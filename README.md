@@ -1,5 +1,9 @@
 # Card Game Platform ("Cardstock")
 
+**▶ [Play now](https://paulgibeault.github.io/card-game/)** — Crazy Eights
+solo vs. bots, hosted straight from this repo via GitHub Pages. Works on
+iPhone Safari for on-device testing; no install needed.
+
 A single dynamic platform that plays many card games, each delivered as a
 **card-pack** (config + optional logic + styles + assets). Runs as one game
 inside [Paul's Arcade](https://paulgibeault.github.io), using its SDK for
@@ -22,7 +26,9 @@ node tools/simulate.mjs --all --games=1000   # bot-vs-bot stall detection
 
 Open `http://localhost:4780/` to play Crazy Eights solo against bots
 (`?pack=<id>` selects another pack, though only Crazy Eights has UI
-polish so far).
+polish so far). The [hosted version](https://paulgibeault.github.io/card-game/)
+deploys automatically from `main` — no server needed, useful for testing
+on a phone.
 
 ## Layout
 
@@ -60,4 +66,6 @@ polish so far).
   planned gameId: `cardstock`.
 - Uno, Phase 10, and Skip-Bo are Mattel trademarks. The packs describe
   public gameplay for personal use; replace names and art before any public
-  release.
+  release. The hosted build above serves Crazy Eights only (public domain)
+  for this reason — the other four packs are engine-complete but not
+  linked from the UI's default view.
