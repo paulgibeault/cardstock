@@ -16,6 +16,7 @@ const BOT_DELAY_MS = 600;
 
 const el = {
   status: document.getElementById('status-bar'),
+  statusText: document.getElementById('status-text'),
   opponentsTop: document.getElementById('opponents-top'),
   drawPile: document.getElementById('draw-pile'),
   discardPile: document.getElementById('discard-pile'),
@@ -24,7 +25,17 @@ const el = {
   drawButton: document.getElementById('draw-button'),
   choiceModal: document.getElementById('choice-modal'),
   choicePanel: document.querySelector('#choice-modal .panel'),
+  gameOverOverlay: document.getElementById('game-over-overlay'),
+  gameOverMessage: document.getElementById('game-over-message'),
+  playAgainButton: document.getElementById('play-again-button'),
 };
+
+// `liveState`/`epoch` exist so "Play again" can start a fresh game without a bot-turn
+// timer left over from the PREVIOUS game corrupting it — scheduleNextTurn's callback
+// checks its own epoch is still current before touching anything.
+let liveState = null;
+let epoch = 0;
+let dealAnimation = false;
 
 async function fetchJson(url) {
   const res = await fetch(url);
@@ -56,18 +67,23 @@ function legalPlayCardIds(state) {
 function render(state, message) {
   const legal = legalPlayCardIds(state);
 
-  el.status.querySelector('#status-text').textContent = state.gameOver
+  el.statusText.textContent = state.gameOver
     ? `Game over — ${seatLabel(state.winner)} wins!`
     : `${seatLabel(state.turn.seat)}'s turn`;
+  el.status.classList.toggle('status-bar--your-turn', !state.gameOver && state.turn.seat === HUMAN_SEAT);
 
   el.opponentsTop.innerHTML = '';
   for (let seat = 0; seat < SEAT_COUNT; seat++) {
     if (seat === HUMAN_SEAT) continue;
     const wrap = document.createElement('div');
     const count = state.zones.count(`hand.${seat}`);
+    const backs = Array.from({ length: count }, (_, i) => {
+      const delay = dealAnimation ? ` style="animation-delay:${i * 35}ms"` : '';
+      return `<span class="${dealAnimation ? 'card-deal' : ''}"${delay}>${renderCardBackSvg()}</span>`;
+    }).join('');
     wrap.innerHTML = `
       <div class="seat-label ${state.turn.seat === seat ? 'seat-label--active' : ''}">${seatLabel(seat)} (${count})</div>
-      <div class="mini-hand">${Array.from({ length: count }, () => renderCardBackSvg()).join('')}</div>
+      <div class="mini-hand">${backs}</div>
     `;
     el.opponentsTop.appendChild(wrap);
   }
@@ -84,19 +100,30 @@ function render(state, message) {
 
   el.hand.innerHTML = '';
   const hand = state.zones.cards(`hand.${HUMAN_SEAT}`);
-  for (const cardId of hand) {
+  hand.forEach((cardId, i) => {
     const card = state.pack.cardsById.get(baseId(cardId));
     const isLegal = legal.has(cardId);
     const wrapper = document.createElement('span');
-    wrapper.className = `card-face-wrap ${isLegal ? '' : 'card-face--disabled'}`;
+    wrapper.className = `card-face-wrap ${isLegal ? '' : 'card-face--disabled'} ${dealAnimation ? 'card-deal' : ''}`;
+    if (dealAnimation) wrapper.style.animationDelay = `${i * 35}ms`;
     wrapper.innerHTML = renderCardFaceSvg(card);
     wrapper.querySelector('svg').classList.toggle('card-face--disabled', !isLegal);
     if (isLegal) wrapper.addEventListener('click', () => onPlayCard(state, cardId, card));
     el.hand.appendChild(wrapper);
-  }
+  });
+  dealAnimation = false;
 
   el.drawButton.disabled = state.turn.seat !== HUMAN_SEAT || state.gameOver || legal.size > 0;
-  if (message) el.log.textContent = message;
+  // A game-ending move can arrive with no message (the human's own winning play) or a
+  // stale one from the mover ("Bot 2 played" right before Bot 2's own hand emptied) —
+  // gameOver always wins the log line over whatever was passed in.
+  if (state.gameOver) {
+    el.log.textContent = `${seatLabel(state.winner)} wins!`;
+    el.gameOverMessage.textContent = state.winner === HUMAN_SEAT ? 'You win! 🎉' : `${seatLabel(state.winner)} wins.`;
+    el.gameOverOverlay.hidden = false;
+  } else if (message) {
+    el.log.textContent = message;
+  }
 }
 
 function needsChoice(card) {
@@ -140,7 +167,7 @@ async function onPlayCard(state, cardId, card) {
   }
   applyMove(state, move);
   render(state);
-  scheduleNextTurn(state);
+  scheduleNextTurn(state, epoch);
 }
 
 function onDraw(state) {
@@ -149,32 +176,42 @@ function onDraw(state) {
   if (!check.legal) return;
   applyMove(state, move);
   render(state);
-  scheduleNextTurn(state);
+  scheduleNextTurn(state, epoch);
 }
 
-function scheduleNextTurn(state) {
+function scheduleNextTurn(state, myEpoch) {
   if (state.gameOver || state.turn.seat === HUMAN_SEAT) return;
   setTimeout(() => {
+    if (myEpoch !== epoch) return; // a "Play again" superseded this game — drop the stale turn
     const seat = state.turn.seat;
     const move = chooseBotMove(state, seat);
     if (!move) return;
     applyMove(state, move);
     render(state, `${seatLabel(seat)} played.`);
-    scheduleNextTurn(state);
+    scheduleNextTurn(state, myEpoch);
   }, BOT_DELAY_MS);
+}
+
+function startGame(pack) {
+  epoch += 1;
+  const myEpoch = epoch;
+  const state = createState({ pack, seats: SEAT_COUNT, seed: Date.now() });
+  liveState = state;
+  const ctx = makeCtx(state);
+  pack.template.setup(ctx);
+
+  el.gameOverOverlay.hidden = true;
+  dealAnimation = true;
+  render(state, `Playing ${pack.manifest.name}.`);
+  scheduleNextTurn(state, myEpoch);
 }
 
 async function boot() {
   const pack = await loadPackFromServer(PACK_ID);
-  const state = createState({ pack, seats: SEAT_COUNT, seed: Date.now() });
-  const ctx = makeCtx(state);
-  pack.template.setup(ctx);
-
   document.title = `Cardstock — ${pack.manifest.name}`;
-  render(state, `Playing ${pack.manifest.name}.`);
-  scheduleNextTurn(state);
-
-  el.drawButton.addEventListener('click', () => onDraw(state));
+  el.drawButton.addEventListener('click', () => liveState && onDraw(liveState));
+  el.playAgainButton.addEventListener('click', () => startGame(pack));
+  startGame(pack);
 }
 
 boot().catch((err) => {

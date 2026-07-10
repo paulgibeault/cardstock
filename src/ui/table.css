@@ -9,11 +9,15 @@
 body {
   margin: 0;
   font-family: system-ui, sans-serif;
-  background: var(--felt);
   color: #fff;
   min-height: 100vh;
   display: flex;
   flex-direction: column;
+  background:
+    radial-gradient(ellipse at 50% 35%, rgba(255, 255, 255, 0.08), transparent 60%),
+    radial-gradient(ellipse at 50% 100%, rgba(0, 0, 0, 0.35), transparent 65%),
+    repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.02) 0 2px, transparent 2px 9px),
+    var(--felt);
 }
 
 #status-bar {
@@ -25,6 +29,12 @@ body {
   align-items: center;
   flex-wrap: wrap;
   gap: 0.5rem;
+  border-bottom: 3px solid transparent;
+  transition: border-color 0.3s ease;
+}
+
+#status-bar.status-bar--your-turn {
+  border-bottom-color: #ffd166;
 }
 
 #status-bar button {
@@ -67,6 +77,7 @@ body {
 .seat-label--active {
   opacity: 1;
   font-weight: 700;
+  animation: pulse-glow 1.6s ease-in-out infinite;
 }
 
 .mini-hand {
@@ -108,8 +119,37 @@ body {
 .hand .card-face--disabled { cursor: default; opacity: 0.55; }
 .hand .card-face--disabled:hover { transform: none; }
 
-.card-face { display: inline-block; }
-.card-face svg { width: 100%; display: block; filter: drop-shadow(0 2px 3px rgba(0,0,0,0.4)); }
+.card-face { display: inline-block; animation: settle-in 0.22s ease-out; }
+.card-face svg { width: 100%; display: block; filter: drop-shadow(0 3px 4px rgba(0,0,0,0.45)); }
+
+.card-face-wrap.card-deal,
+.mini-hand .card-deal .card-face {
+  animation: deal-in 0.4s cubic-bezier(0.2, 0.8, 0.3, 1) both;
+}
+
+@keyframes settle-in {
+  from { opacity: 0; transform: translateY(6px) scale(0.96); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes deal-in {
+  from { opacity: 0; transform: translateY(-36px) scale(0.85) rotate(-6deg); }
+  to { opacity: 1; transform: translateY(0) scale(1) rotate(0deg); }
+}
+
+@keyframes pulse-glow {
+  0%, 100% { text-shadow: 0 0 4px rgba(255, 255, 255, 0.3); }
+  50% { text-shadow: 0 0 10px rgba(255, 255, 255, 0.9); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card-face,
+  .card-face-wrap.card-deal,
+  .mini-hand .card-deal .card-face,
+  .seat-label--active {
+    animation: none !important;
+  }
+}
 
 .card-face__bg { fill: #fdfdfa; stroke: #00000022; }
 .card-face--red .card-face__corner,
@@ -177,3 +217,39 @@ body {
   border: none;
   cursor: pointer;
 }
+
+#game-over-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+}
+#game-over-overlay[hidden] { display: none; }
+#game-over-overlay .panel {
+  background: #fff;
+  color: var(--ink);
+  padding: 2rem 2.5rem;
+  border-radius: 12px;
+  text-align: center;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+  animation: settle-in 0.3s ease-out;
+}
+#game-over-message {
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin-bottom: 1.25rem;
+}
+#play-again-button {
+  font: inherit;
+  padding: 0.7rem 1.5rem;
+  border-radius: 8px;
+  border: none;
+  cursor: pointer;
+  background: #2f6fb0;
+  color: #fff;
+  font-weight: 600;
+}
+#play-again-button:hover { background: #245a91; }
