@@ -44,10 +44,14 @@ async function fetchJson(url) {
 }
 
 async function loadPackFromServer(packId) {
-  const manifest = await fetchJson(`/packs/${packId}/manifest.json`);
+  // Relative, not root-relative — this must work whether the page sits at the origin
+  // root (arcade integration, later) or under a subpath (GitHub Pages project site:
+  // /card-game/; the arcade's dev.sh staging: /<gameId>/). Resolves against the
+  // document's own URL either way.
+  const manifest = await fetchJson(`packs/${packId}/manifest.json`);
   let deckJson;
   try {
-    deckJson = await fetchJson(`/packs/${packId}/deck.json`);
+    deckJson = await fetchJson(`packs/${packId}/deck.json`);
   } catch {
     deckJson = undefined;
   }
