@@ -1,0 +1,232 @@
+#!/usr/bin/env node
+// Headless rule-test runner. Builds each test's `setup` state directly (no dealing/
+// play-through), then runs its `assert` sequence. See schema/rules-test.schema.json.
+
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { loadPack } from '../src/engine/packLoader.js';
+import { createState } from '../src/engine/state.js';
+import { validateMove, applyMove, applyAnnouncement, runScoreRound } from '../src/engine/movePipeline.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = path.resolve(__dirname, '..');
+const PACKS_DIR = path.join(REPO_ROOT, 'packs');
+
+async function readJson(p) {
+  return JSON.parse(await readFile(p, 'utf8'));
+}
+
+async function loadPackFromDisk(packId) {
+  const dir = path.join(PACKS_DIR, packId);
+  const manifest = await readJson(path.join(dir, 'manifest.json'));
+  let deckJson;
+  try {
+    deckJson = await readJson(path.join(dir, 'deck.json'));
+  } catch {
+    deckJson = undefined;
+  }
+  return loadPack(manifest, { deckJson });
+}
+
+function buildStateFromSetup(pack, setup) {
+  const state = createState({ pack, seats: setup.seats, seed: `pack-test:${pack.id}` });
+  if (setup.turn) {
+    state.turn.seat = setup.turn.seat ?? 0;
+    state.turn.phase = setup.turn.phase ?? null;
+  }
+  if (setup.direction) state.direction = setup.direction === 'counterclockwise' ? -1 : 1;
+  if (setup.vars) Object.assign(state.vars, setup.vars);
+  if (setup.playerVars) {
+    for (const [seat, vars] of Object.entries(setup.playerVars)) {
+      Object.assign(state.playerVars[Number(seat)], vars);
+    }
+  }
+  if (setup.scores) {
+    for (const [seat, val] of Object.entries(setup.scores)) state.scores[Number(seat)] = val;
+  }
+
+  const placed = new Set();
+  for (const [address, cardIds] of Object.entries(setup.zones || {})) {
+    if (!state.zones.has(address)) throw new Error(`setup references unknown zone address: ${address}`);
+    const zone = state.zones.get(address);
+    zone.cards.push(...cardIds);
+    for (const id of cardIds) {
+      state.cardLocation.set(id, address);
+      placed.add(id);
+    }
+  }
+
+  const unlistedMode = setup.unlisted ?? 'draw';
+  if (unlistedMode === 'draw' && state.zones.has('draw')) {
+    const remaining = [...pack.cardsById.keys()].filter((id) => !placed.has(id));
+    const drawZone = state.zones.get('draw');
+    drawZone.cards.unshift(...remaining);
+    for (const id of remaining) state.cardLocation.set(id, 'draw');
+  }
+
+  return state;
+}
+
+function deepEqual(a, b) {
+  if (a === b) return true;
+  if (typeof a !== typeof b) return false;
+  if (Array.isArray(a) || Array.isArray(b)) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+    return a.every((v, i) => deepEqual(v, b[i]));
+  }
+  if (a && b && typeof a === 'object') {
+    const ak = Object.keys(a);
+    const bk = Object.keys(b);
+    if (ak.length !== bk.length) return false;
+    return ak.every((k) => deepEqual(a[k], b[k]));
+  }
+  return false;
+}
+
+function checkExpect(state, expected) {
+  const problems = [];
+  if (expected.zones) {
+    for (const [address, want] of Object.entries(expected.zones)) {
+      const zone = state.zones.get(address);
+      if (typeof want === 'number') {
+        if (zone.cards.length !== want) problems.push(`zone ${address}: expected count ${want}, got ${zone.cards.length}`);
+      } else if (!deepEqual(zone.cards, want)) {
+        problems.push(`zone ${address}: expected [${want.join(',')}], got [${zone.cards.join(',')}]`);
+      }
+    }
+  }
+  if (expected.vars) {
+    for (const [k, v] of Object.entries(expected.vars)) {
+      if (!deepEqual(state.vars[k], v)) problems.push(`var ${k}: expected ${JSON.stringify(v)}, got ${JSON.stringify(state.vars[k])}`);
+    }
+  }
+  if (expected.playerVars) {
+    for (const [seat, vars] of Object.entries(expected.playerVars)) {
+      for (const [k, v] of Object.entries(vars)) {
+        const got = state.playerVars[Number(seat)]?.[k];
+        if (!deepEqual(got, v)) problems.push(`playerVars.${seat}.${k}: expected ${JSON.stringify(v)}, got ${JSON.stringify(got)}`);
+      }
+    }
+  }
+  if (expected.turn) {
+    if (expected.turn.seat !== undefined && state.turn.seat !== expected.turn.seat) {
+      problems.push(`turn.seat: expected ${expected.turn.seat}, got ${state.turn.seat}`);
+    }
+    if (expected.turn.phase !== undefined && state.turn.phase !== expected.turn.phase) {
+      problems.push(`turn.phase: expected ${expected.turn.phase}, got ${state.turn.phase}`);
+    }
+  }
+  if (expected.direction) {
+    const want = expected.direction === 'counterclockwise' ? -1 : 1;
+    if (state.direction !== want) problems.push(`direction: expected ${expected.direction}, got ${state.direction === 1 ? 'clockwise' : 'counterclockwise'}`);
+  }
+  if (expected.scores) {
+    for (const [seat, v] of Object.entries(expected.scores)) {
+      if (state.scores[Number(seat)] !== v) problems.push(`scores.${seat}: expected ${v}, got ${state.scores[Number(seat)]}`);
+    }
+  }
+  if (expected.gameOver !== undefined && state.gameOver !== expected.gameOver) {
+    problems.push(`gameOver: expected ${expected.gameOver}, got ${state.gameOver}`);
+  }
+  if (expected.winner !== undefined && state.winner !== expected.winner) {
+    problems.push(`winner: expected ${expected.winner}, got ${state.winner}`);
+  }
+  return problems;
+}
+
+function runAssertion(state, assertion) {
+  if (assertion.move) {
+    const result = validateMove(state, assertion.move);
+    if (result.legal !== assertion.legal) {
+      return [`expected legal=${assertion.legal}, got legal=${result.legal}${result.rule ? ` (rule: ${result.rule}, ${result.reason || ''})` : ''}`];
+    }
+    if (assertion.rule && result.rule !== assertion.rule) {
+      return [`expected rule "${assertion.rule}", got "${result.rule}"`];
+    }
+    return [];
+  }
+  if (assertion.apply) {
+    try {
+      applyMove(state, assertion.apply);
+      return [];
+    } catch (e) {
+      return [`apply threw: ${e.message}`];
+    }
+  }
+  if (assertion.announce) {
+    try {
+      applyAnnouncement(state, assertion.announce);
+      return [];
+    } catch (e) {
+      return [`announce threw: ${e.message}`];
+    }
+  }
+  if (assertion.score) {
+    const scores = runScoreRound(state);
+    const problems = [];
+    for (const [seat, want] of Object.entries(assertion.score)) {
+      const got = scores[Number(seat)];
+      if (got !== want) problems.push(`score seat ${seat}: expected ${want}, got ${got}`);
+    }
+    return problems;
+  }
+  if (assertion.expect) {
+    return checkExpect(state, assertion.expect);
+  }
+  return [`unrecognized assertion: ${JSON.stringify(assertion)}`];
+}
+
+async function runPackTests(packId) {
+  const pack = await loadPackFromDisk(packId);
+  const testFile = await readJson(path.join(PACKS_DIR, packId, 'tests', 'rules.test.json'));
+
+  let passed = 0;
+  let failed = 0;
+  for (const test of testFile.tests) {
+    const state = buildStateFromSetup(pack, test.setup);
+    const problems = [];
+    for (let i = 0; i < test.assert.length; i++) {
+      const result = runAssertion(state, test.assert[i]);
+      if (result.length) problems.push(`  assert[${i}]: ${result.join('; ')}`);
+    }
+    if (problems.length === 0) {
+      passed++;
+      console.log(`  \x1b[32m✓\x1b[0m ${test.name}`);
+    } else {
+      failed++;
+      console.log(`  \x1b[31m✗\x1b[0m ${test.name}`);
+      for (const p of problems) console.log(`    \x1b[31m${p}\x1b[0m`);
+    }
+  }
+  console.log(`${packId}: ${passed} passed, ${failed} failed\n`);
+  return { passed, failed };
+}
+
+async function main() {
+  const args = process.argv.slice(2);
+  const all = args.includes('--all');
+  const packIds = all
+    ? (await import('node:fs')).readdirSync(PACKS_DIR).filter((f) => !f.startsWith('.'))
+    : args.filter((a) => !a.startsWith('--'));
+
+  if (packIds.length === 0) {
+    console.error('Usage: pack-test.mjs <pack-id> [<pack-id>...] | --all');
+    process.exit(2);
+  }
+
+  let totalFailed = 0;
+  for (const packId of packIds) {
+    console.log(`\n=== ${packId} ===`);
+    try {
+      const { failed } = await runPackTests(packId);
+      totalFailed += failed;
+    } catch (e) {
+      console.error(`  \x1b[31mERROR loading/running ${packId}: ${e.stack}\x1b[0m`);
+      totalFailed += 1;
+    }
+  }
+  process.exit(totalFailed > 0 ? 1 : 0);
+}
+
+main();

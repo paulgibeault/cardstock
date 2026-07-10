@@ -1,0 +1,16 @@
+{
+  "name": "cardstock",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Card-pack driven multi-game platform engine.",
+  "scripts": {
+    "pack-test": "node tools/pack-test.mjs",
+    "pack-test:all": "node tools/pack-test.mjs --all",
+    "simulate": "node tools/simulate.mjs",
+    "serve": "node tools/serve.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

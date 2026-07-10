@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Cardstock</title>
+  <link rel="stylesheet" href="/src/ui/table.css" />
+</head>
+<body>
+  <div id="status-bar">
+    <span id="status-text">Loading…</span>
+    <button id="draw-button" disabled>Draw</button>
+  </div>
+
+  <div id="table">
+    <div class="opponent-row" id="opponents-top"></div>
+
+    <div id="center-piles">
+      <div class="pile">
+        <div id="draw-pile"></div>
+        <div class="pile-count"></div>
+      </div>
+      <div class="pile">
+        <div id="discard-pile"></div>
+        <div class="pile-count"></div>
+      </div>
+    </div>
+
+    <div id="hand-row">
+      <div class="hand" id="hand"></div>
+    </div>
+  </div>
+
+  <div id="log"></div>
+
+  <div id="choice-modal" hidden>
+    <div class="panel"></div>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

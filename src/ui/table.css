@@ -1,0 +1,179 @@
+:root {
+  color-scheme: light dark;
+  --felt: #1b5e3a;
+  --ink: #1a1a1a;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: system-ui, sans-serif;
+  background: var(--felt);
+  color: #fff;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+#status-bar {
+  padding: 0.5rem 1rem;
+  background: rgba(0, 0, 0, 0.25);
+  font-size: 0.95rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+#status-bar button {
+  font: inherit;
+  padding: 0.35rem 0.8rem;
+  border-radius: 6px;
+  border: none;
+  cursor: pointer;
+  background: #fff;
+  color: var(--ink);
+}
+
+#status-bar button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+#table {
+  flex: 1;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  gap: 1rem;
+  padding: 1rem;
+}
+
+.opponent-row {
+  display: flex;
+  justify-content: center;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+}
+
+.seat-label {
+  font-size: 0.8rem;
+  text-align: center;
+  opacity: 0.85;
+  margin-bottom: 0.25rem;
+}
+
+.seat-label--active {
+  opacity: 1;
+  font-weight: 700;
+}
+
+.mini-hand {
+  display: flex;
+}
+
+.mini-hand .card-face { width: 28px; margin-left: -14px; }
+.mini-hand .card-face:first-child { margin-left: 0; }
+
+#center-piles {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 2rem;
+}
+
+.pile { text-align: center; }
+.pile .card-face { width: 90px; }
+.pile-count { font-size: 0.75rem; opacity: 0.8; margin-top: 0.25rem; }
+
+#hand-row {
+  display: flex;
+  justify-content: center;
+}
+
+.hand {
+  display: flex;
+  padding: 0.5rem;
+}
+
+.hand .card-face {
+  width: 70px;
+  margin-left: -22px;
+  transition: transform 0.1s ease;
+  cursor: pointer;
+}
+.hand .card-face:first-child { margin-left: 0; }
+.hand .card-face:hover { transform: translateY(-10px); }
+.hand .card-face--disabled { cursor: default; opacity: 0.55; }
+.hand .card-face--disabled:hover { transform: none; }
+
+.card-face { display: inline-block; }
+.card-face svg { width: 100%; display: block; filter: drop-shadow(0 2px 3px rgba(0,0,0,0.4)); }
+
+.card-face__bg { fill: #fdfdfa; stroke: #00000022; }
+.card-face--red .card-face__corner,
+.card-face--red .card-face__pip { fill: #b91c1c; }
+.card-face--black .card-face__corner,
+.card-face--black .card-face__pip { fill: #111; }
+.card-face--red { --face: #b91c1c; }
+.card-face--black { --face: #111; }
+.card-face--neutral .card-face__corner,
+.card-face--neutral .card-face__pip,
+.card-face--neutral .card-face__badge { fill: #444; }
+
+.card-face--red .card-face__badge,
+.card-face--black .card-face__badge { fill: inherit; }
+
+.card-face--back .card-face__bg { fill: #274b8c; }
+.card-face--back .card-face__back-pattern { fill: #3b62ad; }
+
+.card-face__corner { font-size: 16px; font-weight: 700; }
+.card-face__corner--br { text-anchor: end; }
+.card-face__pip { font-size: 34px; text-anchor: middle; opacity: 0.9; }
+.card-face__badge { font-size: 20px; font-weight: 700; text-anchor: middle; fill: #333; }
+
+/* Uno/Phase-10-style colored cards (no suit) get their face painted by color. */
+.card-face--red .card-face__bg { fill: #c0392b; }
+.card-face--red .card-face__corner, .card-face--red .card-face__badge { fill: #fff; }
+.card-face--yellow .card-face__bg { fill: #e1b12c; }
+.card-face--green .card-face__bg { fill: #27ae60; }
+.card-face--blue .card-face__bg { fill: #2f6fb0; }
+.card-face--yellow .card-face__corner, .card-face--green .card-face__corner, .card-face--blue .card-face__corner,
+.card-face--yellow .card-face__badge, .card-face--green .card-face__badge, .card-face--blue .card-face__badge {
+  fill: #fff;
+}
+
+#log {
+  max-width: 30rem;
+  margin: 0 auto;
+  font-size: 0.8rem;
+  opacity: 0.8;
+  text-align: center;
+  min-height: 1.2em;
+}
+
+#choice-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+#choice-modal[hidden] { display: none; }
+#choice-modal .panel {
+  background: #fff;
+  color: var(--ink);
+  padding: 1rem;
+  border-radius: 8px;
+  display: flex;
+  gap: 0.5rem;
+}
+#choice-modal button {
+  font: inherit;
+  padding: 0.6rem 1rem;
+  border-radius: 6px;
+  border: none;
+  cursor: pointer;
+}
