@@ -1,0 +1,178 @@
+{
+  "pack": "phase-10",
+  "tests": [
+    {
+      "name": "a valid phase-1 laydown (two sets of three, one wild used)",
+      "setup": {
+        "seats": 3,
+        "turn": { "seat": 0, "phase": "meld" },
+        "playerVars": { "0": { "phase": 1, "laidDown": false } },
+        "zones": {
+          "hand.0": ["red-3", "blue-3", "wild", "green-9", "yellow-9", "red-9", "blue-12"]
+        }
+      },
+      "assert": [
+        {
+          "move": {
+            "actor": 0,
+            "type": "layDown",
+            "choice": {
+              "melds": [
+                { "item": "set(3)", "cards": ["red-3", "blue-3", "wild"] },
+                { "item": "set(3)", "cards": ["green-9", "yellow-9", "red-9"] }
+              ]
+            }
+          },
+          "legal": true
+        }
+      ]
+    },
+    {
+      "name": "a meld needs at least one natural card",
+      "setup": {
+        "seats": 3,
+        "turn": { "seat": 0, "phase": "meld" },
+        "playerVars": { "0": { "phase": 1, "laidDown": false } },
+        "zones": {
+          "hand.0": ["wild", "wild#2", "wild#3", "green-9", "yellow-9", "red-9", "blue-12"]
+        }
+      },
+      "assert": [
+        {
+          "move": {
+            "actor": 0,
+            "type": "layDown",
+            "choice": {
+              "melds": [
+                { "item": "set(3)", "cards": ["wild", "wild#2", "wild#3"] },
+                { "item": "set(3)", "cards": ["green-9", "yellow-9", "red-9"] }
+              ]
+            }
+          },
+          "legal": false,
+          "rule": "min-naturals"
+        }
+      ]
+    },
+    {
+      "name": "the laydown must match the player's own current phase",
+      "setup": {
+        "seats": 3,
+        "turn": { "seat": 0, "phase": "meld" },
+        "playerVars": { "0": { "phase": 1, "laidDown": false } },
+        "zones": {
+          "hand.0": ["red-4", "blue-5", "green-6", "yellow-7", "blue-12", "red-1", "green-2"]
+        }
+      },
+      "assert": [
+        {
+          "move": {
+            "actor": 0,
+            "type": "layDown",
+            "choice": {
+              "melds": [
+                { "item": "run(4)", "cards": ["red-4", "blue-5", "green-6", "yellow-7"] }
+              ]
+            }
+          },
+          "legal": false,
+          "rule": "contract-mismatch"
+        }
+      ]
+    },
+    {
+      "name": "hitting is not allowed before laying down",
+      "setup": {
+        "seats": 3,
+        "turn": { "seat": 0, "phase": "meld" },
+        "playerVars": {
+          "0": { "phase": 2, "laidDown": false },
+          "1": { "phase": 1, "laidDown": true }
+        },
+        "zones": {
+          "hand.0": ["blue-5", "red-8"],
+          "melds.1": ["red-5", "green-5", "yellow-5"]
+        }
+      },
+      "assert": [
+        {
+          "move": {
+            "actor": 0, "type": "hit", "cards": ["blue-5"],
+            "choice": { "seat": 1, "meld": 0 }
+          },
+          "legal": false,
+          "rule": "not-laid-down"
+        }
+      ]
+    },
+    {
+      "name": "hitting any player's meld is allowed after laying down",
+      "setup": {
+        "seats": 3,
+        "turn": { "seat": 0, "phase": "meld" },
+        "playerVars": {
+          "0": { "phase": 2, "laidDown": true },
+          "1": { "phase": 1, "laidDown": true }
+        },
+        "zones": {
+          "hand.0": ["blue-5", "red-8"],
+          "melds.1": ["red-5", "green-5", "yellow-5"]
+        }
+      },
+      "assert": [
+        {
+          "move": {
+            "actor": 0, "type": "hit", "cards": ["blue-5"],
+            "choice": { "seat": 1, "meld": 0 }
+          },
+          "legal": true
+        }
+      ]
+    },
+    {
+      "name": "a skip may not be picked up from the discard pile",
+      "setup": {
+        "seats": 3,
+        "turn": { "seat": 0, "phase": "draw" },
+        "playerVars": { "0": { "phase": 1, "laidDown": false } },
+        "zones": { "discard": ["red-4", "skip"], "hand.0": ["blue-5"] }
+      },
+      "assert": [
+        { "move": { "actor": 0, "type": "draw", "from": "discard" }, "legal": false, "rule": "discard-pickup-forbidden" },
+        { "move": { "actor": 0, "type": "draw", "from": "draw" }, "legal": true }
+      ]
+    },
+    {
+      "name": "discarding a skip makes the chosen player lose their next turn",
+      "setup": {
+        "seats": 3,
+        "turn": { "seat": 0, "phase": "discard" },
+        "playerVars": { "0": { "phase": 1, "laidDown": false } },
+        "zones": {
+          "discard": ["red-4"],
+          "hand.0": ["skip", "red-2"],
+          "hand.1": ["blue-1"],
+          "hand.2": ["green-1"]
+        }
+      },
+      "assert": [
+        { "apply": { "actor": 0, "type": "discard", "cards": ["skip"], "choice": { "target": 1 } } },
+        { "expect": { "turn": { "seat": 2 } } }
+      ]
+    },
+    {
+      "name": "round scoring counts leftover hand values against each player",
+      "setup": {
+        "seats": 3,
+        "zones": {
+          "hand.0": [],
+          "hand.1": ["red-3", "wild"],
+          "hand.2": ["blue-9"]
+        }
+      },
+      "assert": [
+        { "score": { "0": 0, "1": 30, "2": 5 } }
+      ]
+    }
+  ]
+}

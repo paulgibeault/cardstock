@@ -1,0 +1,38 @@
+{
+  "id": "crazy-eights",
+  "name": "Crazy Eights",
+  "version": "0.1.0",
+  "players": { "min": 2, "max": 5, "best": 4 },
+  "deck": "standard-52",
+  "template": "shedding",
+  "rules": {
+    "matchOn": ["suit", "rank"],
+    "deal": { "default": 5, "byPlayers": { "2": 7 } },
+    "effects": {
+      "rank:8": { "type": "wild", "choose": "suit" }
+    },
+    "drawWhenStuck": 1,
+    "playAfterDraw": true,
+    "mustPlayIfAble": false,
+    "winner": "first-empty-hand"
+  },
+  "scoring": {
+    "defaultValue": "faceValue",
+    "cardValues": { "rank:8": 50, "rank:J": 10, "rank:Q": 10, "rank:K": 10, "rank:A": 1 },
+    "roundScore": "hand-values-to-winner",
+    "accumulate": true,
+    "gameOver": { "when": "anyScore >= 100", "winner": "highestScore" }
+  },
+  "variants": [
+    {
+      "id": "draw-until-playable",
+      "name": "Draw until playable",
+      "description": "Instead of drawing one card when stuck, draw until you can play.",
+      "default": false,
+      "patch": { "rules.drawWhenStuck": "until-playable" }
+    }
+  ],
+  "undo": "none",
+  "turnTimer": null,
+  "credits": "Traditional (public domain)."
+}

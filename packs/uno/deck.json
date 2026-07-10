@@ -1,0 +1,55 @@
+{
+  "id": "uno-108",
+  "name": "Uno-style 108-card deck",
+  "colors": ["red", "yellow", "green", "blue"],
+  "cards": [
+    {
+      "forEach": { "color": ["red", "yellow", "green", "blue"] },
+      "def": { "rank": "0", "color": "$color", "value": 0 },
+      "count": 1
+    },
+    {
+      "forEach": {
+        "color": ["red", "yellow", "green", "blue"],
+        "rank": ["1", "2", "3", "4", "5", "6", "7", "8", "9"]
+      },
+      "def": { "rank": "$rank", "color": "$color", "value": "$rank" },
+      "count": 2
+    },
+    {
+      "forEach": { "color": ["red", "yellow", "green", "blue"] },
+      "def": { "rank": "skip", "color": "$color", "value": 20, "effect": "skip" },
+      "count": 2
+    },
+    {
+      "forEach": { "color": ["red", "yellow", "green", "blue"] },
+      "def": { "rank": "reverse", "color": "$color", "value": 20, "effect": "reverse" },
+      "count": 2
+    },
+    {
+      "forEach": { "color": ["red", "yellow", "green", "blue"] },
+      "def": { "rank": "draw2", "color": "$color", "value": 20, "effect": { "type": "drawN", "n": 2 } },
+      "count": 2
+    },
+    {
+      "def": {
+        "id": "wild",
+        "rank": "wild",
+        "value": 50,
+        "tags": ["wild"],
+        "effect": { "type": "wild", "choose": "color" }
+      },
+      "count": 4
+    },
+    {
+      "def": {
+        "id": "wild-draw4",
+        "rank": "wild-draw4",
+        "value": 50,
+        "tags": ["wild"],
+        "effect": { "type": "wildDrawN", "n": 4, "choose": "color", "challengeable": true }
+      },
+      "count": 4
+    }
+  ]
+}

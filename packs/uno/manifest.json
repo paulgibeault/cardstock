@@ -1,0 +1,59 @@
+{
+  "id": "uno",
+  "name": "Uno",
+  "version": "0.1.0",
+  "players": { "min": 2, "max": 8, "best": 4 },
+  "deck": "deck.json",
+  "template": "shedding",
+  "rules": {
+    "matchOn": ["color", "rank"],
+    "deal": 7,
+    "drawWhenStuck": 1,
+    "playAfterDraw": true,
+    "mustPlayIfAble": false,
+    "winner": "first-empty-hand",
+    "lastCardCall": { "id": "uno-call", "atHandCount": 1, "penalty": { "draw": 2 } }
+  },
+  "scoring": {
+    "roundScore": "hand-values-to-winner",
+    "accumulate": true,
+    "gameOver": { "when": "anyScore >= 500", "winner": "highestScore" }
+  },
+  "variants": [
+    {
+      "id": "stacking",
+      "name": "Stacking draw cards",
+      "description": "A Draw 2 may be answered with another Draw 2, passing the accumulated penalty on.",
+      "default": false,
+      "patch": { "rules.stacking.drawN": true }
+    },
+    {
+      "id": "jump-in",
+      "name": "Jump-in",
+      "description": "A player holding the identical card may play it out of turn.",
+      "default": false,
+      "patch": { "rules.jumpIn": true }
+    },
+    {
+      "id": "seven-zero",
+      "name": "Sevens and zeros",
+      "description": "Playing a 7 swaps hands with a chosen player; a 0 rotates all hands in the direction of play.",
+      "default": false,
+      "patch": {
+        "rules.effects.rank:7": { "type": "swapHands", "choose": "player" },
+        "rules.effects.rank:0": { "type": "rotateHands" }
+      }
+    },
+    {
+      "id": "draw-to-match",
+      "name": "Draw to match",
+      "description": "When stuck, draw until you can play instead of drawing one.",
+      "default": false,
+      "patch": { "rules.drawWhenStuck": "until-playable" }
+    }
+  ],
+  "undo": "none",
+  "turnTimer": null,
+  "ui": { "felt": "#8b1e1e" },
+  "credits": "Gameplay of the classic shedding game. 'UNO' is a Mattel trademark — replace name and art before any public release."
+}

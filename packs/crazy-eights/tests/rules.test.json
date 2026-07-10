@@ -1,0 +1,89 @@
+{
+  "pack": "crazy-eights",
+  "tests": [
+    {
+      "name": "may play a card matching the discard's suit, not a mismatch",
+      "setup": {
+        "seats": 3,
+        "turn": { "seat": 0, "phase": "play" },
+        "zones": { "discard": ["hearts-7"], "hand.0": ["hearts-K", "clubs-4"] },
+        "vars": { "activeSuit": "hearts" }
+      },
+      "assert": [
+        { "move": { "actor": 0, "type": "playCard", "cards": ["hearts-K"] }, "legal": true },
+        { "move": { "actor": 0, "type": "playCard", "cards": ["clubs-4"] }, "legal": false, "rule": "match" }
+      ]
+    },
+    {
+      "name": "may play a card matching the discard's rank across suits",
+      "setup": {
+        "seats": 3,
+        "turn": { "seat": 0, "phase": "play" },
+        "zones": { "discard": ["hearts-7"], "hand.0": ["clubs-7"] },
+        "vars": { "activeSuit": "hearts" }
+      },
+      "assert": [
+        { "move": { "actor": 0, "type": "playCard", "cards": ["clubs-7"] }, "legal": true }
+      ]
+    },
+    {
+      "name": "an 8 is playable on anything but requires a suit choice",
+      "setup": {
+        "seats": 3,
+        "turn": { "seat": 0, "phase": "play" },
+        "zones": { "discard": ["hearts-7"], "hand.0": ["spades-8"] },
+        "vars": { "activeSuit": "hearts" }
+      },
+      "assert": [
+        { "move": { "actor": 0, "type": "playCard", "cards": ["spades-8"], "choice": { "suit": "clubs" } }, "legal": true },
+        { "move": { "actor": 0, "type": "playCard", "cards": ["spades-8"] }, "legal": false, "rule": "choice-required" }
+      ]
+    },
+    {
+      "name": "after an 8, play follows the chosen suit",
+      "setup": {
+        "seats": 2,
+        "turn": { "seat": 0, "phase": "play" },
+        "zones": {
+          "discard": ["hearts-7"],
+          "hand.0": ["spades-8", "diamonds-2"],
+          "hand.1": ["clubs-9", "spades-9"]
+        },
+        "vars": { "activeSuit": "hearts" }
+      },
+      "assert": [
+        { "apply": { "actor": 0, "type": "playCard", "cards": ["spades-8"], "choice": { "suit": "clubs" } } },
+        { "expect": { "vars": { "activeSuit": "clubs" }, "turn": { "seat": 1 } } },
+        { "move": { "actor": 1, "type": "playCard", "cards": ["clubs-9"] }, "legal": true },
+        { "move": { "actor": 1, "type": "playCard", "cards": ["spades-9"] }, "legal": false, "rule": "match" }
+      ]
+    },
+    {
+      "name": "drawing is the move when nothing is playable",
+      "setup": {
+        "seats": 3,
+        "turn": { "seat": 0, "phase": "play" },
+        "zones": { "discard": ["hearts-7"], "hand.0": ["clubs-4", "spades-9"] },
+        "vars": { "activeSuit": "hearts" }
+      },
+      "assert": [
+        { "move": { "actor": 0, "type": "playCard", "cards": ["clubs-4"] }, "legal": false, "rule": "match" },
+        { "move": { "actor": 0, "type": "draw" }, "legal": true }
+      ]
+    },
+    {
+      "name": "round scoring sends leftover hand values to the winner",
+      "setup": {
+        "seats": 3,
+        "zones": {
+          "hand.0": [],
+          "hand.1": ["hearts-8", "clubs-K"],
+          "hand.2": ["diamonds-4"]
+        }
+      },
+      "assert": [
+        { "score": { "0": 64, "1": 0, "2": 0 } }
+      ]
+    }
+  ]
+}

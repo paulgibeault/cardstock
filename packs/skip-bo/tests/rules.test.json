@@ -1,0 +1,112 @@
+{
+  "pack": "skip-bo",
+  "tests": [
+    {
+      "name": "an empty build pile takes a 1 or a wild, nothing else",
+      "setup": {
+        "seats": 2,
+        "turn": { "seat": 0, "phase": "play" },
+        "zones": {
+          "stock.0": ["sb-5", "sb-1"],
+          "hand.0": ["sb-7", "sb-wild"],
+          "build.1": []
+        }
+      },
+      "assert": [
+        { "move": { "actor": 0, "type": "playCard", "cards": ["sb-1"], "from": "stock.0", "to": "build.1" }, "legal": true },
+        { "move": { "actor": 0, "type": "playCard", "cards": ["sb-wild"], "from": "hand.0", "to": "build.1" }, "legal": true },
+        { "move": { "actor": 0, "type": "playCard", "cards": ["sb-7"], "from": "hand.0", "to": "build.1" }, "legal": false, "rule": "build-rule" }
+      ]
+    },
+    {
+      "name": "only the top of the stock pile is playable",
+      "setup": {
+        "seats": 2,
+        "turn": { "seat": 0, "phase": "play" },
+        "zones": {
+          "stock.0": ["sb-5", "sb-1"],
+          "build.1": []
+        }
+      },
+      "assert": [
+        { "move": { "actor": 0, "type": "playCard", "cards": ["sb-5"], "from": "stock.0", "to": "build.1" }, "legal": false, "rule": "not-top" }
+      ]
+    },
+    {
+      "name": "build piles ascend one rank at a time",
+      "setup": {
+        "seats": 2,
+        "turn": { "seat": 0, "phase": "play" },
+        "zones": {
+          "build.2": ["sb-1", "sb-2"],
+          "hand.0": ["sb-3", "sb-5"]
+        }
+      },
+      "assert": [
+        { "move": { "actor": 0, "type": "playCard", "cards": ["sb-3"], "from": "hand.0", "to": "build.2" }, "legal": true },
+        { "move": { "actor": 0, "type": "playCard", "cards": ["sb-5"], "from": "hand.0", "to": "build.2" }, "legal": false, "rule": "build-rule" }
+      ]
+    },
+    {
+      "name": "only the top of an own discard pile is playable",
+      "setup": {
+        "seats": 2,
+        "turn": { "seat": 0, "phase": "play" },
+        "zones": {
+          "build.2": ["sb-1", "sb-2"],
+          "discard.1.0": ["sb-9", "sb-3"]
+        }
+      },
+      "assert": [
+        { "move": { "actor": 0, "type": "playCard", "cards": ["sb-3"], "from": "discard.1.0", "to": "build.2" }, "legal": true },
+        { "move": { "actor": 0, "type": "playCard", "cards": ["sb-9"], "from": "discard.1.0", "to": "build.2" }, "legal": false, "rule": "not-top" }
+      ]
+    },
+    {
+      "name": "completing a build pile at 12 recycles it",
+      "setup": {
+        "seats": 2,
+        "turn": { "seat": 0, "phase": "play" },
+        "zones": {
+          "build.3": ["sb-1", "sb-2", "sb-3", "sb-4", "sb-5", "sb-6", "sb-7", "sb-8", "sb-9", "sb-10", "sb-11"],
+          "hand.0": ["sb-wild"],
+          "recycled": []
+        }
+      },
+      "assert": [
+        { "apply": { "actor": 0, "type": "playCard", "cards": ["sb-wild"], "from": "hand.0", "to": "build.3" } },
+        { "expect": { "zones": { "build.3": 0, "recycled": 12 } } }
+      ]
+    },
+    {
+      "name": "emptying the stock pile wins immediately",
+      "setup": {
+        "seats": 2,
+        "turn": { "seat": 0, "phase": "play" },
+        "zones": {
+          "stock.0": ["sb-4"],
+          "build.4": ["sb-1", "sb-2", "sb-3"]
+        }
+      },
+      "assert": [
+        { "apply": { "actor": 0, "type": "playCard", "cards": ["sb-4"], "from": "stock.0", "to": "build.4" } },
+        { "expect": { "gameOver": true, "winner": 0 } }
+      ]
+    },
+    {
+      "name": "discarding to an own pile ends the turn",
+      "setup": {
+        "seats": 2,
+        "turn": { "seat": 0, "phase": "play" },
+        "zones": {
+          "hand.0": ["sb-8", "sb-2"],
+          "discard.2.0": []
+        }
+      },
+      "assert": [
+        { "apply": { "actor": 0, "type": "discard", "cards": ["sb-8"], "from": "hand.0", "to": "discard.2.0" } },
+        { "expect": { "turn": { "seat": 1 } } }
+      ]
+    }
+  ]
+}

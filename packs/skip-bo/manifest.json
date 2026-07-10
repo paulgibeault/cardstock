@@ -1,0 +1,27 @@
+{
+  "id": "skip-bo",
+  "name": "Skip-Bo",
+  "version": "0.1.0",
+  "players": { "min": 2, "max": 6, "best": 4 },
+  "deck": "deck.json",
+  "template": "sequencing",
+  "rules": {
+    "buildRule": { "type": "ascending", "from": 1, "to": 12, "wrap": false },
+    "buildPiles": 4,
+    "buildStart": ["rank:1", "tag:wild"],
+    "wilds": { "tag": "wild" },
+    "stockSize": { "default": 30, "byPlayers": { "5": 20, "6": 20 } },
+    "handRefill": { "to": 5, "atTurnStart": true, "onEmptyMidTurn": true },
+    "discardPiles": 4,
+    "playableFrom": ["stock", "hand", "discard"],
+    "turnEnd": "discard-to-own-pile",
+    "winner": "first-empty-stock"
+  },
+  "reactions": [
+    { "when": "zoneFull:build.*", "do": "moveAll", "to": "recycled" },
+    { "when": "zoneEmpty:draw", "do": "recycle", "from": "recycled", "shuffle": true }
+  ],
+  "undo": "none",
+  "turnTimer": null,
+  "credits": "Gameplay of the classic sequencing game. 'Skip-Bo' is a Mattel trademark — replace name and art before any public release."
+}

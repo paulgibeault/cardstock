@@ -1,0 +1,71 @@
+{
+  "id": "hearts",
+  "name": "Hearts",
+  "version": "0.1.0",
+  "players": { "min": 3, "max": 6, "best": 4 },
+  "deck": "standard-52",
+  "template": "trick-taking",
+  "cardTags": {
+    "suit:hearts": ["penalty"],
+    "spades-Q": ["penalty"]
+  },
+  "rules": {
+    "followSuit": "must",
+    "trump": "none",
+    "trickWinner": "highest-of-led",
+    "dealAll": true,
+    "dealAdjust": {
+      "3": ["diamonds-2"],
+      "5": ["diamonds-2", "spades-2"],
+      "6": ["diamonds-2", "diamonds-3", "spades-2", "spades-3"]
+    },
+    "firstLead": "clubs-2",
+    "leader": "trick-winner",
+    "leadConstraints": { "suit:hearts": "untilBroken" },
+    "playConstraints": { "tag:penalty": "notTrick1" },
+    "breaking": { "var": "heartsBroken", "when": "tag:penalty played" },
+    "passing": { "count": 3, "schedule": ["left", "right", "across", "none"] },
+    "sweepBonus": { "if": "tookAll:tag:penalty", "award": "others-gain-sum" }
+  },
+  "scoring": {
+    "defaultValue": 0,
+    "cardValues": { "suit:hearts": 1, "spades-Q": 13 },
+    "roundScore": "penalty-cards-taken",
+    "accumulate": true,
+    "gameOver": { "when": "anyScore >= 100", "winner": "lowestScore" }
+  },
+  "variants": [
+    {
+      "id": "jack-of-diamonds",
+      "name": "Jack of Diamonds (−10)",
+      "description": "Capturing the Jack of Diamonds subtracts 10 points.",
+      "default": false,
+      "patch": { "scoring.cardValues.diamonds-J": -10 }
+    },
+    {
+      "id": "old-moon",
+      "name": "Old-style moon",
+      "description": "Shooting the moon subtracts 26 from your score instead of adding 26 to everyone else's.",
+      "default": false,
+      "patch": { "rules.sweepBonus.award": "self-lose-sum" }
+    },
+    {
+      "id": "first-blood",
+      "name": "Points on the first trick",
+      "description": "Penalty cards may be played on the first trick.",
+      "default": false,
+      "patch": { "rules.playConstraints.tag:penalty": null }
+    },
+    {
+      "id": "no-passing",
+      "name": "No passing",
+      "description": "Skip the passing phase every hand.",
+      "default": false,
+      "patch": { "rules.passing": null }
+    }
+  ],
+  "undo": "none",
+  "turnTimer": null,
+  "ui": { "felt": "#1b5e3a" },
+  "credits": "Traditional (public domain)."
+}

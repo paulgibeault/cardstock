@@ -1,0 +1,134 @@
+{
+  "pack": "uno",
+  "tests": [
+    {
+      "name": "match by color or rank; mismatch is illegal",
+      "setup": {
+        "seats": 3,
+        "turn": { "seat": 0, "phase": "play" },
+        "zones": { "discard": ["red-7"], "hand.0": ["red-3", "green-7", "blue-2"] },
+        "vars": { "activeColor": "red" }
+      },
+      "assert": [
+        { "move": { "actor": 0, "type": "playCard", "cards": ["red-3"] }, "legal": true },
+        { "move": { "actor": 0, "type": "playCard", "cards": ["green-7"] }, "legal": true },
+        { "move": { "actor": 0, "type": "playCard", "cards": ["blue-2"] }, "legal": false, "rule": "match" }
+      ]
+    },
+    {
+      "name": "a wild sets the active color",
+      "setup": {
+        "seats": 2,
+        "turn": { "seat": 0, "phase": "play" },
+        "zones": {
+          "discard": ["red-7"],
+          "hand.0": ["wild", "green-1"],
+          "hand.1": ["blue-4", "red-9"]
+        },
+        "vars": { "activeColor": "red" }
+      },
+      "assert": [
+        { "apply": { "actor": 0, "type": "playCard", "cards": ["wild"], "choice": { "color": "blue" } } },
+        { "expect": { "vars": { "activeColor": "blue" }, "turn": { "seat": 1 } } },
+        { "move": { "actor": 1, "type": "playCard", "cards": ["blue-4"] }, "legal": true },
+        { "move": { "actor": 1, "type": "playCard", "cards": ["red-9"] }, "legal": false, "rule": "match" }
+      ]
+    },
+    {
+      "name": "draw2 makes the next player draw two and lose their turn",
+      "setup": {
+        "seats": 3,
+        "turn": { "seat": 0, "phase": "play" },
+        "zones": {
+          "discard": ["red-5"],
+          "hand.0": ["red-draw2", "green-3"],
+          "hand.1": ["blue-1", "blue-2"],
+          "hand.2": ["yellow-9"]
+        },
+        "vars": { "activeColor": "red" }
+      },
+      "assert": [
+        { "apply": { "actor": 0, "type": "playCard", "cards": ["red-draw2"] } },
+        { "expect": { "zones": { "hand.1": 4 }, "turn": { "seat": 2 } } }
+      ]
+    },
+    {
+      "name": "reverse flips the direction of play",
+      "setup": {
+        "seats": 3,
+        "turn": { "seat": 0, "phase": "play" },
+        "direction": "clockwise",
+        "zones": { "discard": ["red-5"], "hand.0": ["red-reverse", "green-3"] },
+        "vars": { "activeColor": "red" }
+      },
+      "assert": [
+        { "apply": { "actor": 0, "type": "playCard", "cards": ["red-reverse"] } },
+        { "expect": { "direction": "counterclockwise", "turn": { "seat": 2 } } }
+      ]
+    },
+    {
+      "name": "reverse acts as a skip with two players",
+      "setup": {
+        "seats": 2,
+        "turn": { "seat": 0, "phase": "play" },
+        "zones": { "discard": ["red-5"], "hand.0": ["red-reverse", "green-3"], "hand.1": ["blue-1"] },
+        "vars": { "activeColor": "red" }
+      },
+      "assert": [
+        { "apply": { "actor": 0, "type": "playCard", "cards": ["red-reverse"] } },
+        { "expect": { "turn": { "seat": 0 } } }
+      ]
+    },
+    {
+      "name": "a missed last-card call can be challenged for a two-card penalty",
+      "setup": {
+        "seats": 2,
+        "turn": { "seat": 1, "phase": "play" },
+        "zones": {
+          "discard": ["green-7"],
+          "hand.0": ["red-2", "red-3"],
+          "hand.1": ["green-3", "blue-9"]
+        },
+        "vars": { "activeColor": "green" }
+      },
+      "assert": [
+        { "apply": { "actor": 1, "type": "playCard", "cards": ["green-3"] } },
+        { "announce": { "actor": 0, "challenge": "uno-call", "target": 1 } },
+        { "expect": { "zones": { "hand.1": 3 } } }
+      ]
+    },
+    {
+      "name": "a made last-card call cannot be successfully challenged",
+      "setup": {
+        "seats": 2,
+        "turn": { "seat": 1, "phase": "play" },
+        "zones": {
+          "discard": ["green-7"],
+          "hand.0": ["red-2", "red-3"],
+          "hand.1": ["green-3", "blue-9"]
+        },
+        "vars": { "activeColor": "green" }
+      },
+      "assert": [
+        { "announce": { "actor": 1, "id": "uno-call" } },
+        { "apply": { "actor": 1, "type": "playCard", "cards": ["green-3"] } },
+        { "announce": { "actor": 0, "challenge": "uno-call", "target": 1 } },
+        { "expect": { "zones": { "hand.1": 1 } } }
+      ]
+    },
+    {
+      "name": "round scoring sends leftover hand values to the winner",
+      "setup": {
+        "seats": 3,
+        "zones": {
+          "hand.0": [],
+          "hand.1": ["wild", "red-draw2"],
+          "hand.2": ["blue-3"]
+        }
+      },
+      "assert": [
+        { "score": { "0": 73, "1": 0, "2": 0 } }
+      ]
+    }
+  ]
+}

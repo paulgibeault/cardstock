@@ -1,0 +1,130 @@
+{
+  "pack": "hearts",
+  "tests": [
+    {
+      "name": "must follow suit when able",
+      "setup": {
+        "seats": 4,
+        "turn": { "seat": 2, "phase": "play" },
+        "zones": { "trick": ["clubs-5"], "hand.2": ["clubs-9", "hearts-A"] },
+        "vars": { "led": "clubs", "leader": 1, "heartsBroken": false, "trickNumber": 3 }
+      },
+      "assert": [
+        { "move": { "actor": 2, "type": "playCard", "cards": ["hearts-A"] }, "legal": false, "rule": "follow-suit" },
+        { "move": { "actor": 2, "type": "playCard", "cards": ["clubs-9"] }, "legal": true }
+      ]
+    },
+    {
+      "name": "void in the led suit, any card may be discarded and hearts break",
+      "setup": {
+        "seats": 4,
+        "turn": { "seat": 2, "phase": "play" },
+        "zones": { "trick": ["clubs-5"], "hand.2": ["hearts-A", "diamonds-3"] },
+        "vars": { "led": "clubs", "leader": 1, "heartsBroken": false, "trickNumber": 3 }
+      },
+      "assert": [
+        { "move": { "actor": 2, "type": "playCard", "cards": ["hearts-A"] }, "legal": true },
+        { "apply": { "actor": 2, "type": "playCard", "cards": ["hearts-A"] } },
+        { "expect": { "vars": { "heartsBroken": true } } }
+      ]
+    },
+    {
+      "name": "hearts may not be led until broken",
+      "setup": {
+        "seats": 4,
+        "turn": { "seat": 0, "phase": "play" },
+        "zones": { "trick": [], "hand.0": ["hearts-4", "diamonds-9"] },
+        "vars": { "heartsBroken": false, "trickNumber": 3 }
+      },
+      "assert": [
+        { "move": { "actor": 0, "type": "playCard", "cards": ["hearts-4"] }, "legal": false, "rule": "lead-constraint" },
+        { "move": { "actor": 0, "type": "playCard", "cards": ["diamonds-9"] }, "legal": true }
+      ]
+    },
+    {
+      "name": "hearts may be led when the hand holds only hearts (constraint relaxation)",
+      "setup": {
+        "seats": 4,
+        "turn": { "seat": 0, "phase": "play" },
+        "zones": { "trick": [], "hand.0": ["hearts-4", "hearts-9"] },
+        "vars": { "heartsBroken": false, "trickNumber": 8 }
+      },
+      "assert": [
+        { "move": { "actor": 0, "type": "playCard", "cards": ["hearts-4"] }, "legal": true }
+      ]
+    },
+    {
+      "name": "the two of clubs leads the first trick",
+      "setup": {
+        "seats": 4,
+        "turn": { "seat": 3, "phase": "play" },
+        "zones": { "trick": [], "hand.3": ["clubs-2", "diamonds-9"] },
+        "vars": { "heartsBroken": false, "trickNumber": 1 }
+      },
+      "assert": [
+        { "move": { "actor": 3, "type": "playCard", "cards": ["diamonds-9"] }, "legal": false, "rule": "first-lead" },
+        { "move": { "actor": 3, "type": "playCard", "cards": ["clubs-2"] }, "legal": true }
+      ]
+    },
+    {
+      "name": "no penalty cards on the first trick when void",
+      "setup": {
+        "seats": 4,
+        "turn": { "seat": 1, "phase": "play" },
+        "zones": { "trick": ["clubs-2"], "hand.1": ["spades-Q", "diamonds-3"] },
+        "vars": { "led": "clubs", "leader": 0, "heartsBroken": false, "trickNumber": 1 }
+      },
+      "assert": [
+        { "move": { "actor": 1, "type": "playCard", "cards": ["spades-Q"] }, "legal": false, "rule": "play-constraint" },
+        { "move": { "actor": 1, "type": "playCard", "cards": ["diamonds-3"] }, "legal": true }
+      ]
+    },
+    {
+      "name": "highest card of the led suit wins the trick and leads next",
+      "setup": {
+        "seats": 4,
+        "turn": { "seat": 3, "phase": "play" },
+        "zones": {
+          "trick": ["clubs-5", "clubs-J", "diamonds-A"],
+          "hand.3": ["clubs-9"]
+        },
+        "vars": { "led": "clubs", "leader": 0, "heartsBroken": false, "trickNumber": 5 }
+      },
+      "assert": [
+        { "apply": { "actor": 3, "type": "playCard", "cards": ["clubs-9"] } },
+        { "expect": { "zones": { "trick": 0, "won.1": 4 }, "turn": { "seat": 1 } } }
+      ]
+    },
+    {
+      "name": "round scoring counts one per heart and thirteen for the queen of spades",
+      "setup": {
+        "seats": 4,
+        "zones": {
+          "won.0": ["hearts-3", "hearts-7", "hearts-K"],
+          "won.1": ["spades-Q", "hearts-5"],
+          "won.2": [],
+          "won.3": []
+        }
+      },
+      "assert": [
+        { "score": { "0": 3, "1": 14, "2": 0, "3": 0 } }
+      ]
+    },
+    {
+      "name": "shooting the moon gives everyone else 26",
+      "setup": {
+        "seats": 4,
+        "zones": {
+          "won.2": [
+            "hearts-2", "hearts-3", "hearts-4", "hearts-5", "hearts-6",
+            "hearts-7", "hearts-8", "hearts-9", "hearts-10", "hearts-J",
+            "hearts-Q", "hearts-K", "hearts-A", "spades-Q"
+          ]
+        }
+      },
+      "assert": [
+        { "score": { "0": 26, "1": 26, "2": 0, "3": 26 } }
+      ]
+    }
+  ]
+}

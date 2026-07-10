@@ -1,0 +1,37 @@
+{
+  "id": "phase10-108",
+  "name": "Phase-10-style 108-card deck",
+  "colors": ["red", "blue", "green", "yellow"],
+  "cards": [
+    {
+      "forEach": {
+        "color": ["red", "blue", "green", "yellow"],
+        "rank": ["1", "2", "3", "4", "5", "6", "7", "8", "9"]
+      },
+      "def": { "rank": "$rank", "color": "$color", "value": 5 },
+      "count": 2
+    },
+    {
+      "forEach": {
+        "color": ["red", "blue", "green", "yellow"],
+        "rank": ["10", "11", "12"]
+      },
+      "def": { "rank": "$rank", "color": "$color", "value": 10 },
+      "count": 2
+    },
+    {
+      "def": { "id": "wild", "rank": "wild", "value": 25, "tags": ["wild"] },
+      "count": 8
+    },
+    {
+      "def": {
+        "id": "skip",
+        "rank": "skip",
+        "value": 15,
+        "tags": ["skip"],
+        "effect": { "type": "skipTarget", "on": "discard" }
+      },
+      "count": 4
+    }
+  ]
+}

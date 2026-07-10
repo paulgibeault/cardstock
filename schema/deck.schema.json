@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://paulgibeault.github.io/cardstock/schema/deck.schema.json",
+  "title": "Cardstock deck file (v0)",
+  "description": "A deck is a list of card definitions with counts. Card ids are auto-generated as '<color-or-suit>-<rank>' when omitted; the 2nd, 3rd, … physical copies of the same definition get instance ids '<id>#2', '<id>#3', …",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "cards"],
+  "properties": {
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+    "name": { "type": "string" },
+    "suits": { "type": "array", "items": { "type": "string" } },
+    "colors": { "type": "array", "items": { "type": "string" } },
+    "cards": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["def"],
+        "properties": {
+          "forEach": {
+            "type": "object",
+            "description": "Cartesian expansion: emit this entry once per combination of the listed variables, substituting '$<var>' in def string values. 'value': '$rank' coerces to a number.",
+            "additionalProperties": { "type": "array", "items": { "type": "string" } },
+            "minProperties": 1
+          },
+          "def": { "$ref": "#/$defs/cardDef" },
+          "count": { "type": "integer", "minimum": 1, "default": 1 }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "cardDef": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "description": "Explicit id; may contain '$<var>' when used with forEach." },
+        "rank": { "type": ["string", "null"] },
+        "suit": { "type": ["string", "null"] },
+        "color": { "type": ["string", "null"] },
+        "value": {
+          "type": ["number", "null", "string"],
+          "description": "Point value; null defers to the manifest's scoring section; a '$<var>' string is substituted then coerced to a number."
+        },
+        "sortOrder": { "type": "integer" },
+        "tags": { "type": "array", "items": { "type": "string" } },
+        "effect": {
+          "oneOf": [
+            { "type": "string" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["type"],
+              "properties": {
+                "type": { "type": "string" },
+                "n": { "type": "integer", "minimum": 1 },
+                "choose": { "enum": ["suit", "color", "player"] },
+                "challengeable": { "type": "boolean", "default": false },
+                "on": { "enum": ["play", "discard"], "default": "play" }
+              }
+            }
+          ]
+        },
+        "face": { "type": "string", "default": "auto", "description": "'auto' (vanilla renderer) or an asset key." }
+      }
+    }
+  }
+}

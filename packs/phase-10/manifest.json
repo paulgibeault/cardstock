@@ -1,0 +1,41 @@
+{
+  "id": "phase-10",
+  "name": "Phase 10",
+  "version": "0.1.0",
+  "players": { "min": 2, "max": 6, "best": 4 },
+  "deck": "deck.json",
+  "template": "contract-rummy",
+  "rules": {
+    "deal": 10,
+    "contracts": [
+      ["set(3)", "set(3)"],
+      ["set(3)", "run(4)"],
+      ["set(4)", "run(4)"],
+      ["run(7)"],
+      ["run(8)"],
+      ["run(9)"],
+      ["set(4)", "set(4)"],
+      ["colorGroup(7)"],
+      ["set(5)", "set(2)"],
+      ["set(5)", "set(3)"]
+    ],
+    "progression": "advance-on-complete",
+    "wilds": { "tag": "wild", "minNaturals": 1, "maxPerMeld": null },
+    "layDown": "once-per-round-when-complete",
+    "hitting": "own-and-others-after-laydown",
+    "drawFrom": ["draw", "discard"],
+    "discardPickupForbidden": ["tag:skip"],
+    "goingOut": "play-or-discard-last"
+  },
+  "scoring": {
+    "roundScore": "leftover-hand-values",
+    "accumulate": true,
+    "gameOver": { "when": "template", "winner": "template" }
+  },
+  "reactions": [
+    { "when": "zoneEmpty:draw", "do": "recycle", "from": "discard", "keepTop": true, "shuffle": true }
+  ],
+  "undo": "none",
+  "turnTimer": null,
+  "credits": "Gameplay of the classic contract-rummy game. 'Phase 10' is a Mattel trademark — replace name and art before any public release."
+}
