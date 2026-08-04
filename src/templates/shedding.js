@@ -67,8 +67,97 @@ function drawCards(ctx, seat, n) {
   }
 }
 
+/* ------------------------------------------------------------------ *
+ * The last-card call ("Uno!") — design doc §4, "announcements"
+ * ------------------------------------------------------------------ *
+ *
+ * AN ANNOUNCEMENT IS A MOVE. It is declared in the manifest (`lastCardCall`),
+ * but it reaches the state through the ordinary propose → validate → apply →
+ * LOG pipeline like everything else, and that last word is the reason: the log
+ * IS the saved match (src/engine/replay.js). An announcement applied around
+ * the pipeline would set a player var that no replay could reproduce, so a
+ * resumed game would forget who had called and quietly re-expose them to a
+ * penalty they had already avoided.
+ *
+ * Two move types, both deliberately OUT of turn — which is what makes them
+ * announcements rather than plays, and why the turn check below is scoped to
+ * the turn moves instead of guarding the whole validator:
+ *
+ *   announce   the actor declares their own last card
+ *   challenge  anyone catches a seat that is at the count and never declared
+ *
+ * They are also deliberately absent from `enumerateLegalMoves`: that list is
+ * "what may I do with my turn", and it feeds the bot's move chooser. An
+ * announcement is offered through `enumerateAnnouncements` instead, so a bot
+ * decides whether to remember (persona `callReliability`) rather than having
+ * a heuristic accidentally rank "say Uno" against "play the red 7".
+ */
+
 function lastCardCallVarName(cfg) {
   return `__${cfg.id}Called`;
+}
+
+function callCountOf(cfg) {
+  return cfg.atHandCount ?? 1;
+}
+
+function handSizeOf(ctx, seat) {
+  return ctx.cardIdsIn(ctx.zoneAddr('hand', seat)).length;
+}
+
+/**
+ * May this seat declare right now?
+ *
+ * DELIBERATELY WIDER THAN THE VULNERABLE WINDOW, because that is the actual
+ * rule at a table: you say it AS you play your second-to-last card, not after.
+ * A player holding two cards who declares and then plays one has done the
+ * normal, correct thing and must not be catchable — so the legal window is
+ * "at the count, or one card above it", and the flag has to survive the
+ * descent through it.
+ *
+ * The narrower window is what gets OFFERED (see enumerateAnnouncements): the
+ * moment worth putting a button on screen for is the one where forgetting
+ * costs you. Validation is the rule; enumeration is the prompt. They are
+ * allowed to differ, and this is not the first place in this engine where they
+ * do — the passing phase enumerates one canonical pass without that being the
+ * only legal one.
+ */
+function canDeclare(ctx, cfg, seat) {
+  const size = handSizeOf(ctx, seat);
+  return size > 0 && size <= callCountOf(cfg) + 1;
+}
+
+/** At the count and yet to say so — the window a challenge is valid in. */
+function isVulnerable(ctx, cfg, seat) {
+  return handSizeOf(ctx, seat) === callCountOf(cfg)
+    && !ctx.playerVar(seat, lastCardCallVarName(cfg));
+}
+
+/**
+ * Drop the "already called" flag from every seat whose hand has grown back out
+ * of declaring range, after every applied move.
+ *
+ * Swept over all seats rather than threaded through each hand mutation: a hand
+ * changes size from a play, a draw, a Draw-2 landing on someone else, a swap, a
+ * rotation and a challenge penalty, and a rule that has to be remembered at six
+ * call sites is a rule that will be forgotten at the seventh. Without it a
+ * player who called at one card, was made to draw two, and then got back down
+ * to one would still be wearing the old call and could never be caught.
+ *
+ * The threshold is `count + 1`, not `count`, for the reason canDeclare()
+ * gives: clearing at exactly the count would wipe a legitimate pre-emptive
+ * declaration the instant the player acted on it.
+ */
+function refreshCallFlags(ctx) {
+  const cfg = ctx.rules.lastCardCall;
+  if (!cfg) return;
+  const varName = lastCardCallVarName(cfg);
+  const limit = callCountOf(cfg) + 1;
+  for (let s = 0; s < ctx.seats; s++) {
+    if (ctx.playerVar(s, varName) && handSizeOf(ctx, s) > limit) {
+      ctx.setPlayerVar(s, varName, false);
+    }
+  }
 }
 
 function applyEffect(ctx, card, playerSeat, choice) {
@@ -154,6 +243,31 @@ function applyDraw(ctx, move) {
   ctx.setPhase('play');
 }
 
+function applyAnnounce(ctx, move) {
+  const cfg = ctx.rules.lastCardCall;
+  if (!cfg) return;
+  ctx.setPlayerVar(move.actor, lastCardCallVarName(cfg), true);
+  ctx.emit('announced', { seat: move.actor, id: cfg.id, label: cfg.label || 'Last card!' });
+}
+
+function applyChallenge(ctx, move) {
+  const cfg = ctx.rules.lastCardCall;
+  if (!cfg) return;
+  const target = move.target;
+  // Re-checked rather than assumed legal: applyAnnouncement (the rule-test
+  // entry point) reaches this without going through validateMove.
+  if (!isVulnerable(ctx, cfg, target)) return;
+  const penalty = cfg.penalty?.draw ?? 0;
+  const before = handSizeOf(ctx, target);
+  drawCards(ctx, target, penalty);
+  ctx.emit('caught', {
+    seat: move.actor,
+    target,
+    drew: handSizeOf(ctx, target) - before,
+    label: cfg.label || 'Last card!',
+  });
+}
+
 const shedding = {
   id: 'shedding',
 
@@ -191,6 +305,34 @@ const shedding = {
   },
 
   validateMove(ctx, move) {
+    // Announcements first, and before the turn check: being out of turn is
+    // what they ARE (see the block comment above).
+    if (move.type === 'announce' || move.type === 'challenge') {
+      const cfg = ctx.rules.lastCardCall;
+      if (!cfg) return ctx.fail('no-announcement', 'This game has nothing to declare.');
+      if (move.id !== cfg.id) return ctx.fail('unknown-announcement', `Unknown announcement: ${move.id}`);
+
+      if (move.type === 'announce') {
+        if (!canDeclare(ctx, cfg, move.actor)) {
+          return ctx.fail('not-at-count',
+            `You can only declare when you are down to ${callCountOf(cfg)} card(s).`);
+        }
+        if (ctx.playerVar(move.actor, lastCardCallVarName(cfg))) {
+          return ctx.fail('already-called', 'You have already declared.');
+        }
+        return ctx.ok();
+      }
+
+      const target = move.target;
+      if (target === undefined || target === null) return ctx.fail('no-target', 'No player named.');
+      if (target === move.actor) return ctx.fail('self-challenge', 'You cannot catch yourself.');
+      if (target < 0 || target >= ctx.seats) return ctx.fail('no-target', 'No such player.');
+      if (!isVulnerable(ctx, cfg, target)) {
+        return ctx.fail('not-catchable', 'There is nothing to catch them on.');
+      }
+      return ctx.ok();
+    }
+
     if (move.actor !== ctx.turn.seat) return ctx.fail('turn', "It's not your turn.");
 
     if (move.type === 'playCard') {
@@ -224,24 +366,48 @@ const shedding = {
   applyMove(ctx, move) {
     if (move.type === 'playCard') applyPlayCard(ctx, move);
     else if (move.type === 'draw') applyDraw(ctx, move);
+    else if (move.type === 'announce') applyAnnounce(ctx, move);
+    else if (move.type === 'challenge') applyChallenge(ctx, move);
+    refreshCallFlags(ctx);
   },
 
+  /**
+   * What `seat` may say right now, as ready-to-validate moves.
+   *
+   * Same discipline as enumerateLegalMoves: the UI dresses these as buttons
+   * and the bot driver rolls its persona against them, but neither ever
+   * CONSTRUCTS one — every announcement that reaches the engine came out of
+   * this list and goes back through validateMove.
+   */
+  enumerateAnnouncements(ctx, seat) {
+    const cfg = ctx.rules.lastCardCall;
+    if (!cfg || ctx.state.gameOver) return [];
+    const out = [];
+    if (isVulnerable(ctx, cfg, seat)) {
+      out.push({ actor: seat, type: 'announce', id: cfg.id, label: cfg.label || 'Last card!' });
+    }
+    for (let s = 0; s < ctx.seats; s++) {
+      if (s === seat) continue;
+      if (!isVulnerable(ctx, cfg, s)) continue;
+      out.push({ actor: seat, type: 'challenge', id: cfg.id, target: s, label: 'Catch!' });
+    }
+    return out;
+  },
+
+  /**
+   * Kept as the pre-move-pipeline entry point (tools/pack-test.mjs' `announce`
+   * assertion calls it) — now a thin adapter onto the move path, so a rule test
+   * and a real table exercise exactly the same code.
+   */
   applyAnnouncement(ctx, announcement) {
     const cfg = ctx.rules.lastCardCall;
     if (!cfg) return;
-    const varName = lastCardCallVarName(cfg);
-    if (announcement.id === cfg.id) {
-      ctx.setPlayerVar(announcement.actor, varName, true);
-      return;
-    }
     if (announcement.challenge === cfg.id) {
-      const target = announcement.target;
-      const called = ctx.playerVar(target, varName);
-      const handLen = ctx.cardIdsIn(ctx.zoneAddr('hand', target)).length;
-      if (!called && handLen === (cfg.atHandCount ?? 1)) {
-        drawCards(ctx, target, cfg.penalty?.draw ?? 0);
-      }
+      applyChallenge(ctx, { actor: announcement.actor, target: announcement.target, id: cfg.id });
+    } else if (announcement.id === cfg.id) {
+      applyAnnounce(ctx, { actor: announcement.actor, id: cfg.id });
     }
+    refreshCallFlags(ctx);
   },
 
   enumerateLegalMoves(ctx, seat) {

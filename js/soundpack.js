@@ -19,19 +19,30 @@
 // "fix" play-far by giving it its own timbre — the point is that it is the
 // same card, further away.
 //
-// UNPITCHED, WITH ONE EXCEPTION. Nothing mid-hand is an instrument: dealing,
-// playing, drawing and reshuffling are all sheet, felt and table. Pitch enters
-// exactly once, at `win`, because an ending is allowed to be an instrument
-// where a move is not. That boundary is the pack's identity; do not smudge it
-// by giving some mid-game cue a note.
+// UNPITCHED, EXCEPT AT AN ENDING. Nothing mid-MOVE is an instrument: dealing,
+// playing, drawing and reshuffling are all sheet, felt and table. Pitch is
+// reserved for the moment a thing FINISHES, because an ending is allowed to be
+// an instrument where a move is not.
 //
-// Seven cues:
+// The boundary moved once, deliberately, and it is worth recording why rather
+// than leaving the next reader to think it had been smudged. The rule used to
+// read "pitch enters exactly once, at `win`". Then tricks needed a sound of
+// their own: a trick being gathered was borrowing `shuffle`, which is the
+// RECYCLE gesture, so the table told players a pile had been reshuffled every
+// time somebody won four cards. A trick is an ending — the smallest one the
+// game has — so it earns a note on the same principle `win` does, and the two
+// are kept apart by SCALE rather than by kind: `trick` is one soft note and a
+// gather, `win` is three rising notes and a fanfare. Do not let `trick` grow
+// toward `win`; the moment they sound alike, both stop meaning anything.
+//
+// Eight cues:
 //
 //   deal        a hand goes out           a riffle, then cards round the table
 //   play        you play a card           felt, table, done
 //   play-far    an opponent plays         the same landing, across the table
 //   draw        a card off the stock      a slide, with nothing landing
 //   shuffle     the discard is recycled   a packet riffled and squared
+//   trick       a trick is gathered       one bright note over a sweep
 //   invalid     the move is refused       a dull scrape and a droop
 //   win         the hand is out           three rising notes, then the deck away
 //
@@ -82,6 +93,10 @@
     'play-far': 0.17,
     'draw': 0.06,
     'shuffle': 0.12,
+    // A trick is gathered across the table rather than in your hands, so it
+    // sits further out than `play` — but nearer than `play-far`, because the
+    // note is what carries it and a wet note turns to mush.
+    'trick': 0.14,
     'invalid': 0.07,
     'win': 0.19,
   };
@@ -97,6 +112,9 @@
   const NO = 0.110;       // refused — present, never a buzzer
   const SHEET = 0.088;    // per sheet in a riffle; many of them at once
   const FANFARE = 0.140;  // one note of the ending
+  // The trick chime, deliberately well under FANFARE: it fires up to thirteen
+  // times a hand, and a note at ending-level that often stops being an event.
+  const CHIME = 0.075;
 
   // ── materials ─────────────────────────────────────────────────────────
   // One physical object, two angles: the sheet itself (riffled, slid, dealt)
@@ -220,6 +238,38 @@
         gain: TOUCH * 0.34, seed: seed(r),
       });
       return square + 0.5 - t;
+    },
+
+    // A trick is gathered off the table. Two things at once, in that order:
+    // the cards sweeping up (a short riffle, quiet, decelerating — the same
+    // sheet material as everything else), and ONE bright note over the top of
+    // it that says the trick is closed.
+    //
+    // `bad` is the caller's honesty flag, not a second cue: taking a trick
+    // full of penalty points is still a trick, so it is the same gesture with
+    // the note dropped a minor third and dulled. Winning and wincing sound
+    // related, which is the point — you always know a trick just resolved.
+    'trick': function (ctx, o, t, params, r) {
+      const bad = !!(params && params.bad);
+      S.flex(ctx, o, t, {
+        count: 5, rate: 26, end: 1.4,
+        dur: 0.034, flaps: 2, accel: 1.7,
+        stiffness: FELT.stiffness + 0.25,
+        f0: 1040 * S.cents(r, 110) * (bad ? 0.86 : 1),
+        snap: 0.42, gain: SHEET * 0.62, seed: seed(r),
+      });
+      // D6-ish, or B5-ish when it hurts. One note: see the header — `trick`
+      // must never grow into `win`.
+      S.pluck(ctx, o, t + 0.045, {
+        freq: (bad ? 987 : 1175) * S.cents(r, 18),
+        dur: bad ? 0.5 : 0.72,
+        damping: bad ? 0.62 : 0.38,
+        tone: bad ? 1700 : 3200,
+        gain: CHIME * (bad ? 0.85 : 1),
+        seed: seed(r),
+      });
+      land(ctx, o, t + 0.20, r, 0.55);
+      return 0.85;
     },
 
     // Refused. The one gesture in the game with no ring in it at all: a dull

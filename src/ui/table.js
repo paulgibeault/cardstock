@@ -26,31 +26,57 @@
 // the layout/label/facing the renderer needs, which is what the design doc §3
 // always said they were for.
 //
-// INPUT IS MOVE-DRIVEN. enumerateLegalMoves is the single source of what the
-// human may do; the UI's job is to dress those moves as taps. One-tap play
-// for single-destination games (shedding, a trick), tap-source →
-// tap-destination where a move needs a `to` (Stockpile's build piles),
-// multi-select plus one button where a move carries several cards (Hearts'
-// pass, Milestones' lay-down). The selection can never construct a move the
-// engine would refuse — every tap target is derived from a move that already
-// enumerated as legal.
+// INPUT IS MOVE-DRIVEN, IN TWO DRESSINGS. enumerateLegalMoves is the single
+// source of what the human may do; the UI's job is to dress those moves as
+// taps AND as drops. Both ask src/ui/interaction.js the same question and get
+// moves that already enumerated as legal, so a dragged card can no more
+// construct an illegal play than a tapped one could. Tap-only remains a
+// complete path (design doc §12) — drag is an enhancement layered over it,
+// which is why no tap handler changed when it arrived.
+//
+// WHAT THIS MODULE NO LONGER DOES. The pure "what may I do" model lives in
+// src/ui/interaction.js, the overlays in src/ui/panels.js, the pointer
+// choreography in src/ui/dragController.js, and who-is-who in
+// src/players/roster.js. What is left here is the felt itself: piles, seats,
+// the hand, and the loop that turns a move into sound, motion and a save.
 
 import { createState } from '../engine/state.js';
 import { makeCtx } from '../engine/context.js';
 import { validateMove, applyMove, enumerateLegalMoves } from '../engine/movePipeline.js';
-import { rehydrateMatch } from '../engine/replay.js';
+import { rehydrateMatch, serializeMatch } from '../engine/replay.js';
 import { chooseBotMove } from '../engine/bot.js';
 import { baseId } from '../engine/selectors.js';
 import { handValue } from '../engine/scoring.js';
+import { buildSeating, thinkTimeMs } from '../players/roster.js';
+import { computeMatchStats, placements } from '../stats/matchStats.js';
 import { makeCardRenderer } from './cardStyles/index.js';
 import { fetchPack } from './packSource.js';
-import { flyCard, landOn, motionAllowed } from './flight.js';
+import { flyCard, landOn, motionAllowed, flightLayer } from './flight.js';
 import { safeCssColor } from './css.js';
+import { confirmAction, closeConfirm } from './confirm.js';
+import { createDragController } from './dragController.js';
+import { attachInspector, hideInspector } from './inspector.js';
+import {
+  describeCard, describeZone, cardAriaLabel, zoneAriaLabel, zoneBadgeText,
+} from './describe.js';
+import {
+  interactionMode, buildUiModel, dropCandidates, draggableSources, pruneSelection,
+  isSelected, handAddress, implicitLandingZone,
+} from './interaction.js';
+import {
+  orderHand, reorder, nextMode, isSortMode, SORT_LABELS,
+} from './handOrder.js';
+import {
+  initPanels, showRoundSummary, hideRoundSummary, isRoundSummaryOpen,
+  showScoreboard, showGameOver, hideAllPanels,
+} from './panels.js';
 import {
   rememberPack, loadSettings, saveMatch, loadMatch, clearMatch, recordResult, readStats,
+  loadHandPrefs, saveHandPrefs,
 } from '../arcade/storage.js';
 import {
   playDeal, playCardPlayed, playDraw, playShuffle, playInvalid, playWin, playTrickTaken,
+  playAnnouncement,
 } from '../arcade/audio.js';
 
 const HUMAN_SEAT = 0;
@@ -58,6 +84,9 @@ const SEAT_COUNT = 3;
 
 /** How many discards stay visible under the top one. Enough to read as a pile. */
 const DISCARD_DEPTH = 3;
+
+/** §7b: this value reaches a class name, so it is an allow-list, not a passthrough. */
+const OVERLAP_MODES = new Set(['horizontal', 'vertical']);
 
 /**
  * Templates this table renders COMPLETELY, and can therefore be played through
@@ -76,29 +105,24 @@ const el = {
   statusText: document.getElementById('status-text'),
   gameName: document.getElementById('game-name'),
   lobbyButton: document.getElementById('lobby-button'),
+  scoreChip: document.getElementById('score-chip'),
+  scoreChipValue: document.getElementById('score-chip-value'),
+  forfeitButton: document.getElementById('forfeit-button'),
   opponentsTop: document.getElementById('opponents-top'),
   centerPiles: document.getElementById('center-piles'),
   playerPiles: document.getElementById('player-piles'),
+  announceBar: document.getElementById('announce-bar'),
   actionBar: document.getElementById('action-bar'),
   actionHint: document.getElementById('action-hint'),
   actionButton: document.getElementById('action-button'),
   hand: document.getElementById('hand'),
+  handSort: document.getElementById('hand-sort'),
   log: document.getElementById('log'),
   eventBanner: document.getElementById('event-banner'),
   choiceModal: document.getElementById('choice-modal'),
   choicePrompt: document.getElementById('choice-prompt'),
   choicePanel: document.getElementById('choice-options'),
   choiceCancel: document.getElementById('choice-cancel'),
-  roundOverlay: document.getElementById('round-overlay'),
-  roundTitle: document.getElementById('round-title'),
-  roundScores: document.getElementById('round-scores'),
-  roundContinue: document.getElementById('round-continue'),
-  gameOverOverlay: document.getElementById('game-over-overlay'),
-  gameOverFan: document.getElementById('game-over-fan'),
-  gameOverMessage: document.getElementById('game-over-message'),
-  gameOverRecord: document.getElementById('game-over-record'),
-  playAgainButton: document.getElementById('play-again-button'),
-  gameOverLobbyButton: document.getElementById('game-over-lobby-button'),
 };
 
 // `liveState`/`epoch` exist so "Play again" can start a fresh game without a bot-turn
@@ -120,12 +144,45 @@ let bannerTimer = null;
 let settings = null;
 let exitToLobby = () => {};
 
+// Who is in each seat, for this match (src/players/roster.js). Derived from the
+// match SEED, so it survives a resume without being serialized and rotates on
+// every fresh deal.
+let seating = [];
+
 // The human's tapped-but-not-yet-committed cards: { from: zoneAddress,
 // cardIds: [id, ...] }. Multi-card only where a move takes several cards
 // (passing, a lay-down); everywhere else it holds exactly one. Cleared on
 // every applied move and pruned against the live state on every render, so a
 // stale id can never reach a move.
 let selection = null;
+
+// How this pack's hand is arranged, and the order actually on screen. Both are
+// PRESENTATION (src/ui/handOrder.js): neither ever reaches the engine, so a
+// player rearranging their fan cannot change what a move enumerates.
+let handPrefs = { mode: 'auto', order: [] };
+let displayedHand = [];
+
+// Pointer choreography for lifting a card (src/ui/dragController.js), created
+// once at init. A render that landed mid-drag would replace the very node the
+// pointer is holding, so renders are DEFERRED while one is live and replayed
+// when it settles.
+let drag = null;
+let pendingRender = null;
+
+// Announcement beats (§E2) — a bot remembering to declare, or noticing that
+// you did not. Timers, so they are cancelled on every path that closes or
+// replaces the table, exactly like the bot-turn timer.
+let announceTimers = [];
+// One roll per vulnerability window, not one per re-render: without this a bot
+// gets a fresh chance to remember every time anybody moves, and
+// `callReliability` silently becomes 1.
+const botCallDecision = new Map();
+const botCatchDecision = new Map();
+
+// A forfeited match is over without `state.gameOver` being true — the engine
+// never decided anything, the player walked away. Kept as its own flag so no
+// engine invariant has to be faked to represent it.
+let forfeited = false;
 
 // openTable() awaits a fetch, and the player can be back in the lobby before it
 // lands. `epoch` cannot cover that gap — it is bumped when the match is ADOPTED,
@@ -156,13 +213,29 @@ let matchDirty = false;
  * State questions
  * ------------------------------------------------------------------ */
 
-function seatLabel(seat) {
-  return seat === HUMAN_SEAT ? 'You' : `Bot ${seat}`;
+/**
+ * The player's own display name, from the arcade-wide identity — the same one
+ * a peer will see when Phase 8 lands (§17.4), which is why it is read here
+ * rather than invented. Never interpolated into markup; it reaches the DOM
+ * only as textContent, through the roster.
+ */
+function humanName() {
+  try {
+    return (window.Arcade && Arcade.player && Arcade.player.name()) || '';
+  } catch {
+    return '';
+  }
 }
 
-// Own values, not pack input — these reach an inline style and never pass
-// through anything a manifest can influence.
-const SEAT_COLORS = ['#2f6fb0', '#b0603a', '#4a7a4e', '#7a5aa8', '#a8823a', '#3a8a8a', '#8a3a63', '#5a6a8a'];
+function identityOf(seat) {
+  return seating[seat] || { seat, name: `Seat ${seat}`, icon: '', color: '#6b7280', isBot: seat !== HUMAN_SEAT };
+}
+
+/** The name to put in a sentence about a seat. */
+function seatLabel(seat) {
+  const identity = identityOf(seat);
+  return seat === HUMAN_SEAT ? 'You' : identity.name;
+}
 
 /**
  * Who may act right now. Usually just turn.seat; a simultaneous-commit phase
@@ -172,7 +245,7 @@ const SEAT_COLORS = ['#2f6fb0', '#b0603a', '#4a7a4e', '#7a5aa8', '#a8823a', '#3a
  * bot may act, not whoever nominally holds the turn.
  */
 function actingSeatsOf(state) {
-  if (state.gameOver) return [];
+  if (state.gameOver || forfeited) return [];
   const template = state.pack.template;
   if (template.actingSeats) return template.actingSeats(makeCtx(state));
   return [state.turn.seat];
@@ -182,184 +255,25 @@ function cardById(state, cardId) {
   return state.pack.cardsById.get(baseId(cardId));
 }
 
-/**
- * How the human's taps are interpreted for the open pack — derived from the
- * template and the current phase, never stored:
- *   'tap'        one tap plays the card; the destination is implicit
- *                (shedding's discard, a trick).
- *   'pass'       multi-select exactly N cards, commit with the action button.
- *   'rummy-draw' tap the deck or the discard pile to draw from it.
- *   'rummy-meld' multi-select for a lay-down; a single selected card arms
- *                meld chips (hit) and the discard pile (end of turn).
- *   'place'      select one card from hand/stock/discard top, then tap a
- *                build pile (play) or an own discard pile (end of turn).
- */
-function interactionMode(state) {
-  const id = state.pack.template.id;
-  if (id === 'trick-taking') return state.turn.phase === 'pass' ? 'pass' : 'tap';
-  if (id === 'contract-rummy') return state.turn.phase === 'draw' ? 'rummy-draw' : 'rummy-meld';
-  if (id === 'sequencing') return 'place';
-  return 'tap';
+/** What a seat may SAY right now, out of turn (§E2). Never enumerated as a play. */
+function announcementsFor(state, seat) {
+  const template = state.pack.template;
+  if (!template.enumerateAnnouncements || forfeited) return [];
+  return template.enumerateAnnouncements(makeCtx(state), seat) || [];
 }
-
-function selectedIds() {
-  return selection ? selection.cardIds : [];
-}
-
-function isSelected(from, cardId) {
-  return !!selection && selection.from === from && selection.cardIds.includes(cardId);
-}
-
-/** Drop a selection the state has moved out from under (rerender, resume). */
-function pruneSelection(state) {
-  if (!selection) return;
-  if (!state.zones.has(selection.from)) { selection = null; return; }
-  const inZone = state.zones.cards(selection.from);
-  if (!selection.cardIds.every((id) => inZone.includes(id))) selection = null;
-}
-
-/* ------------------------------------------------------------------ *
- * The per-render UI model
- * ------------------------------------------------------------------ */
 
 /**
- * Everything a render needs to know about what is tappable, derived in one
- * place from the enumerated legal moves so the pile builders stay dumb:
- *   handSelectable  Set of hand card ids that respond to a tap
- *   handMulti       whether hand taps toggle membership or replace
- *   sourceTops      Map zoneAddress -> top card id, for piles whose top can
- *                   be picked up as a source (Stockpile's stock/discards)
- *   readyTargets    Map zoneAddress -> move to apply when that pile is tapped
- *   readyMelds      Map "seat:index" -> hit move for that meld chip
- *   action          { label, makeMove() } for the action button, or null
- *   hint            the action bar's text
+ * How a zone's visible cards are laid out, from the pack's `ui.zoneOverlap`.
+ *
+ * PRESENTATION, so it lives in `ui` rather than in the engine's zone def: how
+ * far a discard pile fans says nothing about the rules, and putting it in `ui`
+ * means a variant can change it with a one-line manifest patch
+ * (`"ui.zoneOverlap.discard": "vertical"`) instead of restating a whole zone
+ * definition. Allow-listed on the way out — the value reaches a class name.
  */
-function buildUiModel(state, humanMoves, humanActs) {
-  const mode = interactionMode(state);
-  const handAddr = `hand.${HUMAN_SEAT}`;
-  const ui = {
-    mode,
-    handSelectable: new Set(),
-    handMulti: false,
-    sourceTops: new Map(),
-    readyTargets: new Map(),
-    readyMelds: new Map(),
-    action: null,
-    hint: '',
-  };
-  if (!humanActs) {
-    if (mode === 'pass' && !state.gameOver) ui.hint = ''; // covered by status text
-    return ui;
-  }
-
-  const hand = state.zones.cards(handAddr);
-  const sel = selectedIds();
-
-  if (mode === 'tap') {
-    for (const move of humanMoves) {
-      if (move.type === 'playCard') ui.handSelectable.add(move.cards[0]);
-    }
-    // Drawing is offered only when there is nothing legal to play, which is
-    // the rule these packs share — so the pile lighting up is itself the hint
-    // that you are stuck, and no separate prompt has to say so.
-    if (ui.handSelectable.size === 0) {
-      const draw = humanMoves.find((m) => m.type === 'draw');
-      if (draw) ui.readyTargets.set('draw', draw);
-    }
-    ui.hint = 'Your turn';
-    return ui;
-  }
-
-  if (mode === 'pass') {
-    const count = state.pack.rules.passing?.count ?? 3;
-    const direction = { left: 'to the left', right: 'to the right', across: 'across' }[state.vars.passDirection] || '';
-    for (const id of hand) ui.handSelectable.add(id);
-    ui.handMulti = true;
-    ui.hint = `Pick ${count} cards to pass ${direction}`.trim();
-    if (sel.length === count && selection.from === handAddr) {
-      ui.action = {
-        label: `Pass ${count} cards`,
-        makeMove: () => ({ actor: HUMAN_SEAT, type: 'passCards', cards: selectedIds().slice() }),
-      };
-    }
-    return ui;
-  }
-
-  if (mode === 'rummy-draw') {
-    for (const move of humanMoves) {
-      if (move.type === 'draw') ui.readyTargets.set(move.from ?? 'draw', move);
-    }
-    ui.hint = ui.readyTargets.has('discard')
-      ? 'Draw from the deck or the discard pile'
-      : 'Draw from the deck';
-    return ui;
-  }
-
-  if (mode === 'rummy-meld') {
-    const ctx = makeCtx(state);
-    const laidDown = state.playerVars[HUMAN_SEAT]?.laidDown;
-    for (const id of hand) ui.handSelectable.add(id);
-    ui.handMulti = !laidDown;
-
-    if (!laidDown) {
-      const contract = state.pack.rules.contracts?.[(state.playerVars[HUMAN_SEAT]?.phase ?? 1) - 1] || [];
-      ui.hint = `Contract: ${contract.map(describeContractItem).join(' + ')} — select cards to lay down, or discard`;
-      if (sel.length && selection.from === handAddr && state.pack.template.arrangeContract) {
-        const melds = state.pack.template.arrangeContract(ctx, HUMAN_SEAT, sel);
-        if (melds) {
-          ui.action = {
-            label: 'Lay down',
-            makeMove: () => ({ actor: HUMAN_SEAT, type: 'layDown', choice: { melds } }),
-          };
-        }
-      }
-    } else {
-      ui.hint = 'Hit any meld with a matching card, or discard to end your turn';
-    }
-
-    if (sel.length === 1 && selection.from === handAddr) {
-      const cardId = sel[0];
-      for (const move of humanMoves) {
-        if (move.type === 'discard' && move.cards[0] === cardId && !ui.readyTargets.has('discard')) {
-          // Enumerated targeted discards (a skip card) arrive with a concrete
-          // choice.target baked in — one variant per victim. The tap must NOT
-          // inherit one silently; performHumanMove sees the bare move and asks.
-          ui.readyTargets.set('discard', { actor: move.actor, type: 'discard', cards: move.cards });
-        }
-        if (move.type === 'hit' && move.cards[0] === cardId) {
-          ui.readyMelds.set(`${move.choice.seat}:${move.choice.meld}`, move);
-        }
-      }
-    } else if (sel.length > 1) {
-      // A multi-card selection with no lay-down: still let a plain discard
-      // happen the moment the selection shrinks back to one.
-    }
-    return ui;
-  }
-
-  // mode === 'place' (sequencing)
-  for (const move of humanMoves) {
-    if (move.type !== 'playCard' && move.type !== 'discard') continue;
-    const from = move.from;
-    if (from === handAddr) ui.handSelectable.add(move.cards[0]);
-    else if (from) ui.sourceTops.set(from, move.cards[0]);
-    if (sel.length === 1 && selection.from === (from ?? handAddr) && move.cards[0] === sel[0]) {
-      ui.readyTargets.set(move.to, move);
-    }
-  }
-  if (!sel.length) ui.hint = 'Play from your stock, hand, or discard piles';
-  else if (selection.from === handAddr) ui.hint = 'Tap a build pile to play it — or one of your discard piles to end your turn';
-  else ui.hint = 'Tap a build pile to play it';
-  return ui;
-}
-
-function describeContractItem(item) {
-  const m = /^(\w+)\((\d+)\)$/.exec(item || '');
-  if (!m) return item;
-  if (m[1] === 'set') return `set of ${m[2]}`;
-  if (m[1] === 'run') return `run of ${m[2]}`;
-  if (m[1] === 'colorGroup') return `${m[2]} of one color`;
-  return item;
+function overlapFor(state, def) {
+  const declared = state.pack.manifest.ui?.zoneOverlap?.[def.id];
+  return OVERLAP_MODES.has(declared) ? declared : null;
 }
 
 /* ------------------------------------------------------------------ *
@@ -437,18 +351,8 @@ function zoneStackNode(address) {
   return el.screen.querySelector(`[data-zone="${CSS.escape(address)}"]`);
 }
 
-function pileLabelText(state, inst) {
-  const { def, n, address } = inst;
-  const count = state.zones.count(address);
-  const base = `${def.label || def.id}${n != null ? ` ${n}` : ''}`;
-  if (def.id === 'discard' && def.per !== 'player') {
-    // Shedding's discard doubles as the active-state readout after a wild.
-    const active = state.vars.activeSuit || state.vars.activeColor;
-    if (active) return `Active: ${active}`;
-  }
-  if (def.id === 'trick') return `${base} (${count})`;
-  if (def.capacity != null) return `${base} · ${count}/${def.capacity}`;
-  return `${base} (${count})`;
+function meldChipNode(meldKey) {
+  return el.screen.querySelector(`[data-meld="${CSS.escape(meldKey)}"]`);
 }
 
 /**
@@ -456,8 +360,12 @@ function pileLabelText(state, inst) {
  * anything this render is decided by the UI model (a ready target applies its
  * move, a source top picks itself up), and a pile that does neither is simply
  * disabled — same element, same geometry, no relayout when a pile wakes up.
+ *
+ * The pile's WORDS live in its accessible name and its inspector panel; what
+ * is printed on the felt is a count badge (src/ui/describe.js explains why the
+ * split is that way round and not the other).
  */
-function buildPileNode(state, inst, ui, { mini = false } = {}) {
+function buildPileNode(state, inst, ui, { mini = false, draggableTop = null } = {}) {
   const { def, address } = inst;
   const cards = state.zones.cards(address);
   const count = cards.length;
@@ -473,17 +381,35 @@ function buildPileNode(state, inst, ui, { mini = false } = {}) {
   const sourceTop = !target && ui.sourceTops.has(address) ? ui.sourceTops.get(address) : null;
   const isSpread = def.layout === 'spread' || def.id === 'trick';
   const faceDown = def.facing === 'down' || def.visibility === 'none';
+  // A pile whose contract is "only the top card is public" must not leak the
+  // ones under it. It used to draw DISCARD_DEPTH real faces for depth, which
+  // showed Stockpile players the next three cards of everybody's discards.
+  const secretUnder = def.visibility === 'top';
+  const overlap = mini ? null : overlapFor(state, def);
 
   stack.classList.toggle('pile-stack--deep', count > 2);
   stack.classList.toggle('pile-stack--spread', isSpread && !mini);
   stack.classList.toggle('pile-stack--ready', !!target);
   stack.classList.toggle('pile-stack--source', !!sourceTop);
-  stack.classList.toggle('pile-stack--picked', !!sourceTop && isSelected(address, sourceTop));
+  stack.classList.toggle('pile-stack--picked', !!sourceTop && isSelected(selection, address, sourceTop));
+  if (overlap) stack.classList.add(`pile-stack--overlap-${overlap === 'vertical' ? 'v' : 'h'}`);
 
+  /** Place one card in the stack, carrying its index for the overlap offsets. */
+  const placeCard = (markup, i, visibleCount, cardId, isTop) => {
+    const node = svgNode(markup, `pile-stack__card ${isTop ? 'pile-stack__top' : ''}`);
+    node.style.setProperty('--stack-index', String(i - (visibleCount - 1) / 2));
+    node.style.setProperty('--overlap-index', String(i));
+    if (cardId) node.style.setProperty('--stack-tilt', `${tiltFor(cardId, isTop ? 2 : 5).toFixed(2)}deg`);
+    stack.appendChild(node);
+    return node;
+  };
+
+  let topNode = null;
   if (faceDown) {
-    stack.appendChild(count > 0
-      ? svgNode(cardArt.back(), 'pile-stack__top')
-      : svgNode('<div class="card-face card-face--empty"></div>', 'pile-stack__top'));
+    topNode = svgNode(count > 0
+      ? cardArt.back()
+      : '<div class="card-face card-face--empty"></div>', 'pile-stack__top');
+    stack.appendChild(topNode);
   } else if (isSpread && !mini) {
     // A trick is not a pile: every card in it is live information about who
     // played what, so it spreads and shows the whole trick.
@@ -492,59 +418,71 @@ function buildPileNode(state, inst, ui, { mini = false } = {}) {
       const card = cardById(state, cardId);
       if (!card) return;
       const isTop = i === visible.length - 1;
-      const node = svgNode(cardArt.face(card), `pile-stack__card ${isTop ? 'pile-stack__top' : ''}`);
-      node.style.setProperty('--stack-index', String(i - (visible.length - 1) / 2));
+      const node = placeCard(cardArt.face(card), i, visible.length, cardId, isTop);
       node.style.setProperty('--stack-tilt', `${tiltFor(cardId, 7).toFixed(2)}deg`);
-      stack.appendChild(node);
+      if (isTop) topNode = node;
     });
     if (!visible.length) stack.appendChild(svgNode('<div class="card-face card-face--empty"></div>', 'pile-stack__top'));
   } else {
     // A face-up pile keeps a few cards of HISTORY under the top one, stacked —
-    // a pile that only ever shows one card reads as a slide viewer.
-    const visible = cards.slice(mini ? -1 : -DISCARD_DEPTH);
+    // a pile that only ever shows one card reads as a slide viewer. On a
+    // top-visible pile that history is drawn as BACKS: the depth is public,
+    // the cards are not.
+    const depth = mini ? 1 : DISCARD_DEPTH;
+    const visible = cards.slice(-depth);
+    stack.style.setProperty('--overlap-count', String(Math.max(0, visible.length - 1)));
     visible.forEach((cardId, i) => {
+      const isTop = i === visible.length - 1;
       const card = cardById(state, cardId);
       if (!card) return;
-      const isTop = i === visible.length - 1;
-      const node = svgNode(cardArt.face(card), `pile-stack__card ${isTop ? 'pile-stack__top' : ''}`);
-      node.style.setProperty('--stack-index', String(i - (visible.length - 1) / 2));
-      node.style.setProperty('--stack-tilt', `${tiltFor(cardId, isTop ? 2 : 5).toFixed(2)}deg`);
-      stack.appendChild(node);
+      const markup = (!isTop && secretUnder) ? cardArt.back() : cardArt.face(card);
+      const node = placeCard(markup, i, visible.length, cardId, isTop);
+      if (isTop) topNode = node;
     });
     if (!visible.length) stack.appendChild(svgNode('<div class="card-face card-face--empty"></div>', 'pile-stack__top'));
   }
 
-  const labelText = pileLabelText(state, inst);
+  const ariaLabel = zoneAriaLabel(state, inst);
 
   if (target) {
     stack.disabled = false;
     const verb = target.type === 'draw' ? 'Draw a card from'
       : target.type === 'discard' ? 'Discard to'
         : 'Play your selected card onto';
-    stack.setAttribute('aria-label', `${verb} ${labelText}.`);
+    stack.setAttribute('aria-label', `${verb} ${ariaLabel}`);
     stack.addEventListener('click', () => liveState && performHumanMove(liveState, target, stack));
   } else if (sourceTop) {
     stack.disabled = false;
-    stack.setAttribute('aria-label', `${labelText}: pick up the top card to play it.`);
+    stack.setAttribute('aria-label', `${ariaLabel} Pick up the top card to play it.`);
     stack.addEventListener('click', () => {
       if (!liveState) return;
-      selection = isSelected(address, sourceTop) ? null : { from: address, cardIds: [sourceTop] };
+      selection = isSelected(selection, address, sourceTop) ? null : { from: address, cardIds: [sourceTop] };
       render(liveState);
     });
   } else {
     stack.disabled = true;
-    stack.setAttribute('aria-label', `${labelText}.`);
+    stack.setAttribute('aria-label', ariaLabel);
   }
 
+  // Any face-up top card the human owns lifts, whether or not it has anywhere
+  // to go — a refused drop simply snaps home. That is the "cards on felt"
+  // feel, and it is also how a player LEARNS what is legal.
+  if (draggableTop && topNode && drag) {
+    drag.attach(topNode, { kind: 'pile', from: address, cardId: draggableTop });
+  }
+
+  attachInspector(stack, () => (liveState ? describeZone(liveState, inst) : null),
+    { isBusy: () => !!drag && drag.isDragging() });
+
+  wrap.appendChild(stack);
   if (!mini) {
-    const label = document.createElement('div');
-    label.className = 'pile-count';
-    label.textContent = labelText;
-    wrap.appendChild(stack);
-    wrap.appendChild(label);
-  } else {
-    stack.setAttribute('title', labelText);
-    wrap.appendChild(stack);
+    const badge = document.createElement('div');
+    badge.className = 'pile-count';
+    // The words moved to the accessible name and the inspector; what is left
+    // on the felt is the number you actually watch.
+    badge.textContent = zoneBadgeText(state, inst);
+    badge.setAttribute('aria-hidden', 'true');
+    wrap.appendChild(badge);
   }
   return wrap;
 }
@@ -568,22 +506,25 @@ function buildMeldStrip(state, seat, ui, { mini = false } = {}) {
   strip.dataset.zone = `melds.${seat}`;
   const groups = meldGroupsOf(state, seat);
   groups.forEach((group, i) => {
-    const move = ui.readyMelds.get(`${seat}:${i}`) || null;
+    const meldKey = `${seat}:${i}`;
+    const move = ui.readyMelds.get(meldKey) || null;
     const chip = document.createElement('button');
     chip.type = 'button';
     chip.className = `meld-chip ${move ? 'meld-chip--ready' : ''}`;
+    chip.dataset.meld = meldKey;
     for (const cardId of group.cards) {
       const card = cardById(state, cardId);
       if (card) chip.appendChild(svgNode(cardArt.face(card), 'meld-chip__card'));
     }
-    const what = group.item ? describeContractItem(group.item) : 'meld';
+    const what = group.item ? group.item : 'meld';
+    const owner = seat === HUMAN_SEAT ? 'Your' : `${identityOf(seat).name}'s`;
     if (move) {
       chip.disabled = false;
-      chip.setAttribute('aria-label', `${seatLabel(seat)}'s ${what}, ${group.cards.length} cards. Add your selected card.`);
+      chip.setAttribute('aria-label', `${owner} ${what}, ${group.cards.length} cards. Add your selected card.`);
       chip.addEventListener('click', () => liveState && performHumanMove(liveState, move, chip));
     } else {
       chip.disabled = true;
-      chip.setAttribute('aria-label', `${seatLabel(seat)}'s ${what}, ${group.cards.length} cards.`);
+      chip.setAttribute('aria-label', `${owner} ${what}, ${group.cards.length} cards.`);
     }
     strip.appendChild(chip);
   });
@@ -599,10 +540,32 @@ function wonPointsText(state, seat) {
   return pts > 0 ? `${pts} pts` : null;
 }
 
+/** Does this pack keep a running score worth showing on the felt? */
+function showsScores(state) {
+  return state.pack.scoring?.accumulate === true
+    || state.scores.some((n) => n !== 0);
+}
+
+function seatScoreChip(state, seat) {
+  const chip = document.createElement('span');
+  chip.className = 'seat__score';
+  const phase = state.playerVars[seat]?.phase;
+  // Contract rummy's "score" that matters is the contract you have reached;
+  // the points are the tiebreak. Show what the player is actually racing.
+  const text = typeof phase === 'number' ? `Ph ${phase}` : `${state.scores[seat]}`;
+  chip.textContent = text;
+  chip.setAttribute('aria-label', typeof phase === 'number'
+    ? `on contract ${phase}, ${state.scores[seat]} points`
+    : `${state.scores[seat]} points`);
+  return chip;
+}
+
 function renderSeats(state, stagger, acting, ui) {
   el.opponentsTop.replaceChildren();
-  for (let seat = 0; seat < SEAT_COUNT; seat++) {
+  const scored = showsScores(state);
+  for (let seat = 0; seat < state.seats; seat++) {
     if (seat === HUMAN_SEAT) continue;
+    const identity = identityOf(seat);
     const count = state.zones.count(`hand.${seat}`);
     const active = acting.includes(seat);
 
@@ -617,18 +580,22 @@ function renderSeats(state, stagger, acting, ui) {
 
     const avatar = document.createElement('span');
     avatar.className = 'seat__avatar';
-    avatar.style.background = SEAT_COLORS[seat % SEAT_COLORS.length];
-    // textContent, not innerHTML. The label is literal today, but the instant
-    // it becomes Arcade.player.name() or a peer name (Phase 8) an interpolated
-    // template string is the peer-name XSS this fleet has shipped twice
-    // (GAME_INTEGRATION §7b).
-    avatar.textContent = seatLabel(seat).replace(/[^A-Za-z0-9]/g, '').slice(0, 2).toUpperCase();
+    // Own value from the roster, never a manifest one — this reaches an
+    // inline style (§7b).
+    avatar.style.background = identity.color;
+    // textContent, not innerHTML: the instant a name arrives from a peer,
+    // an interpolated template string is the XSS this fleet has shipped
+    // twice (GAME_INTEGRATION §7b).
+    avatar.textContent = identity.icon || identity.initials;
+    avatar.setAttribute('aria-hidden', 'true');
     head.appendChild(avatar);
 
     const name = document.createElement('span');
     name.className = 'seat__name';
-    name.textContent = seatLabel(seat);
+    name.textContent = identity.name;
     head.appendChild(name);
+
+    if (scored) head.appendChild(seatScoreChip(state, seat));
 
     const badge = document.createElement('span');
     badge.className = 'seat__count';
@@ -638,6 +605,17 @@ function renderSeats(state, stagger, acting, ui) {
     head.appendChild(badge);
 
     wrap.appendChild(head);
+
+    // Who this opponent IS, on hover — the personality is only playable if it
+    // is legible.
+    attachInspector(wrap, () => ({
+      title: `${identity.icon} ${identity.name}`.trim(),
+      lines: [
+        { label: 'Cards', value: String(count) },
+        { label: 'Score', value: String(state.scores[seat]) },
+      ],
+      notes: identity.tagline ? [identity.tagline] : [],
+    }), { isBusy: () => !!drag && drag.isDragging() });
 
     const mini = document.createElement('div');
     mini.className = 'mini-hand';
@@ -669,18 +647,33 @@ function renderSeats(state, stagger, acting, ui) {
       wrap.appendChild(strip);
     }
 
+    // The catch affordance (§E2) lives on the seat it accuses, which is the
+    // only place it reads as "you — you never said it".
+    const catchMove = humanAnnouncements(state).find((a) => a.type === 'challenge' && a.target === seat);
+    if (catchMove) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'seat__catch';
+      button.textContent = 'Catch!';
+      button.setAttribute('aria-label', `Catch ${identity.name} — they never declared their last card.`);
+      button.addEventListener('click', () => liveState && performAnnouncement(liveState, catchMove));
+      wrap.appendChild(button);
+    }
+
     el.opponentsTop.appendChild(wrap);
   }
 }
 
-function renderCenterZones(state, ui) {
+function renderCenterZones(state, ui, draggable) {
   el.centerPiles.replaceChildren();
   for (const inst of sharedZoneInstances(state)) {
-    el.centerPiles.appendChild(buildPileNode(state, inst, ui));
+    el.centerPiles.appendChild(buildPileNode(state, inst, ui, {
+      draggableTop: draggable.piles.get(inst.address) || null,
+    }));
   }
 }
 
-function renderPlayerZones(state, ui) {
+function renderPlayerZones(state, ui, draggable) {
   el.playerPiles.replaceChildren();
   for (const inst of perPlayerZoneInstances(state, HUMAN_SEAT)) {
     if (inst.def.id === 'melds') {
@@ -690,33 +683,96 @@ function renderPlayerZones(state, ui) {
       // its count — and its cost, when the pack scores what it holds.
       const pts = inst.def.id === 'won' ? wonPointsText(state, HUMAN_SEAT) : null;
       const pile = buildPileNode(state, inst, ui);
-      if (pts) pile.querySelector('.pile-count').textContent = `${pileLabelText(state, inst)} · ${pts}`;
+      if (pts) pile.querySelector('.pile-count').textContent = pts;
       el.playerPiles.appendChild(pile);
     } else {
-      el.playerPiles.appendChild(buildPileNode(state, inst, ui));
+      el.playerPiles.appendChild(buildPileNode(state, inst, ui, {
+        draggableTop: draggable.piles.get(inst.address) || null,
+      }));
     }
   }
 }
 
-function renderHand(state, ui, stagger) {
+function renderHand(state, ui, stagger, draggable) {
   el.hand.replaceChildren();
-  const handAddr = `hand.${HUMAN_SEAT}`;
-  const hand = state.zones.cards(handAddr);
+  const handAddr = handAddress(HUMAN_SEAT);
+  const engineHand = state.zones.cards(handAddr);
+  // The engine's order is dealing order and stays that way; what the player
+  // sees is their own arrangement (src/ui/handOrder.js).
+  displayedHand = orderHand(engineHand, (id) => cardById(state, id), handPrefs.mode, handPrefs.order);
   const committedPass = state.playerVars[HUMAN_SEAT]?.__pendingPass;
-  hand.forEach((cardId, i) => {
+
+  displayedHand.forEach((cardId, i) => {
     const card = cardById(state, cardId);
     const selectable = ui.handSelectable.has(cardId);
-    const selected = isSelected(handAddr, cardId) || (committedPass || []).includes(cardId);
+    const selected = isSelected(selection, handAddr, cardId) || (committedPass || []).includes(cardId);
     const wrapper = svgNode(cardArt.face(card),
       `card-face-wrap ${selectable ? '' : 'card-face--disabled'} ${stagger ? 'card-deal' : ''} ${selected ? 'card-face-wrap--selected' : ''}`);
+    wrapper.dataset.cardId = cardId;
     if (stagger) wrapper.style.animationDelay = `${i * 35}ms`;
     wrapper.querySelector('svg').classList.toggle('card-face--disabled', !selectable);
+
+    // Every hand card is reachable by keyboard, playable or not: a card that
+    // cannot be focused cannot be inspected, and "why can't I play this?" is
+    // a question the disabled ones are the whole reason for.
+    wrapper.setAttribute('role', 'button');
+    wrapper.tabIndex = 0;
+    wrapper.setAttribute('aria-label',
+      `${cardAriaLabel(card, state.pack, { position: i + 1, of: displayedHand.length })}`
+      + (selectable ? ' Playable.' : ''));
+    wrapper.setAttribute('aria-pressed', String(!!selected));
+
+    const activate = () => onHandCard(state, cardId, card, wrapper, ui);
     if (selectable) {
       wrapper.classList.add('card-face-wrap--playable');
-      wrapper.addEventListener('click', () => onHandCard(state, cardId, card, wrapper, ui));
+      wrapper.addEventListener('click', activate);
     }
+    wrapper.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      if (selectable) activate();
+    });
+
+    if (draggable.hand.has(cardId) && drag) {
+      drag.attach(wrapper, { kind: 'hand', from: handAddr, cardId });
+    }
+    attachInspector(wrapper, () => describeCard(card, state.pack),
+      { isBusy: () => !!drag && drag.isDragging() });
+
     el.hand.appendChild(wrapper);
   });
+
+  el.handSort.textContent = SORT_LABELS[handPrefs.mode] || SORT_LABELS.auto;
+  el.handSort.setAttribute('aria-label', `Hand order: ${SORT_LABELS[handPrefs.mode]}. Change it.`);
+  el.handSort.hidden = engineHand.length < 2;
+}
+
+/**
+ * The out-of-turn bar: what the human may declare or call out right now.
+ *
+ * Rendered from `enumerateAnnouncements` exactly as the action bar is rendered
+ * from `enumerateLegalMoves` — the UI never invents an announcement, and a
+ * pack that declares none simply gets an empty bar. "Uno" is only the first
+ * customer of this surface (§E2).
+ */
+function humanAnnouncements(state) {
+  return announcementsFor(state, HUMAN_SEAT);
+}
+
+function renderAnnounceBar(state) {
+  const options = humanAnnouncements(state).filter((a) => a.type === 'announce');
+  el.announceBar.replaceChildren();
+  el.announceBar.hidden = options.length === 0;
+  for (const option of options) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'announce-button';
+    // The keyphrase is PACK DATA — a pirate-themed pack says "Avast!" and
+    // this code never learns the word.
+    button.textContent = option.label || 'Last card!';
+    button.addEventListener('click', () => liveState && performAnnouncement(liveState, option));
+    el.announceBar.appendChild(button);
+  }
 }
 
 function renderActionBar(state, ui, humanActs) {
@@ -732,8 +788,7 @@ function renderActionBar(state, ui, humanActs) {
     el.actionButton.textContent = ui.action.label;
     el.actionButton.onclick = () => {
       if (!liveState) return;
-      const move = ui.action.makeMove();
-      performHumanMove(liveState, move, el.actionButton);
+      performHumanMove(liveState, ui.action.makeMove(), el.actionButton);
     };
   } else {
     el.actionButton.hidden = true;
@@ -741,30 +796,27 @@ function renderActionBar(state, ui, humanActs) {
   }
 }
 
-function showGameOver(state) {
-  el.gameOverFan.replaceChildren();
-  for (const face of heroFaces(state.pack)) {
-    el.gameOverFan.appendChild(svgNode(cardArt.face(face), 'game-over-fan__card'));
-  }
-  el.gameOverMessage.textContent = state.winner === HUMAN_SEAT
-    ? 'You win! \u{1F389}'
-    : `${seatLabel(state.winner)} wins.`;
-  const record = readStats(state.pack.id);
-  el.gameOverRecord.textContent = record.played
-    ? `${record.won} of ${record.played} in ${state.pack.manifest.name}.`
-    : '';
-  el.gameOverOverlay.classList.toggle('game-over--won', state.winner === HUMAN_SEAT);
-  el.gameOverOverlay.hidden = false;
-}
+function renderStatusBar(state, acting) {
+  el.statusText.textContent = statusTextFor(state, acting);
+  const humanActs = acting.includes(HUMAN_SEAT);
+  el.status.classList.toggle('status-bar--your-turn', humanActs);
+  el.status.classList.toggle('status-bar--thinking', !state.gameOver && !forfeited && !humanActs);
 
-/** Display-only faces from the manifest; see schema `heroCards`. */
-function heroFaces(pack) {
-  const faces = pack.manifest.heroCards;
-  return Array.isArray(faces) ? faces.slice(0, 3) : [];
+  const scored = showsScores(state);
+  el.scoreChip.hidden = !scored;
+  if (scored) {
+    const phase = state.playerVars[HUMAN_SEAT]?.phase;
+    el.scoreChipValue.textContent = typeof phase === 'number'
+      ? `Ph ${phase} · ${state.scores[HUMAN_SEAT]}`
+      : String(state.scores[HUMAN_SEAT]);
+    el.scoreChip.setAttribute('aria-label', `Your score: ${state.scores[HUMAN_SEAT]}. Open the scoreboard.`);
+  }
+  el.forfeitButton.hidden = state.gameOver || forfeited;
 }
 
 function statusTextFor(state, acting) {
-  if (state.gameOver) return `Game over — ${seatLabel(state.winner)} wins!`;
+  if (forfeited) return 'Game forfeited.';
+  if (state.gameOver) return `Game over — ${seatLabel(state.winner)} ${state.winner === HUMAN_SEAT ? 'win' : 'wins'}!`;
   if (state.turn.phase === 'pass') {
     return acting.includes(HUMAN_SEAT) ? 'Passing — your pick' : 'Waiting for passes…';
   }
@@ -772,21 +824,26 @@ function statusTextFor(state, acting) {
 }
 
 function render(state, message) {
-  pruneSelection(state);
+  // A render mid-drag would replace the very node the pointer is holding.
+  // Deferred, then replayed by the controller's settle callback.
+  if (drag && drag.isDragging()) {
+    pendingRender = { state, message };
+    return;
+  }
+  selection = pruneSelection(state, selection);
   const acting = actingSeatsOf(state);
   const humanActs = acting.includes(HUMAN_SEAT);
   const humanMoves = humanActs ? enumerateLegalMoves(state, HUMAN_SEAT) : [];
-  const ui = buildUiModel(state, humanMoves, humanActs);
+  const ui = buildUiModel(state, { seat: HUMAN_SEAT, moves: humanMoves, acts: humanActs, selection });
+  const draggable = draggableSources(state, { seat: HUMAN_SEAT, acts: humanActs });
   const stagger = dealAnimation && motionAllowed();
 
-  el.statusText.textContent = statusTextFor(state, acting);
-  el.status.classList.toggle('status-bar--your-turn', humanActs);
-  el.status.classList.toggle('status-bar--thinking', !state.gameOver && !humanActs);
-
+  renderStatusBar(state, acting);
   renderSeats(state, stagger, acting, ui);
-  renderCenterZones(state, ui);
-  renderPlayerZones(state, ui);
-  renderHand(state, ui, stagger);
+  renderCenterZones(state, ui, draggable);
+  renderPlayerZones(state, ui, draggable);
+  renderHand(state, ui, stagger, draggable);
+  renderAnnounceBar(state);
   renderActionBar(state, ui, humanActs);
   dealAnimation = false;
 
@@ -794,11 +851,105 @@ function render(state, message) {
   // stale one from the mover ("Bot 2 played" right before Bot 2's own hand emptied) —
   // gameOver always wins the log line over whatever was passed in.
   if (state.gameOver) {
-    el.log.textContent = `${seatLabel(state.winner)} wins!`;
-    showGameOver(state);
+    el.log.textContent = `${seatLabel(state.winner)} ${state.winner === HUMAN_SEAT ? 'win' : 'wins'}!`;
   } else if (message) {
     el.log.textContent = message;
   }
+}
+
+/** Re-render after a drag settles, replaying whatever was deferred. */
+function onDragSettled() {
+  const deferred = pendingRender;
+  pendingRender = null;
+  if (!liveState) return;
+  render(deferred ? deferred.state : liveState, deferred ? deferred.message : undefined);
+}
+
+/* ------------------------------------------------------------------ *
+ * Dragging
+ * ------------------------------------------------------------------ */
+
+/**
+ * A card has been lifted: what does it look like, and where may it land?
+ *
+ * The targets come from src/ui/interaction.js, which derives them from the
+ * SAME enumerated legal moves the tap path uses — so this function cannot
+ * offer a drop the engine would refuse, and an empty target list (a card with
+ * nothing to do) is a perfectly ordinary answer that ends in a snap-back.
+ */
+function onDragLift(handle) {
+  const state = liveState;
+  if (!state) return null;
+  const card = cardById(state, handle.cardId);
+  if (!card) return null;
+  hideInspector();
+
+  const acting = actingSeatsOf(state);
+  const humanActs = acting.includes(HUMAN_SEAT);
+  const targets = [];
+
+  if (humanActs) {
+    const moves = enumerateLegalMoves(state, HUMAN_SEAT);
+    for (const candidate of dropCandidates(state, {
+      seat: HUMAN_SEAT,
+      moves,
+      source: { from: handle.from, cardId: handle.cardId },
+    })) {
+      const node = candidate.kind === 'zone'
+        ? zoneStackNode(candidate.address)
+        : meldChipNode(candidate.meldKey);
+      if (node) targets.push({ node, onDrop: () => performHumanMove(state, candidate.move, node) });
+    }
+  }
+
+  // Dropping a hand card back into the hand is REARRANGING, and it is always
+  // available — including on an opponent's turn, which is exactly when a
+  // player tidies their cards.
+  if (handle.kind === 'hand') {
+    targets.push({
+      node: el.hand,
+      onDrop: (event) => reorderHandAt(handle.cardId, event.clientX),
+    });
+  }
+
+  return { markup: cardArt.face(card), targets };
+}
+
+/**
+ * Drop `cardId` where the pointer left it.
+ *
+ * Rearranging by hand IMPLIES "my order" — a player who has just moved a card
+ * has said what they want more clearly than any toggle could, so the mode
+ * follows the gesture rather than making them find a control first.
+ */
+function reorderHandAt(cardId, clientX) {
+  const nodes = [...el.hand.querySelectorAll('[data-card-id]')];
+  let index = nodes.length;
+  for (let i = 0; i < nodes.length; i++) {
+    const rect = nodes[i].getBoundingClientRect();
+    if (clientX < rect.left + rect.width / 2) {
+      index = i;
+      break;
+    }
+  }
+  if (!livePack || !liveState) return;
+  handPrefs = { mode: 'manual', order: reorder(displayedHand, cardId, index) };
+  saveHandPrefs(livePack.id, handPrefs);
+  render(liveState);
+}
+
+function cycleHandSort() {
+  if (!liveState || !livePack) return;
+  const mode = nextMode(handPrefs.mode);
+  handPrefs = {
+    // Switching AWAY from manual keeps the permutation: the player gets their
+    // arrangement back when they cycle round to it, instead of being punished
+    // for glancing at a sorted view.
+    mode: isSortMode(mode) ? mode : 'auto',
+    order: handPrefs.mode === 'manual' ? displayedHand.slice() : handPrefs.order,
+  };
+  saveHandPrefs(livePack.id, handPrefs);
+  render(liveState);
 }
 
 /* ------------------------------------------------------------------ *
@@ -840,15 +991,6 @@ function zoneRect(address) {
   return rectOf(node.querySelector?.('.pile-stack__top') || node) || rectOf(node);
 }
 
-/** The zone a played/discarded card visibly lands in, for the flight target. */
-function landingZone(state, move) {
-  if (move.to) return move.to;
-  if (move.type === 'discard') return 'discard';
-  if (state.zones.has('trick')) return 'trick';
-  if (state.zones.has('discard')) return 'discard';
-  return null;
-}
-
 /**
  * Send a copy of the moved card across the table, then reveal where it landed.
  *
@@ -864,7 +1006,7 @@ function animateMove(state, move, from) {
     // own draw is face-up because they are about to see it anyway.
     const to = cardSizedRect(seatRect(move.actor), from.width);
     const card = move.actor === HUMAN_SEAT
-      ? cardById(state, state.zones.cards(`hand.${HUMAN_SEAT}`).at(-1) || '')
+      ? cardById(state, state.zones.cards(handAddress(HUMAN_SEAT)).at(-1) || '')
       : null;
     flyCard(card ? cardArt.face(card) : cardArt.back(), from, to, { fade: true });
     return;
@@ -878,7 +1020,7 @@ function animateMove(state, move, from) {
   if (move.type !== 'playCard' && move.type !== 'discard') return;
   const card = cardById(state, move.cards && move.cards[0]);
   if (!card) return;
-  const address = landingZone(state, move);
+  const address = implicitLandingZone(state, move);
   if (!address) return;
   const node = zoneStackNode(address);
   const topNode = node ? node.querySelector('.pile-stack__top') : null;
@@ -958,28 +1100,11 @@ function celebrateTrick(state, ev) {
   }
 }
 
-/** The score sheet between rounds. Bot turns stay parked until it is dismissed. */
-function showRoundSummary(state, ev) {
-  el.roundTitle.textContent = `Round ${ev.round} over`;
-  el.roundScores.replaceChildren();
-  for (let s = 0; s < state.seats; s++) {
-    const delta = ev.scores[s] ?? 0;
-    const row = document.createElement('div');
-    row.className = `round-scores__row ${s === HUMAN_SEAT ? 'round-scores__row--you' : ''}`;
-    row.appendChild(line('round-scores__name', seatLabel(s)));
-    row.appendChild(line('round-scores__delta', delta > 0 ? `+${delta}` : `${delta}`));
-    row.appendChild(line('round-scores__total', `${ev.totals[s]}`));
-    el.roundScores.appendChild(row);
-  }
-  el.roundContinue.textContent = `Deal round ${state.roundNumber}`;
-  el.roundOverlay.hidden = false;
-}
-
 function dismissRoundSummary() {
-  if (el.roundOverlay.hidden || !liveState) return;
-  el.roundOverlay.hidden = true;
+  if (!isRoundSummaryOpen() || !liveState) return;
+  hideRoundSummary();
   dealAnimation = true;
-  playDeal(SEAT_COUNT);
+  playDeal(liveState.seats);
   render(liveState, `Round ${liveState.roundNumber}.`);
   scheduleNextTurn(liveState, epoch);
 }
@@ -997,6 +1122,111 @@ function persistMatch() {
 /** Synchronous by construction — onSuspend calls this directly (§6b). */
 export function flushTable() {
   if (matchDirty) persistMatch();
+}
+
+/* ------------------------------------------------------------------ *
+ * Stats and the record
+ * ------------------------------------------------------------------ */
+
+/**
+ * This match's numbers, replayed out of its own log (src/stats/matchStats.js).
+ *
+ * Never throws to the caller: a log the current rules can no longer replay is
+ * a reason to show no stats, never a reason to lose the game-over panel — and
+ * it is the same failure openTable() already handles by starting fresh.
+ */
+function safeStats(state) {
+  try {
+    return computeMatchStats(state.pack, serializeMatch(state));
+  } catch (err) {
+    console.warn('[cardstock] could not compute match stats', err);
+    return null;
+  }
+}
+
+/** The per-opponent outcomes this match contributes to the head-to-head record. */
+function opponentOutcomes(state, stats, { forfeit }) {
+  const rank = stats && !forfeit
+    ? placements(state.pack, { totals: stats.totals, winner: state.winner, seats: state.seats })
+    : null;
+  return seating
+    .filter((identity) => identity.isBot && identity.opponentKey)
+    .map((identity) => ({
+      key: identity.opponentKey,
+      // Walking away is not beating anybody.
+      beaten: !!rank && rank[HUMAN_SEAT] < rank[identity.seat],
+    }));
+}
+
+function recordSentence(state) {
+  const record = readStats(state.pack.id);
+  const overall = record.played
+    ? `${record.won} of ${record.played} in ${state.pack.manifest.name}`
+    : '';
+  const head = seating
+    .filter((identity) => identity.isBot && record.opponents[identity.opponentKey])
+    .map((identity) => {
+      const r = record.opponents[identity.opponentKey];
+      return `${r.won}–${r.played - r.won} vs ${identity.name}`;
+    })
+    .join(' · ');
+  const streak = record.streak > 1 ? `${record.streak} in a row` : '';
+  return [overall, streak, head].filter(Boolean).join(' — ');
+}
+
+/**
+ * End the match in the books: record it, stop it resuming, and show the panel.
+ *
+ * One door for both endings — the engine deciding, and the player walking
+ * away — because the two must agree about what a loss is. They differ only in
+ * `forfeit`, which is recorded honestly rather than being hidden as an
+ * ordinary defeat.
+ */
+function concludeMatch(state, { forfeit = false } = {}) {
+  cancelBotTurn();
+  cancelAnnouncementBeats();
+  matchDirty = false;
+  // A finished match is not something to resume into.
+  clearMatch(state.pack.id);
+  const stats = safeStats(state);
+  recordResult(state.pack.id, {
+    won: !forfeit && state.winner === HUMAN_SEAT,
+    forfeit,
+    opponents: opponentOutcomes(state, stats, { forfeit }),
+  });
+  showGameOver(state, {
+    seating,
+    stats,
+    recordText: recordSentence(state),
+    heroFaces: heroFaces(state.pack),
+    renderFace: (face) => cardArt.face(face),
+    forfeited: forfeit,
+  });
+}
+
+/** Display-only faces from the manifest; see schema `heroCards`. */
+function heroFaces(pack) {
+  const faces = pack.manifest.heroCards;
+  return Array.isArray(faces) ? faces.slice(0, 3) : [];
+}
+
+async function forfeitMatch() {
+  if (!liveState || liveState.gameOver || forfeited) return;
+  const name = livePack.manifest.name;
+  const ok = await confirmAction(
+    `Forfeit your game of ${name}? It counts as a loss and the game is gone.`,
+    { okLabel: 'Forfeit', cancelLabel: 'Keep playing' },
+  );
+  if (!ok || !liveState || liveState.gameOver || forfeited) return;
+  forfeited = true;
+  if (drag) drag.cancel();
+  concludeMatch(liveState, { forfeit: true });
+  render(liveState);
+}
+
+function openScoreboard() {
+  if (!liveState) return;
+  showScoreboard(liveState, seating, safeStats(liveState));
 }
 
 /* ------------------------------------------------------------------ *
@@ -1028,13 +1258,10 @@ function afterMove(state, move, from, message) {
   const roundOver = events.find((e) => e.type === 'roundOver' && !e.over);
 
   if (state.gameOver) {
-    matchDirty = false;
-    // A finished match is not something to resume into.
-    clearMatch(state.pack.id);
     // Before the render, so the overlay can show the updated record — this
     // game's counters are ours to display (§4: `stats` is the surface whose
     // formatting the game owns).
-    recordResult(state.pack.id, { won: state.winner === HUMAN_SEAT });
+    concludeMatch(state);
     render(state, message);
     animateMove(state, move, from);
     if (trick) celebrateTrick(state, trick);
@@ -1052,15 +1279,17 @@ function afterMove(state, move, from, message) {
     // The engine has already dealt the next round beneath this move; the
     // summary sits on top of the fresh deal and bot play waits for its
     // dismissal. A beat of delay lets a closing trick's gather land first.
+    cancelAnnouncementBeats();
     const myEpoch = epoch;
     Arcade.session.setTimeout(() => {
       if (myEpoch !== epoch) return;
-      showRoundSummary(state, roundOver);
+      showRoundSummary(state, roundOver, seating);
     }, trick ? 900 : 250);
     return;
   }
 
   scheduleNextTurn(state, epoch);
+  scheduleAnnouncementBeats(state, epoch);
 }
 
 /* ------------------------------------------------------------------ *
@@ -1114,13 +1343,33 @@ function closeChoiceModal() {
 }
 
 /**
- * The single gate between a human tap and the engine, whatever dressed the
- * move up (a hand card, a pile, a meld chip, the action button). Fills in any
- * choice the move still owes — a discard that skips a player asks who —
- * validates, and hands off to the shared apply/render/persist path.
+ * The single gate between a human gesture and the engine, whatever dressed the
+ * move up — a hand card, a pile, a meld chip, the action button, or a card
+ * dropped onto a pile. Fills in any choice the move still owes (a wild asks
+ * its colour; a discard that skips a player asks who), validates, and hands
+ * off to the shared apply/render/persist path.
+ *
+ * The wild prompt used to live in the tap handler alone, which meant a dropped
+ * wild would have bypassed it. Asking HERE is what lets both dressings stay
+ * one code path.
  */
 async function performHumanMove(state, move, sourceNode) {
   const myEpoch = epoch;
+
+  if (move.type === 'playCard' && move.cards && !move.choice) {
+    const card = cardById(state, move.cards[0]);
+    const attr = card ? needsChoice(card) : null;
+    if (attr) {
+      const options = attr === 'suit'
+        ? ['clubs', 'diamonds', 'hearts', 'spades']
+        : [...new Set([...state.pack.cardsById.values()].map((c) => c.color).filter(Boolean))];
+      const picked = await promptChoice(attr, options);
+      // Backed out, or the table closed while the prompt was open — either way
+      // this move belongs to a match that is no longer the one on screen.
+      if (picked === null || myEpoch !== epoch) return;
+      move = { ...move, choice: { [attr]: picked } };
+    }
+  }
 
   if (move.type === 'discard' && move.cards) {
     const card = cardById(state, move.cards[0]);
@@ -1128,9 +1377,10 @@ async function performHumanMove(state, move, sourceNode) {
     if (effect?.type === 'skipTarget' && effect.on === 'discard' && move.choice?.target === undefined) {
       const others = [];
       for (let s = 0; s < state.seats; s++) if (s !== HUMAN_SEAT) others.push(s);
-      const picked = await promptChoice('player to skip', others.map((s) => seatLabel(s)));
+      const labels = others.map((s) => identityOf(s).name);
+      const picked = await promptChoice('player to skip', labels);
       if (picked === null || myEpoch !== epoch) return;
-      move = { ...move, choice: { ...(move.choice || {}), target: others[others.map((s) => seatLabel(s)).indexOf(picked)] } };
+      move = { ...move, choice: { ...(move.choice || {}), target: others[labels.indexOf(picked)] } };
     }
   }
 
@@ -1147,27 +1397,13 @@ async function performHumanMove(state, move, sourceNode) {
 }
 
 /** A tap on one of the human's own hand cards, interpreted per the UI model. */
-async function onHandCard(state, cardId, card, sourceNode, ui) {
-  const handAddr = `hand.${HUMAN_SEAT}`;
+function onHandCard(state, cardId, card, sourceNode, ui) {
+  const handAddr = handAddress(HUMAN_SEAT);
 
   if (ui.mode === 'tap') {
-    // One tap plays it — the destination is implicit. Wilds ask their question
-    // first, exactly as before.
-    const myEpoch = epoch;
-    let choice;
-    const attr = needsChoice(card);
-    if (attr) {
-      const options =
-        attr === 'suit'
-          ? ['clubs', 'diamonds', 'hearts', 'spades']
-          : [...new Set([...state.pack.cardsById.values()].map((c) => c.color).filter(Boolean))];
-      const picked = await promptChoice(attr, options);
-      // Backed out, or the table closed while the prompt was open — either way
-      // this move belongs to a match that is no longer the one on screen.
-      if (picked === null || myEpoch !== epoch) return;
-      choice = { [attr]: picked };
-    }
-    performHumanMove(state, { actor: HUMAN_SEAT, type: 'playCard', cards: [cardId], choice }, sourceNode);
+    // One tap plays it — the destination is implicit, and the wild's question
+    // is asked by performHumanMove, the same place a drop asks it.
+    performHumanMove(state, { actor: HUMAN_SEAT, type: 'playCard', cards: [cardId] }, sourceNode);
     return;
   }
 
@@ -1180,14 +1416,143 @@ async function onHandCard(state, cardId, card, sourceNode, ui) {
     else ids.push(cardId);
     selection = ids.length ? { from: handAddr, cardIds: ids } : null;
   } else {
-    selection = isSelected(handAddr, cardId) ? null : { from: handAddr, cardIds: [cardId] };
+    selection = isSelected(selection, handAddr, cardId) ? null : { from: handAddr, cardIds: [cardId] };
   }
   render(state);
 }
 
+/* ------------------------------------------------------------------ *
+ * Announcements (§E2)
+ * ------------------------------------------------------------------ */
+
+/**
+ * Apply an announcement — the player's, or a bot's.
+ *
+ * Deliberately NOT routed through afterMove: an announcement never changes
+ * whose turn it is, so re-entering the turn scheduler would cancel and restart
+ * a bot's think time every time somebody spoke.
+ */
+function performAnnouncement(state, move, myEpoch = epoch) {
+  if (myEpoch !== epoch || !liveState) return;
+  const check = validateMove(state, move);
+  // The window closed while the timer ran — somebody else got there first, or
+  // the target played. That is an ordinary outcome, not an error.
+  if (!check.legal) return;
+
+  applyMove(state, move);
+  const caught = state.events.find((e) => e.type === 'caught');
+  const announced = state.events.find((e) => e.type === 'announced');
+  playAnnouncement({ caught: !!caught });
+
+  let message = '';
+  if (announced) {
+    const who = announced.seat === HUMAN_SEAT ? 'You' : identityOf(announced.seat).name;
+    message = `${who}: “${announced.label}”`;
+    showBanner(message, announced.seat === HUMAN_SEAT ? 'good' : 'neutral');
+  } else if (caught) {
+    const catcher = caught.seat === HUMAN_SEAT ? 'You' : identityOf(caught.seat).name;
+    const victim = caught.target === HUMAN_SEAT ? 'you' : identityOf(caught.target).name;
+    message = `${catcher} caught ${victim} — ${caught.drew} card${caught.drew === 1 ? '' : 's'}.`;
+    showBanner(message, caught.target === HUMAN_SEAT ? 'bad' : 'good');
+  }
+
+  render(state, message);
+  persistMatch();
+  scheduleAnnouncementBeats(state, epoch);
+}
+
+function cancelAnnouncementBeats() {
+  for (const timer of announceTimers) timer.cancel();
+  announceTimers = [];
+}
+
+/**
+ * Decide, once per window, whether each bot remembers to declare and whether
+ * each notices somebody who did not — then schedule what they decided.
+ *
+ * THIS IS WHERE THE MECHANIC BECOMES A GAME. A bot that always declares makes
+ * the catch button decorative; one that always catches makes forgetting an
+ * instant loss. Persona weights (`callReliability`, `catchAttention`) and a
+ * deliberate delay before a catch are what leave room for a player to declare
+ * late and get away with it — which is exactly the tension the rule has at a
+ * real table.
+ *
+ * The decision is CACHED per vulnerability window. Re-rolling on every render
+ * would hand a forgetful bot a fresh chance every time anybody moved, and
+ * `callReliability: 0.5` would behave like 1.
+ */
+function scheduleAnnouncementBeats(state, myEpoch) {
+  cancelAnnouncementBeats();
+  if (state.gameOver || forfeited) return;
+  if (!state.pack.template.enumerateAnnouncements) return;
+
+  const schedule = (fn, ms) => {
+    announceTimers.push(Arcade.session.setTimeout(() => {
+      if (myEpoch !== epoch) return;
+      fn();
+    }, ms));
+  };
+
+  for (let seat = 0; seat < state.seats; seat++) {
+    if (seat === HUMAN_SEAT) continue;
+    const identity = identityOf(seat);
+    const persona = identity.persona;
+    if (!persona) continue;
+    const options = announcementsFor(state, seat);
+
+    const own = options.find((a) => a.type === 'announce');
+    if (!own) {
+      botCallDecision.delete(seat);
+    } else {
+      if (!botCallDecision.has(seat)) {
+        botCallDecision.set(seat, Math.random() < persona.callReliability);
+      }
+      if (botCallDecision.get(seat)) {
+        // They say it as they put the card down, near enough.
+        schedule(() => performAnnouncement(state, own, myEpoch),
+          Math.round(thinkTimeMs(identity, settings.botDelayMs) * 0.4));
+      }
+    }
+
+    for (const option of options) {
+      if (option.type !== 'challenge') continue;
+      const key = `${seat}>${option.target}`;
+      if (!botCatchDecision.has(key)) {
+        botCatchDecision.set(key, Math.random() < persona.catchAttention);
+      }
+      if (!botCatchDecision.get(key)) continue;
+      // The grace is the whole fairness of it: a sharp bot pounces in under a
+      // second, a dreamy one takes three, and either way you had a moment to
+      // say it yourself.
+      const grace = 700 + (1 - persona.catchAttention) * 2600 + Math.random() * 500;
+      schedule(() => performAnnouncement(state, option, myEpoch), Math.round(grace));
+    }
+  }
+
+  // Windows that have closed leave no stale decision behind to be reused by
+  // the next one.
+  for (const key of [...botCatchDecision.keys()]) {
+    const target = Number(key.split('>')[1]);
+    const stillOpen = announcementsFor(state, Number(key.split('>')[0]))
+      .some((a) => a.type === 'challenge' && a.target === target);
+    if (!stillOpen) botCatchDecision.delete(key);
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * The bot driver
+ * ------------------------------------------------------------------ */
+
 function scheduleNextTurn(state, myEpoch) {
-  if (state.gameOver) return;
-  if (!actingSeatsOf(state).some((s) => s !== HUMAN_SEAT)) return;
+  // Cancel first: an announcement or a re-entry could otherwise leave two
+  // timers racing to move the same bot.
+  cancelBotTurn();
+  if (state.gameOver || forfeited) return;
+  const acting = actingSeatsOf(state);
+  const seat = acting.find((s) => s !== HUMAN_SEAT);
+  if (seat === undefined) return;
+
+  const identity = identityOf(seat);
   // Arcade.session.setTimeout, not setTimeout: it freezes while the frame is
   // suspended (§6c — forgotten timers are the #1 battery drain in a hidden
   // iframe) and cancels itself when a save import replaces state. The epoch
@@ -1196,16 +1561,16 @@ function scheduleNextTurn(state, myEpoch) {
   botTimer = Arcade.session.setTimeout(() => {
     botTimer = null;
     if (myEpoch !== epoch) return; // superseded — drop the stale turn
-    const seat = actingSeatsOf(state).find((s) => s !== HUMAN_SEAT);
-    if (seat === undefined) return; // the human became the only one who may act
-    const move = chooseBotMove(state, seat);
+    const actingNow = actingSeatsOf(state).find((s) => s !== HUMAN_SEAT);
+    if (actingNow === undefined) return; // the human became the only one who may act
+    const move = chooseBotMove(state, actingNow, { persona: identityOf(actingNow).persona });
     if (!move) return;
     const from = move.type === 'draw'
-      ? (zoneRect(move.from ?? 'draw') || seatRect(seat))
-      : seatRect(seat);
+      ? (zoneRect(move.from ?? 'draw') || seatRect(actingNow))
+      : seatRect(actingNow);
     applyStateChange(state, move, { far: true });
-    afterMove(state, move, from, `${seatLabel(seat)} ${BOT_VERBS[move.type] || 'played'}.`);
-  }, settings.botDelayMs);
+    afterMove(state, move, from, `${identityOf(actingNow).name} ${BOT_VERBS[move.type] || 'played'}.`);
+  }, thinkTimeMs(identity, settings.botDelayMs));
 }
 
 const BOT_VERBS = {
@@ -1232,22 +1597,36 @@ function adoptMatch(pack, state, message) {
   livePack = pack;
   liveState = state;
   selection = null;
+  forfeited = false;
+  pendingRender = null;
+  botCallDecision.clear();
+  botCatchDecision.clear();
+  if (drag) drag.cancel();
   // Before the first render, and from the PACK rather than the manifest alone:
   // the deck is what tells a style which colours it actually has to draw.
   cardArt = makeCardRenderer(pack.manifest, pack.cardsById);
-  el.gameOverOverlay.hidden = true;
-  el.roundOverlay.hidden = true;
+  // Who is at this table — derived from the match SEED, so a resumed game
+  // re-seats the same opponents and a fresh deal brings new ones.
+  seating = buildSeating(state.seed, state.seats, {
+    humanSeat: HUMAN_SEAT,
+    humanName: humanName(),
+  });
+  handPrefs = loadHandPrefs(pack.id);
+  hideAllPanels();
   hideBanner();
   render(state, message);
   persistMatch();
   scheduleNextTurn(state, epoch);
+  scheduleAnnouncementBeats(state, epoch);
 }
 
 function startGame(pack) {
   cancelBotTurn();
+  cancelAnnouncementBeats();
   // Date.now() is only the entropy source. The seed itself is persisted with
   // the match from the first write, which is what makes the log replayable
-  // (src/engine/replay.js) rather than merely re-runnable.
+  // (src/engine/replay.js) rather than merely re-runnable — and, since the
+  // seating is derived from it, what rotates the opponents per game.
   const state = createState({ pack, seats: SEAT_COUNT, seed: Date.now() });
   pack.template.setup(makeCtx(state));
   dealAnimation = true;
@@ -1265,6 +1644,7 @@ function startGame(pack) {
 export async function openTable(packId) {
   const myToken = ++openToken;
   cancelBotTurn();
+  cancelAnnouncementBeats();
   closeChoiceModal();
   matchDirty = false;
 
@@ -1282,7 +1662,7 @@ export async function openTable(packId) {
   rememberPack(packId);
   Arcade.ui.setTitle(`Cardstock — ${pack.manifest.name}`);
   el.gameName.textContent = pack.manifest.name;
-  el.gameOverOverlay.hidden = true;
+  hideAllPanels();
 
   if (stored) {
     try {
@@ -1310,14 +1690,20 @@ export function closeTable() {
   openToken += 1;          // abandon any open still in flight
   epoch += 1;              // and any bot turn already scheduled
   cancelBotTurn();
+  cancelAnnouncementBeats();
   closeChoiceModal();
+  closeConfirm();
+  hideInspector();
+  if (drag) drag.cancel();
   flushTable();
   liveState = null;
   livePack = null;
   selection = null;
+  seating = [];
+  forfeited = false;
+  pendingRender = null;
   hideBanner();
-  el.gameOverOverlay.hidden = true;
-  el.roundOverlay.hidden = true;
+  hideAllPanels();
 }
 
 export function isTableOpen() {
@@ -1334,10 +1720,19 @@ export function initTable({ onExit }) {
   exitToLobby = onExit;
   settings = loadSettings();
 
-  el.playAgainButton.addEventListener('click', () => livePack && startGame(livePack));
+  drag = createDragController({ layer: flightLayer, onLift: onDragLift, onSettle: onDragSettled });
+
+  initPanels({
+    onContinueRound: () => dismissRoundSummary(),
+    onPlayAgain: () => livePack && startGame(livePack),
+    onLobby: () => exitToLobby(),
+    onCloseScoreboard: () => {},
+  });
+
   el.lobbyButton.addEventListener('click', () => exitToLobby());
-  el.gameOverLobbyButton.addEventListener('click', () => exitToLobby());
-  el.roundContinue.addEventListener('click', () => dismissRoundSummary());
+  el.scoreChip.addEventListener('click', () => openScoreboard());
+  el.forfeitButton.addEventListener('click', () => { forfeitMatch(); });
+  el.handSort.addEventListener('click', () => cycleHandSort());
 }
 
 /** Surface a boot/open failure on the table's own log line. */

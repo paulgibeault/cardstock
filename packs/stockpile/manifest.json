@@ -2,38 +2,92 @@
   "id": "stockpile",
   "name": "Stockpile",
   "version": "0.1.0",
-  "players": { "min": 2, "max": 6, "best": 4 },
+  "players": {
+    "min": 2,
+    "max": 6,
+    "best": 4
+  },
   "deck": "deck.json",
   "template": "sequencing",
   "tagline": "Race your stock down before anyone else.",
   "accent": "#6b4fa8",
   "heroCards": [
-    { "rank": "1" },
-    { "rank": "2" },
-    { "rank": "wild" }
+    {
+      "rank": "1"
+    },
+    {
+      "rank": "2"
+    },
+    {
+      "rank": "wild"
+    }
   ],
   "rules": {
-    "buildRule": { "type": "ascending", "from": 1, "to": 12, "wrap": false },
+    "buildRule": {
+      "type": "ascending",
+      "from": 1,
+      "to": 12,
+      "wrap": false
+    },
     "buildPiles": 4,
-    "buildStart": ["rank:1", "tag:wild"],
-    "wilds": { "tag": "wild" },
-    "stockSize": { "default": 30, "byPlayers": { "5": 20, "6": 20 } },
-    "handRefill": { "to": 5, "atTurnStart": true, "onEmptyMidTurn": true },
+    "buildStart": [
+      "rank:1",
+      "tag:wild"
+    ],
+    "wilds": {
+      "tag": "wild"
+    },
+    "stockSize": {
+      "default": 30,
+      "byPlayers": {
+        "5": 20,
+        "6": 20
+      }
+    },
+    "handRefill": {
+      "to": 5,
+      "atTurnStart": true,
+      "onEmptyMidTurn": true
+    },
     "discardPiles": 4,
-    "playableFrom": ["stock", "hand", "discard"],
+    "playableFrom": [
+      "stock",
+      "hand",
+      "discard"
+    ],
     "turnEnd": "discard-to-own-pile",
     "winner": "first-empty-stock"
   },
   "reactions": [
-    { "when": "zoneFull:build.*", "do": "moveAll", "to": "recycled" },
-    { "when": "zoneEmpty:draw", "do": "recycle", "from": "recycled", "shuffle": true }
+    {
+      "when": "zoneFull:build.*",
+      "do": "moveAll",
+      "to": "recycled"
+    },
+    {
+      "when": "zoneEmpty:draw",
+      "do": "recycle",
+      "from": "recycled",
+      "shuffle": true
+    }
   ],
   "undo": "none",
   "turnTimer": null,
   "ui": {
     "cardStyle": "rankrun",
-    "cardPalette": { "band1": "#2f6fb0", "band2": "#1b7d4d", "band3": "#c0392b" },
-    "cardBack": { "pattern": "weave", "color": "#6b4fa8", "emblem": "S" }
+    "cardPalette": {
+      "band1": "#2f6fb0",
+      "band2": "#1b7d4d",
+      "band3": "#c0392b"
+    },
+    "cardBack": {
+      "pattern": "weave",
+      "color": "#6b4fa8",
+      "emblem": "S"
+    },
+    "zoneOverlap": {
+      "discard": "vertical"
+    }
   },
   "credits": "An original sequencing pack: race to empty your stock onto shared build piles that count 1 through 12."
 }
