@@ -23,7 +23,7 @@ import { validateMove, applyMove, enumerateLegalMoves } from '../engine/movePipe
 import { rehydrateMatch } from '../engine/replay.js';
 import { chooseBotMove } from '../engine/bot.js';
 import { baseId } from '../engine/selectors.js';
-import { renderCardFaceSvg, renderCardBackSvg } from './renderCard.js';
+import { makeCardRenderer } from './cardStyles/index.js';
 import { fetchPack } from './packSource.js';
 import { flyCard, landOn, motionAllowed } from './flight.js';
 import { safeCssColor } from './css.js';
@@ -90,6 +90,18 @@ const el = {
 let livePack = null;
 let liveState = null;
 let epoch = 0;
+
+// The open table's card art, built once from its pack (src/ui/cardStyles).
+// Rebuilt in adoptMatch rather than per render: resolving a theme walks the
+// whole deck for its colours, which is not something to do sixty times a
+// second, and the memoised card back would be thrown away with it.
+//
+// Named `cardArt` and not `cards`, which is not fussiness: renderPiles already
+// has a local `const cards` for the pile's contents, and a module-level `cards`
+// is SHADOWED by it for the whole function — including the lines above the
+// declaration, where it is in the temporal dead zone. That is a ReferenceError
+// on the first render of every table, and nothing in the unit tests reaches it.
+let cardArt = makeCardRenderer({});
 let dealAnimation = false;
 let botTimer = null;
 let settings = null;
@@ -139,8 +151,8 @@ function legalPlayCardIds(state) {
 }
 
 // Card SVG is markup this repo authors, with every card-derived value escaped
-// inside renderCard.js — so innerHTML on a fresh node is safe here in a way it
-// is NOT for anything carrying a name or a label. Those use textContent.
+// inside src/ui/cardStyles — so innerHTML on a fresh node is safe here in a way
+// it is NOT for anything carrying a name or a label. Those use textContent.
 function svgNode(markup, className) {
   const span = document.createElement('span');
   if (className) span.className = className;
@@ -203,7 +215,7 @@ function renderSeats(state, stagger) {
     const mini = document.createElement('div');
     mini.className = 'mini-hand';
     for (let i = 0; i < count; i++) {
-      const back = svgNode(renderCardBackSvg(), stagger ? 'card-deal' : '');
+      const back = svgNode(cardArt.back(), stagger ? 'card-deal' : '');
       if (stagger) back.style.animationDelay = `${i * 35}ms`;
       mini.appendChild(back);
     }
@@ -235,7 +247,7 @@ function renderPiles(state, canDraw) {
     el.drawPile.replaceChildren();
     el.drawPile.classList.toggle('pile-stack--deep', drawTop > 2);
     el.drawPile.classList.toggle('pile-stack--ready', canDraw);
-    if (drawTop > 0) el.drawPile.appendChild(svgNode(renderCardBackSvg(), 'pile-stack__top'));
+    if (drawTop > 0) el.drawPile.appendChild(svgNode(cardArt.back(), 'pile-stack__top'));
     else el.drawPile.appendChild(svgNode('<div class="card-face card-face--empty"></div>', 'pile-stack__top'));
     el.drawPile.disabled = !canDraw;
     // The visible label is a count; the button needs to say what pressing it does.
@@ -263,7 +275,7 @@ function renderPiles(state, canDraw) {
     const card = cardById(state, cardId);
     if (!card) return;
     const isTop = i === visible.length - 1;
-    const node = svgNode(renderCardFaceSvg(card), `pile-stack__card ${isTop ? 'pile-stack__top' : ''}`);
+    const node = svgNode(cardArt.face(card), `pile-stack__card ${isTop ? 'pile-stack__top' : ''}`);
     node.style.setProperty('--stack-index', String(i - (visible.length - 1) / 2));
     node.style.setProperty('--stack-tilt', `${tiltFor(cardId, isTop && !isTrick ? 2 : 7).toFixed(2)}deg`);
     el.centerPile.appendChild(node);
@@ -281,7 +293,7 @@ function renderHand(state, legal, stagger) {
   hand.forEach((cardId, i) => {
     const card = cardById(state, cardId);
     const isLegal = legal.has(cardId);
-    const wrapper = svgNode(renderCardFaceSvg(card),
+    const wrapper = svgNode(cardArt.face(card),
       `card-face-wrap ${isLegal ? '' : 'card-face--disabled'} ${stagger ? 'card-deal' : ''}`);
     if (stagger) wrapper.style.animationDelay = `${i * 35}ms`;
     wrapper.querySelector('svg').classList.toggle('card-face--disabled', !isLegal);
@@ -296,7 +308,7 @@ function renderHand(state, legal, stagger) {
 function showGameOver(state) {
   el.gameOverFan.replaceChildren();
   for (const face of heroFaces(state.pack)) {
-    el.gameOverFan.appendChild(svgNode(renderCardFaceSvg(face), 'game-over-fan__card'));
+    el.gameOverFan.appendChild(svgNode(cardArt.face(face), 'game-over-fan__card'));
   }
   el.gameOverMessage.textContent = state.winner === HUMAN_SEAT
     ? 'You win! \u{1F389}'
@@ -384,13 +396,13 @@ function animateMove(state, move, from) {
     const card = move.actor === HUMAN_SEAT
       ? cardById(state, state.zones.cards(`hand.${HUMAN_SEAT}`).at(-1) || '')
       : null;
-    flyCard(card ? renderCardFaceSvg(card) : renderCardBackSvg(), from, to, { fade: true });
+    flyCard(card ? cardArt.face(card) : cardArt.back(), from, to, { fade: true });
     return;
   }
   const card = cardById(state, move.cards && move.cards[0]);
   if (!card) return;
   landOn(el.centerPile.querySelector('.pile-stack__top'),
-    flyCard(renderCardFaceSvg(card), from, centerRect()));
+    flyCard(cardArt.face(card), from, centerRect()));
 }
 
 /* ------------------------------------------------------------------ *
@@ -569,6 +581,9 @@ function adoptMatch(pack, state, message) {
   epoch += 1;
   livePack = pack;
   liveState = state;
+  // Before the first render, and from the PACK rather than the manifest alone:
+  // the deck is what tells a style which colours it actually has to draw.
+  cardArt = makeCardRenderer(pack.manifest, pack.cardsById);
   el.gameOverOverlay.hidden = true;
   render(state, message);
   persistMatch();

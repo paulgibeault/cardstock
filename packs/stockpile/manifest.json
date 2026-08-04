@@ -30,5 +30,10 @@
   ],
   "undo": "none",
   "turnTimer": null,
+  "ui": {
+    "cardStyle": "rankrun",
+    "cardPalette": { "band1": "#2f6fb0", "band2": "#1b7d4d", "band3": "#c0392b" },
+    "cardBack": { "pattern": "weave", "color": "#6b4fa8", "emblem": "S" }
+  },
   "credits": "An original sequencing pack: race to empty your stock onto shared build piles that count 1 through 12."
 }

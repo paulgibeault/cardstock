@@ -33,7 +33,8 @@ async function readJson(p) {
   return JSON.parse(await readFile(p, 'utf8'));
 }
 
-async function loadPackFromDisk(packId) {
+/** Exported so a test can render a real deck without a second copy of this. */
+export async function loadPackFromDisk(packId) {
   const dir = path.join(PACKS_DIR, packId);
   const manifest = await readJson(path.join(dir, 'manifest.json'));
   let deckJson;

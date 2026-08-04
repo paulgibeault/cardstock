@@ -61,6 +61,11 @@
   ],
   "undo": "none",
   "turnTimer": null,
-  "ui": { "felt": "#8b1e1e" },
+  "ui": {
+    "felt": "#8b1e1e",
+    "cardStyle": "shedding",
+    "cardPalette": { "red": "#c0392b", "yellow": "#e1b12c", "green": "#27ae60", "blue": "#2f6fb0" },
+    "cardBack": { "pattern": "sunburst", "color": "#d2601a", "emblem": "✱" }
+  },
   "credits": "An original shedding pack: match by color or rank, wilds change the color, and call your last card or draw two."
 }

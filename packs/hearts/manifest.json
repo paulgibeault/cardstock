@@ -73,6 +73,9 @@
   ],
   "undo": "none",
   "turnTimer": null,
-  "ui": { "felt": "#1b5e3a" },
+  "ui": {
+    "felt": "#1b5e3a",
+    "cardBack": { "pattern": "lattice", "color": "#8c2740", "emblem": "♥" }
+  },
   "credits": "Traditional (public domain)."
 }

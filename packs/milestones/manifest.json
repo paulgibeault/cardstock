@@ -44,5 +44,10 @@
   ],
   "undo": "none",
   "turnTimer": null,
+  "ui": {
+    "cardStyle": "sequencing",
+    "cardPalette": { "red": "#c0392b", "blue": "#2f6fb0", "green": "#1f7a63", "yellow": "#d9a520" },
+    "cardBack": { "pattern": "rings", "color": "#1f7a63", "emblem": "M" }
+  },
   "credits": "An original contract-rummy pack: ten milestones of sets and runs, one per round, first to finish them all wins."
 }
