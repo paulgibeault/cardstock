@@ -45,7 +45,7 @@ const SCOPE = `/${GAME_ID}/`;
 // cleanup never runs, and every fix you ship afterwards reaches nobody who
 // has already visited. A hand-bumped counter here has cost the fleet exactly
 // that, twice.
-const APP_VERSION = '0.1.2';
+const APP_VERSION = '0.1.3';
 
 const CACHE_NAME = `${GAME_ID}-v${APP_VERSION}`;
 
