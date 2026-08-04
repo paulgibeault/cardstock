@@ -26,10 +26,18 @@ jobs:
       # The fleet norm for any app with a service worker: CI owns the cache
       # version (§10).
       version_bump: true
-      # Check the launcher out and run `npm run acceptance` after our own
-      # tests, so the §13 checklist is a per-push gate rather than something
-      # somebody remembers to run. The integration surface it covers — bridged
-      # storage, the settings snapshot, suspend/resume, the caps contract — is
-      # exactly the kind that breaks from the launcher side, where this repo's
-      # own tests can never see it.
+      # Check the launcher out (as ARCADE_LAUNCHER) and run `npm run
+      # acceptance` after our own tests, so the §13 checklist is a per-push
+      # gate rather than something somebody remembers to run. The integration
+      # surface it covers — bridged storage, the settings snapshot,
+      # suspend/resume, the caps contract — is exactly the kind that breaks
+      # from the launcher side, where this repo's own tests can never see it.
+      #
+      # NOTE: the pipeline runs `npm run acceptance` in THIS repo, not in the
+      # launcher. tools/acceptance.mjs is that script; it stages the artifact,
+      # drives the launcher's dev.sh, and runs the launcher's checklist runner
+      # against it.
       launcher: true
+      # The checklist runner is Playwright-driven and the test tier installs no
+      # browsers unless asked. Without this it fails on a missing chromium.
+      browsers: chromium

@@ -6,6 +6,7 @@
   "description": "Card-pack driven multi-game platform engine.",
   "scripts": {
     "test": "node tools/verify-artifact.mjs && node --test 'tests/*.test.js'",
+    "acceptance": "node tools/acceptance.mjs",
     "pack-test": "node tools/pack-test.mjs",
     "pack-test:all": "node tools/pack-test.mjs --all",
     "simulate": "node tools/simulate.mjs",
