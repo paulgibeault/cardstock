@@ -5,6 +5,13 @@
   "players": { "min": 2, "max": 6, "best": 4 },
   "deck": "deck.json",
   "template": "sequencing",
+  "tagline": "Race your stock down before anyone else.",
+  "accent": "#6b4fa8",
+  "heroCards": [
+    { "rank": "1" },
+    { "rank": "2" },
+    { "rank": "wild" }
+  ],
   "rules": {
     "buildRule": { "type": "ascending", "from": 1, "to": 12, "wrap": false },
     "buildPiles": 4,

@@ -8,6 +8,7 @@ import { test } from "node:test";
 import assert from "node:assert";
 import { renderCardFaceSvg, renderCardBackSvg } from "../src/ui/renderCard.js";
 import { isValidPackId } from "../src/arcade/storage.js";
+import { safeCssColor, safeAccent } from "../src/ui/css.js";
 
 const PAYLOAD = '"><img src=x onerror=alert(1)>';
 
@@ -55,6 +56,37 @@ test("every quote in the rendered face is one we opened", () => {
 test("the card back is a constant, with nothing to inject into", () => {
   assert.strictEqual(renderCardBackSvg(), renderCardBackSvg());
   assert.ok(!renderCardBackSvg().includes("${"));
+});
+
+// The lobby paints each tile with `manifest.accent`, which lands in an inline
+// style. An inline style is a real sink: url() fetches, var() reads values the
+// pack was never given, and a stray `;` opens the whole declaration block.
+test("a pack's tile accent cannot smuggle anything into a style", () => {
+  for (const good of ["#c0392b", "#FFD166", "#000000"]) {
+    assert.strictEqual(safeAccent(good, "#fallback"), good);
+  }
+  for (const bad of [
+    "red", "#fff",                                  // shapes color-mix() can't be trusted with here
+    "url(https://evil.example/x.png)",
+    "var(--panel-bg)",
+    "#c0392b; background-image: url(x)",
+    "#c0392b/**/;position:fixed",
+    "expression(alert(1))", PAYLOAD, "", null, undefined, 42, {},
+  ]) {
+    assert.strictEqual(safeAccent(bad, "#3d7a5a"), "#3d7a5a",
+      `${JSON.stringify(bad)} should have fallen back`);
+  }
+});
+
+test("a wild's colour choice cannot smuggle anything into a swatch", () => {
+  // These are pack-derived card colours, painted onto the choice buttons.
+  for (const good of ["red", "blue", "#e1b12c"]) {
+    assert.strictEqual(safeCssColor(good), good);
+  }
+  for (const bad of ["url(x)", "var(--x)", "red;position:fixed", "rgb(1,2,3)",
+                     "a".repeat(21), PAYLOAD, "", null, 42]) {
+    assert.strictEqual(safeCssColor(bad), null, `${JSON.stringify(bad)} should have been refused`);
+  }
 });
 
 test("pack ids are charset-validated before reaching a fetch path", () => {

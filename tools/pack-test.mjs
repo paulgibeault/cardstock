@@ -14,9 +14,19 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..');
 export const PACKS_DIR = path.join(REPO_ROOT, 'packs');
 
-/** Every pack id on disk. One source of truth for the CLI and tests/packs.test.js. */
+/**
+ * Every pack id on disk. One source of truth for the CLI and tests/packs.test.js.
+ *
+ * Directories only — `packs/` also holds index.json, the list the browser
+ * lobby fetches because nothing client-side can read a directory. Without the
+ * isDirectory filter that file reads as a pack named "index.json" and every
+ * caller here tries to load a manifest out of it.
+ */
 export function listPackIds() {
-  return fsSync.readdirSync(PACKS_DIR).filter((f) => !f.startsWith('.')).sort();
+  return fsSync.readdirSync(PACKS_DIR, { withFileTypes: true })
+    .filter((e) => e.isDirectory() && !e.name.startsWith('.'))
+    .map((e) => e.name)
+    .sort();
 }
 
 async function readJson(p) {

@@ -1,22 +1,40 @@
 # Card Game Platform ("Cardstock")
 
-**▶ [Play now](https://paulgibeault.github.io/cardstock/)** — Crazy Eights
-solo vs. bots, hosted straight from this repo via GitHub Pages. Works on
-iPhone Safari for on-device testing; no install needed.
+**▶ [Play now](https://paulgibeault.github.io/cardstock/)** — pick a game
+from the lobby and play it solo vs. bots, hosted straight from this repo via
+GitHub Pages. Works on iPhone Safari for on-device testing; no install
+needed.
 
 A single dynamic platform that plays many card games, each delivered as a
 **card-pack** (config + optional logic + styles + assets). Runs as one game
 inside [Paul's Arcade](https://paulgibeault.github.io), using its SDK for
 storage and serverless P2P multiplayer.
 
-**Status: milestone 1 plus arcade integration.** Engine core, all four
-genre templates, and all five launch packs pass their rule tests; the
-table UI plays solo against bots, standalone or mounted in the arcade.
+**Status: milestone 1, arcade integration, and the lobby.** Engine core,
+all four genre templates, and all five launch packs pass their rule tests;
+the table UI plays solo against bots, standalone or mounted in the arcade.
 The launcher integration is done and all 12 automated §13 acceptance
-checks pass — SDK boot, namespaced storage with a resumable match,
+checks pass — SDK boot, namespaced storage with resumable matches,
 lifecycle, launcher settings (theme, font scale, handedness, reduced
 motion), a PWA for offline solo play, and a graph-cue sound pack. The
 catalog entry ships with `inDevelopment: true`.
+
+**The lobby is the front door.** Every pack gets a tile; a game you walk
+away from keeps its place and is waiting when you come back, and **every
+pack can have its own game in flight at once**. Only the open table
+advances — a match nobody is looking at is a seed and a log in storage,
+not a process, so no bot plays a card in a game you closed. See
+[LOBBY_PLAN.md](LOBBY_PLAN.md) for the design and
+[src/ui/table.js](src/ui/table.js) for why that invariant is structural
+rather than policed.
+
+Only `shedding` packs (Crazy Eights, Wildfire) can be played from deal to
+game over. The other three deal, display and persist, but the table has no
+controls yet for passing (Hearts), laying down melds (Milestones) or
+choosing a build pile (Stockpile) — so the lobby labels them **Preview**
+rather than letting a player find out at the table. The set lives in
+`FULLY_PLAYABLE_TEMPLATES` in [src/ui/table.js](src/ui/table.js); move a
+template out of it by teaching the table its moves.
 
 **Not yet built: multiplayer.** It is a primary feature and is planned in
 full — see [ARCADE_ENHANCEMENTS.md](ARCADE_ENHANCEMENTS.md) Phase 8 —
@@ -48,11 +66,13 @@ npm run acceptance -- http://127.0.0.1:4791/cardstock/
 ```
 
 Play at `http://localhost:4780/` (standalone) or from the launcher grid.
-`?pack=<id>` picks a pack; the last one played is remembered in
-`arcade.v1.cardstock.lastPack`, because launcher deep links are
-`#app=cardstock` and cannot carry a query. Only Crazy Eights has UI polish
-so far. The [hosted version](https://paulgibeault.github.io/cardstock/)
-deploys through the shared fleet pipeline on every push to `main`.
+A plain visit lands on the lobby — including every launcher deep link,
+which is `#app=cardstock` and cannot carry a query. `?pack=<id>` skips it
+and opens that pack's table directly; that is the dev/test/CI entry, not
+the player's. `arcade.v1.cardstock.lastPack` no longer auto-launches
+anything: it only tells the lobby which tile to feature. The
+[hosted version](https://paulgibeault.github.io/cardstock/) deploys
+through the shared fleet pipeline on every push to `main`.
 
 ## Layout
 
@@ -79,8 +99,15 @@ deploys through the shared fleet pipeline on every push to `main`.
   pack loader, bot.
 - **`src/templates/`** — the four genre templates (shedding, trick-taking,
   contract-rummy, sequencing).
-- **`src/ui/`, `src/main.js`, `index.html`** — the vanilla table UI and
-  its arcade integration.
+- **`src/ui/`, `src/main.js`, `index.html`** — the two screens and their
+  arcade integration. `main.js` is boot plus the lobby/table router;
+  `lobby.js` draws the grid from manifests alone (no decks, no replay);
+  `table.js` owns the one open match; `packSource.js` is the only module
+  that builds a URL from a pack id; `flight.js` sends cards across the
+  table; `css.js` gates the manifest values that reach a style.
+- **`packs/index.json`** — the catalog the lobby fetches, because a browser
+  cannot list a directory. Its order is the grid's order;
+  `tests/repo-gates.test.js` keeps its contents matching `packs/`.
 - **`src/arcade/`** — the launcher-facing edge: `storage.js` (the only
   module that touches `Arcade.state`, and where the `Arcade.store` seam is
   stubbed) and `audio.js` (the single sound-registration site).
