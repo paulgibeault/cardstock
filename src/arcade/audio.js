@@ -85,3 +85,12 @@ export function playDraw() { sfx('draw'); }
 export function playShuffle() { sfx('shuffle'); }
 export function playInvalid() { sfx('invalid'); }
 export function playWin() { sfx('win'); }
+
+/**
+ * A trick being gathered off the table. Mapped onto existing pack cues — the
+ * sweep of cards is physically a shuffle gesture, and a trick full of penalty
+ * points landing in YOUR pile earns the dull 'invalid' thud. A dedicated
+ * gather cue belongs in js/soundpack.js if one is ever designed; per the
+ * header, no synthesis is added here.
+ */
+export function playTrickTaken({ bad = false } = {}) { sfx(bad ? 'invalid' : 'shuffle'); }

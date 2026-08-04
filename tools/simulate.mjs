@@ -61,8 +61,9 @@ function playOne(pack, seats, seed) {
   const maxMoves = MAX_MOVES_BY_TEMPLATE[pack.template.id] ?? MAX_MOVES;
 
   let moves = 0;
+  let roundDone = false;
   const effectCounts = {};
-  while (!state.gameOver && !pack.template.isRoundOver(makeCtx(state)) && moves < maxMoves) {
+  while (!state.gameOver && !roundDone && moves < maxMoves) {
     let move = null;
     let actingSeat = null;
     for (const seat of actingSeats(makeCtx(state))) {
@@ -79,6 +80,11 @@ function playOne(pack, seats, seed) {
     } catch (e) {
       return { outcome: 'error', moves, reason: e.message };
     }
+    // The pipeline advances rounds itself now (a finished hand is scored and the
+    // next one dealt inside applyMove), so "did a round complete" is read from
+    // the event window rather than isRoundOver — which is already false again
+    // by the time the redeal has happened.
+    if (state.events.some((e) => e.type === 'roundOver')) roundDone = true;
     moves++;
   }
   if (moves >= maxMoves) return { outcome: 'stall', moves, reason: 'move cap exceeded (live-lock, or just very slow bot convergence)' };
@@ -120,8 +126,12 @@ async function main() {
   const gamesArg = args.find((a) => a.startsWith('--games='));
   const games = gamesArg ? Number(gamesArg.split('=')[1]) : 1000;
   const all = args.includes('--all');
+  // Directories only — packs/ also holds index.json (see pack-test.mjs's
+  // listPackIds, which dodges the same trap).
   const packIds = all
-    ? (await readdir(PACKS_DIR)).filter((f) => !f.startsWith('.'))
+    ? (await readdir(PACKS_DIR, { withFileTypes: true }))
+      .filter((e) => e.isDirectory() && !e.name.startsWith('.'))
+      .map((e) => e.name)
     : args.filter((a) => !a.startsWith('--'));
 
   if (packIds.length === 0) {

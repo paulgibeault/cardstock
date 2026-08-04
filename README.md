@@ -28,13 +28,22 @@ not a process, so no bot plays a card in a game you closed. See
 [src/ui/table.js](src/ui/table.js) for why that invariant is structural
 rather than policed.
 
-Only `shedding` packs (Crazy Eights, Wildfire) can be played from deal to
-game over. The other three deal, display and persist, but the table has no
-controls yet for passing (Hearts), laying down melds (Milestones) or
-choosing a build pile (Stockpile) — so the lobby labels them **Preview**
-rather than letting a player find out at the table. The set lives in
-`FULLY_PLAYABLE_TEMPLATES` in [src/ui/table.js](src/ui/table.js); move a
-template out of it by teaching the table its moves.
+**All five packs play from deal to game over.** The table renders piles
+from the packs' own zone definitions (Stockpile's four build piles and four
+personal discards included), input is tap-source → tap-destination driven
+by the enumerated legal moves, and the previously-Preview genres have their
+controls: Hearts passes three cards by multi-select, Milestones lays down
+and hits melds, Stockpile picks build piles. The engine advances rounds
+itself — a finished hand is scored and the next one dealt inside
+`applyMove` (see `maybeFinishRound` in
+[src/engine/movePipeline.js](src/engine/movePipeline.js)), so Crazy
+Eights/Wildfire/Hearts now run to their declared score thresholds and
+Milestones to its tenth contract. Tricks celebrate (or sting) via the
+engine's derived-event channel (`state.events`), and one gold turn token
+marks whoever may act, in every game. `FULLY_PLAYABLE_TEMPLATES` in
+[src/ui/table.js](src/ui/table.js) now holds all four templates; a future
+fifth template starts life outside it and earns its way in the same way —
+by teaching the table its moves.
 
 **Not yet built: multiplayer.** It is a primary feature and is planned in
 full — see [ARCADE_ENHANCEMENTS.md](ARCADE_ENHANCEMENTS.md) Phase 8 —

@@ -184,6 +184,19 @@ function findContractLayDown(ctx, seat) {
   return melds;
 }
 
+// All orderings of a contract's items. Contracts are at most a few items, so this
+// is bounded and cheap; trying every order is what makes arrangeContract succeed on
+// selections a single greedy pass would mis-partition (a card that fits either item).
+function permutations(items) {
+  if (items.length <= 1) return [items];
+  const out = [];
+  for (let i = 0; i < items.length; i++) {
+    const rest = [...items.slice(0, i), ...items.slice(i + 1)];
+    for (const p of permutations(rest)) out.push([items[i], ...p]);
+  }
+  return out;
+}
+
 // Every legal one-card hit across every seat's melds, via validateMove itself so this
 // can never drift from what applyMove would actually accept.
 function findHits(ctx, seat) {
@@ -210,15 +223,36 @@ function skipNextTurnFrom(ctx, seat) {
   return next;
 }
 
+// The per-round part of dealing, shared by setup (round 1) and startRound
+// (rounds 2+): shuffle the whole deck into `draw`, deal, reset the round-scoped
+// player vars, flip the starter. Zones are already empty on both paths — fresh
+// from createState, or cleared by the pipeline's round boundary.
+function dealRound(ctx) {
+  initializeDeckInto(ctx.state, 'draw');
+  const dealCount = typeof ctx.rules.deal === 'number' ? ctx.rules.deal : ctx.rules.deal?.default ?? 10;
+  for (let s = 0; s < ctx.seats; s++) {
+    for (let i = 0; i < dealCount; i++) {
+      const top = ctx.zone('draw').cards.slice(-1)[0];
+      if (top === undefined) break;
+      ctx.moveCards([top], 'draw', ctx.zoneAddr('hand', s));
+    }
+    ctx.setPlayerVar(s, 'laidDown', false);
+    ctx.setPlayerVar(s, 'melds', undefined);
+    ctx.setPlayerVar(s, 'skipNextTurn', false);
+  }
+  const starter = ctx.zone('draw').cards.slice(-1)[0];
+  if (starter !== undefined) ctx.moveCards([starter], 'draw', 'discard');
+}
+
 const contractRummy = {
   id: 'contract-rummy',
 
   defaultZones() {
     return [
       { id: 'hand', per: 'player', visibility: 'owner', layout: 'fan', order: 'sorted', facing: 'up' },
-      { id: 'draw', per: 'shared', visibility: 'none', layout: 'stack', order: 'stack', facing: 'down' },
-      { id: 'discard', per: 'shared', visibility: 'top', layout: 'stack', order: 'stack', facing: 'up' },
-      { id: 'melds', per: 'player', visibility: 'all', layout: 'grid', order: 'free', facing: 'up' },
+      { id: 'draw', per: 'shared', visibility: 'none', layout: 'stack', order: 'stack', facing: 'down', label: 'Draw' },
+      { id: 'discard', per: 'shared', visibility: 'top', layout: 'stack', order: 'stack', facing: 'up', label: 'Discard' },
+      { id: 'melds', per: 'player', visibility: 'all', layout: 'grid', order: 'free', facing: 'up', label: 'Melds' },
     ];
   },
 
@@ -227,19 +261,18 @@ const contractRummy = {
   },
 
   setup(ctx) {
-    initializeDeckInto(ctx.state, 'draw');
-    const dealCount = typeof ctx.rules.deal === 'number' ? ctx.rules.deal : ctx.rules.deal?.default ?? 10;
-    for (let s = 0; s < ctx.seats; s++) {
-      for (let i = 0; i < dealCount; i++) {
-        const top = ctx.zone('draw').cards.slice(-1)[0];
-        if (top === undefined) break;
-        ctx.moveCards([top], 'draw', ctx.zoneAddr('hand', s));
-      }
-      ctx.setPlayerVar(s, 'phase', 1);
-      ctx.setPlayerVar(s, 'laidDown', false);
-    }
-    const starter = ctx.zone('draw').cards.slice(-1)[0];
-    if (starter !== undefined) ctx.moveCards([starter], 'draw', 'discard');
+    dealRound(ctx);
+    for (let s = 0; s < ctx.seats; s++) ctx.setPlayerVar(s, 'phase', 1);
+    ctx.setTurnSeat(0);
+    ctx.setPhase('draw');
+  },
+
+  // Between rounds the deal resets but the CONTRACTS do not: 'phase' is the
+  // whole point of the game and survives; laidDown/melds/skipNextTurn are
+  // round-scoped. The opening lead rotates so seat 0 doesn't start every round.
+  startRound(ctx) {
+    dealRound(ctx);
+    ctx.setTurnSeat((ctx.state.roundNumber - 1) % ctx.seats);
     ctx.setPhase('draw');
   },
 
@@ -364,7 +397,9 @@ const contractRummy = {
       ctx.setPlayerVar(seat, 'laidDown', true);
       // advance-on-complete: completing a phase's contract advances it for next round,
       // independent of who wins this round.
-      ctx.setPlayerVar(seat, 'phase', ctx.playerVar(seat, 'phase') + 1);
+      const completed = ctx.playerVar(seat, 'phase');
+      ctx.setPlayerVar(seat, 'phase', completed + 1);
+      ctx.emit('laidDown', { seat, contract: completed, melds: groups.length });
       if (ctx.cardIdsIn(ctx.zoneAddr('hand', seat)).length === 0) ctx.setGameOver(seat);
       return;
     }
@@ -378,6 +413,7 @@ const contractRummy = {
       group.cards.push(...move.cards);
       group.item = `${kind}(${group.cards.length})`;
       ctx.setPlayerVar(targetSeat, 'melds', groups);
+      ctx.emit('hit', { seat, targetSeat, meld: meldIndex });
       if (ctx.cardIdsIn(ctx.zoneAddr('hand', seat)).length === 0) ctx.setGameOver(seat);
       return;
     }
@@ -398,6 +434,37 @@ const contractRummy = {
       ctx.setTurnSeat(skipNextTurnFrom(ctx, seat));
       ctx.setPhase('draw');
     }
+  },
+
+  /**
+   * Fit exactly `cardIds` (a player's tapped selection) into the seat's current
+   * contract, or return null. Unlike the bot's findContractLayDown, which mines
+   * the whole hand, this must use EVERY selected card — a lay-down that quietly
+   * ignored two of the cards you picked would move cards you didn't ask to move.
+   * The UI's "Lay down" button enables on exactly this returning non-null.
+   */
+  arrangeContract(ctx, seat, cardIds) {
+    const contract = ctx.rules.contracts[ctx.playerVar(seat, 'phase') - 1];
+    if (!contract || !cardIds.length) return null;
+    const pool = cardIds.map((id) => ({ id, card: ctx.cardById(id) }));
+    for (const order of permutations(contract)) {
+      let available = pool.slice();
+      const melds = [];
+      let ok = true;
+      for (const item of order) {
+        const parsed = parseItem(item);
+        const found = parsed && findMeldForItem(ctx, parsed, available);
+        if (!found) { ok = false; break; }
+        melds.push({ item, cards: found });
+        available = available.filter((c) => !found.includes(c.id));
+      }
+      if (ok && available.length === 0) {
+        // Re-order to match the declared contract so the move reads naturally.
+        const move = { actor: seat, type: 'layDown', choice: { melds } };
+        if (contractRummy.validateMove(ctx, move).legal) return melds;
+      }
+    }
+    return null;
   },
 
   enumerateLegalMoves(ctx, seat) {

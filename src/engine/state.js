@@ -108,7 +108,27 @@ export function createState({ pack, seats, seed }) {
     gameOver: false,
     winner: null,
     log: [],
+    // Transient, derived, and NOT persisted: what happened inside the last
+    // applied move (a trick resolving, a pile recycling, a round ending).
+    // serializeMatch ignores it and replay regenerates it, so it can never
+    // drift from the log. movePipeline.applyMove clears it per move; the UI
+    // reads it after to drive animation/sound without re-deriving the engine's
+    // internals from zone diffs.
+    events: [],
   };
+}
+
+/** Append a derived event for the UI. Safe before/after any move. */
+export function emitEvent(state, type, payload) {
+  state.events.push({ type, ...payload });
+}
+
+/** Empty every zone and the location map — the reset between rounds. */
+export function clearAllZones(state) {
+  for (const address of state.zones.allAddresses()) {
+    state.zones.get(address).cards.length = 0;
+  }
+  state.cardLocation.clear();
 }
 
 export function moveCards(state, cardIds, fromAddress, toAddress, { position = 'top' } = {}) {
@@ -174,6 +194,7 @@ function applyReaction(state, reaction, triggerAddress) {
     const target = state.zones.instances.get(triggerAddress);
     target.cards.push(...moving);
     for (const id of moving) state.cardLocation.set(id, triggerAddress);
+    emitEvent(state, 'recycled', { from: reaction.from, to: triggerAddress, count: moving.length });
     return true;
   }
   if (reaction.do === 'moveAll') {
@@ -184,6 +205,7 @@ function applyReaction(state, reaction, triggerAddress) {
     const target = state.zones.instances.get(reaction.to);
     target.cards.push(...moving);
     for (const id of moving) state.cardLocation.set(id, reaction.to);
+    emitEvent(state, 'pileCleared', { zone: triggerAddress, to: reaction.to, count: moving.length });
     return true;
   }
   return false;

@@ -58,21 +58,26 @@
     <div id="table">
       <div class="opponent-row" id="opponents-top"></div>
 
-      <!-- Both slots are optional: not every template has a stock to draw
-           from (trick-taking has neither a draw pile nor a discard), so each
-           is hidden when the open pack has no such zone. -->
-      <div id="center-piles">
-        <div class="pile" id="draw-slot" hidden>
-          <!-- The draw pile IS the draw control. Reaching for the stock is how
-               drawing works at a real table, and it puts the card's flight
-               start under the finger that asked for it. -->
-          <button type="button" id="draw-pile" class="pile-stack" disabled></button>
-          <div id="draw-count" class="pile-count"></div>
-        </div>
-        <div class="pile" id="center-slot" hidden>
-          <div id="center-pile" class="pile-stack"></div>
-          <div id="center-pile-label" class="pile-count"></div>
-        </div>
+      <!-- Every pile the open pack's shared zones call for — draw, discard,
+           trick, build.1..N — drawn from the zone definitions themselves
+           (src/ui/table.js renderCenterZones). The draw pile IS the draw
+           control where drawing is a move: reaching for the stock is how
+           drawing works at a real table, and it puts the card's flight start
+           under the finger that asked for it. -->
+      <div id="center-piles"></div>
+
+      <!-- The human's own piles beyond the hand: a Stockpile stock and
+           discards, Milestones melds, a Hearts won pile. Empty (and
+           collapsed) for packs whose only personal zone is the hand. -->
+      <div id="player-piles"></div>
+
+      <!-- Phase-contextual guidance and the one action that needs a button
+           (passing, laying down). Carries the turn token when it is the
+           human's turn — the same token the seats wear. -->
+      <div id="action-bar" hidden>
+        <span class="turn-token" aria-hidden="true"></span>
+        <span id="action-hint"></span>
+        <button type="button" id="action-button" hidden></button>
       </div>
 
       <div id="hand-row">
@@ -81,6 +86,20 @@
     </div>
 
     <div id="log" role="status" aria-live="polite"></div>
+
+    <!-- Trick celebrations and other table moments. Decorative by
+         construction: #log is the live region that says the same thing. -->
+    <div id="event-banner" aria-hidden="true" hidden></div>
+  </div>
+
+  <div id="round-overlay" hidden>
+    <div class="panel">
+      <div id="round-title" class="panel__title"></div>
+      <div id="round-scores" class="round-scores"></div>
+      <div class="panel__actions">
+        <button id="round-continue">Deal the next round</button>
+      </div>
+    </div>
   </div>
 
   <div id="choice-modal" hidden>
