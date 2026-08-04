@@ -5,6 +5,13 @@
   "players": { "min": 2, "max": 6, "best": 4 },
   "deck": "deck.json",
   "template": "contract-rummy",
+  "tagline": "Ten contracts, each harder than the last.",
+  "accent": "#1f7a63",
+  "heroCards": [
+    { "rank": "7", "color": "green" },
+    { "rank": "7", "color": "blue" },
+    { "rank": "wild" }
+  ],
   "rules": {
     "deal": 10,
     "contracts": [

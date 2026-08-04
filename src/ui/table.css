@@ -44,6 +44,24 @@
   --action-bg: #2f6fb0;
   --action-bg-hover: #245a91;
   --action-text: #ffffff;
+
+  /* The rail: the wooden edge that turns a green rectangle into a table. */
+  --rail: #5a3d24;
+  --rail-edge: rgba(255, 255, 255, 0.14);
+  --rail-shadow: rgba(0, 0, 0, 0.5);
+
+  --chip-bg: rgba(0, 0, 0, 0.28);
+  --chip-border: rgba(255, 255, 255, 0.14);
+  --tile-bg: #16281f;
+  --tile-border: rgba(255, 255, 255, 0.16);
+  --tile-accent-strong: 62%;
+  --tile-accent-weak: 26%;
+  --ghost-text: var(--chrome-text);
+  --ghost-border: rgba(255, 255, 255, 0.35);
+  --ghost-hover: rgba(255, 255, 255, 0.12);
+  --danger-bg: #a33a3a;
+  --danger-bg-hover: #862d2d;
+  --ribbon-text: #1a1a1a;
 }
 
 [data-theme="light"] {
@@ -75,6 +93,23 @@
   --action-bg: #245a91;
   --action-bg-hover: #1b4670;
   --action-text: #ffffff;
+
+  --rail: #9a7448;
+  --rail-edge: rgba(255, 255, 255, 0.45);
+  --rail-shadow: rgba(31, 61, 45, 0.3);
+
+  --chip-bg: rgba(255, 255, 255, 0.55);
+  --chip-border: rgba(20, 38, 28, 0.16);
+  --tile-bg: #ffffff;
+  --tile-border: rgba(20, 38, 28, 0.14);
+  --tile-accent-strong: 34%;
+  --tile-accent-weak: 11%;
+  --ghost-text: var(--chrome-text);
+  --ghost-border: rgba(20, 38, 28, 0.3);
+  --ghost-hover: rgba(20, 38, 28, 0.08);
+  --danger-bg: #9a2f2f;
+  --danger-bg-hover: #7a2424;
+  --ribbon-text: #ffffff;
 }
 
 * { box-sizing: border-box; }
@@ -93,6 +128,17 @@ body {
     var(--felt);
 }
 
+/* An element given `display: flex` needs its own [hidden] rule — the UA
+   sheet's `display: none` loses to any later display declaration, and the
+   router relies on `hidden` alone to swap screens. */
+#table-screen {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+#table-screen[hidden] { display: none; }
+
 #status-bar {
   padding: 0.5rem 1rem;
   background: var(--chrome-bar);
@@ -106,8 +152,29 @@ body {
   transition: border-color 0.3s ease;
 }
 
+.status-bar__side {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-width: 0;
+}
+
+.status-bar__game {
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 #status-bar.status-bar--your-turn {
   border-bottom-color: var(--accent);
+}
+
+/* The opponent's turn is a *quieter* signal than your own, not a second loud
+   one: it says "waiting", and the seat chip is already pulsing. */
+#status-bar.status-bar--thinking {
+  border-bottom-color: var(--chip-border);
 }
 
 #status-bar button {
@@ -125,6 +192,35 @@ body {
   cursor: default;
 }
 
+.ghost-button {
+  font: inherit;
+  padding: 0.35rem 0.7rem;
+  border-radius: 6px;
+  border: 1px solid var(--ghost-border);
+  background: transparent;
+  color: var(--ghost-text);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.ghost-button:hover { background: var(--ghost-hover); }
+
+#status-bar .ghost-button {
+  background: transparent;
+  color: var(--chrome-text);
+}
+
+.danger-button {
+  font: inherit;
+  padding: 0.6rem 1.1rem;
+  border-radius: 8px;
+  border: none;
+  cursor: pointer;
+  font-weight: 600;
+  background: var(--danger-bg);
+  color: #fff;
+}
+.danger-button:hover { background: var(--danger-bg-hover); }
+
 /* HANDEDNESS (§5). The SDK stamps data-handedness on <html>. The two things
    that have a side are the action button and the direction the hand fans, and
    both flip together — a left-handed player's thumb covers the left edge, so
@@ -133,36 +229,95 @@ body {
 [data-handedness="left"] .hand { flex-direction: row-reverse; }
 [data-handedness="left"] .opponent-row { flex-direction: row-reverse; }
 
+/* THE RAIL. A green rectangle is a viewport; a green rectangle inside a
+   wooden edge is a table. The ring is a box-shadow rather than a border so it
+   sits outside the padding box and the felt keeps its own rounded corner, and
+   the hairline highlight on top of it is what keeps the wood from reading as
+   a flat brown stripe. */
 #table {
   flex: 1;
   display: grid;
   grid-template-rows: auto 1fr auto;
   gap: 1rem;
-  padding: 1rem;
+  padding: 1.25rem 1rem;
+  margin: 0.85rem;
+  border-radius: 18px;
+  box-shadow:
+    0 0 0 10px var(--rail),
+    0 0 0 11px var(--rail-edge),
+    0 10px 30px var(--rail-shadow),
+    inset 0 0 90px var(--felt-vignette);
+  background:
+    radial-gradient(ellipse at 50% 30%, var(--felt-sheen), transparent 62%),
+    repeating-linear-gradient(45deg, var(--felt-weave) 0 2px, transparent 2px 9px),
+    var(--felt);
 }
 
 .opponent-row {
   display: flex;
   justify-content: center;
-  gap: 1.5rem;
+  gap: 1.25rem;
   flex-wrap: wrap;
 }
 
-.seat-label {
-  font-size: 0.8rem;
-  text-align: center;
-  opacity: 0.85;
-  margin-bottom: 0.25rem;
+/* A seat is a player, so it gets a face and a name plate rather than a line of
+   text. The count is a badge on the plate — the number you actually watch. */
+.seat {
+  padding: 0.4rem 0.55rem 0.5rem;
+  border-radius: 12px;
+  background: var(--chip-bg);
+  border: 1px solid var(--chip-border);
+  transition: box-shadow 0.25s ease, transform 0.25s ease;
 }
 
-.seat-label--active {
-  opacity: 1;
+.seat--active {
+  box-shadow: 0 0 0 2px var(--accent), 0 4px 14px var(--panel-shadow);
+  transform: translateY(-2px);
+}
+
+.seat__head {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.35rem;
+}
+
+.seat__avatar {
+  width: 1.55rem;
+  height: 1.55rem;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: #fff;
+  flex: none;
+  box-shadow: inset 0 -2px 4px rgba(0, 0, 0, 0.25);
+}
+
+.seat__name { font-size: 0.8rem; }
+
+.seat--active .seat__name {
   font-weight: 700;
   animation: pulse-glow 1.6s ease-in-out infinite;
 }
 
+.seat__count {
+  margin-left: auto;
+  font-size: 0.7rem;
+  font-weight: 700;
+  min-width: 1.35rem;
+  padding: 0.08rem 0.35rem;
+  text-align: center;
+  border-radius: 999px;
+  background: var(--chip-border);
+}
+
 .mini-hand {
   display: flex;
+  justify-content: center;
 }
 
 .mini-hand .card-face { width: 28px; margin-left: -14px; }
@@ -172,12 +327,101 @@ body {
   display: flex;
   justify-content: center;
   align-items: center;
-  gap: 2rem;
+  gap: 2.5rem;
 }
 
 .pile { text-align: center; }
-.pile .card-face { width: 90px; }
-.pile-count { font-size: 0.75rem; opacity: 0.8; margin-top: 0.25rem; }
+.pile-count { font-size: 0.75rem; opacity: 0.85; margin-top: 1.1rem; }
+
+/* Piles stack in place: every card sits at the same spot, so the discard can
+   keep a few cards of history under the top one and the draw pile can look as
+   deep as it actually is. 90 × 126 is the card's own 100:140 aspect. */
+.pile-stack {
+  position: relative;
+  width: 90px;
+  height: 126px;
+  margin: 0 auto;
+}
+
+/* The draw pile is a button (index.html): reaching for the stock is how you
+   draw at a real table. It is disabled whenever drawing is not a legal move,
+   so the pile lighting up is the "you're stuck" cue. */
+button.pile-stack {
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  color: inherit;
+  cursor: default;
+  border-radius: 8px;
+  transition: transform 0.18s ease;
+}
+
+button.pile-stack:not(:disabled) { cursor: pointer; }
+button.pile-stack:not(:disabled):hover { transform: translateY(-4px); }
+button.pile-stack:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+
+.pile-stack--ready .pile-stack__top {
+  animation: pile-beckon 1.8s ease-in-out infinite;
+  border-radius: 8px;
+}
+
+@keyframes pile-beckon {
+  0%, 100% { box-shadow: 0 0 0 0 var(--glow); }
+  50% { box-shadow: 0 0 0 5px var(--glow); }
+}
+
+/* z-index, not just source order: ::after below is a sibling that paints AFTER
+   every real child, so without this the depth cue draws a dark slab over the
+   top card of the pile. */
+.pile-stack > * {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+}
+
+.pile-stack .card-face { width: 90px; }
+
+/* The edges of the cards underneath. Two is enough to read as "a lot left" —
+   this is a depth cue, not a count. */
+.pile-stack--deep::before,
+.pile-stack--deep::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 8px;
+  background: #d8d8d2;
+  border: 1px solid var(--card-shadow);
+  z-index: 0;
+}
+.pile-stack--deep::before { transform: translate(3px, 3px); }
+.pile-stack--deep::after { transform: translate(1.5px, 1.5px); }
+
+.card-face--empty {
+  width: 90px;
+  height: 126px;
+  border-radius: 8px;
+  border: 2px dashed var(--chip-border);
+}
+
+.pile-stack__card {
+  transform: rotate(var(--stack-tilt, 0deg));
+}
+.pile-stack__card svg { transition: opacity 0.15s ease; }
+
+/* A trick is not a pile. Every card in it is live information about who played
+   what, so it spreads out and stays readable instead of burying itself. The
+   slot widens to hold the spread rather than letting cards fall off it. */
+.pile-stack--spread {
+  width: 190px;
+}
+.pile-stack--spread .pile-stack__card {
+  left: 50%;
+  right: auto;
+  width: 90px;
+  margin-left: -45px;
+  transform: translateX(calc(var(--stack-index, 0) * 46px)) rotate(var(--stack-tilt, 0deg));
+}
 
 #hand-row {
   display: flex;
@@ -197,11 +441,23 @@ body {
 }
 .hand .card-face:first-child { margin-left: 0; }
 .hand .card-face:hover { transform: translateY(-10px); }
-.hand .card-face--disabled { cursor: default; opacity: 0.55; }
+.hand .card-face--disabled { cursor: default; opacity: 0.78; }
 .hand .card-face--disabled:hover { transform: none; }
 
-.card-face { display: inline-block; animation: settle-in 0.22s ease-out; }
-.card-face svg { width: 100%; display: block; filter: drop-shadow(0 3px 4px var(--card-shadow)); }
+/* A playable card is lifted a little even before you reach for it, so which
+   cards are legal is readable at a glance rather than only by what dims. */
+.card-face-wrap--playable .card-face { transform: translateY(-4px); }
+.card-face-wrap--playable .card-face:hover { transform: translateY(-14px); }
+
+/* `card-face` is the class on the SVG ELEMENT itself (src/ui/renderCard.js) —
+   not on a wrapper — so the drop shadow belongs here. It used to sit on
+   `.card-face svg`, which matches a nested svg that does not exist, and so
+   every card on the table was shadowless. */
+.card-face {
+  display: inline-block;
+  animation: settle-in 0.22s ease-out;
+  filter: drop-shadow(0 3px 4px var(--card-shadow));
+}
 
 .card-face-wrap.card-deal,
 .mini-hand .card-deal .card-face {
@@ -232,8 +488,35 @@ body {
   .card-face,
   .card-face-wrap.card-deal,
   .mini-hand .card-deal .card-face,
-  .seat-label--active {
+  .seat--active .seat__name,
+  .pile-stack--ready .pile-stack__top,
+  .game-over--won .game-over-fan__card,
+  #choice-modal .panel,
+  #confirm-modal .panel,
+  #game-over-overlay .panel {
     animation: none !important;
+  }
+
+  /* Transitions are motion too, and the SDK's kill-switch only covers
+     animations. Everything below moves an element under the pointer — the
+     tile lift, the fan opening, a card rising out of the hand — so it is
+     reduced to the colour change alone rather than removed entirely. */
+  .tile,
+  .tile__fan-card,
+  .seat,
+  .hand .card-face,
+  button.pile-stack,
+  .card-face-wrap--playable .card-face {
+    transition: none !important;
+  }
+  .tile:hover,
+  .tile__open:hover .tile__fan-card,
+  .hand .card-face:hover,
+  .card-face-wrap--playable .card-face,
+  .card-face-wrap--playable .card-face:hover,
+  button.pile-stack:not(:disabled):hover,
+  .seat--active {
+    transform: none !important;
   }
 }
 
@@ -261,20 +544,23 @@ body {
    rank grew while the card did not would overflow its own corner. Chrome text
    is rem throughout and does scale. */
 .card-face__corner { font-size: 16px; font-weight: 700; }
+.card-face__corner--sm { font-size: 12px; }
+.card-face__corner--xs { font-size: 9.5px; }
 .card-face__corner--br { text-anchor: end; }
 .card-face__pip { font-size: 34px; text-anchor: middle; opacity: 0.9; }
 .card-face__badge { font-size: 20px; font-weight: 700; text-anchor: middle; fill: #333; }
 
-/* Colored cards with no suit (Wildfire, Milestones) get their face painted by color. */
-.card-face--red .card-face__bg { fill: #c0392b; }
-.card-face--red .card-face__corner, .card-face--red .card-face__badge { fill: #fff; }
-.card-face--yellow .card-face__bg { fill: #e1b12c; }
-.card-face--green .card-face__bg { fill: #27ae60; }
-.card-face--blue .card-face__bg { fill: #2f6fb0; }
-.card-face--yellow .card-face__corner, .card-face--green .card-face__corner, .card-face--blue .card-face__corner,
-.card-face--yellow .card-face__badge, .card-face--green .card-face__badge, .card-face--blue .card-face__badge {
-  fill: #fff;
-}
+/* Colored cards with NO SUIT (Wildfire, Milestones) get their face painted by
+   colour. The `--painted` qualifier is load-bearing: a diamond in a standard
+   deck also carries color:"red" (src/engine/cards.js), so without it every
+   heart and diamond on the table rendered as a solid red slab instead of a
+   white card with red pips. */
+.card-face--painted.card-face--red .card-face__bg { fill: #c0392b; }
+.card-face--painted.card-face--yellow .card-face__bg { fill: #e1b12c; }
+.card-face--painted.card-face--green .card-face__bg { fill: #27ae60; }
+.card-face--painted.card-face--blue .card-face__bg { fill: #2f6fb0; }
+.card-face--painted .card-face__corner,
+.card-face--painted .card-face__badge { fill: #fff; }
 
 #log {
   max-width: 30rem;
@@ -285,31 +571,12 @@ body {
   min-height: 1.2em;
 }
 
-#choice-modal {
-  position: fixed;
-  inset: 0;
-  background: var(--scrim);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-#choice-modal[hidden] { display: none; }
-#choice-modal .panel {
-  background: var(--panel-bg);
-  color: var(--panel-text);
-  padding: 1rem;
-  border-radius: 8px;
-  display: flex;
-  gap: 0.5rem;
-}
-#choice-modal button {
-  font: inherit;
-  padding: 0.6rem 1rem;
-  border-radius: 6px;
-  border: none;
-  cursor: pointer;
-}
+/* ------------------------------------------------------------------ *
+ * Modals
+ * ------------------------------------------------------------------ */
 
+#choice-modal,
+#confirm-modal,
 #game-over-overlay {
   position: fixed;
   inset: 0;
@@ -317,18 +584,95 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
+  padding: 1rem;
   z-index: 10;
 }
+#choice-modal[hidden],
+#confirm-modal[hidden],
 #game-over-overlay[hidden] { display: none; }
+
+#choice-modal .panel,
+#confirm-modal .panel,
 #game-over-overlay .panel {
   background: var(--panel-bg);
   color: var(--panel-text);
-  padding: 2rem 2.5rem;
-  border-radius: 12px;
+  padding: 1.5rem;
+  border-radius: 14px;
   text-align: center;
+  max-width: min(26rem, 100%);
   box-shadow: 0 20px 60px var(--panel-shadow);
   animation: settle-in 0.3s ease-out;
 }
+
+.panel__title {
+  font-size: 1.05rem;
+  font-weight: 600;
+  margin-bottom: 1rem;
+}
+
+.panel__options {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  justify-content: center;
+  margin-bottom: 1rem;
+}
+
+.panel__actions {
+  display: flex;
+  gap: 0.6rem;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+/* Inside a panel the ghost button sits on the panel's own surface, so it
+   borrows the panel's text colour rather than the felt's. */
+.panel .ghost-button {
+  color: var(--panel-text);
+  border-color: var(--panel-text);
+  opacity: 0.75;
+}
+.panel .ghost-button:hover { opacity: 1; background: transparent; }
+
+.choice-option {
+  font: inherit;
+  padding: 0.6rem 1rem;
+  border-radius: 8px;
+  border: 1px solid var(--chip-border);
+  cursor: pointer;
+  background: #eee;
+  color: #1a1a1a;
+  text-transform: capitalize;
+}
+/* A swatch paints itself the colour it names, so the text on it cannot be
+   assumed readable — the outline is what keeps the label legible on both a
+   pale yellow and a dark blue. */
+.choice-option--swatch {
+  color: #fff;
+  font-weight: 700;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85), 0 0 2px rgba(0, 0, 0, 0.6);
+  min-width: 5.5rem;
+}
+
+/* ------------------------------------------------------------------ *
+ * Game over
+ * ------------------------------------------------------------------ */
+
+.game-over-fan {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 1rem;
+  height: 84px;
+}
+.game-over-fan__card {
+  width: 60px;
+  display: block;
+}
+.game-over-fan__card:nth-child(1) { transform: rotate(-14deg) translate(14px, 4px); }
+.game-over-fan__card:nth-child(2) { transform: translateY(-4px); z-index: 1; }
+.game-over-fan__card:nth-child(3) { transform: rotate(14deg) translate(-14px, 4px); }
+.game-over-fan__card .card-face { width: 60px; }
+
 #game-over-message {
   font-size: 1.5rem;
   font-weight: 700;
@@ -351,3 +695,230 @@ body {
   font-weight: 600;
 }
 #play-again-button:hover { background: var(--action-bg-hover); }
+
+/* Only a win gets the flourish. A loss showing the same celebration is worse
+   than showing nothing. */
+.game-over--won .game-over-fan__card {
+  animation: cascade-in 0.45s cubic-bezier(0.2, 0.9, 0.3, 1) both;
+}
+.game-over--won .game-over-fan__card:nth-child(2) { animation-delay: 0.07s; }
+.game-over--won .game-over-fan__card:nth-child(3) { animation-delay: 0.14s; }
+
+@keyframes cascade-in {
+  from { opacity: 0; transform: translateY(-70px) rotate(0deg) scale(0.8); }
+}
+
+/* ------------------------------------------------------------------ *
+ * Cards in flight (src/ui/flight.js)
+ * ------------------------------------------------------------------ */
+
+#fly-layer {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9;
+}
+
+.fly-card {
+  position: absolute;
+  will-change: transform;
+}
+.fly-card .card-face {
+  width: 100%;
+  animation: none;
+  filter: drop-shadow(0 10px 16px var(--card-shadow));
+}
+
+/* ------------------------------------------------------------------ *
+ * The lobby
+ * ------------------------------------------------------------------ */
+
+#lobby {
+  flex: 1;
+  padding: 1.5rem 1rem 2.5rem;
+  overflow-y: auto;
+}
+#lobby[hidden] { display: none; }
+
+.lobby__header { text-align: center; margin-bottom: 1.75rem; }
+
+.wordmark {
+  margin: 0;
+  font-size: 1.9rem;
+  font-weight: 300;
+  letter-spacing: 0.42em;
+  text-indent: 0.42em;      /* the tracking would otherwise push it off-centre */
+  text-transform: uppercase;
+}
+
+.wordmark__rule {
+  margin: 0.5rem 0 0.75rem;
+  display: flex;
+  justify-content: center;
+  gap: 0.6rem;
+  font-size: 0.85rem;
+  opacity: 0.55;
+}
+
+.lobby__note {
+  margin: 0;
+  font-size: 0.85rem;
+  opacity: 0.8;
+  min-height: 1.2em;
+}
+
+.lobby__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: 1rem;
+  max-width: 62rem;
+  margin: 0 auto;
+}
+
+/* A tile is a mat on the felt in the pack's own colour — not a list row. The
+   accent arrives from the manifest through safeAccent() (§7b) and everything
+   else here is mixed from it, so one hex per pack dresses the whole tile.
+
+   The column layout plus `margin-top: auto` on the footer is what keeps every
+   tile's record line and CTA on the same baseline across the grid, however
+   many lines its tagline wraps to. */
+.tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  border-radius: 14px;
+  background: linear-gradient(160deg,
+    color-mix(in srgb, var(--tile-accent) var(--tile-accent-strong), var(--tile-bg)),
+    color-mix(in srgb, var(--tile-accent) var(--tile-accent-weak), var(--tile-bg)));
+  border: 1px solid var(--tile-border);
+  box-shadow: 0 6px 18px var(--card-shadow);
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+
+.tile:hover { transform: translateY(-3px); box-shadow: 0 12px 26px var(--card-shadow); }
+
+.tile--featured {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent), 0 10px 26px var(--card-shadow);
+}
+
+.tile__open {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  padding: 1.5rem 1rem 1rem;
+  gap: 0.2rem;
+  font: inherit;
+  color: inherit;
+  text-align: center;
+  background: none;
+  border: none;
+  border-radius: inherit;
+  cursor: pointer;
+}
+.tile__open:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Pinned to the tile's top edge, straddling it like a tab. */
+.tile__ribbon {
+  position: absolute;
+  top: -0.55rem;
+  left: 0.75rem;
+  right: 0.75rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--ribbon-text);
+  font-size: 0.68rem;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Three real faces from the pack, fanned. Zero art to ship, and every game is
+   recognisable before its name is read. */
+.tile__fan {
+  display: flex;
+  justify-content: center;
+  height: 78px;
+  margin-bottom: 0.5rem;
+}
+.tile__fan-card {
+  width: 54px;
+  display: block;
+  transform: rotate(calc(var(--fan-index) * 13deg))
+             translate(calc(var(--fan-index) * -13px), calc(var(--fan-index) * var(--fan-index) * 5px));
+  transition: transform 0.22s ease;
+}
+.tile__fan-card .card-face { width: 54px; }
+
+/* The fan opens when you reach for the tile. */
+.tile__open:hover .tile__fan-card {
+  transform: rotate(calc(var(--fan-index) * 18deg))
+             translate(calc(var(--fan-index) * -20px), calc(var(--fan-index) * var(--fan-index) * 6px));
+}
+
+.tile__name { font-size: 1.1rem; font-weight: 700; }
+
+.tile__genre {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  opacity: 0.7;
+}
+
+.tile__badge {
+  padding: 0.1rem 0.4rem;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  letter-spacing: 0.08em;
+  font-size: 0.6rem;
+}
+
+.tile__tagline {
+  font-size: 0.82rem;
+  opacity: 0.85;
+  margin: 0.35rem 0 0.6rem;
+}
+
+.tile__foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  width: 100%;
+  gap: 0.5rem;
+  margin-top: auto;
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--tile-border);
+  font-size: 0.75rem;
+}
+.tile__record { opacity: 0.75; }
+.tile__cta { font-weight: 700; color: var(--accent); }
+
+.tile__restart {
+  display: block;
+  width: 100%;
+  padding: 0.5rem;
+  font: inherit;
+  font-size: 0.72rem;
+  color: inherit;
+  opacity: 0.65;
+  background: none;
+  border: none;
+  border-top: 1px solid var(--tile-border);
+  cursor: pointer;
+}
+.tile__restart:hover { opacity: 1; background: var(--ghost-hover); }
+
+.tile--broken {
+  padding: 2rem 1rem;
+  text-align: center;
+  opacity: 0.7;
+}
+.tile--broken .tile__name,
+.tile--broken .tile__tagline { display: block; }

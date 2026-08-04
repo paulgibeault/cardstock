@@ -5,6 +5,13 @@
   "players": { "min": 2, "max": 8, "best": 4 },
   "deck": "deck.json",
   "template": "shedding",
+  "tagline": "Match the colour or the number. Or don't.",
+  "accent": "#d2601a",
+  "heroCards": [
+    { "rank": "7", "color": "red" },
+    { "rank": "draw2", "color": "yellow", "effect": { "type": "drawN", "n": 2 } },
+    { "rank": "wild", "effect": { "type": "wild", "choose": "color" } }
+  ],
   "rules": {
     "matchOn": ["color", "rank"],
     "deal": 7,

@@ -5,6 +5,13 @@
   "players": { "min": 2, "max": 5, "best": 4 },
   "deck": "standard-52",
   "template": "shedding",
+  "tagline": "Empty your hand. Eights are wild.",
+  "accent": "#2f6fb0",
+  "heroCards": [
+    { "rank": "8", "suit": "spades", "effect": { "type": "wild", "choose": "suit" } },
+    { "rank": "8", "suit": "hearts", "effect": { "type": "wild", "choose": "suit" } },
+    { "rank": "K", "suit": "diamonds" }
+  ],
   "rules": {
     "matchOn": ["suit", "rank"],
     "deal": { "default": 5, "byPlayers": { "2": 7 } },

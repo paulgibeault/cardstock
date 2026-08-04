@@ -29,41 +29,87 @@
   <script>Arcade.init({ gameId: 'cardstock' });</script>
 </head>
 <body>
-  <div id="status-bar">
-    <span id="status-text">Loading…</span>
-    <button id="draw-button" disabled>Draw</button>
-  </div>
+  <!-- Two screens in one document, swapped by the router in src/main.js. Both
+       are present from the first paint so every element lookup can happen at
+       module load; only their `hidden` flags move. -->
 
-  <div id="table">
-    <div class="opponent-row" id="opponents-top"></div>
+  <main id="lobby" hidden>
+    <header class="lobby__header">
+      <h1 class="wordmark">Cardstock</h1>
+      <!-- The suits are the ornament, drawn from the same glyphs the card
+           renderer uses. No webfont, and so no third-party asset. -->
+      <p class="wordmark__rule" aria-hidden="true"><span>♠</span><span>♥</span><span>♦</span><span>♣</span></p>
+      <p id="lobby-note" class="lobby__note"></p>
+    </header>
+    <div id="lobby-grid" class="lobby__grid"></div>
+  </main>
 
-    <div id="center-piles">
-      <div class="pile">
-        <div id="draw-pile"></div>
-        <div class="pile-count"></div>
+  <div id="table-screen" hidden>
+    <div id="status-bar">
+      <div class="status-bar__side">
+        <button id="lobby-button" class="ghost-button" aria-label="Back to the lobby">
+          <span aria-hidden="true">←</span> Lobby
+        </button>
+        <span id="game-name" class="status-bar__game"></span>
       </div>
-      <div class="pile">
-        <div id="discard-pile"></div>
-        <div class="pile-count"></div>
+      <span id="status-text">Loading…</span>
+    </div>
+
+    <div id="table">
+      <div class="opponent-row" id="opponents-top"></div>
+
+      <!-- Both slots are optional: not every template has a stock to draw
+           from (trick-taking has neither a draw pile nor a discard), so each
+           is hidden when the open pack has no such zone. -->
+      <div id="center-piles">
+        <div class="pile" id="draw-slot" hidden>
+          <!-- The draw pile IS the draw control. Reaching for the stock is how
+               drawing works at a real table, and it puts the card's flight
+               start under the finger that asked for it. -->
+          <button type="button" id="draw-pile" class="pile-stack" disabled></button>
+          <div id="draw-count" class="pile-count"></div>
+        </div>
+        <div class="pile" id="center-slot" hidden>
+          <div id="center-pile" class="pile-stack"></div>
+          <div id="center-pile-label" class="pile-count"></div>
+        </div>
+      </div>
+
+      <div id="hand-row">
+        <div class="hand" id="hand"></div>
       </div>
     </div>
 
-    <div id="hand-row">
-      <div class="hand" id="hand"></div>
-    </div>
+    <div id="log" role="status" aria-live="polite"></div>
   </div>
-
-  <div id="log"></div>
 
   <div id="choice-modal" hidden>
-    <div class="panel"></div>
+    <div class="panel">
+      <div id="choice-prompt" class="panel__title"></div>
+      <div id="choice-options" class="panel__options"></div>
+      <button id="choice-cancel" class="ghost-button">Cancel</button>
+    </div>
+  </div>
+
+  <div id="confirm-modal" hidden>
+    <div class="panel">
+      <div id="confirm-message" class="panel__title"></div>
+      <div class="panel__actions">
+        <button id="confirm-cancel" class="ghost-button">Keep playing</button>
+        <button id="confirm-ok" class="danger-button">Start over</button>
+      </div>
+    </div>
   </div>
 
   <div id="game-over-overlay" hidden>
     <div class="panel">
+      <div id="game-over-fan" class="game-over-fan" aria-hidden="true"></div>
       <div id="game-over-message"></div>
       <div id="game-over-record"></div>
-      <button id="play-again-button">Play again</button>
+      <div class="panel__actions">
+        <button id="game-over-lobby-button" class="ghost-button">Lobby</button>
+        <button id="play-again-button">Play again</button>
+      </div>
     </div>
   </div>
 
