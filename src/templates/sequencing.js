@@ -76,11 +76,11 @@ const sequencing = {
     const buildCapacity = rules.buildRule.to - rules.buildRule.from + 1;
     return [
       { id: 'hand', per: 'player', visibility: 'owner', layout: 'fan', order: 'free', facing: 'up' },
-      { id: 'stock', per: 'player', visibility: 'top', layout: 'stack', order: 'stack', facing: 'up' },
-      { id: 'discard', per: 'player', count: rules.discardPiles, visibility: 'top', layout: 'stack', order: 'stack', facing: 'up' },
-      { id: 'build', per: 'shared', count: rules.buildPiles, visibility: 'top', layout: 'stack', order: 'stack', facing: 'up', capacity: buildCapacity },
+      { id: 'stock', per: 'player', visibility: 'top', layout: 'stack', order: 'stack', facing: 'up', label: 'Stock' },
+      { id: 'discard', per: 'player', count: rules.discardPiles, visibility: 'top', layout: 'stack', order: 'stack', facing: 'up', label: 'Discard' },
+      { id: 'build', per: 'shared', count: rules.buildPiles, visibility: 'top', layout: 'stack', order: 'stack', facing: 'up', capacity: buildCapacity, label: 'Build' },
       { id: 'recycled', per: 'shared', visibility: 'none', layout: 'stack', order: 'stack', facing: 'down' },
-      { id: 'draw', per: 'shared', visibility: 'none', layout: 'stack', order: 'stack', facing: 'down' },
+      { id: 'draw', per: 'shared', visibility: 'none', layout: 'stack', order: 'stack', facing: 'down', label: 'Draw' },
     ];
   },
 

@@ -4,7 +4,7 @@
 // state changes funnel through one place.
 
 import { baseId } from './selectors.js';
-import { moveCards as moveCardsInState } from './state.js';
+import { moveCards as moveCardsInState, emitEvent } from './state.js';
 
 export function zoneAddr(id, seat) {
   return seat === undefined || seat === null ? id : `${id}.${seat}`;
@@ -65,6 +65,10 @@ export function makeCtx(state) {
       state.gameOver = true;
       state.winner = winner;
     },
+
+    // Derived events for the UI (state.events) — a trick resolving, a lay-down
+    // landing. Never part of the persisted log; see state.js.
+    emit: (type, payload = {}) => emitEvent(state, type, payload),
 
     fail: (rule, reason) => ({ legal: false, rule, reason }),
     ok: () => ({ legal: true }),

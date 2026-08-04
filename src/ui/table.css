@@ -235,9 +235,14 @@ body {
    the hairline highlight on top of it is what keeps the wood from reading as
    a flat brown stripe. */
 #table {
+  /* Every pile and card size on the felt derives from these two, so the whole
+     table can step down together on a narrow screen (the breakpoint below).
+     Safe to scale: type on card faces is px-in-viewBox and rides the card. */
+  --pile-w: 90px;
+  --hand-card-w: 70px;
   flex: 1;
-  display: grid;
-  grid-template-rows: auto 1fr auto;
+  display: flex;
+  flex-direction: column;
   gap: 1rem;
   padding: 1.25rem 1rem;
   margin: 0.85rem;
@@ -323,23 +328,42 @@ body {
 .mini-hand .card-face { width: 28px; margin-left: -14px; }
 .mini-hand .card-face:first-child { margin-left: 0; }
 
+/* The middle of the table takes whatever is left between the seats and the
+   hand, and holds however many shared piles the pack declares — one for
+   Hearts' trick, six for Stockpile's deck + four builds + recycled-hidden.
+   Wrapping beats shrinking: a second row of piles is still a table. */
 #center-piles {
+  flex: 1;
   display: flex;
   justify-content: center;
   align-items: center;
-  gap: 2.5rem;
+  align-content: center;
+  flex-wrap: wrap;
+  gap: 0.5rem clamp(0.9rem, 3vw, 2.5rem);
 }
+
+/* The human's own piles (stock, discards, melds, won) sit just above the
+   hand — yours, within thumb's reach, mirroring the compact copies each
+   opponent seat wears. Absent entirely for hand-only packs. */
+#player-piles {
+  display: flex;
+  justify-content: center;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 0.4rem clamp(0.7rem, 2.5vw, 1.6rem);
+}
+#player-piles:empty { display: none; }
 
 .pile { text-align: center; }
 .pile-count { font-size: 0.75rem; opacity: 0.85; margin-top: 1.1rem; }
 
 /* Piles stack in place: every card sits at the same spot, so the discard can
    keep a few cards of history under the top one and the draw pile can look as
-   deep as it actually is. 90 × 126 is the card's own 100:140 aspect. */
+   deep as it actually is. The 1:1.4 ratio is the card's own 100:140 aspect. */
 .pile-stack {
   position: relative;
-  width: 90px;
-  height: 126px;
+  width: var(--pile-w, 90px);
+  height: calc(var(--pile-w, 90px) * 1.4);
   margin: 0 auto;
 }
 
@@ -371,6 +395,23 @@ button.pile-stack:focus-visible { outline: 2px solid var(--accent); outline-offs
   50% { box-shadow: 0 0 0 5px var(--glow); }
 }
 
+/* A pile whose top card can be picked up as a SOURCE (Stockpile's stock and
+   discards). Quieter than --ready: it answers "where can I play from?"
+   without competing with the beckon that answers "where can this card go?". */
+.pile-stack--source .pile-stack__top {
+  border-radius: 8px;
+  box-shadow: 0 0 0 2px var(--glow);
+}
+
+/* The picked-up source: the card visibly leaves the pile and waits. */
+.pile-stack--picked {
+  transform: translateY(-6px);
+}
+.pile-stack--picked .pile-stack__top {
+  border-radius: 8px;
+  box-shadow: 0 0 0 3px var(--accent);
+}
+
 /* z-index, not just source order: ::after below is a sibling that paints AFTER
    every real child, so without this the depth cue draws a dark slab over the
    top card of the pile. */
@@ -380,7 +421,7 @@ button.pile-stack:focus-visible { outline: 2px solid var(--accent); outline-offs
   z-index: 1;
 }
 
-.pile-stack .card-face { width: 90px; }
+.pile-stack .card-face { width: 100%; }
 
 /* The edges of the cards underneath. Two is enough to read as "a lot left" —
    this is a depth cue, not a count. */
@@ -398,8 +439,8 @@ button.pile-stack:focus-visible { outline: 2px solid var(--accent); outline-offs
 .pile-stack--deep::after { transform: translate(1.5px, 1.5px); }
 
 .card-face--empty {
-  width: 90px;
-  height: 126px;
+  width: 100%;
+  height: 100%;
   border-radius: 8px;
   border: 2px dashed var(--chip-border);
 }
@@ -413,14 +454,14 @@ button.pile-stack:focus-visible { outline: 2px solid var(--accent); outline-offs
    what, so it spreads out and stays readable instead of burying itself. The
    slot widens to hold the spread rather than letting cards fall off it. */
 .pile-stack--spread {
-  width: 190px;
+  width: calc(var(--pile-w, 90px) * 2.11);
 }
 .pile-stack--spread .pile-stack__card {
   left: 50%;
   right: auto;
-  width: 90px;
-  margin-left: -45px;
-  transform: translateX(calc(var(--stack-index, 0) * 46px)) rotate(var(--stack-tilt, 0deg));
+  width: var(--pile-w, 90px);
+  margin-left: calc(var(--pile-w, 90px) / -2);
+  transform: translateX(calc(var(--stack-index, 0) * var(--pile-w, 90px) * 0.51)) rotate(var(--stack-tilt, 0deg));
 }
 
 #hand-row {
@@ -434,8 +475,8 @@ button.pile-stack:focus-visible { outline: 2px solid var(--accent); outline-offs
 }
 
 .hand .card-face {
-  width: 70px;
-  margin-left: -22px;
+  width: var(--hand-card-w, 70px);
+  margin-left: calc(var(--hand-card-w, 70px) * -0.31);
   transition: transform 0.1s ease;
   cursor: pointer;
 }
@@ -448,6 +489,244 @@ button.pile-stack:focus-visible { outline: 2px solid var(--accent); outline-offs
    cards are legal is readable at a glance rather than only by what dims. */
 .card-face-wrap--playable .card-face { transform: translateY(-4px); }
 .card-face-wrap--playable .card-face:hover { transform: translateY(-14px); }
+
+/* A SELECTED card stands clear of the fan and glows: it is the one your next
+   pile tap will move (or one of the N you are about to pass). */
+.card-face-wrap--selected .card-face,
+.card-face-wrap--selected.card-face-wrap--playable .card-face {
+  transform: translateY(-14px);
+  filter: drop-shadow(0 0 6px var(--accent)) drop-shadow(0 3px 4px var(--card-shadow));
+}
+
+/* ------------------------------------------------------------------ *
+ * The turn token
+ * ------------------------------------------------------------------ */
+
+/* THE turn marker, identical in every game: a small gold chip worn by
+   whichever seat may act — on a bot's name plate, on the action bar when the
+   turn is yours. One shape, one colour, wherever it appears, so "whose turn
+   is it" is answered by finding the chip, not by learning each game's tells. */
+.turn-token {
+  position: relative;
+  width: 0.95rem;
+  height: 0.95rem;
+  border-radius: 50%;
+  flex: none;
+  display: inline-block;
+  background: radial-gradient(circle at 35% 30%, #ffe9a8, var(--accent) 72%);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.3), 0 0 6px var(--accent);
+  animation: token-pulse 1.6s ease-in-out infinite;
+}
+.turn-token::after {
+  content: "\25B6"; /* ▶ */
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.42rem;
+  color: #4a3200;
+}
+
+@keyframes token-pulse {
+  0%, 100% { box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.3), 0 0 3px var(--accent); }
+  50% { box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.3), 0 0 12px var(--accent); }
+}
+
+/* ------------------------------------------------------------------ *
+ * The action bar
+ * ------------------------------------------------------------------ */
+
+/* One line of guidance plus at most one button, floating above the hand.
+   This is also where the human wears the turn token — the same chip the
+   seats wear, in the same place every game. */
+#action-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  margin: 0 auto;
+  width: fit-content;
+  max-width: 100%;
+  padding: 0.35rem 0.9rem;
+  border-radius: 999px;
+  background: var(--chip-bg);
+  border: 1px solid var(--chip-border);
+  font-size: 0.85rem;
+}
+#action-bar[hidden] { display: none; }
+#action-bar:not(.action-bar--acting) .turn-token { display: none; }
+
+#action-button {
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 0.35rem 0.9rem;
+  border-radius: 999px;
+  border: none;
+  cursor: pointer;
+  background: var(--action-bg);
+  color: var(--action-text);
+  white-space: nowrap;
+}
+#action-button:hover { background: var(--action-bg-hover); }
+#action-button[hidden] { display: none; }
+
+/* ------------------------------------------------------------------ *
+ * Compact piles on the seats, and melds
+ * ------------------------------------------------------------------ */
+
+/* A seat's own piles in miniature: enough to read an opponent's stock and
+   discards at a glance, never to interact with. */
+.seat__zones {
+  display: flex;
+  justify-content: center;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin-top: 0.4rem;
+}
+
+.pile--mini { --pile-w: 34px; }
+.pile--mini .pile-stack { border-radius: 4px; }
+.pile--mini .card-face--empty { border-width: 1px; border-radius: 4px; }
+
+/* A hidden per-player pile (Hearts' won tricks) as a text chip: count and,
+   when the pack scores it, what it is costing so far. */
+.seat__pilechip {
+  font-size: 0.62rem;
+  padding: 0.12rem 0.4rem;
+  border-radius: 999px;
+  background: var(--chip-border);
+  white-space: nowrap;
+}
+
+/* A laid-down meld: a tight overlapped run of small faces, and a live hit
+   target when the selected card extends it. */
+.meld-strip {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+.meld-chip {
+  display: flex;
+  align-items: center;
+  padding: 0.25rem 0.4rem;
+  border-radius: 8px;
+  border: 1px solid var(--chip-border);
+  background: var(--chip-bg);
+  cursor: default;
+}
+.meld-chip__card { display: block; width: 30px; margin-left: -16px; }
+.meld-chip__card:first-child { margin-left: 0; }
+.meld-chip__card .card-face { width: 30px; animation: none; }
+.meld-chip--ready {
+  cursor: pointer;
+  border-color: var(--accent);
+  animation: pile-beckon 1.8s ease-in-out infinite;
+}
+.meld-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.meld-strip--mini .meld-chip { padding: 0.15rem 0.3rem; }
+.meld-strip--mini .meld-chip__card { width: 20px; margin-left: -12px; }
+.meld-strip--mini .meld-chip__card:first-child { margin-left: 0; }
+.meld-strip--mini .meld-chip__card .card-face { width: 20px; }
+
+/* ------------------------------------------------------------------ *
+ * Table moments: the banner and the trick's aftermath
+ * ------------------------------------------------------------------ */
+
+/* Decorative by construction (#log is the live region saying the same thing),
+   so it can sit above the table and be theatrical. */
+#event-banner {
+  position: fixed;
+  left: 50%;
+  top: 34%;
+  transform: translate(-50%, -50%);
+  z-index: 8;
+  padding: 0.55rem 1.3rem;
+  border-radius: 999px;
+  font-weight: 700;
+  font-size: 1rem;
+  white-space: nowrap;
+  pointer-events: none;
+  background: var(--panel-bg);
+  color: var(--panel-text);
+  box-shadow: 0 8px 24px var(--panel-shadow);
+}
+#event-banner[hidden] { display: none; }
+
+/* The id selector above sets the neutral coat; the tones must out-rank it. */
+#event-banner.event-banner--good {
+  background: #2c6e49;
+  color: #fff;
+  box-shadow: 0 0 0 2px var(--accent), 0 8px 24px var(--panel-shadow);
+}
+#event-banner.event-banner--bad { background: #8c2740; color: #fff; }
+#event-banner.event-banner--neutral { opacity: 0.92; }
+
+.event-banner--in { animation: banner-in 2.2s cubic-bezier(0.2, 0.9, 0.3, 1) both; }
+.event-banner--bad.event-banner--in {
+  animation: banner-in 2.2s cubic-bezier(0.2, 0.9, 0.3, 1) both,
+             banner-shake 0.5s ease-in-out 0.15s;
+}
+
+@keyframes banner-in {
+  0% { opacity: 0; transform: translate(-50%, -30%) scale(0.85); }
+  12% { opacity: 1; transform: translate(-50%, -50%) scale(1.05); }
+  18% { transform: translate(-50%, -50%) scale(1); }
+  82% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, -64%) scale(0.95); }
+}
+
+@keyframes banner-shake {
+  0%, 100% { margin-left: 0; }
+  25% { margin-left: -8px; }
+  55% { margin-left: 6px; }
+  80% { margin-left: -3px; }
+}
+
+/* The winner's cards glow when a trick lands well; your own hand flinches
+   when the trick you just took was full of points. */
+.zone-celebrate { animation: zone-celebrate 0.9s ease-out; }
+.zone-lament { animation: zone-lament 0.55s ease-in-out; }
+
+@keyframes zone-celebrate {
+  0%, 100% { filter: none; }
+  35% { filter: drop-shadow(0 0 14px var(--accent)); }
+}
+
+@keyframes zone-lament {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-7px); }
+  55% { transform: translateX(5px); }
+  80% { transform: translateX(-3px); }
+}
+
+/* Narrow screens: everything on the felt steps down together (the sizes all
+   derive from the two variables on #table), and the pile gaps tighten. This
+   is what keeps Stockpile's nine piles on a phone. */
+@media (max-width: 720px) {
+  #table {
+    --pile-w: 62px;
+    --hand-card-w: 54px;
+    gap: 0.7rem;
+    padding: 0.9rem 0.5rem;
+  }
+  .pile-count { font-size: 0.66rem; margin-top: 0.5rem; }
+  .pile--mini { --pile-w: 28px; }
+  .opponent-row { gap: 0.6rem; }
+}
+
+/* Phones: small enough that Stockpile's deck-plus-four-builds row still fits
+   on one line (5 × 52px + gaps < 375px). */
+@media (max-width: 420px) {
+  #table { --pile-w: 52px; --hand-card-w: 46px; }
+  #center-piles { gap: 0.4rem 0.7rem; }
+  #player-piles { gap: 0.3rem 0.55rem; }
+  .pile--mini { --pile-w: 24px; }
+}
 
 /* `card-face` is the class on the SVG ELEMENT itself (src/ui/cardStyles) —
    not on a wrapper — so the drop shadow belongs here. It used to sit on
@@ -490,9 +769,16 @@ button.pile-stack:focus-visible { outline: 2px solid var(--accent); outline-offs
   .mini-hand .card-deal .card-face,
   .seat--active .seat__name,
   .pile-stack--ready .pile-stack__top,
+  .turn-token,
+  .meld-chip--ready,
+  .event-banner--in,
+  .event-banner--bad.event-banner--in,
+  .zone-celebrate,
+  .zone-lament,
   .game-over--won .game-over-fan__card,
   #choice-modal .panel,
   #confirm-modal .panel,
+  #round-overlay .panel,
   #game-over-overlay .panel {
     animation: none !important;
   }
@@ -587,6 +873,7 @@ button.pile-stack:focus-visible { outline: 2px solid var(--accent); outline-offs
 
 #choice-modal,
 #confirm-modal,
+#round-overlay,
 #game-over-overlay {
   position: fixed;
   inset: 0;
@@ -599,10 +886,12 @@ button.pile-stack:focus-visible { outline: 2px solid var(--accent); outline-offs
 }
 #choice-modal[hidden],
 #confirm-modal[hidden],
+#round-overlay[hidden],
 #game-over-overlay[hidden] { display: none; }
 
 #choice-modal .panel,
 #confirm-modal .panel,
+#round-overlay .panel,
 #game-over-overlay .panel {
   background: var(--panel-bg);
   color: var(--panel-text);
@@ -643,6 +932,34 @@ button.pile-stack:focus-visible { outline: 2px solid var(--accent); outline-offs
   opacity: 0.75;
 }
 .panel .ghost-button:hover { opacity: 1; background: transparent; }
+
+/* The score sheet between rounds: one row per seat — this round's damage and
+   the running total. The human's row is the one you look for, so it leads. */
+.round-scores {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 0.35rem 1.2rem;
+  margin-bottom: 1.25rem;
+  text-align: left;
+  font-size: 0.95rem;
+}
+.round-scores__row { display: contents; }
+.round-scores__row--you .round-scores__name,
+.round-scores__row--you .round-scores__total { font-weight: 700; }
+.round-scores__delta { text-align: right; opacity: 0.8; }
+.round-scores__total { text-align: right; font-variant-numeric: tabular-nums; }
+
+#round-continue {
+  font: inherit;
+  padding: 0.7rem 1.5rem;
+  border-radius: 8px;
+  border: none;
+  cursor: pointer;
+  background: var(--action-bg);
+  color: var(--action-text);
+  font-weight: 600;
+}
+#round-continue:hover { background: var(--action-bg-hover); }
 
 .choice-option {
   font: inherit;

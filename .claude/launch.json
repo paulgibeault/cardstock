@@ -5,7 +5,8 @@
       "name": "cardstock",
       "runtimeExecutable": "node",
       "runtimeArgs": ["tools/serve.mjs"],
-      "port": 4780
+      "port": 4780,
+      "autoPort": true
     }
   ]
 }

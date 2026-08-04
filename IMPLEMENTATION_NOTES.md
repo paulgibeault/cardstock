@@ -158,6 +158,46 @@ still a bare index (`HUMAN_SEAT`/`SEAT_COUNT` in `src/main.js`) rather than
 which freeze on suspend and must become host-wall-clock timeout events at a
 shared table.
 
+## The preview packs became playable (2026-08)
+
+The table learned the three genres it used to only display, and the engine
+grew the two layers that work exposed:
+
+- **A derived-event channel.** `state.events` is cleared per `applyMove`
+  and carries what happened *inside* the move — `trickWon` (with the
+  trick's point cost), `cardsPassed`, `laidDown`, `hit`, `recycled`,
+  `pileCleared`, `roundOver`, `roundStart`. It is never persisted;
+  replay regenerates it, so it cannot drift from the log. The UI drives
+  celebration, sound, and the round summary from it instead of diffing
+  zone counts.
+- **The round boundary.** `maybeFinishRound` (movePipeline) runs after
+  every applied move: score the round, apply totals, then either end the
+  match (`scoring.gameOver` / the template's own call) or clear zones and
+  redeal — inside the pipeline, because the redeal consumes seeded RNG and
+  replay must cross the boundary at the same move. Templates with
+  meta-state that outlives a round implement `startRound` (contract-rummy
+  keeps `phase`, resets `laidDown`/`melds`, rotates the opening seat).
+  Shedding packs therefore now play to their declared thresholds — which
+  their manifests always claimed (`accumulate`, `anyScore >= N`).
+- **Zone-driven rendering and move-driven input.** Every shared zone gets
+  a center pile, every per-player zone beyond the hand gets a pile on the
+  human's own row and a compact copy on the opponent seats; what is
+  tappable is derived from `enumerateLegalMoves` (tap-source →
+  tap-destination for Stockpile, multi-select + one button for Hearts'
+  pass and Milestones' lay-down, meld chips as hit targets). The bot
+  driver consults `actingSeats`, which un-stalled Hearts' pass phase at
+  the table the same way it did in the simulator.
+- **One turn token.** The same gold chip marks whoever may act — on a
+  bot's name plate, on the action bar when the turn is yours — identical
+  across all packs.
+
+`tests/rounds.test.js` pins the boundary and the event window.
+`tools/simulate.mjs` still simulates exactly one round per game: it now
+detects the boundary by the `roundOver` event, since `isRoundOver` is
+already false again once the pipeline has redealt. Milestones/Stockpile
+stall rates under simulation are unchanged from the pre-round baseline
+(slow bot convergence, documented above — not a rules deadlock).
+
 ## Next steps
 
 Multiplayer (Phase 8), per-pack UI polish (per-pack `theme.css`, custom

@@ -5,7 +5,7 @@
 
 import { RANKS } from '../engine/cards.js';
 import { selectorMatches } from '../engine/selectors.js';
-import { runRoundScore, evaluateGameOver } from '../engine/scoring.js';
+import { runRoundScore, evaluateGameOver, cardValue } from '../engine/scoring.js';
 
 function isExactCardFirstLead(ctx) {
   const fl = ctx.rules.firstLead;
@@ -145,9 +145,17 @@ function resolveTrick(ctx) {
   }
 
   ctx.moveCards(trickCards, 'trick', ctx.zoneAddr('won', winnerSeat));
+
+  // What the trick was WORTH is part of the event: the UI celebrates a clean
+  // trick and winces at a pointed one without re-deriving pack scoring.
+  const scoring = ctx.pack.scoring || {};
+  const points = trickCards.reduce((sum, id) => sum + cardValue(ctx.cardById(id), scoring), 0);
+  const number = ctx.var('trickNumber') ?? 1;
+  ctx.emit('trickWon', { seat: winnerSeat, cards: trickCards.slice(), points, trickNumber: number });
+
   ctx.setVar('led', null);
   ctx.setVar('leader', winnerSeat);
-  ctx.setVar('trickNumber', (ctx.var('trickNumber') ?? 1) + 1);
+  ctx.setVar('trickNumber', number + 1);
   ctx.setTurnSeat(winnerSeat);
 }
 
@@ -212,6 +220,7 @@ function applyPassCards(ctx, move) {
   }
   for (let s = 0; s < ctx.seats; s++) ctx.setPlayerVar(s, '__pendingPass', undefined);
 
+  ctx.emit('cardsPassed', { direction });
   startPlayPhase(ctx);
 }
 
@@ -245,8 +254,8 @@ const trickTaking = {
   defaultZones() {
     return [
       { id: 'hand', per: 'player', visibility: 'owner', layout: 'fan', order: 'sorted', facing: 'up' },
-      { id: 'trick', per: 'shared', visibility: 'all', layout: 'fan', order: 'sequence', facing: 'up' },
-      { id: 'won', per: 'player', visibility: 'none', layout: 'stack', order: 'stack', facing: 'down' },
+      { id: 'trick', per: 'shared', visibility: 'all', layout: 'spread', order: 'sequence', facing: 'up', label: 'Trick' },
+      { id: 'won', per: 'player', visibility: 'none', layout: 'stack', order: 'stack', facing: 'down', label: 'Won' },
     ];
   },
 
