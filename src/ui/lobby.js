@@ -9,10 +9,10 @@
 // Each tile is one physical object on the felt: a mat in the pack's own
 // accent, a fan of three of its faces, and — when a game is waiting — the
 // ribbon that says so. The fan is drawn by the same renderer the table uses
-// (src/ui/renderCard.js), so a pack looks like itself here with no art to
+// (src/ui/cardStyles), so a pack looks like itself here with no art to
 // commission and no third-party asset in the repo.
 
-import { renderCardFaceSvg } from './renderCard.js';
+import { makeCardRenderer } from './cardStyles/index.js';
 import { fetchPackIndex, fetchPackManifest } from './packSource.js';
 import { safeAccent } from './css.js';
 import { listMatchSummaries, readStats, lastPlayedPack, clearMatch } from '../arcade/storage.js';
@@ -110,13 +110,17 @@ function heroFan(manifest) {
   // Decorative: the tile's accessible name already says which game this is,
   // and three card names read out before it would bury that.
   fan.setAttribute('aria-hidden', 'true');
+  // Manifest only — no deck. The lobby's whole cost ceiling is that it never
+  // loads one (see the header), so a pack whose art needs its real colours
+  // declares them as `ui.cardPalette`, which is read on this path too.
+  const renderer = makeCardRenderer(manifest);
   const faces = Array.isArray(manifest.heroCards) ? manifest.heroCards.slice(0, 3) : [];
   faces.forEach((face, i) => {
     const card = document.createElement('span');
     card.className = 'tile__fan-card';
-    // renderCard.js escapes every card-derived value it emits; this is markup
+    // The card styles escape every card-derived value they emit; this is markup
     // this repo authors, unlike anything carrying a name (§7b).
-    card.innerHTML = renderCardFaceSvg(face);
+    card.innerHTML = renderer.face(face);
     card.style.setProperty('--fan-index', String(i - 1));
     fan.appendChild(card);
   });

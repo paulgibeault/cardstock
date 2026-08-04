@@ -250,7 +250,28 @@
         "faces": { "type": "string", "description": "Asset path for a face sprite/SVG set; omit for the vanilla renderer." },
         "felt": { "type": "string", "description": "Table color (CSS)." },
         "table": { "type": "string", "description": "Asset path for a table texture." },
-        "sounds": { "type": "object", "additionalProperties": { "type": "string" } }
+        "sounds": { "type": "object", "additionalProperties": { "type": "string" } },
+        "cardStyle": {
+          "enum": ["vanilla", "classic", "shedding", "sequencing", "rankrun"],
+          "description": "Which generated card art this pack uses (src/ui/cardStyles). Omit to let the registry infer: a standard-5x deck gets 'classic', a shedding template with its own deck gets 'shedding', anything else gets 'vanilla'. Declare it when the template does not describe the deck — Milestones is contract-rummy but wants 'sequencing' art, Stockpile is sequencing but wants 'rankrun'."
+        },
+        "cardPalette": {
+          "type": "object",
+          "description": "Card color name → hex. Keys are the deck's own `color` values (Wildfire: red/yellow/green/blue) or a style's named slots (rankrun: band1/band2/band3). Key ORDER is the order a wild's multi-color mark uses. Declaring this is also what makes a lobby tile match the table, since the lobby never loads a deck.",
+          "additionalProperties": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
+          "propertyNames": { "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,23}$" },
+          "minProperties": 1
+        },
+        "cardBack": {
+          "type": "object",
+          "description": "The face-down side. Generated, not an asset — see `back` above for the asset form.",
+          "additionalProperties": false,
+          "properties": {
+            "pattern": { "enum": ["lattice", "sunburst", "rings", "pinstripe", "weave"] },
+            "color": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$", "description": "Defaults to the pack's `accent`." },
+            "emblem": { "type": "string", "maxLength": 2, "description": "One or two characters in the center medallion. Omit for a plain pip." }
+          }
+        }
       }
     },
     "rules-shedding": {

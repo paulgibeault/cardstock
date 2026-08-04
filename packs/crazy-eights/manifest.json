@@ -41,5 +41,8 @@
   ],
   "undo": "none",
   "turnTimer": null,
+  "ui": {
+    "cardBack": { "pattern": "pinstripe", "color": "#2f6fb0", "emblem": "8" }
+  },
   "credits": "Traditional (public domain)."
 }

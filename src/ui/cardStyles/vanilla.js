@@ -1,14 +1,15 @@
-// Vanilla card renderer: draws any card purely from its rank/suit/color/effect
-// definition, in SVG. No image assets required — this is what lets a manifest-only
-// pack look clean with zero art (design doc §2).
+// The zero-configuration style: draws any card from its rank/suit/colour alone.
+//
+// This is what lets a manifest-only pack look clean with no art and no
+// declaration (design §2), and it is the fallback for every pack that names no
+// style and matches no default. It is deliberately UNCHANGED from the renderer
+// that shipped before the style registry existed — tests/cardStyles.test.js
+// pins its exact output — so adopting a richer style is always a decision a
+// pack makes, never something that happens to it.
 
-const SUIT_GLYPH = { clubs: '♣', diamonds: '♦', hearts: '♥', spades: '♠' };
+import { escapeXml, cardAriaLabel, effectType, isWildRank, SUIT_GLYPH } from './shared.js';
+
 const EFFECT_GLYPH = { skip: '⛔', reverse: '⇄', drawN: '+', wildDrawN: '+', wild: '✱' };
-
-function effectType(effect) {
-  if (!effect) return null;
-  return typeof effect === 'string' ? effect : effect.type;
-}
 
 function effectLabel(card) {
   const type = effectType(card.effect);
@@ -23,10 +24,6 @@ export function cardFaceColor(card) {
   return 'neutral';
 }
 
-function isWildRank(card) {
-  return card.rank === 'wild' || card.rank === 'wild-draw4';
-}
-
 // Rank names are pack-authored words, not single characters — Wildfire has
 // "reverse" and "draw2" — and a 16px corner fits about two of them. The size
 // steps down rather than the text being clipped by the card edge, which is
@@ -37,7 +34,7 @@ function cornerSizeClass(label) {
   return '';
 }
 
-export function renderCardFaceSvg(card) {
+export function face(card) {
   const color = cardFaceColor(card);
   const glyph = card.suit ? SUIT_GLYPH[card.suit] : '';
   const rankLabel = isWildRank(card) ? '' : card.rank ?? '';
@@ -66,25 +63,9 @@ export function renderCardFaceSvg(card) {
     </svg>`;
 }
 
-export function renderCardBackSvg() {
-  return `
-    <svg viewBox="0 0 100 140" class="card-face card-face--back" role="img" aria-label="Face-down card">
-      <rect x="1" y="1" width="98" height="138" rx="8" class="card-face__bg" />
-      <rect x="10" y="10" width="80" height="120" rx="6" class="card-face__back-pattern" />
-    </svg>`;
-}
-
-// Returns RAW pack values (rank/suit/color/id). Every caller must escape —
-// see the aria-label above. Card fields are pack-supplied, and a pack can
-// arrive from another device (design §7d config exchange), so they are
-// untrusted input the moment sharing ships. §7b calls this exact shape out as
-// a class that has shipped twice in this fleet.
-function cardAriaLabel(card) {
-  if (card.rank && card.suit) return `${card.rank} of ${card.suit}`;
-  if (card.rank && card.color) return `${card.color} ${card.rank}`;
-  return card.rank || card.id;
-}
-
-function escapeXml(str) {
-  return String(str).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-}
+export const defaults = {
+  accent: '#274b8c',
+  order: ['red', 'yellow', 'green', 'blue'],
+  palette: { red: '#c0392b', yellow: '#e1b12c', green: '#27ae60', blue: '#2f6fb0' },
+  back: { pattern: 'lattice' },
+};

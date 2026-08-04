@@ -42,7 +42,7 @@ function flightLayer() {
 /**
  * Fly a copy of a card from one screen rectangle to another.
  *
- * @param markup  card SVG from src/ui/renderCard.js — markup this repo authors,
+ * @param markup  card SVG from src/ui/cardStyles — markup this repo authors,
  *                with every card-derived value escaped inside that module. The
  *                same rule as the table's own svgNode(): safe for innerHTML in
  *                a way that anything carrying a name or label is NOT.

@@ -449,7 +449,7 @@ button.pile-stack:focus-visible { outline: 2px solid var(--accent); outline-offs
 .card-face-wrap--playable .card-face { transform: translateY(-4px); }
 .card-face-wrap--playable .card-face:hover { transform: translateY(-14px); }
 
-/* `card-face` is the class on the SVG ELEMENT itself (src/ui/renderCard.js) —
+/* `card-face` is the class on the SVG ELEMENT itself (src/ui/cardStyles) —
    not on a wrapper — so the drop shadow belongs here. It used to sit on
    `.card-face svg`, which matches a nested svg that does not exist, and so
    every card on the table was shadowless. */
@@ -535,9 +535,6 @@ button.pile-stack:focus-visible { outline: 2px solid var(--accent); outline-offs
 .card-face--red .card-face__badge,
 .card-face--black .card-face__badge { fill: inherit; }
 
-.card-face--back .card-face__bg { fill: #274b8c; }
-.card-face--back .card-face__back-pattern { fill: #3b62ad; }
-
 /* px inside an SVG viewBox, deliberately (§5, design §17.7). These are user
    units in a 100×140 coordinate space, so they scale with the CARD — which
    scales with the layout — not with the launcher's font scale. A card whose
@@ -561,6 +558,19 @@ button.pile-stack:focus-visible { outline: 2px solid var(--accent); outline-offs
 .card-face--painted.card-face--blue .card-face__bg { fill: #2f6fb0; }
 .card-face--painted .card-face__corner,
 .card-face--painted .card-face__badge { fill: #fff; }
+
+/* The richer styles (src/ui/cardStyles/{classic,shedding,sequencing,rankrun}.js)
+   need almost nothing from here, and that is on purpose. Their sizes and fills
+   are geometry that varies per rank and per pack palette, so they ride as
+   presentation ATTRIBUTES on each element — a stylesheet would need one class
+   per size, and a pack colour reaching a CSS declaration is the sink §7b is
+   about. What is left is the one thing an attribute cannot say:
+
+   `paint-order: stroke` puts a numeral's outline BEHIND its fill. Without it
+   the stroke is painted over the letterform, eating half the stroke width off
+   every edge and turning a 46px digit on a saturated card into a smudge. It is
+   what lets a white number sit legibly straight on top of Wildfire's red. */
+.cs-text { paint-order: stroke; stroke-linejoin: round; }
 
 #log {
   max-width: 30rem;

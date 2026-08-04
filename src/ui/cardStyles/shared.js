@@ -1,0 +1,229 @@
+// Primitives every card style draws with.
+//
+// TWO RULES HOLD FOR EVERY SHAPE IN THIS DIRECTORY, and both are load-bearing:
+//
+//  1. NO SVG `id`, `<defs>`, `<pattern>`, `<clipPath>` or `url(#…)` — ever.
+//     Card SVGs are inlined into the page by the dozen (a mini-hand is one per
+//     card, the lobby shows five packs at once), and ids are DOCUMENT-scoped.
+//     Two inlined SVGs declaring the same id make every `url(#x)` in the page
+//     resolve to whichever came first, so one pack silently paints another
+//     pack's cards. Everything here is explicit geometry instead, which also
+//     makes each face a pure function of its card and theme.
+//
+//  2. Every card-derived string is escaped, and every colour that reaches an
+//     attribute was either written in this repo or passed the hex gate in
+//     src/ui/css.js (§7b). A pack is untrusted input the moment sharing ships.
+
+export const SUIT_GLYPH = { clubs: '♣', diamonds: '♦', hearts: '♥', spades: '♠' };
+
+export function escapeXml(str) {
+  return String(str).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+/**
+ * Returns RAW pack values (rank/suit/color/id). Every caller must escape.
+ * Card fields are pack-supplied, and a pack can arrive from another device
+ * (design §7d config exchange), so they are untrusted input the moment
+ * sharing ships. §7b calls this exact shape out as a class that has shipped
+ * twice in this fleet.
+ */
+export function cardAriaLabel(card) {
+  if (card.rank && card.suit) return `${card.rank} of ${card.suit}`;
+  if (card.rank && card.color) return `${card.color} ${card.rank}`;
+  return card.rank || card.id;
+}
+
+export function effectType(effect) {
+  if (!effect) return null;
+  return typeof effect === 'string' ? effect : effect.type;
+}
+
+export function isWildRank(card) {
+  return card.rank === 'wild' || card.rank === 'wild-draw4';
+}
+
+/**
+ * What KIND of card this is, for styles that draw an icon rather than a word.
+ *
+ * Read from the effect first and the rank second, because the same idea is
+ * carried both ways across the packs: Wildfire's skip is an effect, Milestones'
+ * is a tag with a matching rank. A style that only looked at one of them drew a
+ * blank card for the other pack.
+ */
+export function cardKind(card) {
+  const type = effectType(card.effect);
+  if (type === 'wildDrawN') return 'wildDrawN';
+  if (type === 'wild') return 'wild';
+  if (type === 'drawN') return 'drawN';
+  if (type === 'reverse') return 'reverse';
+  if (type === 'skip' || type === 'skipTarget') return 'skip';
+  if (card.rank === 'wild-draw4') return 'wildDrawN';
+  if (card.rank === 'wild' || (card.tags || []).includes('wild')) return 'wild';
+  if (card.rank === 'skip' || (card.tags || []).includes('skip')) return 'skip';
+  if (card.rank === 'reverse') return 'reverse';
+  return 'number';
+}
+
+/** How many cards a draw-N card makes you take, when it says so. */
+export function drawCount(card) {
+  const n = card.effect && typeof card.effect === 'object' ? card.effect.n : null;
+  return Number.isInteger(n) && n > 0 && n < 100 ? n : 2;
+}
+
+/* ------------------------------------------------------------------ *
+ * Colour
+ * ------------------------------------------------------------------ */
+
+/** Round to 2dp: shorter markup, and identical output for identical input. */
+export function num(n) {
+  return String(Math.round(n * 100) / 100);
+}
+
+function clampByte(n) {
+  return Math.max(0, Math.min(255, Math.round(n)));
+}
+
+function channels(hex) {
+  const n = parseInt(hex.slice(1), 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+
+/**
+ * Lighten (`amount` > 0) or darken (< 0) a validated `#rrggbb`.
+ *
+ * Done in JS rather than with `color-mix()` because these land in SVG
+ * presentation attributes, and the output is a plain hex literal this module
+ * generated — never a pack string that merely looked like one.
+ */
+export function shade(hex, amount) {
+  const out = channels(hex).map((c) => (amount >= 0 ? c + (255 - c) * amount : c * (1 + amount)));
+  return `#${out.map((c) => clampByte(c).toString(16).padStart(2, '0')).join('')}`;
+}
+
+/* ------------------------------------------------------------------ *
+ * Shapes
+ * ------------------------------------------------------------------ */
+
+/** The card blank every style starts from. */
+export function cardBase(fill, stroke = '#00000022') {
+  return `<rect x="1" y="1" width="98" height="138" rx="8" fill="${fill}" stroke="${stroke}" />`;
+}
+
+/**
+ * A group repeated at 180°, which is how a real card carries its index twice.
+ *
+ * The rotation is about the card's centre, so the second copy lands in the
+ * opposite corner reading the right way up when the card is turned around.
+ */
+export function mirrored(markup) {
+  return `${markup}<g transform="rotate(180 50 70)">${markup}</g>`;
+}
+
+/** A pie split evenly between `colors` — the "this card is every colour" mark. */
+export function wedgeDisc(cx, cy, r, colors) {
+  if (colors.length === 0) return '';
+  if (colors.length === 1) return `<circle cx="${num(cx)}" cy="${num(cy)}" r="${num(r)}" fill="${colors[0]}" />`;
+  const step = (Math.PI * 2) / colors.length;
+  return colors.map((fill, i) => {
+    const a0 = -Math.PI / 2 + i * step;
+    const a1 = a0 + step;
+    const x0 = num(cx + r * Math.cos(a0));
+    const y0 = num(cy + r * Math.sin(a0));
+    const x1 = num(cx + r * Math.cos(a1));
+    const y1 = num(cy + r * Math.sin(a1));
+    return `<path d="M${num(cx)} ${num(cy)}L${x0} ${y0}A${num(r)} ${num(r)} 0 ${step > Math.PI ? 1 : 0} 1 ${x1} ${y1}Z" fill="${fill}" />`;
+  }).join('');
+}
+
+/** The same idea as a diamond: four triangles filling a square stood on a corner. */
+export function diamondRosette(cx, cy, h, colors) {
+  const pts = [[cx, cy - h], [cx + h, cy], [cx, cy + h], [cx - h, cy]];
+  return colors.slice(0, 4).map((fill, i) => {
+    const a = pts[i];
+    const b = pts[(i + 1) % 4];
+    return `<path d="M${num(cx)} ${num(cy)}L${num(a[0])} ${num(a[1])}L${num(b[0])} ${num(b[1])}Z" fill="${fill}" />`;
+  }).join('');
+}
+
+/** The corner-sized version of a rosette: one dot per colour, in a square. */
+export function colorDots(cx, cy, spread, r, colors) {
+  const at = [[-1, -1], [1, -1], [1, 1], [-1, 1]];
+  return colors.slice(0, 4).map((fill, i) =>
+    `<circle cx="${num(cx + at[i][0] * spread)}" cy="${num(cy + at[i][1] * spread)}" r="${num(r)}" fill="${fill}" />`).join('');
+}
+
+/**
+ * The action icons, drawn at any size so the corner index and the centre mark
+ * are the SAME symbol rather than a picture and a word that have to agree.
+ *
+ * `r` is the radius of the circle the icon fits inside.
+ */
+export function actionIcon(kind, cx, cy, r, color) {
+  const w = num(r * 0.3);
+  if (kind === 'skip') {
+    return `<circle cx="${num(cx)}" cy="${num(cy)}" r="${num(r * 0.78)}" fill="none" stroke="${color}" stroke-width="${w}" />`
+      + `<line x1="${num(cx - r * 0.55)}" y1="${num(cy + r * 0.55)}" x2="${num(cx + r * 0.55)}" y2="${num(cy - r * 0.55)}" stroke="${color}" stroke-width="${w}" stroke-linecap="round" />`;
+  }
+  if (kind === 'reverse') {
+    // One arrow, then the same arrow turned around — a shape that is its own
+    // opposite is what "reverse" has to look like at 8px as well as at 40px.
+    //
+    // Each arrow is confined to its OWN half (|x| between 0.15r and 0.85r).
+    // A first pass had them overlapping through the middle, on the theory that
+    // interlocking arrows read as circulation; at 40px they merged into one
+    // unreadable blob and at 8px into a dot. Two separated arrows pointing
+    // opposite ways survive both sizes.
+    const arrow = `<path d="M${num(cx - r * 0.48)} ${num(cy + r * 0.82)}L${num(cx - r * 0.48)} ${num(cy + r * 0.05)}`
+      + `L${num(cx - r * 0.25)} ${num(cy + r * 0.05)}L${num(cx - r * 0.6)} ${num(cy - r * 0.82)}`
+      + `L${num(cx - r * 0.95)} ${num(cy + r * 0.05)}L${num(cx - r * 0.72)} ${num(cy + r * 0.05)}`
+      + `L${num(cx - r * 0.72)} ${num(cy + r * 0.82)}Z" fill="${color}" />`;
+    return `${arrow}<g transform="rotate(180 ${num(cx)} ${num(cy)})">${arrow}</g>`;
+  }
+  if (kind === 'draw') {
+    // Two cards, one already on top of the other: the thing that is about to
+    // happen to your hand.
+    const cw = r * 0.86;
+    const chh = r * 1.16;
+    const card = (dx, dy, fill) =>
+      `<rect x="${num(cx - cw / 2 + dx)}" y="${num(cy - chh / 2 + dy)}" width="${num(cw)}" height="${num(chh)}"`
+      + ` rx="${num(r * 0.16)}" fill="${fill}" stroke="${color}" stroke-width="${num(r * 0.14)}" />`;
+    return card(-r * 0.3, -r * 0.22, '#ffffff') + card(r * 0.3, r * 0.22, color);
+  }
+  return '';
+}
+
+/* ------------------------------------------------------------------ *
+ * Text
+ * ------------------------------------------------------------------ */
+
+/**
+ * A text run. `size`/`weight`/`anchor` are presentation ATTRIBUTES rather than
+ * classes because they vary per style and per rank — a stylesheet would need a
+ * class per size, and the sizes are geometry, not theme (see the note on px
+ * units in table.css).
+ *
+ * `outline` is what makes a numeral survive being printed straight onto a
+ * saturated colour; `paint-order: stroke` comes from the stylesheet so the
+ * stroke sits behind the fill instead of eating into the letterform.
+ */
+export function text(str, { x, y, size, fill, weight = 700, anchor = 'middle', outline = null, outlineWidth = 3, opacity = null, cls = 'cs-text' }) {
+  // `cls` is a literal at every call site today. Escaped anyway: it costs
+  // nothing, and the next style to want a modifier per card is one refactor
+  // away from routing a pack value through it.
+  const parts = [
+    `<text x="${num(x)}" y="${num(y)}" font-size="${num(size)}" font-weight="${weight}"`,
+    ` text-anchor="${anchor}" fill="${fill}" class="${escapeXml(cls)}"`,
+  ];
+  if (outline) parts.push(` stroke="${outline}" stroke-width="${num(outlineWidth)}"`);
+  if (opacity !== null) parts.push(` opacity="${num(opacity)}"`);
+  parts.push(`>${escapeXml(str)}</text>`);
+  return parts.join('');
+}
+
+/**
+ * The opening `<svg>` for a card, with the classes the stylesheet sizes and
+ * shadows off, and the label a screen reader actually reads.
+ */
+export function openSvg(classes, label) {
+  return `<svg viewBox="0 0 100 140" class="${escapeXml(classes)}" role="img" aria-label="${escapeXml(label)}">`;
+}
