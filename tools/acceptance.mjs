@@ -9,9 +9,15 @@
 // the game, this tests the integration.
 //
 // The doc's flow is `./dev.sh ../cardstock` in one shell and the runner in
-// another. This does both in one process, so `npm run acceptance` is one
-// command locally and the exact thing fleet CI invokes (`launcher: true`
-// checks the launcher out as ARCADE_LAUNCHER and runs this script).
+// another. This does both in one process, so the whole checklist is one
+// command.
+//
+// CI does not run this YET. The fleet's `launcher: true` input invokes exactly
+// this script (it checks the launcher out as ARCADE_LAUNCHER), but the flag is
+// off in .github/workflows/pages.yml until `cardstock` is in the launcher's
+// upstream catalog.json — without a catalog entry there is no tile to launch
+// the game from and the framed-boot check correctly fails. The comment there
+// carries the re-enable instructions.
 //
 // IT STAGES FIRST, AND SERVES THE ARTIFACT — not the checkout. Same reason
 // tools/verify-artifact.mjs does: a checkout obviously contains every file, so
@@ -33,8 +39,8 @@ const GAME_ID = 'cardstock';
 if (!fs.existsSync(path.join(LAUNCHER, 'dev.sh'))) {
   console.error(
     `acceptance: no launcher checkout at ${LAUNCHER}\n` +
-    '  CI sets ARCADE_LAUNCHER via `launcher: true` in .github/workflows/pages.yml.\n' +
-    '  Locally, clone paulgibeault/paulgibeault.github.io as a sibling directory.');
+    '  Locally, clone paulgibeault/paulgibeault.github.io as a sibling directory.\n' +
+    '  In CI, ARCADE_LAUNCHER comes from `launcher: true` in .github/workflows/pages.yml.');
   process.exit(1);
 }
 
