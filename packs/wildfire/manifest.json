@@ -1,6 +1,6 @@
 {
-  "id": "uno",
-  "name": "Uno",
+  "id": "wildfire",
+  "name": "Wildfire",
   "version": "0.1.0",
   "players": { "min": 2, "max": 8, "best": 4 },
   "deck": "deck.json",
@@ -12,7 +12,7 @@
     "playAfterDraw": true,
     "mustPlayIfAble": false,
     "winner": "first-empty-hand",
-    "lastCardCall": { "id": "uno-call", "atHandCount": 1, "penalty": { "draw": 2 } }
+    "lastCardCall": { "id": "last-card-call", "label": "Last card!", "atHandCount": 1, "penalty": { "draw": 2 } }
   },
   "scoring": {
     "roundScore": "hand-values-to-winner",
@@ -55,5 +55,5 @@
   "undo": "none",
   "turnTimer": null,
   "ui": { "felt": "#8b1e1e" },
-  "credits": "Gameplay of the classic shedding game. 'UNO' is a Mattel trademark — replace name and art before any public release."
+  "credits": "An original shedding pack: match by color or rank, wilds change the color, and call your last card or draw two."
 }

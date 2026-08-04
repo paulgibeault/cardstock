@@ -1,4 +1,4 @@
-// Contract-rummy template (design doc §13.3). Validates against Phase 10.
+// Contract-rummy template (design doc §13.3). Validates against Milestones.
 // Each round every player pursues a personal contract (ctx.playerVar 'phase', 1-indexed
 // into ctx.rules.contracts). Turn: draw -> meld (lay down once, then hit freely) -> discard.
 

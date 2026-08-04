@@ -29,7 +29,7 @@ export function renderCardFaceSvg(card) {
   const rankLabel = card.rank === 'wild' || card.rank === 'wild-draw4' ? '' : card.rank ?? '';
   const badge = effectLabel(card);
   return `
-    <svg viewBox="0 0 100 140" class="card-face card-face--${color}" role="img" aria-label="${cardAriaLabel(card)}">
+    <svg viewBox="0 0 100 140" class="card-face card-face--${escapeXml(color)}" role="img" aria-label="${escapeXml(cardAriaLabel(card))}">
       <rect x="1" y="1" width="98" height="138" rx="8" class="card-face__bg" />
       <text x="8" y="22" class="card-face__corner">${escapeXml(rankLabel)}${glyph ? ' ' + glyph : ''}</text>
       <text x="92" y="128" class="card-face__corner card-face__corner--br">${escapeXml(rankLabel)}${glyph ? ' ' + glyph : ''}</text>
@@ -46,6 +46,11 @@ export function renderCardBackSvg() {
     </svg>`;
 }
 
+// Returns RAW pack values (rank/suit/color/id). Every caller must escape —
+// see the aria-label above. Card fields are pack-supplied, and a pack can
+// arrive from another device (design §7d config exchange), so they are
+// untrusted input the moment sharing ships. §7b calls this exact shape out as
+// a class that has shipped twice in this fleet.
 function cardAriaLabel(card) {
   if (card.rank && card.suit) return `${card.rank} of ${card.suit}`;
   if (card.rank && card.color) return `${card.color} ${card.rank}`;

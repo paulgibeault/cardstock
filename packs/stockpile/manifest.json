@@ -1,6 +1,6 @@
 {
-  "id": "skip-bo",
-  "name": "Skip-Bo",
+  "id": "stockpile",
+  "name": "Stockpile",
   "version": "0.1.0",
   "players": { "min": 2, "max": 6, "best": 4 },
   "deck": "deck.json",
@@ -23,5 +23,5 @@
   ],
   "undo": "none",
   "turnTimer": null,
-  "credits": "Gameplay of the classic sequencing game. 'Skip-Bo' is a Mattel trademark — replace name and art before any public release."
+  "credits": "An original sequencing pack: race to empty your stock onto shared build piles that count 1 through 12."
 }

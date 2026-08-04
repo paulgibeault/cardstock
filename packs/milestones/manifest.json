@@ -1,6 +1,6 @@
 {
-  "id": "phase-10",
-  "name": "Phase 10",
+  "id": "milestones",
+  "name": "Milestones",
   "version": "0.1.0",
   "players": { "min": 2, "max": 6, "best": 4 },
   "deck": "deck.json",
@@ -37,5 +37,5 @@
   ],
   "undo": "none",
   "turnTimer": null,
-  "credits": "Gameplay of the classic contract-rummy game. 'Phase 10' is a Mattel trademark — replace name and art before any public release."
+  "credits": "An original contract-rummy pack: ten milestones of sets and runs, one per round, first to finish them all wins."
 }

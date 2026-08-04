@@ -1,6 +1,6 @@
 # Card Game Platform ("Cardstock")
 
-**▶ [Play now](https://paulgibeault.github.io/card-game/)** — Crazy Eights
+**▶ [Play now](https://paulgibeault.github.io/cardstock/)** — Crazy Eights
 solo vs. bots, hosted straight from this repo via GitHub Pages. Works on
 iPhone Safari for on-device testing; no install needed.
 
@@ -9,26 +9,50 @@ A single dynamic platform that plays many card games, each delivered as a
 inside [Paul's Arcade](https://paulgibeault.github.io), using its SDK for
 storage and serverless P2P multiplayer.
 
-**Status: milestone 1 implemented.** Engine core, all four genre templates,
-and all five launch packs pass their rule tests; a minimal standalone UI
-plays Crazy Eights solo against bots. See
-**[IMPLEMENTATION_NOTES.md](IMPLEMENTATION_NOTES.md)** for what's built,
-what simulation caught and fixed, and known limitations. Arcade SDK
-integration and P2P sync (design doc §15 milestone 2+) haven't started.
+**Status: milestone 1 plus arcade integration.** Engine core, all four
+genre templates, and all five launch packs pass their rule tests; the
+table UI plays solo against bots, standalone or mounted in the arcade.
+The launcher integration is done and all 12 automated §13 acceptance
+checks pass — SDK boot, namespaced storage with a resumable match,
+lifecycle, launcher settings (theme, font scale, handedness, reduced
+motion), a PWA for offline solo play, and a graph-cue sound pack. The
+catalog entry ships with `inDevelopment: true`.
+
+**Not yet built: multiplayer.** It is a primary feature and is planned in
+full — see [ARCADE_ENHANCEMENTS.md](ARCADE_ENHANCEMENTS.md) Phase 8 —
+but it is deliberately a later pass. What exists today is the seam it
+needs: a match persists as **seed + event log** and re-hydrates by
+replaying the reducer, which is the identical payload a multiplayer
+snapshot and resync consume ([src/engine/replay.js](src/engine/replay.js)).
+
+See **[IMPLEMENTATION_NOTES.md](IMPLEMENTATION_NOTES.md)** for what
+simulation caught and fixed, and known limitations.
 
 ## Running it
 
 ```sh
-node tools/serve.mjs          # dev server at http://localhost:4780
-node tools/pack-test.mjs --all      # rule-test suite (38 assertions, 5 packs)
+npm test                                     # the CI gate: artifact + all suites
+node tools/pack-test.mjs --all               # rule-test suite (38 assertions, 5 packs)
 node tools/simulate.mjs --all --games=1000   # bot-vs-bot stall detection
+node tools/serve.mjs                         # standalone dev server, :4780
 ```
 
-Open `http://localhost:4780/` to play Crazy Eights solo against bots
-(`?pack=<id>` selects another pack, though only Crazy Eights has UI
-polish so far). The [hosted version](https://paulgibeault.github.io/card-game/)
-deploys automatically from `main` — no server needed, useful for testing
-on a phone.
+`tools/serve.mjs` is for solo UI work; it serves this repo and borrows
+`/arcade-sdk.js` from the sibling launcher checkout. **A framed test needs
+the real launcher**, which stages both under one origin with the CORS
+header opaque-origin frames require:
+
+```sh
+cd ../paulgibeault.github.io && ./dev.sh ../cardstock
+npm run acceptance -- http://127.0.0.1:4791/cardstock/
+```
+
+Play at `http://localhost:4780/` (standalone) or from the launcher grid.
+`?pack=<id>` picks a pack; the last one played is remembered in
+`arcade.v1.cardstock.lastPack`, because launcher deep links are
+`#app=cardstock` and cannot carry a query. Only Crazy Eights has UI polish
+so far. The [hosted version](https://paulgibeault.github.io/cardstock/)
+deploys through the shared fleet pipeline on every push to `main`.
 
 ## Layout
 
@@ -37,35 +61,61 @@ on a phone.
   sync model, roadmap. Start here.
 - **[IMPLEMENTATION_NOTES.md](IMPLEMENTATION_NOTES.md)** — milestone 1
   status: what's built, bugs simulation caught, known limitations.
-- **[ARCADE_ENHANCEMENTS.md](ARCADE_ENHANCEMENTS.md)** — spec for four
-  additive `Arcade.peer` enhancements (capability flags, targeted send,
-  peer roster, message meta), being implemented concurrently in the
-  arcade repo. The design assumes they're available: multiplayer
-  boot-gates on the caps, with no fallback protocol paths in the game.
+- **[ARCADE_ENHANCEMENTS.md](ARCADE_ENHANCEMENTS.md)** — the canonical
+  arcade-integration implementation plan (v2), phase by phase, including
+  the multiplayer work breakdown. Its v1 platform asks (capability flags,
+  targeted send, peer roster, message meta) all shipped in the launcher
+  SDK; multiplayer boot-gates on those caps with no fallback protocol.
+- **[ARCADE_COMPLIANCE.md](ARCADE_COMPLIANCE.md)** — the evaluation the
+  plan came from: scorecard against `GAME_INTEGRATION.md`, findings A–G
+  with file:line references, and the five resolved decisions.
 - **`schema/`** — JSON Schemas for the pack manifest, deck files, and rule
   tests. Normative for those formats.
-- **`packs/`** — the five launch packs: `crazy-eights`, `uno`, `hearts`,
-  `phase-10`, `skip-bo`. Each has a manifest, a deck file where needed,
-  and table-driven rule tests. All five are manifest-only (no `logic.js`).
+- **`packs/`** — the five launch packs: `crazy-eights`, `wildfire`,
+  `hearts`, `milestones`, `stockpile`. Each has a manifest, a deck file
+  where needed, and table-driven rule tests. All five are manifest-only
+  (no `logic.js`).
 - **`src/engine/`** — card/deck/zone/state model, move pipeline, scoring,
   pack loader, bot.
 - **`src/templates/`** — the four genre templates (shedding, trick-taking,
   contract-rummy, sequencing).
-- **`src/ui/`, `src/main.js`, `index.html`** — the standalone vanilla
-  table UI (no arcade integration yet).
+- **`src/ui/`, `src/main.js`, `index.html`** — the vanilla table UI and
+  its arcade integration.
+- **`src/arcade/`** — the launcher-facing edge: `storage.js` (the only
+  module that touches `Arcade.state`, and where the `Arcade.store` seam is
+  stubbed) and `audio.js` (the single sound-registration site).
+- **`js/soundpack.js`** — the sound design: graph cues built from the
+  launcher's shared physical-gesture elements.
+- **`sw.js`, `manifest.json`, `icon.png`** — the PWA and the catalog card
+  art. `icon.png` is generated by `tools/make-icon.mjs`; there are no
+  third-party assets in this repo.
+- **`tests/`** — the CI gate (`npm test`): pack rules, repo parse gates,
+  RNG known-answer vectors, replay round-trips, and XSS inertness.
 - **`tools/`** — `pack-test.mjs` (rule-test runner), `simulate.mjs`
   (headless bot-vs-bot simulation), `serve.mjs` (zero-dependency dev
-  server).
+  server), `make-icon.mjs`, plus the three fleet deploy files
+  (`stage.mjs` is ours; `verify-artifact.mjs` and `inject-precache.mjs`
+  are byte-identical vendored copies — never edit them here).
 
 ## Notes
 
 - Companion docs live in the arcade repo: `ARCADE_PLATFORM.md` (SDK/P2P
-  surface) and `GAME_INTEGRATION.md` (catalog integration). The design's
-  §17 is the full integration contract, aligned with those docs at arcade
-  protocol v2 and verified against the transport source (2026-07-10);
-  planned gameId: `cardstock`.
-- Uno, Phase 10, and Skip-Bo are Mattel trademarks. The packs describe
-  public gameplay for personal use; replace names and art before any public
-  release. The hosted build above serves Crazy Eights only (public domain)
-  for this reason — the other four packs are engine-complete but not
-  linked from the UI's default view.
+  surface) and `GAME_INTEGRATION.md` (catalog integration). **Where they
+  disagree with anything here, they win.** The design's §17 is the
+  integration contract, re-verified 2026-08-04.
+- **Card text does not scale with the launcher's font scale, deliberately.**
+  Chrome is sized in `rem` and scales. The `px` sizes on card faces are
+  user units inside an SVG `viewBox`, so they scale with the *card* —
+  which scales with the layout — not with text. A rank that grew while its
+  card did not would overflow the corner it sits in.
+- **Themes:** the table honours the launcher's light/dark setting. Card
+  *faces* are fixed across both — a playing card is a physical object on
+  the table, not chrome, and does not repaint when the room lights
+  change.
+- Every pack ships under an original name with original art. Game
+  mechanics are not protectable and these packs implement classic ones —
+  Wildfire is color-and-rank shedding with wilds, Milestones is
+  ten-contract rummy, Stockpile is stock-racing sequencing — but no pack
+  carries another publisher's name, deck design, or artwork. Card faces
+  are drawn from scratch by `src/ui/renderCard.js`; there are no
+  third-party assets in the repo.

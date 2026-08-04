@@ -1,0 +1,53 @@
+# Thin caller for the fleet CI/CD standard. The pipeline lives in the
+# launcher repo (fleet-ci.yml); change it there and every app follows.
+# See GAME_INTEGRATION.md §13a.
+name: CI & Deploy Pages
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write # version_bump pushes the bump commit back to main
+  pages: write
+  id-token: write
+
+# Per-ref, so a PR run never cancels main's deploy.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fleet:
+    uses: paulgibeault/paulgibeault.github.io/.github/workflows/fleet-ci.yml@main
+    with:
+      # The fleet norm for any app with a service worker: CI owns the cache
+      # version (§10).
+      version_bump: true
+
+      # DELIBERATELY OFF UNTIL THE CATALOG ENTRY LANDS.
+      #
+      # `launcher: true` checks the launcher out and runs `npm run acceptance`
+      # (in THIS repo — tools/acceptance.mjs) after our own tests, making the
+      # §13 checklist a per-push gate. That is where this repo wants to end up:
+      # the surface it covers — bridged storage, the settings snapshot,
+      # suspend/resume, the caps contract — breaks from the launcher side,
+      # where our own tests can never see it.
+      #
+      # It cannot pass yet. CI checks the launcher out fresh from upstream
+      # `main`, and until `cardstock` is in that repo's catalog.json there is
+      # no launcher tile to launch the game from, so the framed-boot check
+      # fails with "launcher has no .launcher-btn[data-game-id=cardstock]".
+      # That is a correct signal, not a flake: registration is real and it has
+      # not happened. See ARCADE_ENHANCEMENTS.md Phase 6, whose step 1 is the
+      # catalog entry and whose step 3 is this flag.
+      #
+      # `npm run acceptance` runs fine locally today against a sibling
+      # launcher checkout that carries the entry. Re-enable both lines below
+      # in a follow-up once the catalog entry is merged upstream:
+      #
+      #   launcher: true
+      #   browsers: chromium   # the checklist runner is Playwright-driven and
+      #                        # the test tier installs no browsers unless asked

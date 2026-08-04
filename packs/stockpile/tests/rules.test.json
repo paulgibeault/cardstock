@@ -1,5 +1,5 @@
 {
-  "pack": "skip-bo",
+  "pack": "stockpile",
   "tests": [
     {
       "name": "an empty build pile takes a 1 or a wild, nothing else",

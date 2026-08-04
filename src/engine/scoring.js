@@ -21,7 +21,7 @@ export function handValue(cards, scoring) {
 }
 
 // "First seat with an empty hand" wins the round; every other seat's hand value
-// goes to them (Crazy Eights, Uno).
+// goes to them (Crazy Eights, Wildfire).
 export function roundScoreHandValuesToWinner(ctx) {
   const scoring = ctx.pack.scoring;
   const result = {};
@@ -41,7 +41,7 @@ export function roundScoreHandValuesToWinner(ctx) {
   return result;
 }
 
-// Every seat scores the value of the cards left in their own hand (Phase 10).
+// Every seat scores the value of the cards left in their own hand (Milestones).
 export function roundScoreLeftoverHandValues(ctx) {
   const scoring = ctx.pack.scoring;
   const result = {};
@@ -110,9 +110,9 @@ export function runRoundScore(ctx) {
 }
 
 // Handles the common "anyScore >= N" / lowestScore|highestScore gameOver shape
-// (Crazy Eights, Uno, Hearts). Returns null when scoring.gameOver is absent or
+// (Crazy Eights, Wildfire, Hearts). Returns null when scoring.gameOver is absent or
 // says "template" — the template owns game-over/winner logic itself in that case
-// (Phase 10: "first to complete all contracts", not a score threshold).
+// (Milestones: "first to complete all contracts", not a score threshold).
 export function evaluateGameOver(ctx) {
   const cfg = ctx.pack.scoring.gameOver;
   if (!cfg || cfg.when === 'template') return null;
