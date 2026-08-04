@@ -47,7 +47,7 @@
         "vars": { "type": "object", "description": "Game vars (template-defined names, e.g. activeSuit, heartsBroken, led, leader, trickNumber)." },
         "playerVars": {
           "type": "object",
-          "description": "seat → { var: value } (e.g. Phase 10's phase / laidDown).",
+          "description": "seat \u2192 { var: value } (e.g. Milestones' phase / laidDown).",
           "additionalProperties": { "type": "object" }
         },
         "scores": { "type": "object", "additionalProperties": { "type": "number" } },

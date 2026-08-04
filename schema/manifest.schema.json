@@ -114,7 +114,7 @@
             "on": {
               "enum": ["play", "discard"],
               "default": "play",
-              "description": "When the effect triggers. Phase 10's Skip triggers on discard."
+              "description": "When the effect triggers. Milestones' Skip triggers on discard."
             }
           }
         }
@@ -263,6 +263,7 @@
           "description": "Generates a 'declare last card' announcement plus its missed-call challenge.",
           "properties": {
             "id": { "type": "string" },
+            "label": { "type": "string", "description": "Player-facing announcement text (e.g. \"Last card!\"). Defaults to the id when absent." },
             "atHandCount": { "type": "integer", "default": 1 },
             "penalty": { "type": "object", "properties": { "draw": { "type": "integer" } } }
           }
@@ -368,7 +369,7 @@
         "discardPickupForbidden": {
           "type": "array",
           "items": { "type": "string" },
-          "description": "Selectors that may not be taken from the discard (Phase 10's Skip)."
+          "description": "Selectors that may not be taken from the discard (Milestones' Skip)."
         },
         "goingOut": { "enum": ["discard-last", "play-or-discard-last"] }
       }

@@ -1,4 +1,4 @@
-// Sequencing template (design doc §13.4). Validates against Skip-Bo.
+// Sequencing template (design doc §13.4). Validates against Stockpile.
 // Shared build piles fill 1..buildRule.to in order (wilds fill any slot); each player
 // races to empty their stock pile through hand/stock/discard plays, ending their turn
 // by discarding one card to an own numbered discard pile.

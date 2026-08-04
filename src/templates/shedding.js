@@ -1,4 +1,4 @@
-// Shedding template (design doc §13.2). Validates against Crazy Eights and Uno.
+// Shedding template (design doc §13.2). Validates against Crazy Eights and Wildfire.
 // Match-and-discard: play a card matching the active state on any matchOn attribute
 // (or a wild), first to empty hand wins.
 
@@ -67,7 +67,7 @@ function drawCards(ctx, seat, n) {
   }
 }
 
-function unoCallVarName(cfg) {
+function lastCardCallVarName(cfg) {
   return `__${cfg.id}Called`;
 }
 
@@ -229,7 +229,7 @@ const shedding = {
   applyAnnouncement(ctx, announcement) {
     const cfg = ctx.rules.lastCardCall;
     if (!cfg) return;
-    const varName = unoCallVarName(cfg);
+    const varName = lastCardCallVarName(cfg);
     if (announcement.id === cfg.id) {
       ctx.setPlayerVar(announcement.actor, varName, true);
       return;

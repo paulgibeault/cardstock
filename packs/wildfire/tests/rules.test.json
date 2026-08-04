@@ -1,5 +1,5 @@
 {
-  "pack": "uno",
+  "pack": "wildfire",
   "tests": [
     {
       "name": "match by color or rank; mismatch is illegal",
@@ -93,7 +93,7 @@
       },
       "assert": [
         { "apply": { "actor": 1, "type": "playCard", "cards": ["green-3"] } },
-        { "announce": { "actor": 0, "challenge": "uno-call", "target": 1 } },
+        { "announce": { "actor": 0, "challenge": "last-card-call", "target": 1 } },
         { "expect": { "zones": { "hand.1": 3 } } }
       ]
     },
@@ -110,9 +110,9 @@
         "vars": { "activeColor": "green" }
       },
       "assert": [
-        { "announce": { "actor": 1, "id": "uno-call" } },
+        { "announce": { "actor": 1, "id": "last-card-call" } },
         { "apply": { "actor": 1, "type": "playCard", "cards": ["green-3"] } },
-        { "announce": { "actor": 0, "challenge": "uno-call", "target": 1 } },
+        { "announce": { "actor": 0, "challenge": "last-card-call", "target": 1 } },
         { "expect": { "zones": { "hand.1": 1 } } }
       ]
     },

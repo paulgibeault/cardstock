@@ -1,7 +1,80 @@
-:root {
-  color-scheme: light dark;
+/* The table's chrome and the vanilla card renderer.
+ *
+ * THEMING (design §17.7, GAME_INTEGRATION §5). The launcher stamps
+ * `data-theme="light|dark"` on <html>; every colour below is a custom property
+ * so both palettes are one block each rather than a second stylesheet.
+ *
+ * Two rules that look like oversights and are not:
+ *
+ *  1. The dark palette is ALSO the :root default. Standalone boots with no
+ *     data-theme at all, and continuity with the green-felt table people
+ *     already have beats guessing at the OS preference.
+ *  2. Card FACES are fixed across both themes. A playing card is a physical
+ *     object on the table, not chrome — it does not repaint when the room
+ *     lights change. Only its surroundings do.
+ *
+ * A pack's own theme.css must style both themes; that pack rule stays, and
+ * these properties are the vocabulary it overrides.
+ */
+
+:root,
+[data-theme="dark"] {
+  color-scheme: dark;
+
   --felt: #1b5e3a;
-  --ink: #1a1a1a;
+  --felt-sheen: rgba(255, 255, 255, 0.08);
+  --felt-vignette: rgba(0, 0, 0, 0.35);
+  --felt-weave: rgba(255, 255, 255, 0.02);
+
+  --chrome-text: #ffffff;
+  --chrome-bar: rgba(0, 0, 0, 0.25);
+  --accent: #ffd166;
+  --glow: rgba(255, 255, 255, 0.3);
+  --glow-strong: rgba(255, 255, 255, 0.9);
+
+  --button-bg: #ffffff;
+  --button-text: #1a1a1a;
+
+  --panel-bg: #ffffff;
+  --panel-text: #1a1a1a;
+  --scrim: rgba(0, 0, 0, 0.55);
+  --panel-shadow: rgba(0, 0, 0, 0.45);
+
+  --card-shadow: rgba(0, 0, 0, 0.45);
+  --action-bg: #2f6fb0;
+  --action-bg-hover: #245a91;
+  --action-text: #ffffff;
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+
+  /* A pale baize rather than a white page — still a card table, just one in a
+     lit room. Chrome text is near-black on it (well past AA at these sizes),
+     which is what the dark palette gets for free from white-on-green. */
+  --felt: #c9ddd0;
+  --felt-sheen: rgba(255, 255, 255, 0.55);
+  --felt-vignette: rgba(31, 61, 45, 0.14);
+  --felt-weave: rgba(31, 61, 45, 0.035);
+
+  --chrome-text: #14261c;
+  --chrome-bar: rgba(255, 255, 255, 0.6);
+  --accent: #9a6400;
+  --glow: rgba(20, 38, 28, 0.25);
+  --glow-strong: rgba(20, 38, 28, 0.65);
+
+  --button-bg: #14261c;
+  --button-text: #ffffff;
+
+  --panel-bg: #ffffff;
+  --panel-text: #14261c;
+  --scrim: rgba(20, 38, 28, 0.45);
+  --panel-shadow: rgba(31, 61, 45, 0.3);
+
+  --card-shadow: rgba(31, 61, 45, 0.28);
+  --action-bg: #245a91;
+  --action-bg-hover: #1b4670;
+  --action-text: #ffffff;
 }
 
 * { box-sizing: border-box; }
@@ -9,20 +82,20 @@
 body {
   margin: 0;
   font-family: system-ui, sans-serif;
-  color: #fff;
+  color: var(--chrome-text);
   min-height: 100vh;
   display: flex;
   flex-direction: column;
   background:
-    radial-gradient(ellipse at 50% 35%, rgba(255, 255, 255, 0.08), transparent 60%),
-    radial-gradient(ellipse at 50% 100%, rgba(0, 0, 0, 0.35), transparent 65%),
-    repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.02) 0 2px, transparent 2px 9px),
+    radial-gradient(ellipse at 50% 35%, var(--felt-sheen), transparent 60%),
+    radial-gradient(ellipse at 50% 100%, var(--felt-vignette), transparent 65%),
+    repeating-linear-gradient(45deg, var(--felt-weave) 0 2px, transparent 2px 9px),
     var(--felt);
 }
 
 #status-bar {
   padding: 0.5rem 1rem;
-  background: rgba(0, 0, 0, 0.25);
+  background: var(--chrome-bar);
   font-size: 0.95rem;
   display: flex;
   justify-content: space-between;
@@ -34,7 +107,7 @@ body {
 }
 
 #status-bar.status-bar--your-turn {
-  border-bottom-color: #ffd166;
+  border-bottom-color: var(--accent);
 }
 
 #status-bar button {
@@ -43,14 +116,22 @@ body {
   border-radius: 6px;
   border: none;
   cursor: pointer;
-  background: #fff;
-  color: var(--ink);
+  background: var(--button-bg);
+  color: var(--button-text);
 }
 
 #status-bar button:disabled {
   opacity: 0.5;
   cursor: default;
 }
+
+/* HANDEDNESS (§5). The SDK stamps data-handedness on <html>. The two things
+   that have a side are the action button and the direction the hand fans, and
+   both flip together — a left-handed player's thumb covers the left edge, so
+   the newest card and the button both belong there. */
+[data-handedness="left"] #status-bar { flex-direction: row-reverse; }
+[data-handedness="left"] .hand { flex-direction: row-reverse; }
+[data-handedness="left"] .opponent-row { flex-direction: row-reverse; }
 
 #table {
   flex: 1;
@@ -120,7 +201,7 @@ body {
 .hand .card-face--disabled:hover { transform: none; }
 
 .card-face { display: inline-block; animation: settle-in 0.22s ease-out; }
-.card-face svg { width: 100%; display: block; filter: drop-shadow(0 3px 4px rgba(0,0,0,0.45)); }
+.card-face svg { width: 100%; display: block; filter: drop-shadow(0 3px 4px var(--card-shadow)); }
 
 .card-face-wrap.card-deal,
 .mini-hand .card-deal .card-face {
@@ -138,10 +219,15 @@ body {
 }
 
 @keyframes pulse-glow {
-  0%, 100% { text-shadow: 0 0 4px rgba(255, 255, 255, 0.3); }
-  50% { text-shadow: 0 0 10px rgba(255, 255, 255, 0.9); }
+  0%, 100% { text-shadow: 0 0 4px var(--glow); }
+  50% { text-shadow: 0 0 10px var(--glow-strong); }
 }
 
+/* The LAUNCHER's reduced-motion setting is handled for free: the SDK injects a
+   kill-switch rule keyed on data-reduced-motion and this game sets no
+   data-arcade-keep-motion opt-out. This block reads the OS preference instead,
+   which is a different signal and the only one a standalone visit has. Both are
+   needed; the JS-driven deal stagger is gated separately in src/main.js. */
 @media (prefers-reduced-motion: reduce) {
   .card-face,
   .card-face-wrap.card-deal,
@@ -151,6 +237,7 @@ body {
   }
 }
 
+/* Card faces: fixed across themes on purpose — see the header. */
 .card-face__bg { fill: #fdfdfa; stroke: #00000022; }
 .card-face--red .card-face__corner,
 .card-face--red .card-face__pip { fill: #b91c1c; }
@@ -168,12 +255,17 @@ body {
 .card-face--back .card-face__bg { fill: #274b8c; }
 .card-face--back .card-face__back-pattern { fill: #3b62ad; }
 
+/* px inside an SVG viewBox, deliberately (§5, design §17.7). These are user
+   units in a 100×140 coordinate space, so they scale with the CARD — which
+   scales with the layout — not with the launcher's font scale. A card whose
+   rank grew while the card did not would overflow its own corner. Chrome text
+   is rem throughout and does scale. */
 .card-face__corner { font-size: 16px; font-weight: 700; }
 .card-face__corner--br { text-anchor: end; }
 .card-face__pip { font-size: 34px; text-anchor: middle; opacity: 0.9; }
 .card-face__badge { font-size: 20px; font-weight: 700; text-anchor: middle; fill: #333; }
 
-/* Uno/Phase-10-style colored cards (no suit) get their face painted by color. */
+/* Colored cards with no suit (Wildfire, Milestones) get their face painted by color. */
 .card-face--red .card-face__bg { fill: #c0392b; }
 .card-face--red .card-face__corner, .card-face--red .card-face__badge { fill: #fff; }
 .card-face--yellow .card-face__bg { fill: #e1b12c; }
@@ -196,15 +288,15 @@ body {
 #choice-modal {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--scrim);
   display: flex;
   align-items: center;
   justify-content: center;
 }
 #choice-modal[hidden] { display: none; }
 #choice-modal .panel {
-  background: #fff;
-  color: var(--ink);
+  background: var(--panel-bg);
+  color: var(--panel-text);
   padding: 1rem;
   border-radius: 8px;
   display: flex;
@@ -221,7 +313,7 @@ body {
 #game-over-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.55);
+  background: var(--scrim);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -229,18 +321,24 @@ body {
 }
 #game-over-overlay[hidden] { display: none; }
 #game-over-overlay .panel {
-  background: #fff;
-  color: var(--ink);
+  background: var(--panel-bg);
+  color: var(--panel-text);
   padding: 2rem 2.5rem;
   border-radius: 12px;
   text-align: center;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 20px 60px var(--panel-shadow);
   animation: settle-in 0.3s ease-out;
 }
 #game-over-message {
   font-size: 1.5rem;
   font-weight: 700;
+  margin-bottom: 0.35rem;
+}
+#game-over-record {
+  font-size: 0.85rem;
+  opacity: 0.7;
   margin-bottom: 1.25rem;
+  min-height: 1.1em;
 }
 #play-again-button {
   font: inherit;
@@ -248,8 +346,8 @@ body {
   border-radius: 8px;
   border: none;
   cursor: pointer;
-  background: #2f6fb0;
-  color: #fff;
+  background: var(--action-bg);
+  color: var(--action-text);
   font-weight: 600;
 }
-#play-again-button:hover { background: #245a91; }
+#play-again-button:hover { background: var(--action-bg-hover); }

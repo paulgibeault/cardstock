@@ -726,10 +726,13 @@ engine primitive. This keeps templates from speculatively bloating.
 - End-to-end sealing + commit-reveal dealing (so even the host can't peek;
   acceptable at friend-scale; the dealing interface stays abstract so it
   can slot in later).
-- Arcade enhancements E0–E3 are treated as **available** (implementation
-  underway in the arcade repo per `ARCADE_ENHANCEMENTS.md`); re-align when
-  they land — any drift surfaces as acceptance-test failures, not design
-  debt.
+- ~~Arcade enhancements E0–E3~~ — **shipped** (2026-08-04). `peer.sendTo`,
+  `peer.roster` and `peer.meta` are all in the SDK's documented capability
+  list, alongside a later `peer.party` that postdates this section. The
+  boot-time caps gate below is still correct as a defensive path, but an
+  older launcher is no longer the expected case. `ARCADE_ENHANCEMENTS.md`
+  is now the Cardstock-side implementation plan rather than a platform
+  spec; its Appendix B keeps the E-labels resolvable.
 - Host migration on host loss (log persistence + resume covers the common
   case).
 - URL-loaded third-party packs (would require sandboxing `logic.js`).
@@ -826,14 +829,24 @@ disagree, the arcade docs win and this section gets updated.
   picker**, not separate launcher entries — the launcher's per-game
   storage namespace, score categories, and peer routing all key off the
   single `cardstock` id, with the pack id as a second-level key.
-- Launcher card assets: square cover `images/cardstock.png` (≥ 512×512) in
-  the launcher repo; subtitle ≤ 20 chars (**"Card games"**); update both
-  the `#view-launcher` grid in `index.html` and the mirrored `#games`
-  section in `profile.html`.
-- Iframe sandbox (`allow-scripts allow-same-origin allow-downloads`): no
-  top-level navigation, no `window.open` — rules reference and help are
-  in-app overlays. Fullscreen only on user gesture, targeting our root
-  element. `<a download>` works (replay export uses it).
+- Launcher card art: `icon.png` (square, ≥ 512×512) lives in **this**
+  repo and is served at `/cardstock/icon.png`; subtitle ≤ 20 chars
+  (**"Card games"**). Registration is ONE `catalog.json` entry in the
+  launcher repo and no HTML edits at all — the launcher grid and the
+  portfolio page both render from the catalog. *(Corrected 2026-08-04: an
+  earlier draft called for cover art in the launcher repo plus hand edits
+  to `#view-launcher` in `index.html` and `#games` in `profile.html`. All
+  three are obsolete.)*
+- Iframe sandbox (`allow-scripts allow-downloads` — **no
+  `allow-same-origin`**): no top-level navigation, no `window.open` —
+  rules reference and help are in-app overlays. Fullscreen only on user
+  gesture, targeting our root element. `<a download>` works (replay export
+  uses it). *(Corrected 2026-08-04: an earlier draft listed
+  `allow-same-origin`.)* The consequence is load-bearing: the frame runs
+  **opaque-origin**, so `localStorage` / `indexedDB` / `caches` property
+  access **throws** rather than returning empty, and all storage is
+  bridged over postMessage. Every direct-probe fallback is therefore
+  invalid — go through `Arcade.state` / `store` / `files`, always.
 
 ### 17.2 Boot
 
@@ -995,9 +1008,13 @@ the aggregate `onStatus` merely gates the multiplayer UI as a whole:
   origin-wide caches or service workers (the moon-lit incident) — see
   §17.9.
 
-### 17.9 PWA / service worker (optional; enables offline solo)
+### 17.9 PWA / service worker (shipped; enables offline solo)
 
-If shipped: start from the launcher repo's `tools/templates/game-sw.js`;
+*(Corrected 2026-08-04: this section said "optional". The fleet posture in
+GAME_INTEGRATION §10 is stronger — a manifest implies a worker, and six of
+seven catalog apps ship both. Cardstock ships both.)*
+
+Start from the launcher repo's `tools/templates/game-sw.js`;
 `manifest.json` scope + `start_url` = `/cardstock/`; SW registered with
 `{ scope: '/cardstock/' }`; fetch handler ignores anything outside
 `/cardstock/`; caches version-keyed `cardstock-*` only; pack assets under

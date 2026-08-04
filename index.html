@@ -4,7 +4,29 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Cardstock</title>
+  <meta name="description" content="One engine, many card games — each one a pack." />
+  <meta name="theme-color" content="#1b5e3a" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="icon" type="image/png" href="icon.png" />
+  <link rel="apple-touch-icon" href="icon.png" />
   <link rel="stylesheet" href="src/ui/table.css" />
+
+  <!-- The evergreen alias, root-relative — GAME_INTEGRATION §2. Not the
+       major-pinned /sdk/v3/ form: evergreen is the deliberate fleet posture
+       and every shipped app uses it. Root-relative also resolves under the
+       launcher's local dev staging with no rewrite. -->
+  <script src="/arcade-sdk.js"></script>
+
+  <!-- The shared physical-gesture element library, then this game's sound
+       pack. Both are classic scripts so they evaluate before src/main.js's
+       module graph, which is what lets src/arcade/audio.js register at import
+       time. A missing arcade-audio.js is a supported state: the pack simply
+       does not register and the game is silent (§5 — a pack-based game does
+       not degrade to chiptune). -->
+  <script src="/arcade-audio.js"></script>
+  <script src="js/soundpack.js"></script>
+
+  <script>Arcade.init({ gameId: 'cardstock' });</script>
 </head>
 <body>
   <div id="status-bar">
@@ -40,10 +62,27 @@
   <div id="game-over-overlay" hidden>
     <div class="panel">
       <div id="game-over-message"></div>
+      <div id="game-over-record"></div>
       <button id="play-again-button">Play again</button>
     </div>
   </div>
 
   <script type="module" src="src/main.js"></script>
+
+  <script>
+    // Fire-and-forget, never awaited on the boot path (§10). Inside a launcher
+    // frame the SDK hands back an inert navigator.serviceWorker stub whose
+    // register() rejects catchably — a game's worker only ever controls
+    // STANDALONE visits, because an opaque-origin frame cannot be controlled by
+    // any service worker at all. The loopback guard keeps local-dev edits from
+    // being masked by stale cache, matching the launcher's own behaviour.
+    try {
+      if ('serviceWorker' in navigator &&
+          !/^(127\.|localhost$|0\.0\.0\.0$|::1$)/.test(location.hostname)) {
+        navigator.serviceWorker.register('sw.js', { scope: '/cardstock/' })
+          .catch((e) => console.debug('[cardstock] service worker not registered', e && e.message));
+      }
+    } catch (e) { /* opaque-origin property access can throw outright */ }
+  </script>
 </body>
 </html>

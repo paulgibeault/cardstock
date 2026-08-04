@@ -3,6 +3,7 @@
 // play-through), then runs its `assert` sequence. See schema/rules-test.schema.json.
 
 import { readFile } from 'node:fs/promises';
+import fsSync from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadPack } from '../src/engine/packLoader.js';
@@ -11,7 +12,12 @@ import { validateMove, applyMove, applyAnnouncement, runScoreRound } from '../sr
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..');
-const PACKS_DIR = path.join(REPO_ROOT, 'packs');
+export const PACKS_DIR = path.join(REPO_ROOT, 'packs');
+
+/** Every pack id on disk. One source of truth for the CLI and tests/packs.test.js. */
+export function listPackIds() {
+  return fsSync.readdirSync(PACKS_DIR).filter((f) => !f.startsWith('.')).sort();
+}
 
 async function readJson(p) {
   return JSON.parse(await readFile(p, 'utf8'));
@@ -177,12 +183,16 @@ function runAssertion(state, assertion) {
   return [`unrecognized assertion: ${JSON.stringify(assertion)}`];
 }
 
-async function runPackTests(packId) {
+// The single runner. `log: null` silences it for programmatic callers
+// (tests/packs.test.js) — they read `failures` instead of scraping stdout, so
+// the CLI and the CI gate exercise the same code rather than two copies.
+export async function runPackTests(packId, { log = console.log } = {}) {
+  const say = log || (() => {});
   const pack = await loadPackFromDisk(packId);
   const testFile = await readJson(path.join(PACKS_DIR, packId, 'tests', 'rules.test.json'));
 
   let passed = 0;
-  let failed = 0;
+  const failures = [];
   for (const test of testFile.tests) {
     const state = buildStateFromSetup(pack, test.setup);
     const problems = [];
@@ -192,23 +202,21 @@ async function runPackTests(packId) {
     }
     if (problems.length === 0) {
       passed++;
-      console.log(`  \x1b[32m✓\x1b[0m ${test.name}`);
+      say(`  \x1b[32m✓\x1b[0m ${test.name}`);
     } else {
-      failed++;
-      console.log(`  \x1b[31m✗\x1b[0m ${test.name}`);
-      for (const p of problems) console.log(`    \x1b[31m${p}\x1b[0m`);
+      failures.push({ name: test.name, problems });
+      say(`  \x1b[31m✗\x1b[0m ${test.name}`);
+      for (const p of problems) say(`    \x1b[31m${p}\x1b[0m`);
     }
   }
-  console.log(`${packId}: ${passed} passed, ${failed} failed\n`);
-  return { passed, failed };
+  say(`${packId}: ${passed} passed, ${failures.length} failed\n`);
+  return { passed, failed: failures.length, failures };
 }
 
 async function main() {
   const args = process.argv.slice(2);
   const all = args.includes('--all');
-  const packIds = all
-    ? (await import('node:fs')).readdirSync(PACKS_DIR).filter((f) => !f.startsWith('.'))
-    : args.filter((a) => !a.startsWith('--'));
+  const packIds = all ? listPackIds() : args.filter((a) => !a.startsWith('--'));
 
   if (packIds.length === 0) {
     console.error('Usage: pack-test.mjs <pack-id> [<pack-id>...] | --all');
@@ -229,4 +237,8 @@ async function main() {
   process.exit(totalFailed > 0 ? 1 : 0);
 }
 
-main();
+// CLI only — importing this module (tests/packs.test.js) must not run the
+// suite, and must never reach the process.exit above.
+if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
+  main();
+}

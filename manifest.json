@@ -1,0 +1,19 @@
+{
+  "name": "Cardstock",
+  "short_name": "Cardstock",
+  "description": "One engine, many card games — each one a pack.",
+  "scope": "/cardstock/",
+  "start_url": "./index.html?v=0.1.0",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#1b5e3a",
+  "theme_color": "#1b5e3a",
+  "icons": [
+    {
+      "src": "icon.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

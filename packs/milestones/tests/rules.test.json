@@ -1,5 +1,5 @@
 {
-  "pack": "phase-10",
+  "pack": "milestones",
   "tests": [
     {
       "name": "a valid phase-1 laydown (two sets of three, one wild used)",

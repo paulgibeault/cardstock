@@ -4,7 +4,7 @@
 //
 // Scope: each simulated instance plays until the current ROUND ends (isRoundOver), not
 // a full multi-round match. For shedding/sequencing a round IS the whole game. For
-// trick-taking/contract-rummy, a full match (score threshold / all ten Phase-10
+// trick-taking/contract-rummy, a full match (score threshold / all ten Milestones
 // contracts) is a separate, much harder question of bot skill, not rule-engine
 // correctness — round completion is what actually exercises "does every zone
 // transition, reaction and turn-advance terminate cleanly", which is what this bar is
