@@ -57,14 +57,15 @@ import { confirmAction, closeConfirm } from './confirm.js';
 import { createDragController } from './dragController.js';
 import { attachInspector, hideInspector } from './inspector.js';
 import {
-  describeCard, describeZone, cardAriaLabel, zoneAriaLabel, zoneBadgeText,
+  describeCard, describeZone, cardAriaLabel, zoneAriaLabel, zoneBadgeText, cardName,
 } from './describe.js';
 import {
   interactionMode, buildUiModel, dropCandidates, draggableSources, pruneSelection,
   isSelected, handAddress, implicitLandingZone,
+  describeContractItem, describeContract, shortContract,
 } from './interaction.js';
 import {
-  orderHand, reorder, nextMode, isSortMode, SORT_LABELS,
+  orderHand, reorder, nextMode, isSortMode, fanStep, SORT_LABELS,
 } from './handOrder.js';
 import {
   initPanels, showRoundSummary, hideRoundSummary, isRoundSummaryOpen,
@@ -112,9 +113,11 @@ const el = {
   centerPiles: document.getElementById('center-piles'),
   playerPiles: document.getElementById('player-piles'),
   announceBar: document.getElementById('announce-bar'),
+  contractLadder: document.getElementById('contract-ladder'),
   actionBar: document.getElementById('action-bar'),
   actionHint: document.getElementById('action-hint'),
   actionButton: document.getElementById('action-button'),
+  handRow: document.getElementById('hand-row'),
   hand: document.getElementById('hand'),
   handSort: document.getElementById('hand-sort'),
   log: document.getElementById('log'),
@@ -499,36 +502,136 @@ function meldGroupsOf(state, seat) {
   return cards.length ? [{ item: null, cards: cards.slice() }] : [];
 }
 
-/** A seat's laid-down melds as tappable chips — the hit targets. */
+/**
+ * A seat's laid-down melds as chips — the hit targets, and the single most
+ * useful piece of public information on the table.
+ *
+ * Each chip carries the cards AND a caption naming the requirement they
+ * satisfied. The cards alone cannot say that: three 7s and three 7s are two
+ * different rungs of the ladder depending on the contract that asked for them,
+ * and an opponent's laid-down phase is exactly what you plan your own turn
+ * around.
+ */
 function buildMeldStrip(state, seat, ui, { mini = false } = {}) {
   const strip = document.createElement('div');
   strip.className = `meld-strip ${mini ? 'meld-strip--mini' : ''}`;
   strip.dataset.zone = `melds.${seat}`;
   const groups = meldGroupsOf(state, seat);
+  const owner = seat === HUMAN_SEAT ? 'Your' : `${identityOf(seat).name}'s`;
+
   groups.forEach((group, i) => {
     const meldKey = `${seat}:${i}`;
     const move = ui.readyMelds.get(meldKey) || null;
+    const what = group.item ? describeContractItem(group.item) : 'meld';
+
     const chip = document.createElement('button');
     chip.type = 'button';
     chip.className = `meld-chip ${move ? 'meld-chip--ready' : ''}`;
     chip.dataset.meld = meldKey;
+
+    const cards = document.createElement('span');
+    cards.className = 'meld-chip__cards';
     for (const cardId of group.cards) {
       const card = cardById(state, cardId);
-      if (card) chip.appendChild(svgNode(cardArt.face(card), 'meld-chip__card'));
+      if (card) cards.appendChild(svgNode(cardArt.face(card), 'meld-chip__card'));
     }
-    const what = group.item ? group.item : 'meld';
-    const owner = seat === HUMAN_SEAT ? 'Your' : `${identityOf(seat).name}'s`;
+    chip.appendChild(cards);
+    chip.appendChild(line('meld-chip__label', what));
+
+    const label = `${owner} ${what}, ${group.cards.length} cards.`;
     if (move) {
       chip.disabled = false;
-      chip.setAttribute('aria-label', `${owner} ${what}, ${group.cards.length} cards. Add your selected card.`);
+      chip.setAttribute('aria-label', `${label} Add your selected card.`);
       chip.addEventListener('click', () => liveState && performHumanMove(liveState, move, chip));
     } else {
       chip.disabled = true;
-      chip.setAttribute('aria-label', `${owner} ${what}, ${group.cards.length} cards.`);
+      chip.setAttribute('aria-label', label);
     }
+
+    // Reading a meld card by card is the thing a squeezed strip made
+    // impossible, so the inspector spells the whole thing out.
+    attachInspector(chip, () => ({
+      title: `${owner} ${what}`,
+      lines: group.cards
+        .map((cardId) => cardById(state, cardId))
+        .filter(Boolean)
+        .map((card, n) => ({ label: `Card ${n + 1}`, value: cardName(card) })),
+      notes: move ? ['Your selected card extends this meld — tap to play it.'] : [],
+    }), { isBusy: () => !!drag && drag.isDragging() });
+
     strip.appendChild(chip);
   });
   return strip;
+}
+
+/**
+ * The contract ladder: every rung of the race, and who is standing on it.
+ *
+ * Contract-rummy's per-player progression is the whole game (design doc
+ * §13.3) and it used to be a two-character chip on a name plate — you could
+ * see that Nell was on "Ph 3" but not what phase 3 asks for, how many rungs
+ * are left, or how far ahead of you she is. Data-driven, so it appears for any
+ * pack declaring `rules.contracts` and stays hidden for everything else.
+ *
+ * Rungs carry the SHORT form (`S3+R4`) with a one-line key, and hovering gives
+ * the sentence — the same words-versus-badge split the pile labels use.
+ */
+function renderContractLadder(state) {
+  const contracts = state.pack.rules.contracts;
+  if (!Array.isArray(contracts) || !contracts.length) {
+    el.contractLadder.hidden = true;
+    el.contractLadder.replaceChildren();
+    return;
+  }
+
+  const minePhase = state.playerVars[HUMAN_SEAT]?.phase ?? null;
+  el.contractLadder.replaceChildren();
+
+  contracts.forEach((items, index) => {
+    const phase = index + 1;
+    const rung = document.createElement('div');
+    const mine = phase === minePhase;
+    rung.className = `ladder__rung ${mine ? 'ladder__rung--mine' : ''} `
+      + `${minePhase && phase < minePhase ? 'ladder__rung--past' : ''}`;
+
+    rung.appendChild(line('ladder__no', String(phase)));
+    rung.appendChild(line('ladder__req', shortContract(items)));
+
+    const who = document.createElement('div');
+    who.className = 'ladder__who';
+    const here = [];
+    for (let seat = 0; seat < state.seats; seat++) {
+      if ((state.playerVars[seat]?.phase ?? null) !== phase) continue;
+      const identity = identityOf(seat);
+      here.push(identity);
+      const pip = document.createElement('span');
+      pip.className = 'ladder__pip';
+      // Roster colour — an own value, never a manifest one (§7b).
+      pip.style.background = identity.color;
+      pip.textContent = identity.icon || identity.initials;
+      pip.setAttribute('aria-hidden', 'true');
+      who.appendChild(pip);
+    }
+    rung.appendChild(who);
+
+    const names = here.map((i) => (i.seat === HUMAN_SEAT ? 'you' : i.name));
+    rung.setAttribute('aria-label',
+      `Contract ${phase} of ${contracts.length}: ${describeContract(items)}.`
+      + (names.length ? ` On it: ${names.join(', ')}.` : ' Nobody is on it.'));
+
+    attachInspector(rung, () => ({
+      title: `Contract ${phase}`,
+      lines: items.map((item, n) => ({ label: `Part ${n + 1}`, value: describeContractItem(item) })),
+      notes: names.length
+        ? [`Currently on it: ${names.join(', ')}.`]
+        : ['Nobody is on this contract.'],
+    }), { isBusy: () => !!drag && drag.isDragging() });
+
+    el.contractLadder.appendChild(rung);
+  });
+
+  el.contractLadder.appendChild(line('ladder__key', 'S set · R run · C colour'));
+  el.contractLadder.hidden = false;
 }
 
 /** Hearts' point total taken so far — worth a chip on the won pile. */
@@ -745,6 +848,71 @@ function renderHand(state, ui, stagger, draggable) {
   el.handSort.textContent = SORT_LABELS[handPrefs.mode] || SORT_LABELS.auto;
   el.handSort.setAttribute('aria-label', `Hand order: ${SORT_LABELS[handPrefs.mode]}. Change it.`);
   el.handSort.hidden = engineHand.length < 2;
+  layoutHand();
+}
+
+/**
+ * Tighten the fan until the hand fits the felt.
+ *
+ * A hand is the one thing on the table whose size the layout cannot choose:
+ * the pack decides how many cards you hold, and Milestones deals ten while a
+ * phone is 375px wide. Fixed spacing therefore has exactly two failure modes —
+ * a hand that runs off both edges, or cards so small they cannot be read — and
+ * the fix for both is the same one a real player uses: close the fan.
+ *
+ * So the SPACING is what flexes, never the card size. Each card keeps its full
+ * width and slides further under its neighbour, which is why a squeezed hand
+ * still shows every card's rank corner rather than shrinking into unreadable
+ * confetti. The floor stops it closing past the point where those corners
+ * disappear.
+ *
+ * Cheap enough to run on every render and every resize: two measurements and
+ * one custom property, no relayout of anything else.
+ */
+function layoutHand() {
+  const count = el.hand.childElementCount;
+  if (count < 2) {
+    el.hand.style.removeProperty('--fan-step');
+    return;
+  }
+
+  // A row with no width has not been laid out yet — the table screen is still
+  // `hidden` at boot, and a suspended launcher frame reports zero for
+  // everything. Measuring anyway would compute "no room at all" and pin the
+  // fan shut until something else forced a relayout, so the honest move is to
+  // leave the CSS fallback in place and wait for the observer below to say the
+  // row has a size.
+  const rowWidth = el.handRow.clientWidth;
+  if (!rowWidth) return;
+
+  const styles = getComputedStyle(el.hand);
+  const cardWidth = parseFloat(styles.getPropertyValue('--hand-card-w')) || 70;
+  const padding = (parseFloat(styles.paddingLeft) || 0) + (parseFloat(styles.paddingRight) || 0);
+  // The sort toggle shares the row, so the fan may not have all of it.
+  const reserved = el.handSort.hidden ? 0 : el.handSort.offsetWidth + 12;
+  const available = Math.max(cardWidth, rowWidth - reserved - padding - 4);
+
+  const step = fanStep({ count, cardWidth, available });
+  el.hand.style.setProperty('--fan-step', `${step.toFixed(2)}px`);
+}
+
+/**
+ * Re-fan whenever the row's width changes, whatever changed it.
+ *
+ * A ResizeObserver rather than a window `resize` listener because the width
+ * that matters is the ROW's, and it moves for reasons the window never hears
+ * about: the launcher's font scale, the table screen going from `hidden` to
+ * shown at boot, a suspended frame waking up with real geometry. All three
+ * previously left the fan at whatever it guessed the first time.
+ */
+function watchHandWidth() {
+  if (typeof ResizeObserver !== 'function') {
+    window.addEventListener('resize', () => { if (liveState) layoutHand(); });
+    return;
+  }
+  // Observing the ROW, not the hand: the hand's own width is what layoutHand
+  // changes, so watching it would be a feedback loop.
+  new ResizeObserver(() => { if (liveState) layoutHand(); }).observe(el.handRow);
 }
 
 /**
@@ -840,6 +1008,7 @@ function render(state, message) {
 
   renderStatusBar(state, acting);
   renderSeats(state, stagger, acting, ui);
+  renderContractLadder(state);
   renderCenterZones(state, ui, draggable);
   renderPlayerZones(state, ui, draggable);
   renderHand(state, ui, stagger, draggable);
@@ -1704,6 +1873,8 @@ export function closeTable() {
   pendingRender = null;
   hideBanner();
   hideAllPanels();
+  el.contractLadder.hidden = true;
+  el.contractLadder.replaceChildren();
 }
 
 export function isTableOpen() {
@@ -1728,6 +1899,11 @@ export function initTable({ onExit }) {
     onLobby: () => exitToLobby(),
     onCloseScoreboard: () => {},
   });
+
+  // The fan's spacing is the one thing that depends on how much room the row
+  // has, and it is a custom property rather than a re-render — so reacting to
+  // a width change costs two measurements, not a repaint of the table.
+  watchHandWidth();
 
   el.lobbyButton.addEventListener('click', () => exitToLobby());
   el.scoreChip.addEventListener('click', () => openScoreboard());

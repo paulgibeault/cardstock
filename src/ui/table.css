@@ -408,6 +408,10 @@ body {
    Wrapping beats shrinking: a second row of piles is still a table. */
 #center-piles {
   flex: 1;
+  /* Without this a flex child refuses to shrink below its content, so adding
+     any fixed-height row above (the contract ladder) pushes the hand off the
+     bottom of a short window instead of tightening the middle. */
+  min-height: 0;
   display: flex;
   justify-content: center;
   align-items: center;
@@ -630,15 +634,38 @@ button.pile-stack:focus-visible { outline: 2px solid var(--accent); outline-offs
 .hand {
   display: flex;
   padding: 0.5rem;
+  min-width: 0;
+}
+
+/* THE FAN OVERLAPS BY MOVING THE WRAPPER, NOT THE CARD.
+ *
+ * It used to be a negative margin on `.card-face` with `:first-child` zeroing
+ * the leftmost one — which quietly stopped working the day each card gained a
+ * `.card-face-wrap` span, because every svg is then the first child of its OWN
+ * wrapper and every card matched the reset. The fan silently flattened into a
+ * row, and a ten-card hand ran off both sides of a phone. The wrapper is the
+ * real flex item, so the geometry belongs on it, and `:not(:first-child)` says
+ * what is meant instead of relying on a reset.
+ *
+ * `--fan-step` is how far each card sits from the one before it, computed per
+ * render from the space actually available (layoutHand in src/ui/table.js) so
+ * a big hand tightens its fan rather than overflowing. The fallback here is
+ * the natural spacing, for the first paint before JS measures.
+ */
+.hand .card-face-wrap:not(:first-child) {
+  margin-left: calc(var(--fan-step, calc(var(--hand-card-w, 70px) * 0.69)) - var(--hand-card-w, 70px));
 }
 
 .hand .card-face {
   width: var(--hand-card-w, 70px);
-  margin-left: calc(var(--hand-card-w, 70px) * -0.31);
   transition: transform 0.1s ease;
   cursor: pointer;
 }
-.hand .card-face:first-child { margin-left: 0; }
+/* An overlapped card that lifts has to come to the FRONT, or the neighbour
+   covering it makes the lift look like a glitch. */
+.hand .card-face-wrap { position: relative; }
+.hand .card-face-wrap:hover,
+.hand .card-face-wrap--selected { z-index: 2; }
 .hand .card-face:hover { transform: translateY(-10px); }
 .hand .card-face--disabled { cursor: default; opacity: 0.78; }
 .hand .card-face--disabled:hover { transform: none; }
@@ -872,37 +899,153 @@ body.is-dragging .card-face { cursor: grabbing; }
   white-space: nowrap;
 }
 
-/* A laid-down meld: a tight overlapped run of small faces, and a live hit
-   target when the selected card extends it. */
+/* A laid-down meld.
+ *
+ * These are the most INFORMATION-DENSE objects on the table and they used to
+ * be the least legible: 20px faces overlapped by 60% on an opponent's seat
+ * plate, which is a row of coloured slivers. A laid-down contract is public,
+ * permanent and the thing you plan your own turn around, so it now gets real
+ * card width, an overlap tuned so each card's own corner index stays visible,
+ * and a caption saying WHAT it is — "set of 3" — because the cards alone do
+ * not tell you which requirement they satisfied.
+ */
 .meld-strip {
   display: flex;
   justify-content: center;
-  align-items: center;
+  align-items: flex-start;
   flex-wrap: wrap;
   gap: 0.4rem;
 }
 .meld-chip {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  padding: 0.25rem 0.4rem;
+  gap: 0.15rem;
+  padding: 0.3rem 0.4rem;
   border-radius: 8px;
   border: 1px solid var(--chip-border);
   background: var(--chip-bg);
   cursor: default;
+  font: inherit;
+  color: inherit;
 }
-.meld-chip__card { display: block; width: 30px; margin-left: -16px; }
-.meld-chip__card:first-child { margin-left: 0; }
-.meld-chip__card .card-face { width: 30px; animation: none; }
+.meld-chip__cards { display: flex; align-items: center; }
+/* Overlap by ~45% rather than ~55%: the corner index lives in the left
+   quarter of a card face, so this is the point where every card in a meld
+   still announces its own rank. */
+.meld-chip__card { display: block; width: 32px; }
+.meld-chip__card:not(:first-child) { margin-left: -14px; }
+.meld-chip__card .card-face { width: 32px; animation: none; }
+.meld-chip__label {
+  font-size: 0.58rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  opacity: 0.75;
+  white-space: nowrap;
+}
 .meld-chip--ready {
   cursor: pointer;
   border-color: var(--accent);
   animation: pile-beckon 1.8s ease-in-out infinite;
 }
 .meld-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.meld-strip--mini .meld-chip { padding: 0.15rem 0.3rem; }
-.meld-strip--mini .meld-chip__card { width: 20px; margin-left: -12px; }
-.meld-strip--mini .meld-chip__card:first-child { margin-left: 0; }
-.meld-strip--mini .meld-chip__card .card-face { width: 20px; }
+
+/* The seat-plate copy is smaller, but only a little — it is still meant to be
+   READ from across the table, which is the whole point of the change. */
+.meld-strip--mini { gap: 0.25rem; }
+.meld-strip--mini .meld-chip { padding: 0.2rem 0.25rem; }
+.meld-strip--mini .meld-chip__card { width: 26px; }
+.meld-strip--mini .meld-chip__card:not(:first-child) { margin-left: -12px; }
+.meld-strip--mini .meld-chip__card .card-face { width: 26px; }
+.meld-strip--mini .meld-chip__label { font-size: 0.52rem; }
+
+/* An empty strip must not leave a mystery gap on the seat plate. */
+.meld-strip:empty { display: none; }
+
+/* ------------------------------------------------------------------ *
+ * The contract ladder (contract-rummy)
+ * ------------------------------------------------------------------ */
+
+/* WHERE EVERYONE IS IN THE RACE, at a glance and without a tap.
+ *
+ * Milestones is ten contracts long and every player is on their own rung —
+ * that per-player progression IS the game (design doc §13.3), and before this
+ * it was a two-character chip on a name plate. The ladder makes the whole
+ * course visible and puts each player's face on the rung they are actually
+ * standing on. Rendered only for packs that declare `rules.contracts`. */
+#contract-ladder {
+  flex: none;
+  display: flex;
+  justify-content: center;
+  align-items: stretch;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+#contract-ladder[hidden] { display: none; }
+
+.ladder__rung {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.1rem;
+  min-width: 3rem;
+  padding: 0.25rem 0.35rem 0.2rem;
+  border-radius: 8px;
+  background: var(--chip-bg);
+  border: 1px solid var(--chip-border);
+  font-size: 0.68rem;
+}
+
+/* The rung the player is on, in the same gold everything "yours" wears. */
+.ladder__rung--mine {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+/* Rungs already behind you read as done rather than as pending — but the
+   DIMMING IS ON THE TEXT ONLY. Fading a whole rung would fade the players
+   still standing on it, and "who is behind me" is the single most useful
+   thing the ladder tells you. */
+.ladder__rung--past .ladder__no,
+.ladder__rung--past .ladder__req { opacity: 0.4; }
+.ladder__rung--past { background: transparent; }
+
+.ladder__no { font-weight: 700; font-variant-numeric: tabular-nums; opacity: 0.7; }
+.ladder__req { font-weight: 700; letter-spacing: 0.02em; white-space: nowrap; }
+
+.ladder__who {
+  display: flex;
+  gap: 0.1rem;
+  min-height: 1.1rem;
+  align-items: center;
+}
+
+/* The same face the seat plate wears, small enough to sit on a rung. */
+.ladder__pip {
+  width: 1.05rem;
+  height: 1.05rem;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.62rem;
+  font-weight: 700;
+  color: #fff;
+  box-shadow: inset 0 -1px 3px rgba(0, 0, 0, 0.3);
+}
+
+.ladder__key {
+  align-self: center;
+  font-size: 0.6rem;
+  opacity: 0.6;
+  white-space: nowrap;
+  padding: 0 0.2rem;
+}
+
+@media (max-width: 720px) {
+  .ladder__rung { min-width: 2.5rem; font-size: 0.62rem; padding: 0.2rem 0.25rem; }
+  .ladder__pip { width: 0.9rem; height: 0.9rem; font-size: 0.55rem; }
+  .ladder__key { display: none; }
+}
 
 /* ------------------------------------------------------------------ *
  * Table moments: the banner and the trick's aftermath
@@ -997,6 +1140,44 @@ body.is-dragging .card-face { cursor: grabbing; }
   #center-piles { gap: 0.4rem 0.7rem; }
   #player-piles { gap: 0.3rem 0.55rem; }
   .pile--mini { --pile-w: 24px; }
+}
+
+/* SHORT WINDOWS STEP DOWN TOO.
+ *
+ * The felt has always scaled with WIDTH, and that was only ever half the
+ * problem: a table is a vertical stack of rows — seats, shared piles, your own
+ * piles, the action bar, your hand — and every row a pack adds (Milestones
+ * puts melds AND a contract ladder on screen) costs height that no width
+ * breakpoint gives back. Past a point the hand slides off the bottom, which is
+ * the one row a player cannot do without.
+ *
+ * Same mechanism as the width rules, on purpose: the two variables on #table
+ * drive every card and pile, so shrinking them steps the whole table down
+ * together rather than letting one row win an argument with the others. */
+@media (max-height: 800px) {
+  #table {
+    --pile-w: 74px;
+    --hand-card-w: 60px;
+    gap: 0.6rem;
+    padding: 0.8rem 0.9rem;
+    margin: 0.55rem;
+  }
+  .opponent-row { gap: 0.8rem; }
+  .pile-count { margin-top: 0.35rem; }
+  .ladder__rung { padding: 0.15rem 0.3rem 0.12rem; gap: 0; }
+}
+
+@media (max-height: 660px) {
+  #table {
+    --pile-w: 58px;
+    --hand-card-w: 50px;
+    gap: 0.4rem;
+    padding: 0.6rem 0.7rem;
+  }
+  .mini-hand .card-face { width: 22px; margin-left: -11px; }
+  .seat { padding: 0.3rem 0.4rem 0.35rem; }
+  .ladder__rung { font-size: 0.6rem; min-width: 2.4rem; }
+  .ladder__pip { width: 0.9rem; height: 0.9rem; font-size: 0.55rem; }
 }
 
 /* `card-face` is the class on the SVG ELEMENT itself (src/ui/cardStyles) —

@@ -69,6 +69,11 @@
     <div id="table">
       <div class="opponent-row" id="opponents-top"></div>
 
+      <!-- The contract ladder: every rung of a contract-rummy race, with each
+           player's face on the one they are standing on. Rendered only for
+           packs that declare `rules.contracts`; hidden for everything else. -->
+      <div id="contract-ladder" hidden></div>
+
       <!-- Every pile the open pack's shared zones call for — draw, discard,
            trick, build.1..N — drawn from the zone definitions themselves
            (src/ui/table.js renderCenterZones). The draw pile IS the draw

@@ -127,3 +127,50 @@ export function nextMode(mode) {
   const i = SORT_MODES.indexOf(mode);
   return SORT_MODES[(i + 1) % SORT_MODES.length];
 }
+
+/* ------------------------------------------------------------------ *
+ * How tightly the fan closes
+ * ------------------------------------------------------------------ */
+
+/** The natural spacing, as a fraction of a card's width, with room to spare. */
+const NATURAL = 0.69;
+
+/**
+ * The tightest useful spacing. A card's rank corner lives in roughly its left
+ * sixth, so closing past this hides the one thing an overlapped card still has
+ * to say — and a fan you cannot read is not saving you anything.
+ */
+const TIGHTEST = 0.17;
+
+/** Never below this many px, however small the cards get. */
+const FLOOR_PX = 10;
+
+/**
+ * How far each card should sit from the one before it.
+ *
+ * SPACING FLEXES, CARD SIZE DOES NOT. A hand is the one thing on the table
+ * whose size the layout cannot choose — the pack decides how many cards you
+ * hold, and Milestones deals ten while a phone is 375px wide. Shrinking the
+ * cards would make every hand harder to read to solve a problem only big hands
+ * have; closing the fan is what a real player does, and it costs nothing until
+ * the corners start disappearing.
+ *
+ * Pure so the rule can be pinned in tests — the DOM half is just two
+ * measurements (layoutHand in src/ui/table.js).
+ *
+ * @param count      cards in the hand
+ * @param cardWidth  one card's width in px
+ * @param available  px the fan may occupy
+ */
+export function fanStep({ count, cardWidth, available }) {
+  const natural = cardWidth * NATURAL;
+  if (count < 2) return natural;
+  const tightest = Math.max(FLOOR_PX, cardWidth * TIGHTEST);
+  const needed = (available - cardWidth) / (count - 1);
+  return Math.min(natural, Math.max(tightest, needed));
+}
+
+/** Total width a fan of `count` cards occupies at `step`. */
+export function fanWidth({ count, cardWidth, step }) {
+  return count < 1 ? 0 : cardWidth + Math.max(0, count - 1) * step;
+}

@@ -192,7 +192,13 @@ export function buildSeating(seed, seats, { humanSeat = 0, humanName = '' } = {}
         // The status line stays second-person ("Your turn") whatever the name
         // is; sheets and stats use the name itself.
         shortName: 'You',
-        icon: '',
+        // A MARKER, not a face. Wherever players are shown as pips — the
+        // contract ladder, a score row — the opponents wear their own emoji
+        // and the player needs something equally glanceable. Initials do not
+        // work: the fallback name is "You", which abbreviates to the
+        // nonsense "YO", and even a real name gives two letters that read as
+        // just another opponent. A star is unmistakably "me".
+        icon: '★',
         initials: initialsOf(name),
         color: HUMAN_COLOR,
         isBot: false,

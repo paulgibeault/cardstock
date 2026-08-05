@@ -22,8 +22,11 @@ import { ROOT } from "../tools/stage.mjs";
 import {
   interactionMode, buildUiModel, dropCandidates, draggableSources,
   pruneSelection, isSelected, handAddress, implicitLandingZone,
+  shortContract, shortContractItem, describeContract, describeContractItem,
 } from "../src/ui/interaction.js";
-import { orderHand, applyManual, reorder, nextMode, SORT_MODES } from "../src/ui/handOrder.js";
+import {
+  orderHand, applyManual, reorder, nextMode, fanStep, fanWidth, SORT_MODES,
+} from "../src/ui/handOrder.js";
 
 function packFromDisk(packId) {
   const dir = path.join(ROOT, "packs", packId);
@@ -248,4 +251,81 @@ test("the sort toggle cycles through every mode and back", () => {
   }
   assert.deepStrictEqual(seen, new Set(SORT_MODES));
   assert.strictEqual(mode, SORT_MODES[0], "the cycle must return to where it started");
+});
+
+/* ------------------------------------------------------------------ *
+ * The fan
+ * ------------------------------------------------------------------ */
+
+test("the fan closes until the hand fits, and never past readability", () => {
+  const cardWidth = 70;
+  // Roomy: nothing to solve, so the fan sits at its natural spacing.
+  const roomy = fanStep({ count: 5, cardWidth, available: 2000 });
+  assert.strictEqual(roomy, cardWidth * 0.69);
+
+  // Cramped: the fan closes to fit rather than overflowing.
+  const cramped = fanStep({ count: 13, cardWidth, available: 400 });
+  assert.ok(cramped < roomy, "a big hand in a small space must tighten");
+  assert.ok(fanWidth({ count: 13, cardWidth, step: cramped }) <= 400 + 0.5,
+    "a tightened fan must actually fit the space it was given");
+
+  // Impossible: it stops at the readable floor instead of vanishing.
+  const absurd = fanStep({ count: 40, cardWidth, available: 120 });
+  assert.ok(absurd >= cardWidth * 0.17, "the fan must never close past the rank corner");
+});
+
+test("the fan never overflows for any hand a launch pack can deal", () => {
+  // Every pack's deal size against the narrowest supported screen.
+  const cases = [
+    { count: 10, cardWidth: 46, available: 260 },   // Milestones on a phone
+    { count: 17, cardWidth: 46, available: 260 },   // Hearts, 3 seats, on a phone
+    { count: 7, cardWidth: 46, available: 260 },    // Wildfire on a phone
+    { count: 17, cardWidth: 70, available: 900 },   // Hearts on a desktop
+  ];
+  for (const c of cases) {
+    const step = fanStep(c);
+    const width = fanWidth({ count: c.count, cardWidth: c.cardWidth, step });
+    // Only the floor may exceed the budget, and then only because closing
+    // further would hide the ranks — the honest trade, and it is bounded.
+    const floored = step <= Math.max(10, c.cardWidth * 0.17) + 0.001;
+    assert.ok(width <= c.available + 0.5 || floored,
+      `${c.count} cards overflowed: ${Math.round(width)} > ${c.available}`);
+  }
+});
+
+test("a single card has nothing to overlap", () => {
+  assert.strictEqual(fanStep({ count: 1, cardWidth: 70, available: 10 }), 70 * 0.69);
+  assert.strictEqual(fanWidth({ count: 1, cardWidth: 70, step: 20 }), 70);
+  assert.strictEqual(fanWidth({ count: 0, cardWidth: 70, step: 20 }), 0);
+});
+
+/* ------------------------------------------------------------------ *
+ * Contract notation
+ * ------------------------------------------------------------------ */
+
+test("a contract reads both short enough for a rung and long enough to mean something", () => {
+  assert.strictEqual(shortContractItem("set(3)"), "S3");
+  assert.strictEqual(shortContractItem("run(7)"), "R7");
+  assert.strictEqual(shortContractItem("colorGroup(7)"), "C7");
+  assert.strictEqual(shortContract(["set(3)", "run(4)"]), "S3+R4");
+  assert.strictEqual(describeContract(["set(3)", "run(4)"]), "set of 3 + run of 4");
+  assert.strictEqual(describeContractItem("colorGroup(7)"), "7 of one color");
+});
+
+test("every contract Milestones ships abbreviates without collapsing into ambiguity", () => {
+  const pack = packFromDisk("milestones");
+  const shorts = pack.rules.contracts.map(shortContract);
+  assert.strictEqual(shorts.length, 10);
+  for (const s of shorts) {
+    assert.match(s, /^[SRC]\d+(\+[SRC]\d+)*$/, `unreadable rung: ${s}`);
+  }
+  // Two rungs that abbreviate the same way would make the ladder lie.
+  assert.strictEqual(new Set(shorts).size, shorts.length, `duplicate rungs: ${shorts}`);
+});
+
+test("an unrecognised contract item degrades to its own text rather than vanishing", () => {
+  assert.strictEqual(shortContractItem("mystery(2)"), "mystery(2)");
+  assert.strictEqual(shortContractItem(""), "");
+  assert.strictEqual(shortContract([]), "");
+  assert.strictEqual(describeContract(undefined), "");
 });

@@ -28,6 +28,10 @@ const SLOP = 6;
 let panel = null;
 let timer = null;
 let anchor = null;
+// The node whose inspection is pending or showing. Tracked so a NESTED
+// inspectable (a meld chip inside a seat plate) can win against its own
+// ancestor — see claimedByDescendant() below.
+let pendingNode = null;
 
 function ensurePanel() {
   if (panel) return panel;
@@ -59,7 +63,25 @@ function schedule(fn, ms) {
 export function hideInspector() {
   clearTimer();
   anchor = null;
+  pendingNode = null;
   if (panel) panel.hidden = true;
+}
+
+/**
+ * Is a MORE SPECIFIC element already claiming the panel?
+ *
+ * Inspectables nest: a laid-down meld sits inside an opponent's seat plate,
+ * and both have something worth saying. Hovering the meld fires pointerenter
+ * on the seat as well, so without this the answer to "what is this meld?"
+ * depended on which handler happened to schedule last — and the seat, being
+ * the coarser target, could win and report the opponent's card count instead
+ * of the cards you were actually pointing at.
+ *
+ * The rule is simply that the innermost target wins, whatever the event order.
+ */
+function claimedByDescendant(node) {
+  const held = pendingNode || anchor;
+  return !!held && held !== node && node.contains(held);
 }
 
 function render(content) {
@@ -117,6 +139,7 @@ function show(target, describe) {
   const content = describe();
   if (!content) return;
   anchor = target;
+  pendingNode = target;
   render(content);
   position(target);
 }
@@ -132,7 +155,9 @@ function show(target, describe) {
 export function attachInspector(node, describe, { isBusy = () => false } = {}) {
   node.addEventListener('pointerenter', (event) => {
     if (event.pointerType !== 'mouse' || isBusy()) return;
+    if (claimedByDescendant(node)) return;
     clearTimer();
+    pendingNode = node;
     timer = schedule(() => {
       timer = null;
       if (!isBusy()) show(node, describe);
@@ -140,6 +165,9 @@ export function attachInspector(node, describe, { isBusy = () => false } = {}) {
   });
 
   node.addEventListener('pointerleave', () => {
+    // Leaving an ancestor while the pointer is still inside a descendant that
+    // owns the panel must not close it.
+    if (claimedByDescendant(node)) return;
     if (anchor === node || !anchor) hideInspector();
     else clearTimer();
   });
@@ -149,9 +177,11 @@ export function attachInspector(node, describe, { isBusy = () => false } = {}) {
       hideInspector();
       return;
     }
+    if (claimedByDescendant(node)) return;
     const startX = event.clientX;
     const startY = event.clientY;
     clearTimer();
+    pendingNode = node;
 
     const onMove = (move) => {
       const dx = move.clientX - startX;

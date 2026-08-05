@@ -71,6 +71,32 @@ export function describeContractItem(item) {
   return item;
 }
 
+/**
+ * The same requirement, short enough to fit on a ladder rung: `S3`, `R7`, `C7`.
+ *
+ * A ten-rung ladder cannot carry "set of 3 + set of 3" ten times over, and
+ * dropping the requirement entirely would leave a row of numbers that says
+ * nothing about the race. So the rung carries the initial and the count, the
+ * ladder carries a one-line key, and hovering any rung gives the full sentence
+ * from describeContractItem() — the same split the pile badges use.
+ */
+export function shortContractItem(item) {
+  const m = /^(\w+)\((\d+)\)$/.exec(item || '');
+  if (!m) return String(item || '');
+  const letter = { set: 'S', run: 'R', colorGroup: 'C' }[m[1]];
+  return letter ? `${letter}${m[2]}` : String(item);
+}
+
+/** A whole contract, short: "S3+R4". */
+export function shortContract(items) {
+  return (items || []).map(shortContractItem).join('+');
+}
+
+/** A whole contract, spelled out: "set of 3 + run of 4". */
+export function describeContract(items) {
+  return (items || []).map(describeContractItem).join(' + ');
+}
+
 /* ------------------------------------------------------------------ *
  * The per-render UI model
  * ------------------------------------------------------------------ */
