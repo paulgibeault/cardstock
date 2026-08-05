@@ -16,8 +16,8 @@
 // the rename nothing to do.
 
 import {
-  actionIcon, cardAriaLabel, cardBase, cardKind, colorDots, diamondRosette,
-  drawCount, mirrored, num, openSvg, shade, text,
+  actionIcon, blend, cardAriaLabel, cardBase, cardKind, colorDots, diamondRosette,
+  drawCount, dullInk, dullPaper, mirrored, num, openSvg, shade, text,
 } from './shared.js';
 
 /** A wild belongs to no colour, so it gets the one colour no suit can claim. */
@@ -25,11 +25,11 @@ const WILD_BODY = '#26262b';
 const PANEL = '#fdfdfa';
 
 /** The rounded diamond, centred and stood on its corner. */
-function diamond(cx, cy, half, fill, extra = '') {
+function diamond(cx, cy, half, fill) {
   const side = num(half * Math.SQRT2);
   return `<rect x="${num(cx - (half * Math.SQRT2) / 2)}" y="${num(cy - (half * Math.SQRT2) / 2)}"`
     + ` width="${side}" height="${side}" rx="${num(half * 0.3)}"`
-    + ` transform="rotate(45 ${num(cx)} ${num(cy)})" fill="${fill}"${extra} />`;
+    + ` transform="rotate(45 ${num(cx)} ${num(cy)})" fill="${fill}" />`;
 }
 
 function cornerMark(kind, card, body) {
@@ -41,10 +41,17 @@ function cornerMark(kind, card, body) {
   return actionIcon(kind === 'reverse' ? 'reverse' : 'skip', 15, 22, 8, '#ffffff');
 }
 
-export function face(card, theme) {
+export function face(card, theme, muted = false) {
   const kind = cardKind(card);
   const wild = kind === 'wild' || kind === 'wildDrawN';
-  const body = wild ? WILD_BODY : (theme.palette[card.color] || theme.palette[theme.order[0]] || '#4b5563');
+  // Grey stock, deeper body — see the muting note in shared.js. This is the one
+  // style with no white card to grey: the PANEL is its paper and the painted
+  // body is its ink, which is why the body darkens rather than washing out.
+  // Wildfire plays by colour, so a muted card that had lost its hue would have
+  // lost the only thing you sort your hand by.
+  const deepen = (hex) => (muted ? dullInk(hex) : hex);
+  const panel = muted ? dullPaper(PANEL) : PANEL;
+  const body = deepen(wild ? WILD_BODY : (theme.palette[card.color] || theme.palette[theme.order[0]] || '#4b5563'));
   const rim = shade(body, wild ? 0.22 : -0.3);
   const parts = [
     cardBase(rim),
@@ -55,14 +62,14 @@ export function face(card, theme) {
     // Every colour at once, which is exactly what the card lets you do. Drawn
     // from the pack's OWN palette rather than four hardcoded hues, so a pack
     // that renames or recolours its suits gets a wild that still matches.
-    const colors = theme.order.map((name) => theme.palette[name]).filter(Boolean).slice(0, 4);
+    const colors = theme.order.map((name) => theme.palette[name]).filter(Boolean).slice(0, 4).map(deepen);
     const drawFour = kind === 'wildDrawN';
     const cy = drawFour ? 60 : 70;
     const half = drawFour ? 26 : 31;
     // The white diamond is drawn a little larger than the rosette inside it,
     // because its corners are rounded: a rosette sized to the full half-diagonal
     // would have its four tips poke out past the rounding.
-    parts.push(diamond(50, cy, half + 4, PANEL));
+    parts.push(diamond(50, cy, half + 4, panel));
     parts.push(diamondRosette(50, cy, half - 2, colors.length >= 2 ? colors : [body, shade(body, 0.3), shade(body, -0.3), shade(body, 0.5)]));
     if (drawFour) parts.push(text('+4', { x: 50, y: 118, size: 30, fill: '#ffffff', weight: 800, outline: shade(WILD_BODY, -0.5), outlineWidth: 3.5 }));
     parts.push(mirrored(colorDots(15, 22, 4.2, 3, colors)));
@@ -72,7 +79,10 @@ export function face(card, theme) {
     // #e1b12c on white is around 1.8:1, which is a shape you can see only
     // because you already know what it is.
     const ink = shade(body, -0.28);
-    parts.push(diamond(50, 70, 31, PANEL, ' opacity="0.95"'));
+    // The panel is a hair short of white so the card's colour bleeds through
+    // it. That used to be `opacity="0.95"`; it is the same colour blended
+    // against the body it sits on (no-alpha rule, shared.js).
+    parts.push(diamond(50, 70, 31, blend(body, panel, 0.95)));
     if (kind === 'number') {
       const rank = card.rank == null ? '' : String(card.rank).slice(0, 2);
       parts.push(text(rank, {
@@ -92,7 +102,7 @@ export function face(card, theme) {
     parts.push(mirrored(cornerMark(kind, card, body)));
   }
 
-  return openSvg('card-face card-face--shedding', cardAriaLabel(card)) + parts.join('') + '</svg>';
+  return openSvg(`card-face card-face--shedding${muted ? ' card-face--muted' : ''}`, cardAriaLabel(card)) + parts.join('') + '</svg>';
 }
 
 export const defaults = {

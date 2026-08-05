@@ -14,7 +14,7 @@
 // on a card with rounded corners: there is nothing to clip against but the
 // shape itself.
 
-import { escapeXml, num, shade } from './shared.js';
+import { blend, escapeXml, num, shade } from './shared.js';
 
 /** The printed area inside the white margin: x, y, right, bottom. */
 const AREA = { x: 5, y: 5, r: 95, b: 135 };
@@ -103,6 +103,20 @@ const PATTERNS = {
 export const BACK_PATTERNS = Object.freeze(Object.keys(PATTERNS));
 
 /**
+ * The colour of the printed panel — what a back looks like when all you can see
+ * of it is a sliver.
+ *
+ * A mini-hand overlaps its backs so hard that every card but the last shows
+ * about half a centimetre of its left edge: white margin, then this. Drawing a
+ * ninety-line pattern to fill fourteen pixels is the most expensive nothing on
+ * the table, so src/ui/table.js draws those slivers with this colour instead
+ * and keeps the real SVG for the one card that is actually visible.
+ */
+export function backPanelColor(theme) {
+  return shade(theme.back.color, -0.4);
+}
+
+/**
  * The whole back, from a resolved theme.
  *
  * Pure: same theme in, byte-identical markup out. The renderer memoises one
@@ -112,15 +126,21 @@ export const BACK_PATTERNS = Object.freeze(Object.keys(PATTERNS));
 export function renderBack(theme) {
   const { pattern, color, emblem } = theme.back;
   const deep = shade(color, -0.4);
-  const ink = shade(color, 0.3);
+  // The pattern used to be `<g opacity="0.55">` over the panel. A back is the
+  // most-rasterised card on the table — every opponent's whole hand is backs,
+  // and each of these patterns is fifty to ninety vector lines — so a group
+  // opacity meant compositing all of it through an offscreen buffer, per card,
+  // per frame. The panel underneath is a known flat colour, so the fade is
+  // baked into the ink instead. Same pixels, no buffer.
+  const ink = blend(deep, shade(color, 0.3), 0.55);
   const draw = PATTERNS[pattern] || PATTERNS.lattice;
 
   // A white margin around a printed panel: the thing that makes a rectangle
   // read as a playing card rather than as a coloured tile.
   const parts = [
-    '<rect x="1" y="1" width="98" height="138" rx="8" fill="#fdfdfa" stroke="#00000022" />',
+    '<rect x="1" y="1" width="98" height="138" rx="8" fill="#fdfdfa" stroke="#dededa" />',
     `<rect x="${AREA.x}" y="${AREA.y}" width="${AREA.r - AREA.x}" height="${AREA.b - AREA.y}" rx="5" fill="${deep}" />`,
-    `<g opacity="0.55">${draw(ink)}</g>`,
+    draw(ink),
     `<rect x="${AREA.x}" y="${AREA.y}" width="${AREA.r - AREA.x}" height="${AREA.b - AREA.y}" rx="5" fill="none" stroke="${shade(color, -0.6)}" stroke-width="1.5" />`,
     `<circle cx="50" cy="70" r="17" fill="${deep}" stroke="#fdfdfa" stroke-width="2.5" />`,
   ];

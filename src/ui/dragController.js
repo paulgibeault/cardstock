@@ -144,6 +144,7 @@ export function createDragController({
    */
   function teardown({ restore, settle = true }) {
     if (!drag) return;
+    cancelFrame();
     for (const target of drag.targets) {
       target.node.classList.remove('drop-target', 'drop-target--over');
     }
@@ -157,6 +158,7 @@ export function createDragController({
   /** A refused drop: the card zooms back to where it was lifted from. */
   function snapHome() {
     if (!drag) return;
+    cancelFrame();
     const ghost = drag.ghost;
     const source = drag.source;
     const finish = () => {
@@ -240,6 +242,9 @@ export function createDragController({
       grabY: origin.y - home.top,
       targets: lift.targets || [],
       hover: null,
+      // The latest pointer position, painted on the next frame — see below.
+      at: null,
+      frame: 0,
     };
     // Classes first, THEN measure: `.drop-target` only paints a pseudo-element
     // ring (src/ui/table.css), so it moves nothing — but measuring after the
@@ -251,10 +256,43 @@ export function createDragController({
     return true;
   }
 
+  /**
+   * Paint the ghost at the last position the pointer reported, once per frame.
+   *
+   * Measuring the targets once per drag took the forced layout out of this
+   * path; this takes the redundant WRITES out of it. A phone delivers
+   * pointermove faster than it paints — iOS coalesces to the display rate only
+   * for the events it chooses to, and a 120Hz panel is happy to hand over two
+   * moves per painted frame — so the ghost's transform was being written, and
+   * the hit test run, more often than anything could show for it. rAF makes
+   * the ghost move exactly as often as the screen can show it moving, which is
+   * both cheaper and, on a ProMotion display, smoother: the update lands with
+   * the frame rather than between frames.
+   */
+  function paintFrame() {
+    if (!drag) return;
+    drag.frame = 0;
+    const at = drag.at;
+    if (!at) return;
+    paintHover(targetUnder(moveGhost(at.x, at.y)));
+  }
+
+  /** Drop any frame still owed, so it cannot fire against a torn-down drag. */
+  function cancelFrame() {
+    if (drag && drag.frame) {
+      cancelAnimationFrame(drag.frame);
+      drag.frame = 0;
+    }
+  }
+
   function onPointerMove(event) {
     if (drag) {
+      // Still called on every event, not on the frame: this is what stops iOS
+      // treating the gesture as a scroll, and it has to happen while the event
+      // is being dispatched.
       event.preventDefault();
-      paintHover(targetUnder(moveGhost(event.clientX, event.clientY)));
+      drag.at = { x: event.clientX, y: event.clientY };
+      if (!drag.frame) drag.frame = requestAnimationFrame(paintFrame);
       return;
     }
     if (!pending) return;
@@ -307,6 +345,13 @@ export function createDragController({
       return;
     }
     swallowNextClick();
+    // Settle on the pointer's FINAL position rather than on whatever the last
+    // painted frame happened to be. Coalescing moves into frames is free
+    // everywhere except here: a flick that ends between frames would otherwise
+    // be judged against a position the finger had already left, and drop the
+    // card on the wrong pile.
+    cancelFrame();
+    paintHover(targetUnder(moveGhost(event.clientX, event.clientY)));
     // A drop is the ONE place a move is committed, and it happens after the
     // ghost is gone so the re-render draws the card in its new home rather
     // than fighting a copy of it still in the air.

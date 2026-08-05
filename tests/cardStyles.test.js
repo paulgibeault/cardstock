@@ -10,6 +10,7 @@ import assert from "node:assert";
 import {
   STYLE_IDS, buildTheme, makeCardRenderer, resolveStyleId,
 } from "../src/ui/cardStyles/index.js";
+import { dullPaper } from "../src/ui/cardStyles/shared.js";
 import { face as vanillaFace } from "../src/ui/cardStyles/vanilla.js";
 import { listPackIds, loadPackFromDisk } from "../tools/pack-test.mjs";
 
@@ -316,8 +317,11 @@ function headline(svg) {
   let best = null;
   for (const m of svg.matchAll(/<text[^>]*>/g)) {
     // A faded layer is depth, not something anyone reads — sequencing draws its
-    // numeral twice, once as a 16% ghost offset behind the real one.
-    if (/opacity="/.test(m[0])) continue;
+    // numeral twice, once as a 16% ghost offset behind the real one. The ghost
+    // used to be findable by its `opacity` attribute; card art carries no alpha
+    // any more (see the rule at the top of src/ui/cardStyles/shared.js), so it
+    // is now blended into its fill and says what it is with a class instead.
+    if (/class="[^"]*\bcs-ghost\b/.test(m[0])) continue;
     const size = Number((/font-size="([\d.]+)"/.exec(m[0]) || [])[1]);
     if (!Number.isFinite(size) || (best && size <= best.size)) continue;
     // An outlined numeral is carried by its STROKE — that is the whole reason
@@ -348,6 +352,78 @@ test("the number on a card is legible against the card it is printed on", () => 
     const ratio = contrast(head.ink, PAPER);
     assert.ok(ratio >= 4.5,
       `${styleId} ${JSON.stringify(card)}: ${head.ink} is ${ratio.toFixed(2)}:1 on paper, needs 4.5`);
+  }
+});
+
+/* ------------------------------------------------------------------ *
+ * Muting — the card you cannot play
+ * ------------------------------------------------------------------ */
+
+/** The grey stock a muted card is printed on: dullPaper("#fdfdfa"). */
+const MUTED_PAPER = dullPaper(PAPER);
+
+test("a muted card is still a card you can read", () => {
+  // THIS IS THE WHOLE JUSTIFICATION FOR MUTING THE WAY WE DO. The unplayable
+  // card used to be the live card at `opacity: 0.78`, which faded the numeral
+  // along with everything else. Greying the stock costs contrast too — so the
+  // ink is deepened to pay it back, and this is the test that says it did.
+  //
+  // Milestones' yellow is the case that decides the constants: it lives at
+  // 4.85:1 on white, so it had no margin to give up, and it must come out of
+  // muting no worse.
+  for (const [styleId, card] of [
+    ["sequencing", { rank: "12", color: "yellow" }],
+    ["sequencing", { rank: "7", color: "green" }],
+    ["rankrun", { rank: "6" }],
+    ["rankrun", { rank: "11" }],
+    ["shedding", { rank: "9", color: "yellow" }],
+    ["classic", { rank: "A", suit: "hearts" }],
+    ["classic", { rank: "10", suit: "spades" }],
+  ]) {
+    const renderer = makeCardRenderer({ ui: { cardStyle: styleId } });
+    const head = headline(renderer.face(card, true));
+    assert.ok(head, `${styleId} drew no text for a muted ${JSON.stringify(card)}`);
+    const ratio = contrast(head.ink, MUTED_PAPER);
+    assert.ok(ratio >= 4.5,
+      `muted ${styleId} ${JSON.stringify(card)}: ${head.ink} is ${ratio.toFixed(2)}:1 on grey stock, needs 4.5`);
+  }
+});
+
+test("muting a card changes it, and changing it is all it does", () => {
+  for (const styleId of STYLE_IDS) {
+    const renderer = makeCardRenderer({ ui: { cardStyle: styleId } });
+    for (const card of SAMPLE_CARDS) {
+      const what = `${styleId} ${JSON.stringify(card)}`;
+      const live = renderer.face(card);
+      const muted = renderer.face(card, true);
+      assert.notStrictEqual(muted, live, `${what} drew identically muted and live`);
+      assert.ok(muted.includes("card-face--muted"), `${what} muted without saying so`);
+      assert.ok(!live.includes("card-face--muted"), `${what} marked a live card as muted`);
+      // The no-alpha rule holds on BOTH variants — muting is the one thing
+      // most likely to be reached for with an opacity, so it is asserted here
+      // rather than left to the general invariant below.
+      assert.ok(!/\sopacity=/.test(muted), `${what} muted with alpha:\n${muted}`);
+    }
+  }
+});
+
+test("Wildfire's colours survive being muted, because they are the rules", () => {
+  // A shedding card is played by matching its COLOUR, so a muted hand you can
+  // no longer sort by colour is worse than no cue at all. This is why dullInk
+  // darkens rather than desaturating — the four hues must stay four hues.
+  const renderer = makeCardRenderer({ ui: { cardStyle: "shedding" } });
+  const bodies = ["red", "yellow", "green", "blue"].map((color) => {
+    const svg = renderer.face({ id: color, rank: "5", color }, true);
+    // The body is the big painted rect the whole card reads as.
+    return /<rect x="6" y="6"[^>]*fill="(#[0-9a-f]{6})"/i.exec(svg)?.[1];
+  });
+  assert.ok(bodies.every(Boolean), "a muted shedding card drew no body");
+  assert.strictEqual(new Set(bodies).size, 4, `muted bodies collapsed together: ${bodies.join(", ")}`);
+  for (const body of bodies) {
+    // Still a colour, not a grey: the channels have to still disagree.
+    const [r, g, b] = [1, 3, 5].map((i) => parseInt(body.slice(i, i + 2), 16));
+    assert.ok(Math.max(r, g, b) - Math.min(r, g, b) > 30,
+      `${body} came out of muting effectively grey`);
   }
 });
 

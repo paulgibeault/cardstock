@@ -12,38 +12,42 @@
 // disappearing into the white, and at full size it gives the card some depth.
 
 import {
-  actionIcon, cardAriaLabel, cardBase, cardKind, colorDots, mirrored,
-  openSvg, shade, text, wedgeDisc,
+  actionIcon, blend, cardAriaLabel, cardBase, cardKind, colorDots, dullInk,
+  dullPaper, mirrored, openSvg, shade, text, wedgeDisc,
 } from './shared.js';
 
 const PAPER = '#fdfdfa';
 const SLATE = '#475569';
 
-export function face(card, theme) {
+export function face(card, theme, muted = false) {
   const kind = cardKind(card);
   const wild = kind === 'wild' || kind === 'wildDrawN';
   const skip = kind === 'skip';
-  const colors = theme.order.map((name) => theme.palette[name]).filter(Boolean).slice(0, 4);
-  const border = wild || skip ? SLATE : (theme.palette[card.color] || colors[0] || SLATE);
+  // Grey stock, deeper border and numeral — see the muting note in shared.js.
+  // The white middle is this card's paper; the coloured band around it is not.
+  const paper = muted ? dullPaper(PAPER) : PAPER;
+  const deepen = (hex) => (muted ? dullInk(hex) : hex);
+  const colors = theme.order.map((name) => theme.palette[name]).filter(Boolean).slice(0, 4).map(deepen);
+  const border = deepen(wild || skip ? SLATE : (theme.palette[card.color] || theme.order.map((n) => theme.palette[n]).find(Boolean) || SLATE));
   const rank = card.rank == null ? '' : String(card.rank).slice(0, 3);
 
   const parts = [
     cardBase(border),
-    `<rect x="7" y="7" width="86" height="126" rx="5" fill="${PAPER}" />`,
-    `<rect x="10.5" y="10.5" width="79" height="119" rx="3.5" fill="none" stroke="${border}" stroke-width="1" opacity="0.55" />`,
+    `<rect x="7" y="7" width="86" height="126" rx="5" fill="${paper}" />`,
+    `<rect x="10.5" y="10.5" width="79" height="119" rx="3.5" fill="none" stroke="${blend(paper, border, 0.55)}" stroke-width="1" />`,
   ];
 
   if (wild) {
     // No number to shout, so the card says "any of them" instead — the pack's
     // whole palette in one mark, which is also what makes it findable at 28px.
-    parts.push(`<circle cx="50" cy="70" r="33" fill="${shade(SLATE, 0.85)}" />`);
+    parts.push(`<circle cx="50" cy="70" r="33" fill="${muted ? blend(paper, SLATE, 0.15) : shade(SLATE, 0.85)}" />`);
     parts.push(wedgeDisc(50, 70, 29, colors.length >= 2 ? colors : [SLATE, shade(SLATE, 0.4)]));
-    parts.push(`<circle cx="50" cy="70" r="29" fill="none" stroke="${PAPER}" stroke-width="2" />`);
-    parts.push(`<circle cx="50" cy="70" r="9" fill="${PAPER}" />`);
+    parts.push(`<circle cx="50" cy="70" r="29" fill="none" stroke="${paper}" stroke-width="2" />`);
+    parts.push(`<circle cx="50" cy="70" r="9" fill="${paper}" />`);
     parts.push(mirrored(colorDots(15, 23, 4.4, 3.2, colors)));
   } else if (skip) {
-    parts.push(actionIcon('skip', 50, 70, 24, SLATE));
-    parts.push(mirrored(actionIcon('skip', 15, 23, 8, SLATE)));
+    parts.push(actionIcon('skip', 50, 70, 24, deepen(SLATE)));
+    parts.push(mirrored(actionIcon('skip', 15, 23, 8, deepen(SLATE))));
   } else {
     // The numeral is inked a step darker than the border it matches. The
     // border can be as bright as the pack likes — it is a band of colour, not
@@ -55,12 +59,17 @@ export function face(card, theme) {
     // behind the numeral keeps the pack's actual colour.
     const ink = shade(border, -0.35);
     const size = rank.length > 1 ? 52 : 60;
-    parts.push(text(rank, { x: 52, y: 92, size, fill: border, weight: 800, opacity: 0.16 }));
+    // The ghost is the pack's colour at 16% on PAPER, blended rather than
+    // faded (no-alpha rule, shared.js). It carries `cs-ghost` so that what is
+    // decoration and what is the readable numeral stays tellable apart now
+    // that they no longer differ by an `opacity` attribute — the contrast test
+    // in tests/cardStyles.test.js reads that class.
+    parts.push(text(rank, { x: 52, y: 92, size, fill: blend(paper, border, 0.16), weight: 800, cls: 'cs-text cs-ghost' }));
     parts.push(text(rank, { x: 50, y: 89, size, fill: ink, weight: 800 }));
     parts.push(mirrored(text(rank, { x: 16, y: 27, size: 18, fill: ink })));
   }
 
-  return openSvg('card-face card-face--sequencing', cardAriaLabel(card)) + parts.join('') + '</svg>';
+  return openSvg(`card-face card-face--sequencing${muted ? ' card-face--muted' : ''}`, cardAriaLabel(card)) + parts.join('') + '</svg>';
 }
 
 export const defaults = {
