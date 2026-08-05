@@ -27,7 +27,7 @@
 //        custom node would have to go to Arcade.audio.bus() to obey them.
 //   A4 — cue names are lowercase and event-shaped.
 
-const CUE_NAMES = ['deal', 'play', 'play-far', 'draw', 'shuffle', 'invalid', 'win'];
+const CUE_NAMES = ['deal', 'play', 'play-far', 'draw', 'shuffle', 'trick', 'invalid', 'win'];
 
 // The gestures the pack is actually built from. A cached older library may
 // have graph() and el() but not these, and a missing element throws from
@@ -87,10 +87,27 @@ export function playInvalid() { sfx('invalid'); }
 export function playWin() { sfx('win'); }
 
 /**
- * A trick being gathered off the table. Mapped onto existing pack cues — the
- * sweep of cards is physically a shuffle gesture, and a trick full of penalty
- * points landing in YOUR pile earns the dull 'invalid' thud. A dedicated
- * gather cue belongs in js/soundpack.js if one is ever designed; per the
- * header, no synthesis is added here.
+ * A trick being gathered off the table — now its OWN cue rather than a
+ * borrowed one.
+ *
+ * It used to map onto 'shuffle' for a clean trick and 'invalid' for a pointed
+ * one, which was wrong in a way players could hear: `shuffle` means the discard
+ * pile was recycled, so every trick won announced a reshuffle that had not
+ * happened, and `invalid` means the game refused your move. The pack now has a
+ * `trick` cue (js/soundpack.js) and `bad` is a parameter of it, so a painful
+ * trick is the same gesture darkened rather than a different event entirely.
  */
-export function playTrickTaken({ bad = false } = {}) { sfx(bad ? 'invalid' : 'shuffle'); }
+export function playTrickTaken({ bad = false } = {}) { sfx('trick', { bad }); }
+
+/**
+ * An announcement landing — a last-card call, or somebody being caught not
+ * making one (§E2).
+ *
+ * Deliberately NOT a new cue. A declaration is a player asserting something
+ * about the table, which is the same punctuation a closing trick is, and being
+ * caught is the game refusing you — which is exactly what `invalid` says. The
+ * pack gains a cue when a cue is DESIGNED, never because a call site wanted one.
+ */
+export function playAnnouncement({ caught = false } = {}) {
+  sfx(caught ? 'invalid' : 'trick', caught ? undefined : { bad: false });
+}

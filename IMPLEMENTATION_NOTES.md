@@ -198,7 +198,71 @@ already false again once the pipeline has redealt. Milestones/Stockpile
 stall rates under simulation are unchanged from the pre-round baseline
 (slow bot convergence, documented above — not a rules deadlock).
 
+## The UX pass (2026-08)
+
+A twelve-item pass over how the table FEELS, planned in `UX_PASS_PLAN.md`
+and shipped in five phases. Almost every item landed on a seam that
+already existed, so the pass added exactly one new subsystem (drag) and
+otherwise dressed existing contracts differently.
+
+New modules, each with one job:
+
+| Module | What it owns |
+|---|---|
+| `src/players/roster.js` | who is in seat N — names, faces, personas |
+| `src/ui/interaction.js` | the pure "what may I do" model, DOM-free |
+| `src/ui/dragController.js` | pointer choreography, game-agnostic |
+| `src/ui/inspector.js` + `describe.js` | what a card or pile IS, in words |
+| `src/ui/handOrder.js` | the fan's arrangement (presentation only) |
+| `src/ui/panels.js` | round summary, scoreboard, game over |
+| `src/ui/confirm.js` | the shared confirmation dialog |
+| `src/stats/matchStats.js` | match stats, replayed out of the log |
+
+Load-bearing decisions, in case they look arbitrary later:
+
+- **Opponents are derived from the match seed**, not stored. A new deal
+  brings new faces, a resumed game re-seats the same ones, and the save
+  format did not change by a byte.
+- **A drag is a second dressing of the same moves.** Both taps and drops
+  ask `src/ui/interaction.js` for candidates that came out of
+  `enumerateLegalMoves`, so neither can construct a move the engine would
+  refuse. Tap-only remains a complete path.
+- **Stats are derived, never tallied.** `computeMatchStats` replays the
+  log at the end; nothing counts anything during play, so the numbers
+  cannot drift from the game.
+- **Announcements are moves.** "Uno" reaches state through the ordinary
+  validate → apply → LOG pipeline, because the log IS the saved match — an
+  announcement applied around the pipeline would be forgotten on resume.
+- **Hand order never reaches the engine.** It is a permutation applied at
+  render time, kept in settings, pruned against the real hand every pass.
+
+Three corrections the work forced, each a genuine bug rather than a
+preference:
+
+1. **`animation.finished` is not a reliable completion signal.** Both the
+   flight layer and the drag ghost used it to make a card visible again,
+   and a document that is not being painted has no animation timeline — a
+   table backgrounded mid-drag came back with a hole in the hand. Both now
+   go through `animationSettled()` (`src/ui/flight.js`), which races the
+   animation against a timeout.
+2. **A top-visible pile was drawing its buried cards face up.** Any zone
+   with `visibility: 'top'` now renders its history as backs. In the same
+   breath, sequencing's per-player `discard` moved to `visibility: 'all'`,
+   which is what it always was at a real table — the piles are face up and
+   fanned, and it is *playability* that is limited to the top card.
+3. **The last-card window was too narrow.** Declaring is legal at the
+   count *or one card above it*, because the classic rule is that you say
+   it as you play your second-to-last card. Enumeration still offers the
+   button only in the narrower window where forgetting costs you.
+
+Both of the last two are visible in `packs/wildfire/tests/rules.test.json`,
+which grew five assertions covering the announcement window, the penalty,
+double-jeopardy, and the lapse.
+
 ## Next steps
 
 Multiplayer (Phase 8), per-pack UI polish (per-pack `theme.css`, custom
-card faces), and the contract-rummy bot improvement noted above.
+card faces), and the contract-rummy bot improvement noted above. The UX
+pass left two seams pointed at Phase 8 on purpose: head-to-head records
+are keyed `bot:<id>` / `peer:<deviceId>` from the first write, and the
+forfeit path is where a `bye` frame will go.

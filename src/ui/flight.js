@@ -25,8 +25,13 @@ export function motionAllowed() {
   return !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
 
-/** The layer is created on demand so index.html carries no element that only JS uses. */
-function flightLayer() {
+/**
+ * The layer is created on demand so index.html carries no element that only JS
+ * uses. Exported because a dragged card is the same kind of object as a flying
+ * one — a throwaway copy above the table — and giving the drag ghost its own
+ * layer would mean two stacking contexts to keep in sync (src/ui/dragController.js).
+ */
+export function flightLayer() {
   let layer = document.getElementById('fly-layer');
   if (!layer) {
     layer = document.createElement('div');
@@ -37,6 +42,36 @@ function flightLayer() {
     document.body.appendChild(layer);
   }
   return layer;
+}
+
+/**
+ * Resolve when `animation` finishes — or when `ms` have passed, whichever
+ * comes first.
+ *
+ * NEVER WAIT ON A COMPOSITOR YOU DO NOT CONTROL. `animation.finished` settles
+ * on the animation timeline, and a document that is not being painted has no
+ * animation timeline: in a background tab, a hidden launcher frame, or any
+ * embedding that throttles rAF to zero, the promise stays pending forever.
+ * That is fatal here rather than merely untidy, because both callers use the
+ * resolution to make a card VISIBLE AGAIN — the flight layer un-hides the
+ * destination, the drag controller un-hides the card in your hand. A promise
+ * that never settles is a card that never comes back.
+ *
+ * Found the hard way: a table backgrounded mid-drag came back with a hole in
+ * the hand. setTimeout keeps running (throttled, but it runs, and it fires on
+ * the way back to the foreground), so it is the honest backstop.
+ */
+export function animationSettled(animation, ms) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = () => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    };
+    animation.finished.catch(() => {}).then(done);
+    setTimeout(done, ms);
+  });
 }
 
 /**
@@ -71,18 +106,22 @@ export function flyCard(markup, from, to, { fade = false, duration = 260 } = {})
   const dy = (to.top + to.height / 2) - (from.top + from.height / 2);
   const scale = to.width / from.width;
 
-  let done;
+  let settled;
   try {
-    done = node.animate([
+    const animation = node.animate([
       { transform: 'translate(0, 0) scale(1)', opacity: 1 },
       { transform: `translate(${dx}px, ${dy}px) scale(${scale})`, opacity: fade ? 0 : 1 },
-    ], { duration, easing: 'cubic-bezier(0.25, 0.8, 0.35, 1)', fill: 'forwards' }).finished;
+    ], { duration, easing: 'cubic-bezier(0.25, 0.8, 0.35, 1)', fill: 'forwards' });
+    // Guarded rather than awaited bare — see animationSettled(). landOn() holds
+    // the destination card invisible until this resolves, so "never" is not an
+    // acceptable answer.
+    settled = animationSettled(animation, duration + 400);
   } catch {
     node.remove();
     return Promise.resolve();
   }
 
-  return done.catch(() => {}).then(() => node.remove());
+  return settled.then(() => node.remove());
 }
 
 /**

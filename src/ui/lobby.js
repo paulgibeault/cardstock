@@ -15,7 +15,9 @@
 import { makeCardRenderer } from './cardStyles/index.js';
 import { fetchPackIndex, fetchPackManifest } from './packSource.js';
 import { safeAccent } from './css.js';
-import { listMatchSummaries, readStats, lastPlayedPack, clearMatch } from '../arcade/storage.js';
+import { listMatchSummaries, readStats, lastPlayedPack, clearMatch, recordResult } from '../arcade/storage.js';
+import { buildSeating } from '../players/roster.js';
+import { confirmAction } from './confirm.js';
 import { FULLY_PLAYABLE_TEMPLATES } from './table.js';
 
 const el = {
@@ -23,9 +25,6 @@ const el = {
   grid: document.getElementById('lobby-grid'),
   note: document.getElementById('lobby-note'),
   confirmModal: document.getElementById('confirm-modal'),
-  confirmMessage: document.getElementById('confirm-message'),
-  confirmOk: document.getElementById('confirm-ok'),
-  confirmCancel: document.getElementById('confirm-cancel'),
 };
 
 const GENRE = {
@@ -73,31 +72,8 @@ function ribbonText(summary) {
 function recordText(packId) {
   const record = readStats(packId);
   if (!record.played) return 'Not played yet';
-  return `Won ${record.won} of ${record.played}`;
-}
-
-/* ------------------------------------------------------------------ *
- * Confirmation
- * ------------------------------------------------------------------ */
-
-/**
- * An in-page confirm, not window.confirm(): a framed game is in an
- * opaque-origin iframe, where the native dialog is unreliable at best and
- * blocked at worst.
- */
-function confirmAction(message) {
-  el.confirmMessage.textContent = message;
-  el.confirmModal.hidden = false;
-  return new Promise((resolve) => {
-    const close = (answer) => {
-      el.confirmModal.hidden = true;
-      el.confirmOk.onclick = null;
-      el.confirmCancel.onclick = null;
-      resolve(answer);
-    };
-    el.confirmOk.onclick = () => close(true);
-    el.confirmCancel.onclick = () => close(false);
-  });
+  const streak = record.streak > 1 ? ` · ${record.streak} in a row` : '';
+  return `Won ${record.won} of ${record.played}${streak}`;
 }
 
 /* ------------------------------------------------------------------ *
@@ -187,10 +163,26 @@ function buildTile(manifest, summary, { featured }) {
     restart.addEventListener('click', async () => {
       // A dealt-but-unplayed game has nothing to lose, and telling someone
       // "0 moves will be lost" is a warning about nothing.
-      const ok = await confirmAction(summary.moves === 0
-        ? `Re-deal ${manifest.name}? You'll get a new hand.`
-        : `Abandon your ${manifest.name} game? ${summary.moves} ${summary.moves === 1 ? 'move' : 'moves'} will be lost.`);
+      const played = summary.moves > 0;
+      const ok = await confirmAction(played
+        ? `Abandon your ${manifest.name} game? ${summary.moves} ${summary.moves === 1 ? 'move' : 'moves'} will be lost, and it counts as a forfeit.`
+        : `Re-deal ${manifest.name}? You'll get a new hand.`,
+      { okLabel: played ? 'Abandon it' : 'Re-deal', cancelLabel: 'Keep playing' });
       if (!ok) return;
+      // Walking away from a game with moves in it IS a forfeit, and it is
+      // recorded exactly as the table's own Forfeit button records one — the
+      // two doors out of a match must not disagree about what a loss is. A
+      // dealt-but-untouched hand had no stakes, so it costs nothing.
+      if (played) {
+        const seating = buildSeating(summary.seed, summary.seats, { humanSeat: 0 });
+        recordResult(manifest.id, {
+          won: false,
+          forfeit: true,
+          opponents: seating
+            .filter((identity) => identity.isBot)
+            .map((identity) => ({ key: identity.opponentKey, beaten: false })),
+        });
+      }
       clearMatch(manifest.id);
       openTable(manifest.id);
     });

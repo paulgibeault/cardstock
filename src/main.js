@@ -25,6 +25,7 @@ import {
 import {
   initLobby, renderLobby, showLobby, hideLobby, reportLobbyError,
 } from './ui/lobby.js';
+import { initInspector, hideInspector } from './ui/inspector.js';
 
 /* ------------------------------------------------------------------ *
  * Routing
@@ -32,6 +33,7 @@ import {
 
 async function goToLobby() {
   closeTable();
+  hideInspector();
   document.getElementById('table-screen').hidden = true;
   Arcade.ui.setTitle('Cardstock');
   showLobby();
@@ -45,6 +47,7 @@ async function goToLobby() {
 
 async function goToTable(packId) {
   hideLobby();
+  hideInspector();
   document.getElementById('table-screen').hidden = false;
   try {
     await openTable(packId);
@@ -117,6 +120,9 @@ async function boot() {
   if (migrated) console.info(`[cardstock] migrated the saved ${migrated} match to its own key`);
 
   wireLauncherHooks();
+  // The one floating panel every card and pile shares, plus its global
+  // dismissals (scroll, resize, Escape). Created once — see src/ui/inspector.js.
+  initInspector();
   initTable({ onExit: () => { goToLobby().catch(reportBootFailure); } });
   initLobby({ onOpenTable: (packId) => { goToTable(packId).catch(reportBootFailure); } });
 

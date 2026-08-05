@@ -262,6 +262,12 @@
           "propertyNames": { "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,23}$" },
           "minProperties": 1
         },
+        "zoneOverlap": {
+          "type": "object",
+          "description": "Zone id \u2192 how its visible cards are laid out: \"horizontal\" or \"vertical\" instead of a single stack, so every card shows its own value. PRESENTATION ONLY \u2014 it changes nothing about the rules, which is why it lives here and not in `zones`, and why a variant can flip it with a one-line patch (\"ui.zoneOverlap.discard\").",
+          "additionalProperties": { "enum": ["horizontal", "vertical"] },
+          "propertyNames": { "pattern": "^[\\w-]+$" }
+        },
         "cardBack": {
           "type": "object",
           "description": "The face-down side. Generated, not an asset — see `back` above for the asset form.",

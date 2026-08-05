@@ -76,8 +76,20 @@ const sequencing = {
     const buildCapacity = rules.buildRule.to - rules.buildRule.from + 1;
     return [
       { id: 'hand', per: 'player', visibility: 'owner', layout: 'fan', order: 'free', facing: 'up' },
+      // `top` is the honest model for a stock: the card on top is face up and
+      // everything under it is face down and genuinely secret.
       { id: 'stock', per: 'player', visibility: 'top', layout: 'stack', order: 'stack', facing: 'up', label: 'Stock' },
-      { id: 'discard', per: 'player', count: rules.discardPiles, visibility: 'top', layout: 'stack', order: 'stack', facing: 'up', label: 'Discard' },
+      // A personal discard pile is NOT secret, and calling it `top` was a
+      // modelling slip rather than a rule. At a real table these piles are
+      // face up and fanned — everybody can read every card in them, and only
+      // the TOP one is playable. Playability is enforced by validateMove
+      // ("Only the top card of that pile is playable"), which is where it
+      // belongs; visibility is about who may SEE, and the answer here is
+      // everyone. The distinction started mattering when piles learned to fan
+      // (`ui.zoneOverlap`): under `top` the fan drew card backs, hiding
+      // information the game has never hidden. It will matter more when Phase
+      // 8 filters per-seat views off this same field.
+      { id: 'discard', per: 'player', count: rules.discardPiles, visibility: 'all', layout: 'stack', order: 'stack', facing: 'up', label: 'Discard' },
       { id: 'build', per: 'shared', count: rules.buildPiles, visibility: 'top', layout: 'stack', order: 'stack', facing: 'up', capacity: buildCapacity, label: 'Build' },
       { id: 'recycled', per: 'shared', visibility: 'none', layout: 'stack', order: 'stack', facing: 'down' },
       { id: 'draw', per: 'shared', visibility: 'none', layout: 'stack', order: 'stack', facing: 'down', label: 'Draw' },

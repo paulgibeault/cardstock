@@ -52,11 +52,27 @@
         </button>
         <span id="game-name" class="status-bar__game"></span>
       </div>
-      <span id="status-text">Loading…</span>
+      <div class="status-bar__side">
+        <span id="status-text">Loading…</span>
+        <!-- Your score, always on screen, and the way into the full sheet.
+             A number you have to open a menu to see is a number you stop
+             checking. -->
+        <button type="button" id="score-chip" class="score-chip" hidden>
+          <span id="score-chip-value"></span>
+        </button>
+        <button type="button" id="forfeit-button" class="ghost-button ghost-button--quiet" hidden>
+          Forfeit
+        </button>
+      </div>
     </div>
 
     <div id="table">
       <div class="opponent-row" id="opponents-top"></div>
+
+      <!-- The contract ladder: every rung of a contract-rummy race, with each
+           player's face on the one they are standing on. Rendered only for
+           packs that declare `rules.contracts`; hidden for everything else. -->
+      <div id="contract-ladder" hidden></div>
 
       <!-- Every pile the open pack's shared zones call for — draw, discard,
            trick, build.1..N — drawn from the zone definitions themselves
@@ -71,6 +87,12 @@
            collapsed) for packs whose only personal zone is the hand. -->
       <div id="player-piles"></div>
 
+      <!-- Out-of-turn declarations: "Last card!", and whatever else a pack's
+           `announcements` block offers (§E2). Separate from the action bar
+           because these are legal when it is NOT your turn, which is the whole
+           point of them — and the labels come from the pack, not from here. -->
+      <div id="announce-bar" hidden></div>
+
       <!-- Phase-contextual guidance and the one action that needs a button
            (passing, laying down). Carries the turn token when it is the
            human's turn — the same token the seats wear. -->
@@ -82,6 +104,9 @@
 
       <div id="hand-row">
         <div class="hand" id="hand"></div>
+        <!-- Arrange your own fan. Presentation only — src/ui/handOrder.js
+             explains at length why this never reaches the engine. -->
+        <button type="button" id="hand-sort" class="hand-sort" hidden></button>
       </div>
     </div>
 
@@ -120,11 +145,30 @@
     </div>
   </div>
 
+  <!-- The running score sheet, openable at any time from the status bar. Its
+       per-round history is computed from the match log on open
+       (src/stats/matchStats.js) rather than tallied as the game goes. -->
+  <div id="scoreboard-overlay" hidden>
+    <div class="panel panel--wide">
+      <div class="panel__title">Scores</div>
+      <div id="scoreboard-totals" class="round-scores"></div>
+      <div id="scoreboard-history" class="round-history"></div>
+      <div class="panel__actions">
+        <button id="scoreboard-close">Close</button>
+      </div>
+    </div>
+  </div>
+
   <div id="game-over-overlay" hidden>
-    <div class="panel">
+    <div class="panel panel--wide">
       <div id="game-over-fan" class="game-over-fan" aria-hidden="true"></div>
       <div id="game-over-message"></div>
       <div id="game-over-record"></div>
+      <div id="game-over-stats" class="stats-grid"></div>
+      <button type="button" id="game-over-rounds-toggle" class="ghost-button" aria-expanded="false" hidden>
+        Round by round
+      </button>
+      <div id="game-over-rounds" class="round-history" hidden></div>
       <div class="panel__actions">
         <button id="game-over-lobby-button" class="ghost-button">Lobby</button>
         <button id="play-again-button">Play again</button>

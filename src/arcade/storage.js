@@ -55,6 +55,11 @@ export const SETTINGS_DEFAULTS = {
   // Arcade.settings and copying them would immediately go stale.
   botDelayMs: 600,
   showLegalHints: true,
+  // How each pack's hand is arranged, per pack: { mode, order: [cardId, ...] }.
+  // PRESENTATION ONLY (src/ui/handOrder.js) — it never reaches the engine, and
+  // it lives in settings rather than beside the match because a preference
+  // outlives the game it was formed in.
+  hands: {},
 };
 
 // §7b: this id reaches a fetch path and a DOM attribute.
@@ -113,6 +118,31 @@ export function saveSettings(next) {
   return Arcade.state.set(KEYS.settings, next, { sync: true });
 }
 
+/**
+ * One pack's hand-arrangement preference: `{ mode, order }`.
+ *
+ * Read/written through the settings blob rather than a key of its own — it is
+ * a preference, it is tiny, and giving every pack its own key would spread the
+ * namespace this module exists to keep auditable (§3).
+ */
+export function loadHandPrefs(packId) {
+  if (!isValidPackId(packId)) return { mode: 'auto', order: [] };
+  const hands = loadSettings().hands || {};
+  const stored = hands[packId];
+  return {
+    mode: typeof stored?.mode === 'string' ? stored.mode : 'auto',
+    order: Array.isArray(stored?.order) ? stored.order.filter((id) => typeof id === 'string') : [],
+  };
+}
+
+export function saveHandPrefs(packId, prefs) {
+  if (!isValidPackId(packId)) return false;
+  const settings = loadSettings();
+  const hands = { ...(settings.hands || {}) };
+  hands[packId] = { mode: prefs.mode, order: prefs.order.slice(0, 200) };
+  return saveSettings({ ...settings, hands });
+}
+
 /* ------------------------------------------------------------------ *
  * The resumable matches — one per pack
  * ------------------------------------------------------------------ */
@@ -166,8 +196,12 @@ export function clearMatch(packId) {
  * `moves` therefore comes from the log length, which is exactly the number the
  * ribbon wants anyway.
  *
- * @returns {Map<string, {packId, savedAt, moves, seats, variants}>} — packs
- *   with no resumable match are absent, not present-with-null.
+ * `seed` rides along because the SEATING is derived from it
+ * (src/players/roster.js) — which is how the lobby can name the opponents in a
+ * game it abandons without loading the pack or replaying a single move.
+ *
+ * @returns {Map<string, {packId, savedAt, moves, seats, seed, variants}>} —
+ *   packs with no resumable match are absent, not present-with-null.
  */
 export function listMatchSummaries(packIds) {
   const summaries = new Map();
@@ -179,6 +213,7 @@ export function listMatchSummaries(packIds) {
       savedAt: typeof stored.savedAt === 'number' ? stored.savedAt : null,
       moves: stored.log.length,
       seats: stored.seats,
+      seed: stored.seed,
       variants: stored.variants,
     });
   }
@@ -213,19 +248,69 @@ export function migrateLegacyMatch() {
  * Stats
  * ------------------------------------------------------------------ */
 
-const STATS_DEFAULTS = { played: 0, won: 0 };
+const STATS_DEFAULTS = {
+  played: 0,
+  won: 0,
+  forfeits: 0,
+  streak: 0,
+  bestStreak: 0,
+  // opponentKey -> { played, won }. The KEY IS NAMESPACED FROM THE FIRST WRITE
+  // (`bot:juniper` today, `peer:<deviceId>` when Phase 8 lands) so a record
+  // spanning both never needs a migration to tell them apart — see
+  // src/players/roster.js opponentKey().
+  opponents: {},
+};
 
-/** Per-pack counters, so each pack's record reads on its own (§4). */
-export function recordResult(packId, { won }) {
+/** An id that will be used as an object key and rendered. §7b. */
+const OPPONENT_KEY_RE = /^(bot|peer):[\w-]{1,64}$/;
+
+/** Older records predate the newer fields; merging over the defaults is the migration. */
+function normalizeStats(prev) {
+  const base = { ...STATS_DEFAULTS, ...(prev || {}) };
+  base.opponents = { ...(prev?.opponents || {}) };
+  return base;
+}
+
+/**
+ * Record a finished match against `packId`.
+ *
+ * @param won        did the player win outright
+ * @param forfeit    did they abandon it (counted as a loss, and said so)
+ * @param opponents  [{ key, beaten }] — per-opponent placement, so a
+ *                   three-seat loss still records that you finished ahead of
+ *                   one of them. See src/stats/matchStats.js placements().
+ */
+export function recordResult(packId, { won, forfeit = false, opponents = [] }) {
   if (!isValidPackId(packId)) return;
   Arcade.stats.update(packId, (prev) => {
-    const base = { ...STATS_DEFAULTS, ...(prev || {}) };
-    return { played: base.played + 1, won: base.won + (won ? 1 : 0) };
+    const base = normalizeStats(prev);
+    const streak = won ? base.streak + 1 : 0;
+    const next = {
+      ...base,
+      played: base.played + 1,
+      won: base.won + (won ? 1 : 0),
+      forfeits: base.forfeits + (forfeit ? 1 : 0),
+      streak,
+      bestStreak: Math.max(base.bestStreak, streak),
+      opponents: { ...base.opponents },
+    };
+    for (const { key, beaten } of opponents) {
+      if (!OPPONENT_KEY_RE.test(key || '')) continue;
+      const record = next.opponents[key] || { played: 0, won: 0 };
+      next.opponents[key] = { played: record.played + 1, won: record.won + (beaten ? 1 : 0) };
+    }
+    return next;
   });
 }
 
 export function readStats(packId) {
-  return Arcade.stats.getOrInit(packId, STATS_DEFAULTS);
+  return normalizeStats(Arcade.stats.getOrInit(packId, STATS_DEFAULTS));
+}
+
+/** This player's record against one opponent, or null when they have never met. */
+export function readHeadToHead(packId, opponentKey) {
+  if (!OPPONENT_KEY_RE.test(opponentKey || '')) return null;
+  return readStats(packId).opponents[opponentKey] || null;
 }
 
 /* ------------------------------------------------------------------ *
