@@ -35,10 +35,17 @@
   --button-bg: #ffffff;
   --button-text: #1a1a1a;
 
-  --panel-bg: #ffffff;
-  --panel-text: #1a1a1a;
+  /* Every floating surface — the card inspector, all five modal panels, the
+     event banner — is these two properties and nothing else, which is why
+     re-theming them is a two-line change and not a sweep. They were device
+     white in BOTH themes: a browser default parked on a card table. This is
+     the lobby tile's own surface instead, so a popup reads as a piece of this
+     game rather than a piece of the browser. */
+  --panel-bg: #16281f;
+  --panel-text: #f0ede3;
+  --panel-border: rgba(255, 255, 255, 0.16);
   --scrim: rgba(0, 0, 0, 0.55);
-  --panel-shadow: rgba(0, 0, 0, 0.45);
+  --panel-shadow: rgba(0, 0, 0, 0.55);
 
   --card-shadow: rgba(0, 0, 0, 0.45);
   --action-bg: #2f6fb0;
@@ -84,8 +91,11 @@
   --button-bg: #14261c;
   --button-text: #ffffff;
 
-  --panel-bg: #ffffff;
+  /* Warm paper rather than device white — the lit-room counterpart to the
+     dark theme's deep green. Text is the same near-black the chrome uses. */
+  --panel-bg: #f7f4ec;
   --panel-text: #14261c;
+  --panel-border: rgba(20, 38, 28, 0.14);
   --scrim: rgba(20, 38, 28, 0.45);
   --panel-shadow: rgba(31, 61, 45, 0.3);
 
@@ -157,29 +167,33 @@ body {
 }
 #table-screen[hidden] { display: none; }
 
+/* THE BAR'S HEIGHT IS FIXED, AND THAT IS THE POINT.
+   #table-screen is a viewport-capped flex column, so anything that makes this
+   bar taller pushes the whole felt down — mid-turn, under the hand the player
+   is reaching for. It used to `flex-wrap: wrap` with five items in it, and a
+   status string growing from "Your turn" to "Delphine's turn" was enough to
+   drop the score chip onto a second line and shove the table.
+   Three items now, `nowrap`, and the only elastic one is the status text,
+   which ellipsises rather than wrapping. */
 #status-bar {
   padding: 0.5rem 1rem;
   background: var(--chrome-bar);
   font-size: 0.95rem;
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 0.5rem;
+  flex-wrap: nowrap;
+  gap: 0.6rem;
   border-bottom: 3px solid transparent;
   transition: border-color 0.3s ease;
 }
 
-.status-bar__side {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
+/* The one item that gives: it takes the slack between the two controls and
+   centres in it, so the chip stays pinned to its edge and the Lobby button to
+   its own — neither moves as the sentence changes length. */
+#status-text {
+  flex: 1;
   min-width: 0;
-}
-
-.status-bar__game {
-  font-weight: 700;
-  letter-spacing: 0.01em;
+  text-align: center;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -195,20 +209,14 @@ body {
   border-bottom-color: var(--chip-border);
 }
 
-#status-bar button {
-  font: inherit;
-  padding: 0.35rem 0.8rem;
-  border-radius: 6px;
-  border: none;
-  cursor: pointer;
-  background: var(--button-bg);
-  color: var(--button-text);
-}
-
-#status-bar button:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
+/* NOTE — there is deliberately no `#status-bar button` rule here.
+   There used to be, painting every button in the bar solid `--button-bg`
+   white. At 1-0-1 it out-ranked `.score-chip` (0-1-0) below, so the score
+   chip — which has always had a themed translucent pill of its own — was
+   drawn as an unexplained white box on the felt. The ghost buttons had been
+   rescued with a `#status-bar .ghost-button` counter-override; the chip never
+   was. Both controls in this bar style themselves, so the blanket rule is
+   gone rather than fought. Keep it that way. */
 
 .ghost-button {
   font: inherit;
@@ -223,22 +231,18 @@ body {
 .ghost-button:hover { background: var(--ghost-hover); }
 .ghost-button[hidden] { display: none; }
 
-/* Forfeit lives in the chrome because abandoning a game must be findable —
-   but it is the quietest control on screen, and it is confirm-gated. */
-.ghost-button--quiet {
-  font-size: 0.78rem;
-  padding: 0.25rem 0.55rem;
-  opacity: 0.6;
-  border-color: transparent;
-}
-.ghost-button--quiet:hover { opacity: 1; border-color: var(--ghost-border); }
-
-/* Your score, in the status bar, doubling as the way into the full sheet. */
+/* Your score, in the status bar, doubling as the way into the full sheet.
+   The same translucent pill the seats wear for their own scores — a player
+   reading the table sees one vocabulary for "this is a score", whether it is
+   theirs or an opponent's. */
 .score-chip {
   font: inherit;
   font-size: 0.82rem;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
+  display: flex;
+  align-items: baseline;
+  gap: 0.3rem;
   padding: 0.18rem 0.6rem;
   border-radius: 999px;
   border: 1px solid var(--chip-border);
@@ -251,9 +255,14 @@ body {
 .score-chip[hidden] { display: none; }
 .score-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-#status-bar .ghost-button {
-  background: transparent;
-  color: var(--chrome-text);
+/* "You" — because a bare number in the chrome is a number nobody can name.
+   Quiet enough that the score is still what the eye lands on. */
+.score-chip__label {
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  opacity: 0.65;
 }
 
 .danger-button {
@@ -966,6 +975,7 @@ body.is-dragging .card-face { cursor: grabbing; }
   border-radius: 10px;
   background: var(--panel-bg);
   color: var(--panel-text);
+  border: 1px solid var(--panel-border);
   box-shadow: 0 10px 30px var(--panel-shadow);
   font-size: 0.78rem;
   pointer-events: none;
@@ -1365,6 +1375,7 @@ body.is-dragging .card-face { cursor: grabbing; }
   pointer-events: none;
   background: var(--panel-bg);
   color: var(--panel-text);
+  border: 1px solid var(--panel-border);
   box-shadow: 0 8px 24px var(--panel-shadow);
 }
 #event-banner[hidden] { display: none; }
@@ -1536,10 +1547,9 @@ body.is-dragging .card-face { cursor: grabbing; }
   /* The hint is a sentence, and a sentence that wraps costs a whole line of
      felt. Smaller type keeps it on one. */
   #action-bar { padding: 0.3rem 0.7rem; font-size: 0.78rem; gap: 0.45rem; }
-  /* The chrome bar is not the game, and at this width it was wrapping to two
-     lines and charging the felt for both. */
+  /* The chrome bar is not the game. It can no longer wrap (see #status-bar),
+     but it can still be quieter about the room it takes. */
   #status-bar { padding: 0.35rem 0.5rem; font-size: 0.82rem; gap: 0.35rem; }
-  #game-name { font-size: 0.9em; }
 }
 
 /* `card-face` is the class on the SVG ELEMENT itself (src/ui/cardStyles) —
@@ -1782,6 +1792,7 @@ body.is-dragging .card-face { cursor: grabbing; }
 #game-over-overlay .panel {
   background: var(--panel-bg);
   color: var(--panel-text);
+  border: 1px solid var(--panel-border);
   padding: 1.5rem;
   border-radius: 14px;
   text-align: center;
@@ -1825,10 +1836,19 @@ body.is-dragging .card-face { cursor: grabbing; }
 .panel .ghost-button:hover { opacity: 1; background: transparent; }
 
 /* The score sheet between rounds: one row per seat — this round's damage and
-   the running total. The human's row is the one you look for, so it leads. */
+   the running total. The human's row is the one you look for, so it leads.
+ *
+ * NAME FIRST, and the middle column is what gives. This was `1fr auto auto`,
+ * which reads as "the name gets the slack" and does the opposite: an `auto`
+ * middle track claims its max-content width, and the scoreboard puts a bot's
+ * whole persona line there ("is thinking about something else"). That
+ * squeezed the 1fr name column down to the width of its icon, and the name
+ * spilled out from under it across the persona text. Sizing the name to its
+ * content and giving the middle track the leftover puts the shrinking where
+ * it belongs — on the decorative line. */
 .round-scores {
   display: grid;
-  grid-template-columns: 1fr auto auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   gap: 0.35rem 1.2rem;
   margin-bottom: 1.25rem;
   text-align: left;
@@ -1837,7 +1857,16 @@ body.is-dragging .card-face { cursor: grabbing; }
 .round-scores__row { display: contents; }
 .round-scores__row--you .round-scores__name,
 .round-scores__row--you .round-scores__total { font-weight: 700; }
-.round-scores__delta { text-align: right; opacity: 0.8; }
+/* Truncates rather than overflowing: this cell holds "+12" on the round sheet
+   but a whole persona line on the scoreboard, and only one of those fits. */
+.round-scores__delta {
+  text-align: right;
+  opacity: 0.8;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .round-scores__total { text-align: right; font-variant-numeric: tabular-nums; }
 
 /* Every player's name carries their mark, everywhere it appears — the seat
@@ -1940,16 +1969,19 @@ body.is-dragging .card-face { cursor: grabbing; }
 }
 #round-continue:hover { background: var(--action-bg-hover); }
 
+/* Themed off the panel it sits on rather than a fixed grey, so it follows
+   --panel-bg wherever that goes — the same trick .stat-card uses. */
 .choice-option {
   font: inherit;
   padding: 0.6rem 1rem;
   border-radius: 8px;
-  border: 1px solid var(--chip-border);
+  border: 1px solid var(--panel-border);
   cursor: pointer;
-  background: #eee;
-  color: #1a1a1a;
+  background: color-mix(in srgb, var(--panel-text) 10%, transparent);
+  color: var(--panel-text);
   text-transform: capitalize;
 }
+.choice-option:hover { border-color: var(--accent); }
 /* A swatch paints itself the colour it names, so the text on it cannot be
    assumed readable — the outline is what keeps the label legible on both a
    pale yellow and a dark blue. */

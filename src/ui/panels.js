@@ -185,7 +185,7 @@ function statsInto(node, templateId, stats, seating, seats, winner) {
  * @param renderFace  card markup for one face — the open table's own renderer
  */
 export function showGameOver(state, {
-  seating, stats, recordText, heroFaces = [], renderFace, forfeited = false,
+  seating, stats, recordText, heroFaces = [], renderFace,
 }) {
   el.gameOverFan.replaceChildren();
   for (const face of heroFaces) {
@@ -197,12 +197,12 @@ export function showGameOver(state, {
     el.gameOverFan.appendChild(span);
   }
 
+  // This panel is only ever the ENGINE's ending — a game the player abandons
+  // never reaches a table, it is dropped from the lobby (src/ui/lobby.js).
   const winner = state.winner;
-  const won = !forfeited && seating[winner] && !seating[winner].isBot;
+  const won = seating[winner] && !seating[winner].isBot;
   el.gameOverMessage.replaceChildren();
-  if (forfeited) {
-    el.gameOverMessage.textContent = 'Game forfeited.';
-  } else if (won) {
+  if (won) {
     el.gameOverMessage.textContent = 'You win! \u{1F389}';
   } else {
     el.gameOverMessage.appendChild(nameCell('', seating[winner]));
@@ -210,7 +210,7 @@ export function showGameOver(state, {
   }
 
   el.gameOverRecord.textContent = recordText || '';
-  statsInto(el.gameOverStats, state.pack.template.id, stats, seating, state.seats, forfeited ? -1 : winner);
+  statsInto(el.gameOverStats, state.pack.template.id, stats, seating, state.seats, winner);
 
   const rounds = stats ? stats.rounds : [];
   el.gameOverRoundsToggle.hidden = rounds.length === 0;
