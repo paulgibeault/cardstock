@@ -665,6 +665,18 @@ Zones: `hand`, `draw`, `discard`, `melds` (per player, all-visible).
 | `roundScore` | leftover card values | 5/10/25 by rank |
 | `gameOver` | `first-past-contract(10)` tiebreak lowest score | same |
 
+A wild is wild **in the hand only**. The moment it is played it takes one
+concrete value — a rank for a set or a run, a colour for a colour group — and
+that value is frozen for the rest of the round, recorded per card on the meld
+(`melds` playerVar: `{ item, cards, wilds: { cardId: { rank | color } } }`).
+Every later check reads a wild through that value, so a run laid as
+`3, wild, wild, 6` **is** 3-4-5-6 and a 4 can no longer be hit onto it. A move
+may name the values (`layDown` melds carry `wilds`; a `hit` carries
+`choice.wilds`); anything left unsaid is derived — the shared rank or colour
+for a set or colour group, and for a run the window's gaps, extending up from
+the lowest card and sliding down only as far as the top of the deck forces. A
+value already on the table always wins over one a later move names.
+
 The per-player contract progression is per-player **meta-state persisting
 across rounds** — an engine capability (`ctx.playerVar`), not a hack.
 Future games covered: Contract Rummy, Liverpool Rummy; plain Rummy/Gin with

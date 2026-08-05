@@ -202,6 +202,101 @@ test("a played card's implicit landing zone is one the pack actually has", () =>
 });
 
 /* ------------------------------------------------------------------ *
+ * Playing a wild onto someone's meld
+ * ------------------------------------------------------------------ *
+ *
+ * A wild becomes a specific card the moment it lands, so the value is part of
+ * the move — and where a meld leaves two honest answers, the value is the
+ * PLAYER'S to give. These tests hold the seam between the two halves of that:
+ * the engine enumerates one move per value, and the UI model must not quietly
+ * keep whichever came last.
+ */
+
+/** Seat 1 sitting behind a laid-down run of 3-4-5-6, two of it wild. */
+function meldTable({ hand, cards, wilds, item }) {
+  const state = createState({ pack: packFromDisk("milestones"), seats: 3, seed: "wilds" });
+  for (const id of hand) {
+    state.zones.get("hand.0").cards.push(id);
+    state.cardLocation.set(id, "hand.0");
+  }
+  for (const id of cards) {
+    state.zones.get("melds.1").cards.push(id);
+    state.cardLocation.set(id, "melds.1");
+  }
+  state.turn = { seat: 0, phase: "meld" };
+  state.playerVars[0] = { phase: 3, laidDown: true };
+  state.playerVars[1] = { phase: 2, laidDown: true, melds: [{ item, cards: cards.slice(), wilds }] };
+  return state;
+}
+
+const RUN_3456 = {
+  item: "run(4)",
+  cards: ["green-3", "wild", "wild#2", "blue-6"],
+  wilds: { wild: { rank: "4" }, "wild#2": { rank: "5" } },
+};
+
+test("a wild offers one move per value it could take, and neither end is assumed", () => {
+  const state = meldTable({ ...RUN_3456, hand: ["wild#3", "red-4"] });
+  const moves = enumerateLegalMoves(state, 0);
+
+  const hits = moves.filter((m) => m.type === "hit" && m.cards[0] === "wild#3");
+  const values = hits.map((m) => m.choice.wilds["wild#3"].rank).sort();
+  // The run is frozen at 3-4-5-6, so a wild joining it is either the 2 below
+  // or the 7 above — and every offer names which.
+  assert.deepStrictEqual(values, ["2", "7"]);
+
+  // The 4 is spent. Nothing may offer a second one.
+  assert.ok(!moves.some((m) => m.type === "hit" && m.cards[0] === "red-4"),
+    "a rank a wild already stands for was offered again");
+});
+
+test("tapping a meld with a wild hands the table the question, not an answer", () => {
+  const state = meldTable({ ...RUN_3456, hand: ["wild#3", "red-4"] });
+  const moves = enumerateLegalMoves(state, 0);
+  const ui = buildUiModel(state, {
+    seat: 0,
+    moves,
+    acts: true,
+    selection: { from: handAddress(0), cardIds: ["wild#3"] },
+  });
+
+  const ready = ui.readyMelds.get("1:0");
+  assert.ok(ready, "the run should accept a wild");
+  assert.strictEqual(ready.choice.wilds, undefined,
+    "the tap inherited a value the player never chose");
+
+  const ask = state.pack.template.wildChoice(makeCtx(state), ready);
+  assert.deepStrictEqual(ask, { cardId: "wild#3", attr: "rank", values: ["2", "7"] });
+  // And every answer it offers has to be one the engine takes.
+  for (const value of ask.values) {
+    const answered = { ...ready, choice: { ...ready.choice, wilds: { "wild#3": { rank: value } } } };
+    assert.ok(validateMove(state, answered).legal, `answering ${value} left an illegal move`);
+  }
+});
+
+test("a meld with only one value on offer is never asked about", () => {
+  const state = meldTable({
+    item: "set(3)",
+    cards: ["red-5", "green-5", "yellow-5"],
+    wilds: {},
+    hand: ["wild#3"],
+  });
+  const moves = enumerateLegalMoves(state, 0);
+  const ui = buildUiModel(state, {
+    seat: 0,
+    moves,
+    acts: true,
+    selection: { from: handAddress(0), cardIds: ["wild#3"] },
+  });
+
+  const ready = ui.readyMelds.get("1:0");
+  // A wild in a set of fives is a five; there is nothing to ask, so the value
+  // rides along with the move instead of stopping the player for a modal.
+  assert.deepStrictEqual(ready.choice.wilds, { "wild#3": { rank: "5" } });
+  assert.strictEqual(state.pack.template.wildChoice(makeCtx(state), ready), null);
+});
+
+/* ------------------------------------------------------------------ *
  * Hand order — presentation only
  * ------------------------------------------------------------------ */
 

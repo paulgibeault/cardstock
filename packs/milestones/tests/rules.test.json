@@ -130,6 +130,263 @@
       ]
     },
     {
+      "name": "a wild takes a value the moment it is played, and the slot it filled is gone",
+      "setup": {
+        "seats": 3,
+        "turn": { "seat": 0, "phase": "meld" },
+        "playerVars": { "0": { "phase": 2, "laidDown": false } },
+        "zones": {
+          "hand.0": ["red-9", "blue-9", "green-9", "green-3", "wild", "wild#2", "blue-6", "red-4", "blue-7"]
+        }
+      },
+      "assert": [
+        {
+          "apply": {
+            "actor": 0,
+            "type": "layDown",
+            "choice": {
+              "melds": [
+                { "item": "set(3)", "cards": ["red-9", "blue-9", "green-9"] },
+                { "item": "run(4)", "cards": ["green-3", "wild", "wild#2", "blue-6"] }
+              ]
+            }
+          }
+        },
+        {
+          "expect": {
+            "playerVars": {
+              "0": {
+                "melds": [
+                  { "item": "set(3)", "cards": ["red-9", "blue-9", "green-9"], "wilds": {} },
+                  {
+                    "item": "run(4)",
+                    "cards": ["green-3", "wild", "wild#2", "blue-6"],
+                    "wilds": { "wild": { "rank": "4" }, "wild#2": { "rank": "5" } }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "move": { "actor": 0, "type": "hit", "cards": ["red-4"], "choice": { "seat": 0, "meld": 1 } },
+          "legal": false,
+          "rule": "invalid-meld"
+        },
+        {
+          "move": { "actor": 0, "type": "hit", "cards": ["blue-7"], "choice": { "seat": 0, "meld": 1 } },
+          "legal": true
+        }
+      ]
+    },
+    {
+      "name": "a wild already on the table cannot be re-valued to make room for a card",
+      "setup": {
+        "seats": 3,
+        "turn": { "seat": 0, "phase": "meld" },
+        "playerVars": {
+          "0": { "phase": 3, "laidDown": true },
+          "1": {
+            "phase": 2,
+            "laidDown": true,
+            "melds": [
+              {
+                "item": "run(4)",
+                "cards": ["green-3", "wild", "wild#2", "blue-6"],
+                "wilds": { "wild": { "rank": "4" }, "wild#2": { "rank": "5" } }
+              }
+            ]
+          }
+        },
+        "zones": {
+          "hand.0": ["red-4", "blue-2"],
+          "melds.1": ["green-3", "wild", "wild#2", "blue-6"]
+        }
+      },
+      "assert": [
+        {
+          "move": {
+            "actor": 0, "type": "hit", "cards": ["red-4"],
+            "choice": { "seat": 1, "meld": 0, "wilds": { "wild": { "rank": "9" } } }
+          },
+          "legal": false,
+          "rule": "invalid-meld"
+        },
+        {
+          "move": { "actor": 0, "type": "hit", "cards": ["blue-2"], "choice": { "seat": 1, "meld": 0 } },
+          "legal": true
+        }
+      ]
+    },
+    {
+      "name": "a meld laid down without recorded values still has them pinned before anyone hits it",
+      "setup": {
+        "seats": 3,
+        "turn": { "seat": 0, "phase": "meld" },
+        "playerVars": {
+          "0": { "phase": 3, "laidDown": true },
+          "1": { "phase": 2, "laidDown": true }
+        },
+        "zones": {
+          "hand.0": ["red-4", "blue-7"],
+          "melds.1": ["green-3", "wild", "wild#2", "blue-6"]
+        }
+      },
+      "assert": [
+        {
+          "move": { "actor": 0, "type": "hit", "cards": ["red-4"], "choice": { "seat": 1, "meld": 0 } },
+          "legal": false,
+          "rule": "invalid-meld"
+        },
+        {
+          "move": { "actor": 0, "type": "hit", "cards": ["blue-7"], "choice": { "seat": 1, "meld": 0 } },
+          "legal": true
+        }
+      ]
+    },
+    {
+      "name": "a wild in a run cannot be frozen to a rank the deck does not have",
+      "setup": {
+        "seats": 3,
+        "turn": { "seat": 0, "phase": "meld" },
+        "playerVars": { "0": { "phase": 2, "laidDown": false } },
+        "zones": {
+          "hand.0": ["red-9", "blue-9", "green-9", "red-11", "blue-12", "wild", "wild#2", "red-1"]
+        }
+      },
+      "assert": [
+        {
+          "move": {
+            "actor": 0,
+            "type": "layDown",
+            "choice": {
+              "melds": [
+                { "item": "set(3)", "cards": ["red-9", "blue-9", "green-9"] },
+                {
+                  "item": "run(4)",
+                  "cards": ["red-11", "blue-12", "wild", "wild#2"],
+                  "wilds": { "wild": { "rank": "13" }, "wild#2": { "rank": "14" } }
+                }
+              ]
+            }
+          },
+          "legal": false,
+          "rule": "invalid-meld"
+        },
+        {
+          "apply": {
+            "actor": 0,
+            "type": "layDown",
+            "choice": {
+              "melds": [
+                { "item": "set(3)", "cards": ["red-9", "blue-9", "green-9"] },
+                { "item": "run(4)", "cards": ["red-11", "blue-12", "wild", "wild#2"] }
+              ]
+            }
+          }
+        },
+        {
+          "expect": {
+            "playerVars": {
+              "0": {
+                "melds": [
+                  { "item": "set(3)", "cards": ["red-9", "blue-9", "green-9"], "wilds": {} },
+                  {
+                    "item": "run(4)",
+                    "cards": ["red-11", "blue-12", "wild", "wild#2"],
+                    "wilds": { "wild": { "rank": "9" }, "wild#2": { "rank": "10" } }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "a player may say which card their wild is, and the meld is judged on it",
+      "setup": {
+        "seats": 3,
+        "turn": { "seat": 0, "phase": "meld" },
+        "playerVars": { "0": { "phase": 2, "laidDown": false } },
+        "zones": {
+          "hand.0": ["red-9", "blue-9", "green-9", "green-3", "wild", "blue-5", "blue-6", "red-1"]
+        }
+      },
+      "assert": [
+        {
+          "move": {
+            "actor": 0,
+            "type": "layDown",
+            "choice": {
+              "melds": [
+                { "item": "set(3)", "cards": ["red-9", "blue-9", "green-9"] },
+                {
+                  "item": "run(4)",
+                  "cards": ["green-3", "wild", "blue-5", "blue-6"],
+                  "wilds": { "wild": { "rank": "9" } }
+                }
+              ]
+            }
+          },
+          "legal": false,
+          "rule": "invalid-meld"
+        },
+        {
+          "move": {
+            "actor": 0,
+            "type": "layDown",
+            "choice": {
+              "melds": [
+                { "item": "set(3)", "cards": ["red-9", "blue-9", "green-9"] },
+                {
+                  "item": "run(4)",
+                  "cards": ["green-3", "wild", "blue-5", "blue-6"],
+                  "wilds": { "wild": { "rank": "4" } }
+                }
+              ]
+            }
+          },
+          "legal": true
+        }
+      ]
+    },
+    {
+      "name": "a wild hit on a set takes the set's rank, so the set stays a set",
+      "setup": {
+        "seats": 3,
+        "turn": { "seat": 0, "phase": "meld" },
+        "playerVars": {
+          "0": { "phase": 3, "laidDown": true },
+          "1": { "phase": 1, "laidDown": true }
+        },
+        "zones": {
+          "hand.0": ["wild", "red-8"],
+          "melds.1": ["red-5", "green-5", "yellow-5"]
+        }
+      },
+      "assert": [
+        {
+          "apply": { "actor": 0, "type": "hit", "cards": ["wild"], "choice": { "seat": 1, "meld": 0 } }
+        },
+        {
+          "expect": {
+            "playerVars": {
+              "1": {
+                "melds": [
+                  {
+                    "item": "set(4)",
+                    "cards": ["red-5", "green-5", "yellow-5", "wild"],
+                    "wilds": { "wild": { "rank": "5" } }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
       "name": "a skip may not be picked up from the discard pile",
       "setup": {
         "seats": 3,

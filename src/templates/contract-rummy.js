@@ -17,6 +17,259 @@ function parseItem(item) {
   return { kind: m[1], n: Number(m[2]) };
 }
 
+/* ------------------------------------------------------------------ *
+ * What a wild stands for
+ * ------------------------------------------------------------------ *
+ *
+ * A WILD IS ONLY WILD IN THE HAND. The moment it is played it becomes one
+ * specific card and stays that card for the rest of the round. That is the
+ * rule at a table, and skipping it is not a cosmetic omission: a run laid as
+ * "3, wild, wild, 6" whose wilds never took a value is a run that still has a
+ * 4 and a 5 missing, so the next player can hit it with a 4 and the same slot
+ * gets filled twice. The meld ends up holding five cards' worth of ranks in a
+ * four-rank window, and no later check can untangle which wild was supposed
+ * to be which.
+ *
+ * So every meld carries the values its wilds took. `group.wilds` is
+ * { cardId: { rank } } — or { color } for a colour group — written once, when
+ * the card leaves the hand, and never rewritten: a hit merges NEW assignments
+ * in and the existing ones win every collision (see resolveHit). Validation
+ * reads a wild through that map and treats it as an ordinary card of that
+ * value, which is all it takes for the double-fill above to come back as "a
+ * run cannot repeat a rank".
+ *
+ * Cards are pack-level and shared across matches, so the assignment lives in
+ * match state (the seat's `melds` playerVar) rather than on the card. It is
+ * derived by applyMove from the logged move, so a replay rebuilds it exactly.
+ */
+
+const RANK_DOMAINS = new WeakMap();
+
+// The ranks a run may occupy: the numeric ranks the pack's deck actually
+// holds. A frozen value has to be one a card could have had — without this
+// the window search below is free to run a meld off either end of the deck
+// (a "1, 2, wild" whose wild is a 0), and freezing a rank no card can ever
+// match makes a slot that is neither filled nor fillable.
+function rankDomain(ctx) {
+  let domain = RANK_DOMAINS.get(ctx.pack);
+  if (!domain) {
+    const ranks = [];
+    for (const card of ctx.pack.cardsById.values()) {
+      const r = card.rank === '' || card.rank == null ? NaN : Number(card.rank);
+      if (Number.isFinite(r)) ranks.push(r);
+    }
+    // An empty range for a deck with no numeric ranks: every window is then
+    // wider than the domain, so runs are rejected rather than mis-frozen.
+    domain = ranks.length ? { min: Math.min(...ranks), max: Math.max(...ranks) } : { min: 0, max: -1 };
+    RANK_DOMAINS.set(ctx.pack, domain);
+  }
+  return domain;
+}
+
+// A run or a set pins a wild's RANK; a colour group pins its COLOUR. Nothing
+// else about the card is decided — a run in this template never constrains
+// colour, so a wild in one is a rank and no more.
+function pinnedAttr(kind) {
+  return kind === 'colorGroup' ? 'color' : 'rank';
+}
+
+function entriesOf(ctx, cardIds) {
+  return cardIds.map((id) => ({ id, card: ctx.cardById(id) }));
+}
+
+// What a card counts as inside a meld of this kind: its own attribute, or —
+// for a wild — whatever it was frozen to. `undefined` means a wild nobody has
+// assigned, which is a state no laid-down meld is allowed to be in.
+function meldValue(ctx, entry, kind, wilds) {
+  const attr = pinnedAttr(kind);
+  if (!isWildCard(ctx, entry.card)) return entry.card[attr];
+  return wilds?.[entry.id]?.[attr];
+}
+
+/**
+ * Freeze a value onto every wild in `entries` that does not have one yet, and
+ * carry the ones that do through untouched.
+ *
+ * `pinned` is what is already decided: the values a meld's wilds took when
+ * they were played, plus anything the move itself declared. Everything else
+ * is derived, because a played wild has to mean something even when nobody
+ * said what, and for each meld kind there is one sensible answer:
+ *
+ *   set / colour group   the rank or colour the naturals already share
+ *   run                  the gaps in the window the fixed ranks sit in — and
+ *                        where they do not fill the window (a 3, a 4 and two
+ *                        wilds), the window that starts on the lowest of them
+ *                        and runs UP, slid down only as far as the top of the
+ *                        deck forces.
+ *
+ * A player who wants the other window says so and this leaves it alone; see
+ * `wildChoice`, which is the question the table asks before the card lands.
+ * Deriving is not guessing what the player meant so much as making sure SOME
+ * value is on the card by the time it is on the felt.
+ *
+ * @returns { ok: true, wilds } | { ok: false, rule, reason }
+ */
+function assignWilds(ctx, kind, size, entries, pinned = {}) {
+  const attr = pinnedAttr(kind);
+  const wilds = {};
+  const unassigned = [];
+  for (const entry of entries) {
+    if (!isWildCard(ctx, entry.card)) continue;
+    const value = pinned[entry.id]?.[attr];
+    if (value === undefined) unassigned.push(entry);
+    else wilds[entry.id] = { [attr]: value };
+  }
+  if (!unassigned.length) return { ok: true, wilds };
+
+  const naturals = entries.filter((e) => !isWildCard(ctx, e.card));
+  const noValue = {
+    ok: false,
+    rule: 'wild-value-required',
+    reason: 'A wild has to be played as a specific card, and nothing here says which.',
+  };
+
+  if (kind === 'set' || kind === 'colorGroup') {
+    const value = naturals.length ? naturals[0].card[attr] : Object.values(wilds)[0]?.[attr];
+    if (value === undefined) return noValue;
+    for (const entry of unassigned) wilds[entry.id] = { [attr]: value };
+    return { ok: true, wilds };
+  }
+
+  if (kind === 'run') {
+    const fixed = [
+      ...naturals.map((e) => Number(e.card.rank)),
+      ...Object.values(wilds).map((w) => Number(w.rank)),
+    ];
+    if (fixed.some((r) => !Number.isFinite(r))) {
+      return { ok: false, rule: 'invalid-meld', reason: 'Run cards must have numeric ranks.' };
+    }
+    if (!fixed.length) return noValue;
+
+    const low = Math.min(...fixed);
+    const high = Math.max(...fixed);
+    if (high - low + 1 > size) {
+      return { ok: false, rule: 'invalid-meld', reason: 'Run cards do not fit within the meld size.' };
+    }
+    const domain = rankDomain(ctx);
+    let start = Math.min(low, domain.max - size + 1);
+    start = Math.max(start, domain.min);
+    if (start > low || start + size - 1 < high) {
+      return { ok: false, rule: 'invalid-meld', reason: 'That run does not fit within the deck.' };
+    }
+
+    const taken = new Set(fixed);
+    const free = [];
+    for (let r = start; r < start + size; r++) if (!taken.has(r)) free.push(r);
+    // Fewer holes than wilds means two cards are competing for one rank; the
+    // value check reports it as the repeat it is.
+    if (free.length < unassigned.length) {
+      return { ok: false, rule: 'invalid-meld', reason: 'A run cannot repeat a rank.' };
+    }
+    unassigned.forEach((entry, i) => { wilds[entry.id] = { rank: String(free[i]) }; });
+    return { ok: true, wilds };
+  }
+
+  return { ok: false, rule: 'invalid-meld', reason: `Unknown meld kind "${kind}".` };
+}
+
+// The quota rules — how many cards, how many of them may be wild. Checked
+// BEFORE any value is frozen, because "three wilds and nothing else" is a
+// meld that fails on min-naturals, not on the wilds having no rank to take.
+function checkMeldQuota(ctx, parsed, entries) {
+  if (entries.length !== parsed.n) {
+    return { ok: false, rule: 'invalid-meld', reason: 'Card count does not match the meld size.' };
+  }
+  const wildsCfg = ctx.rules.wilds || {};
+  const naturals = entries.filter((e) => !isWildCard(ctx, e.card));
+  const wildCount = entries.length - naturals.length;
+  if (naturals.length < (wildsCfg.minNaturals ?? 0)) {
+    return { ok: false, rule: 'min-naturals', reason: 'A meld needs at least one natural (non-wild) card.' };
+  }
+  if (wildsCfg.maxPerMeld != null && wildCount > wildsCfg.maxPerMeld) {
+    return { ok: false, rule: 'too-many-wilds', reason: 'Too many wild cards in one meld.' };
+  }
+  return { ok: true };
+}
+
+// The composition rules, read through the frozen assignments: from here down
+// a wild IS the card it was played as, and the checks are the ones any pile
+// of naturals would face.
+function checkMeldValues(ctx, parsed, entries, wilds) {
+  const values = entries.map((e) => meldValue(ctx, e, parsed.kind, wilds));
+  if (values.some((v) => v === undefined || v === null)) {
+    return { ok: false, rule: 'wild-value-required', reason: 'A wild in this meld has no value.' };
+  }
+
+  if (parsed.kind === 'set') {
+    if (values.some((v) => v !== values[0])) {
+      return { ok: false, rule: 'invalid-meld', reason: 'All cards in a set must share a rank.' };
+    }
+    return { ok: true };
+  }
+
+  if (parsed.kind === 'run') {
+    const ranks = values.map((v) => Number(v));
+    if (ranks.some((r) => !Number.isFinite(r))) {
+      return { ok: false, rule: 'invalid-meld', reason: 'Run cards must have numeric ranks.' };
+    }
+    if (new Set(ranks).size !== ranks.length) {
+      return { ok: false, rule: 'invalid-meld', reason: 'A run cannot repeat a rank.' };
+    }
+    const low = Math.min(...ranks);
+    const high = Math.max(...ranks);
+    // Every card's rank is known, so a run is either unbroken or it is not —
+    // there is no longer a hole for a later card to claim.
+    if (high - low + 1 !== parsed.n) {
+      return { ok: false, rule: 'invalid-meld', reason: 'Run cards do not fit within the meld size.' };
+    }
+    const domain = rankDomain(ctx);
+    if (low < domain.min || high > domain.max) {
+      return { ok: false, rule: 'invalid-meld', reason: 'A run cannot carry on past the ends of the deck.' };
+    }
+    return { ok: true };
+  }
+
+  if (parsed.kind === 'colorGroup') {
+    if (values.some((v) => v !== values[0])) {
+      return { ok: false, rule: 'invalid-meld', reason: 'All cards in a color group must share a color.' };
+    }
+    return { ok: true };
+  }
+
+  return { ok: false, rule: 'invalid-meld', reason: `Unknown meld kind "${parsed.kind}".` };
+}
+
+/**
+ * Legality AND the wild values in one answer, so validateMove and applyMove
+ * cannot reach different conclusions about what a wild became. Both call
+ * this; validate throws the values away, apply stores them.
+ *
+ * @param pinned values that are already settled — the meld's own frozen wilds
+ *               and any the move declares.
+ * @returns { ok: true, wilds } | { ok: false, rule, reason }
+ */
+function resolveMeld(ctx, item, cardIds, pinned = {}) {
+  const parsed = parseItem(item);
+  if (!parsed) return { ok: false, rule: 'invalid-meld', reason: `Unknown meld item "${item}".` };
+  if (!Array.isArray(cardIds)) {
+    return { ok: false, rule: 'invalid-meld', reason: 'A meld needs a list of cards.' };
+  }
+  const entries = entriesOf(ctx, cardIds);
+  if (entries.some((e) => !e.card)) {
+    return { ok: false, rule: 'invalid-meld', reason: 'A meld names a card that is not in this deck.' };
+  }
+
+  const quota = checkMeldQuota(ctx, parsed, entries);
+  if (!quota.ok) return quota;
+
+  const assigned = assignWilds(ctx, parsed.kind, parsed.n, entries, pinned);
+  if (!assigned.ok) return assigned;
+
+  const values = checkMeldValues(ctx, parsed, entries, assigned.wilds);
+  if (!values.ok) return values;
+  return { ok: true, wilds: assigned.wilds };
+}
+
 // Contract satisfaction is a multiset match on item strings — order of melds in the
 // move doesn't have to mirror the order the contract lists them in.
 function itemsMatchContract(items, contract) {
@@ -39,54 +292,6 @@ function inferKind(naturals) {
   return 'run';
 }
 
-// { ok: true } or { ok: false, rule, reason }. `cards` are card objects (not ids).
-function validateMeldComposition(ctx, item, cards) {
-  const parsed = parseItem(item);
-  if (!parsed) return { ok: false, rule: 'invalid-meld', reason: `Unknown meld item "${item}".` };
-  if (cards.length !== parsed.n) {
-    return { ok: false, rule: 'invalid-meld', reason: 'Card count does not match the meld size.' };
-  }
-
-  const wildsCfg = ctx.rules.wilds || {};
-  const naturals = cards.filter((c) => !isWildCard(ctx, c));
-  const wildCount = cards.length - naturals.length;
-  const minNaturals = wildsCfg.minNaturals ?? 0;
-  if (naturals.length < minNaturals) {
-    return { ok: false, rule: 'min-naturals', reason: 'A meld needs at least one natural (non-wild) card.' };
-  }
-  if (wildsCfg.maxPerMeld != null && wildCount > wildsCfg.maxPerMeld) {
-    return { ok: false, rule: 'too-many-wilds', reason: 'Too many wild cards in one meld.' };
-  }
-
-  if (parsed.kind === 'set') {
-    const rank = naturals[0].rank;
-    if (naturals.some((c) => c.rank !== rank)) {
-      return { ok: false, rule: 'invalid-meld', reason: 'All cards in a set must share a rank.' };
-    }
-  } else if (parsed.kind === 'run') {
-    const ranks = naturals.map((c) => Number(c.rank));
-    if (ranks.some((r) => Number.isNaN(r))) {
-      return { ok: false, rule: 'invalid-meld', reason: 'Run cards must have numeric ranks.' };
-    }
-    if (new Set(ranks).size !== ranks.length) {
-      return { ok: false, rule: 'invalid-meld', reason: 'A run cannot repeat a rank.' };
-    }
-    const span = Math.max(...ranks) - Math.min(...ranks) + 1;
-    if (span > parsed.n) {
-      return { ok: false, rule: 'invalid-meld', reason: 'Run cards do not fit within the meld size.' };
-    }
-  } else if (parsed.kind === 'colorGroup') {
-    const color = naturals[0].color;
-    if (naturals.some((c) => c.color !== color)) {
-      return { ok: false, rule: 'invalid-meld', reason: 'All cards in a color group must share a color.' };
-    }
-  } else {
-    return { ok: false, rule: 'invalid-meld', reason: `Unknown meld kind "${parsed.kind}".` };
-  }
-
-  return { ok: true };
-}
-
 // Per-seat meld groupings live in playerVar 'melds' ([{item, cards: [id,...]}]) so hits
 // can target one meld among several without needing to slice a flat zone by position.
 // A seat that never went through applyLayDown (e.g. a rule test that pokes the melds.N
@@ -104,6 +309,49 @@ function meldKindOf(ctx, group) {
   return inferKind(group.cards.map((id) => ctx.cardById(id)).filter((c) => !isWildCard(ctx, c)));
 }
 
+// What a meld's wilds are ALREADY standing for. A group laid down through
+// applyMove carries them. One that did not — a rule test poking the melds
+// zone, a group the fallback above invented — is pinned here, on first read,
+// from the meld as it stands: frozen a little late, but frozen before anyone
+// gets to hit it, which is the property that matters.
+function pinnedWildsOf(ctx, group, kind) {
+  if (group.wilds) return group.wilds;
+  const entries = entriesOf(ctx, group.cards);
+  const assigned = assignWilds(ctx, kind, entries.length, entries);
+  return assigned.ok ? assigned.wilds : {};
+}
+
+/**
+ * A hit resolved the same way a lay-down is, with one addition: the target
+ * meld's own wilds are pinned LAST, so they win every collision. A move that
+ * arrives naming a new value for a wild already on the table is not applying
+ * a choice, it is rewriting history, and the whole point of freezing is that
+ * it cannot.
+ */
+function resolveHit(ctx, group, kind, cardIds, declared) {
+  const cards = [...group.cards, ...cardIds];
+  const pinned = { ...(declared || {}), ...pinnedWildsOf(ctx, group, kind) };
+  const resolved = resolveMeld(ctx, `${kind}(${cards.length})`, cards, pinned);
+  return { ...resolved, item: `${kind}(${cards.length})`, cards };
+}
+
+// Every value a wild could take on its way onto this meld, asked of
+// resolveHit itself so the list can never offer something a hit would then
+// refuse. A set or a colour group has exactly one answer; a run has its two
+// open ends, which is the only place the player has a real say.
+function wildHitValues(ctx, group, kind, cardId) {
+  const attr = pinnedAttr(kind);
+  let candidates;
+  if (attr === 'color') {
+    candidates = [...new Set([...ctx.pack.cardsById.values()].map((c) => c.color).filter(Boolean))];
+  } else {
+    const domain = rankDomain(ctx);
+    candidates = [];
+    for (let r = domain.min; r <= domain.max; r++) candidates.push(String(r));
+  }
+  return candidates.filter((value) => resolveHit(ctx, group, kind, [cardId], { [cardId]: { [attr]: value } }).ok);
+}
+
 function groupBy(items, keyFn) {
   const out = new Map();
   for (const item of items) {
@@ -117,17 +365,24 @@ function groupBy(items, keyFn) {
 // Greedy search for `n` cards (from `available`, a list of {id, card}) satisfying one
 // meld item, spending as few wilds as the natural cards on hand allow. Not globally
 // optimal across a whole contract — good enough for a bot to make steady progress.
+//
+// Returns { cards: [id, ...], wilds } or null: a candidate is only an answer once
+// resolveMeld has frozen a value onto every wild in it, which also means a window
+// that runs off the end of the deck is rejected here rather than laid down.
 function findMeldForItem(ctx, parsed, available) {
   const wilds = available.filter((c) => isWildCard(ctx, c.card));
   const naturals = available.filter((c) => !isWildCard(ctx, c.card));
   const minNaturals = ctx.rules.wilds?.minNaturals ?? 0;
   const maxWilds = ctx.rules.wilds?.maxPerMeld;
+  const item = `${parsed.kind}(${parsed.n})`;
 
   function tryComplete(naturalCards, wildsNeeded) {
     if (naturalCards.length < minNaturals) return null;
     if (maxWilds != null && wildsNeeded > maxWilds) return null;
     if (wildsNeeded > wilds.length) return null;
-    return [...naturalCards.map((c) => c.id), ...wilds.slice(0, wildsNeeded).map((c) => c.id)];
+    const cards = [...naturalCards.map((c) => c.id), ...wilds.slice(0, wildsNeeded).map((c) => c.id)];
+    const resolved = resolveMeld(ctx, item, cards, {});
+    return resolved.ok ? { cards, wilds: resolved.wilds } : null;
   }
 
   if (parsed.kind === 'set' || parsed.kind === 'colorGroup') {
@@ -176,10 +431,10 @@ function findContractLayDown(ctx, seat) {
   const melds = [];
   for (const item of contract) {
     const parsed = parseItem(item);
-    const foundIds = parsed && findMeldForItem(ctx, parsed, available);
-    if (!foundIds) return null;
-    melds.push({ item, cards: foundIds });
-    available = available.filter((c) => !foundIds.includes(c.id));
+    const found = parsed && findMeldForItem(ctx, parsed, available);
+    if (!found) return null;
+    melds.push({ item, cards: found.cards, wilds: found.wilds });
+    available = available.filter((c) => !found.cards.includes(c.id));
   }
   return melds;
 }
@@ -199,15 +454,28 @@ function permutations(items) {
 
 // Every legal one-card hit across every seat's melds, via validateMove itself so this
 // can never drift from what applyMove would actually accept.
+//
+// A wild appears once per value it could take, the same way shedding enumerates a
+// wild once per colour: the value is part of the move, so two values are two moves.
+// That is what lets a bot pick one and the table ask a human which they meant.
 function findHits(ctx, seat) {
   const hand = ctx.cardIdsIn(ctx.zoneAddr('hand', seat));
   const hits = [];
   for (let targetSeat = 0; targetSeat < ctx.seats; targetSeat++) {
     const groups = getMeldGroups(ctx, targetSeat);
     for (let meldIndex = 0; meldIndex < groups.length; meldIndex++) {
+      const group = groups[meldIndex];
+      const kind = meldKindOf(ctx, group);
       for (const cardId of hand) {
-        const move = { actor: seat, type: 'hit', cards: [cardId], choice: { seat: targetSeat, meld: meldIndex } };
-        if (contractRummy.validateMove(ctx, move).legal) hits.push(move);
+        const card = ctx.cardById(cardId);
+        const attr = kind && pinnedAttr(kind);
+        const values = kind && card && isWildCard(ctx, card) ? wildHitValues(ctx, group, kind, cardId) : [null];
+        for (const value of values) {
+          const choice = { seat: targetSeat, meld: meldIndex };
+          if (value !== null) choice.wilds = { [cardId]: { [attr]: value } };
+          const move = { actor: seat, type: 'hit', cards: [cardId], choice };
+          if (contractRummy.validateMove(ctx, move).legal) hits.push(move);
+        }
       }
     }
   }
@@ -320,7 +588,10 @@ const contractRummy = {
       }
 
       for (const meld of melds) {
-        const result = validateMeldComposition(ctx, meld.item, meld.cards.map((id) => ctx.cardById(id)));
+        // meld.wilds is what the player says their wilds are; anything they
+        // leave unsaid gets a value here, and either way the meld is judged
+        // with every wild already standing for something.
+        const result = resolveMeld(ctx, meld.item, meld.cards, meld.wilds || {});
         if (!result.ok) return ctx.fail(result.rule, result.reason);
       }
       return ctx.ok();
@@ -348,8 +619,7 @@ const contractRummy = {
 
       const kind = meldKindOf(ctx, group);
       if (!kind) return ctx.fail('invalid-target-meld', 'Target meld has no valid composition.');
-      const candidateCards = [...group.cards, ...cardIds].map((id) => ctx.cardById(id));
-      const result = validateMeldComposition(ctx, `${kind}(${candidateCards.length})`, candidateCards);
+      const result = resolveHit(ctx, group, kind, cardIds, move.choice?.wilds);
       if (!result.ok) return ctx.fail(result.rule, result.reason);
       return ctx.ok();
     }
@@ -390,8 +660,12 @@ const contractRummy = {
     if (move.type === 'layDown') {
       const groups = [];
       for (const meld of move.choice.melds) {
+        // Resolved once more rather than trusted from the move: the values
+        // stored here are the ones validation just approved, and a move that
+        // named none still lands with its wilds decided.
+        const resolved = resolveMeld(ctx, meld.item, meld.cards, meld.wilds || {});
         ctx.moveCards(meld.cards, ctx.zoneAddr('hand', seat), ctx.zoneAddr('melds', seat));
-        groups.push({ item: meld.item, cards: meld.cards.slice() });
+        groups.push({ item: meld.item, cards: meld.cards.slice(), wilds: resolved.wilds || {} });
       }
       ctx.setPlayerVar(seat, 'melds', groups);
       ctx.setPlayerVar(seat, 'laidDown', true);
@@ -409,9 +683,13 @@ const contractRummy = {
       const groups = getMeldGroups(ctx, targetSeat);
       const group = groups[meldIndex];
       const kind = meldKindOf(ctx, group);
+      const resolved = resolveHit(ctx, group, kind, move.cards, move.choice?.wilds);
       ctx.moveCards(move.cards, ctx.zoneAddr('hand', seat), ctx.zoneAddr('melds', targetSeat));
       group.cards.push(...move.cards);
       group.item = `${kind}(${group.cards.length})`;
+      // Includes the meld's existing assignments untouched — resolveHit pins
+      // them over anything the move had to say about them.
+      group.wilds = resolved.wilds || group.wilds || {};
       ctx.setPlayerVar(targetSeat, 'melds', groups);
       ctx.emit('hit', { seat, targetSeat, meld: meldIndex });
       if (ctx.cardIdsIn(ctx.zoneAddr('hand', seat)).length === 0) ctx.setGameOver(seat);
@@ -455,8 +733,10 @@ const contractRummy = {
         const parsed = parseItem(item);
         const found = parsed && findMeldForItem(ctx, parsed, available);
         if (!found) { ok = false; break; }
-        melds.push({ item, cards: found });
-        available = available.filter((c) => !found.includes(c.id));
+        // The wild values travel with the melds so the move the button makes
+        // says what each wild is, rather than leaving applyMove to guess again.
+        melds.push({ item, cards: found.cards, wilds: found.wilds });
+        available = available.filter((c) => !found.cards.includes(c.id));
       }
       if (ok && available.length === 0) {
         // Re-order to match the declared contract so the move reads naturally.
@@ -539,9 +819,40 @@ const contractRummy = {
       const found = findMeldForItem(ctx, parsed, [self, ...kin, ...wilds]);
       // The narrowing makes this near-certain, but a run window can still slide
       // off the pressed rank — so it is checked rather than assumed.
-      if (found && found.includes(cardId)) return { item, cards: found };
+      if (found && found.cards.includes(cardId)) return { item, cards: found.cards };
     }
     return null;
+  },
+
+  /**
+   * The question a hit still owes before it can be applied: which card a wild
+   * is being played as.
+   *
+   * Only asked where the answer is genuinely the player's — a run has two
+   * open ends and the choice between them is a real one (the low end blocks a
+   * different card than the high end does). A set or a colour group has
+   * exactly one value on offer, and a prompt there would be theatre; the same
+   * goes for a natural card, which is already the card it is.
+   *
+   * Returns null when there is nothing to ask, which is the caller's cue to
+   * send the move as it stands and let resolveMeld freeze the one value that
+   * fits.
+   *
+   * @returns { cardId, attr: 'rank' | 'color', values: [string, ...] } | null
+   */
+  wildChoice(ctx, move) {
+    if (move?.type !== 'hit' || move.choice?.wilds) return null;
+    const cardId = move.cards?.[0];
+    const card = cardId && ctx.cardById(cardId);
+    if (!card || !isWildCard(ctx, card)) return null;
+    const { seat: targetSeat, meld: meldIndex } = move.choice || {};
+    if (targetSeat === undefined || meldIndex === undefined) return null;
+    const group = getMeldGroups(ctx, targetSeat)[meldIndex];
+    if (!group) return null;
+    const kind = meldKindOf(ctx, group);
+    if (!kind) return null;
+    const values = wildHitValues(ctx, group, kind, cardId);
+    return values.length > 1 ? { cardId, attr: pinnedAttr(kind), values } : null;
   },
 
   enumerateLegalMoves(ctx, seat) {

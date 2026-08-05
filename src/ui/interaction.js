@@ -206,7 +206,23 @@ export function buildUiModel(state, { seat, moves = [], acts = false, selection 
           ui.readyTargets.set('discard', { actor: move.actor, type: 'discard', cards: move.cards });
         }
         if (move.type === 'hit' && move.cards[0] === cardId) {
-          ui.readyMelds.set(`${move.choice.seat}:${move.choice.meld}`, move);
+          // A wild enumerates once per value it could take on this meld — the
+          // low end of a run and the high end are two different moves. Which
+          // one the player meant is not something a tap on the meld says, so
+          // the target keeps the BARE move and the move handler asks, exactly
+          // as a wild's colour is asked for in shedding.
+          const key = `${move.choice.seat}:${move.choice.meld}`;
+          const already = ui.readyMelds.get(key);
+          if (already) {
+            ui.readyMelds.set(key, {
+              actor: move.actor,
+              type: 'hit',
+              cards: move.cards.slice(),
+              choice: { seat: move.choice.seat, meld: move.choice.meld },
+            });
+          } else {
+            ui.readyMelds.set(key, move);
+          }
         }
       }
     }
