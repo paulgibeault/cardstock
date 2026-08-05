@@ -172,6 +172,21 @@ let displayedHand = [];
 let drag = null;
 let pendingRender = null;
 
+/**
+ * The launcher's session clock, in the cancellable-timer shape, with a plain
+ * fallback so a module can be exercised without the SDK on the page.
+ *
+ * Exists so modules that must not import the SDK — dragController.js is
+ * game-agnostic by design — can still have their timers freeze with a
+ * suspended frame (§6c) rather than burning battery in a hidden iframe.
+ */
+function sessionSchedule(fn, ms) {
+  const session = typeof window !== 'undefined' && window.Arcade && window.Arcade.session;
+  if (session && typeof session.setTimeout === 'function') return session.setTimeout(fn, ms);
+  const id = setTimeout(fn, ms);
+  return { cancel: () => clearTimeout(id) };
+}
+
 // Announcement beats (§E2) — a bot remembering to declare, or noticing that
 // you did not. Timers, so they are cancelled on every path that closes or
 // replaces the table, exactly like the bot-turn timer.
@@ -1891,7 +1906,14 @@ export function initTable({ onExit }) {
   exitToLobby = onExit;
   settings = loadSettings();
 
-  drag = createDragController({ layer: flightLayer, onLift: onDragLift, onSettle: onDragSettled });
+  drag = createDragController({
+    layer: flightLayer,
+    onLift: onDragLift,
+    onSettle: onDragSettled,
+    // The controller is deliberately SDK-free, so the session clock is handed
+    // to it rather than imported — same reasoning as the timers at §6c below.
+    schedule: sessionSchedule,
+  });
 
   initPanels({
     onContinueRound: () => dismissRoundSummary(),
