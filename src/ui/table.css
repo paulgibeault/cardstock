@@ -373,6 +373,7 @@ body {
 /* "Catch!" — the accusation, worn by the seat it accuses. Deliberately loud:
    the window is short and the whole mechanic is about noticing in time. */
 .seat__catch {
+  position: relative;
   display: block;
   width: 100%;
   margin-top: 0.4rem;
@@ -385,13 +386,44 @@ body {
   cursor: pointer;
   background: var(--danger-bg);
   color: #fff;
-  animation: catch-pulse 1s ease-in-out infinite;
 }
 .seat__catch:hover { background: var(--danger-bg-hover); }
 
-@keyframes catch-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.4); }
-  50% { box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.14); }
+.seat__catch::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.22);
+  opacity: 0;
+  pointer-events: none;
+  animation: ring-pulse 1s ease-in-out infinite;
+}
+
+/* ------------------------------------------------------------------ *
+ * Pulsing without repainting
+ * ------------------------------------------------------------------ */
+
+/* EVERY INFINITE PULSE ON THIS TABLE IS A FADING RING, NEVER A GROWING SHADOW.
+ *
+ * `box-shadow` is not a compositable property: animating it repaints the
+ * element's shadow region on the main thread, every frame, forever. The turn
+ * token alone is on screen for essentially the whole match, so four such
+ * animations meant the browser never reached idle — a rAF loop that never
+ * stops, expressed in CSS, costing battery on a phone even when nobody was
+ * touching the screen (issue #6 §2).
+ *
+ * The shape that costs nothing: put the ring on a pseudo-element with a
+ * STATIC box-shadow, and animate only its `opacity`. Opacity is compositor-
+ * only, so the ring is painted once and then faded by the GPU. The pseudo
+ * needs `pointer-events: none` — it covers its host, and a ring that ate the
+ * click would make the loudest button on the table the one that does nothing.
+ *
+ * `transform` is the other compositable property, which is why the announce
+ * button keeps its scale() in the element's own keyframes below. */
+@keyframes ring-pulse {
+  0%, 100% { opacity: 0; }
+  50% { opacity: 1; }
 }
 
 .mini-hand {
@@ -486,14 +518,19 @@ button.pile-stack:not(:disabled) { cursor: pointer; }
 button.pile-stack:not(:disabled):hover { transform: translateY(-4px); }
 button.pile-stack:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
 
-.pile-stack--ready .pile-stack__top {
-  animation: pile-beckon 1.8s ease-in-out infinite;
+/* The beckon: a fading ring, per "Pulsing without repainting" above. The host
+   is `.pile-stack > *`, already `position: absolute; inset: 0`, so the ring
+   lands on the card's own box. */
+.pile-stack--ready .pile-stack__top { border-radius: 8px; }
+.pile-stack--ready .pile-stack__top::after {
+  content: "";
+  position: absolute;
+  inset: 0;
   border-radius: 8px;
-}
-
-@keyframes pile-beckon {
-  0%, 100% { box-shadow: 0 0 0 0 var(--glow); }
-  50% { box-shadow: 0 0 0 5px var(--glow); }
+  box-shadow: 0 0 0 5px var(--glow);
+  opacity: 0;
+  pointer-events: none;
+  animation: ring-pulse 1.8s ease-in-out infinite;
 }
 
 /* A pile whose top card can be picked up as a SOURCE (Stockpile's stock and
@@ -776,6 +813,7 @@ body.is-dragging .card-face { cursor: grabbing; }
 /* Loud, and pulsing, because the window is measured in seconds and missing it
    costs you two cards. */
 .announce-button {
+  position: relative;
   font: inherit;
   font-size: 0.95rem;
   font-weight: 800;
@@ -791,9 +829,22 @@ body.is-dragging .card-face { cursor: grabbing; }
 .announce-button:hover { filter: brightness(1.08); }
 .announce-button:focus-visible { outline: 2px solid var(--chrome-text); outline-offset: 3px; }
 
+/* The scale stays on the element — transform composites. Only the 18px glow
+   moves to the ring (see "Pulsing without repainting"), because a blurred
+   shadow is the most expensive thing on this page to repaint per frame. */
 @keyframes announce-pulse {
-  0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 var(--accent); }
-  50% { transform: scale(1.05); box-shadow: 0 0 18px 2px var(--accent); }
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.05); }
+}
+.announce-button::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  box-shadow: 0 0 18px 2px var(--accent);
+  opacity: 0;
+  pointer-events: none;
+  animation: ring-pulse 1.1s ease-in-out infinite;
 }
 
 /* ------------------------------------------------------------------ *
@@ -812,8 +863,20 @@ body.is-dragging .card-face { cursor: grabbing; }
   flex: none;
   display: inline-block;
   background: radial-gradient(circle at 35% 30%, #ffe9a8, var(--accent) 72%);
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.3), 0 0 6px var(--accent);
-  animation: token-pulse 1.6s ease-in-out infinite;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.3), 0 0 3px var(--accent);
+}
+/* ::after is the glyph, so the glow rides ::before. This is the pulse that
+   matters most: some seat is always acting, so the token is on screen for the
+   whole match and its repaint never stopped. */
+.turn-token::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  box-shadow: 0 0 12px var(--accent);
+  opacity: 0;
+  pointer-events: none;
+  animation: ring-pulse 1.6s ease-in-out infinite;
 }
 .turn-token::after {
   content: "\25B6"; /* ▶ */
@@ -826,10 +889,6 @@ body.is-dragging .card-face { cursor: grabbing; }
   color: #4a3200;
 }
 
-@keyframes token-pulse {
-  0%, 100% { box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.3), 0 0 3px var(--accent); }
-  50% { box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.3), 0 0 12px var(--accent); }
-}
 
 /* ------------------------------------------------------------------ *
  * The action bar
@@ -917,6 +976,7 @@ body.is-dragging .card-face { cursor: grabbing; }
   gap: 0.4rem;
 }
 .meld-chip {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -946,7 +1006,19 @@ body.is-dragging .card-face { cursor: grabbing; }
 .meld-chip--ready {
   cursor: pointer;
   border-color: var(--accent);
-  animation: pile-beckon 1.8s ease-in-out infinite;
+}
+/* The same fading ring the ready piles wear — see "Pulsing without
+   repainting". Several chips can be ready at once, which made this the
+   highest-multiplicity of the four box-shadow animations. */
+.meld-chip--ready::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 8px;
+  box-shadow: 0 0 0 5px var(--glow);
+  opacity: 0;
+  pointer-events: none;
+  animation: ring-pulse 1.8s ease-in-out infinite;
 }
 .meld-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
@@ -1236,6 +1308,19 @@ body.is-dragging .card-face { cursor: grabbing; }
   #scoreboard-overlay .panel,
   #game-over-overlay .panel {
     animation: none !important;
+  }
+
+  /* The pulses now live on pseudo-element rings, and stopping the animation
+     alone would freeze one at whatever opacity it happened to hold. Hidden
+     outright: the thing each ring emphasises is already said by a colour — the
+     accent border, the red catch button, the gold token. */
+  .seat__catch::after,
+  .announce-button::after,
+  .turn-token::before,
+  .pile-stack--ready .pile-stack__top::after,
+  .meld-chip--ready::after {
+    animation: none !important;
+    opacity: 0;
   }
 
   /* A card in flight is JS-driven and gated in src/ui/flight.js; what is left
