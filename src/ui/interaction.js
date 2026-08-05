@@ -230,6 +230,87 @@ export function buildUiModel(state, { seat, moves = [], acts = false, selection 
 }
 
 /* ------------------------------------------------------------------ *
+ * Fitting the contract ladder on one line
+ * ------------------------------------------------------------------ */
+
+/**
+ * Which rungs of a contract ladder to draw, and which to collapse.
+ *
+ * Ten rungs do not fit across a phone, and the ladder wrapping to a second row
+ * cost the felt a whole line of height — which is the line the hand needs. So
+ * the ladder is TRUNCATED rather than wrapped.
+ *
+ * What it must still answer decides what is kept, in this order:
+ *   - which contract am I on          → `minePhase`, never dropped
+ *   - how long is the course          → the last rung
+ *   - what am I racing toward next    → the rung after mine
+ *   - where is everybody else         → occupied rungs, nearest rival first
+ *   - where did we start              → the first rung
+ * Everything after that collapses, and a run of collapsed rungs becomes one
+ * marker that says how many it stands for.
+ *
+ * THE BUDGET IS A HARD CAP, because six players can stand on six different
+ * rungs and no arrangement of ten rungs fits a phone. Collapsing somebody out
+ * of sight is only acceptable because the caller draws the hidden players'
+ * pips ON the marker that covers them — so "who is behind me" survives being
+ * squeezed, at coarser resolution, instead of disappearing.
+ *
+ * Pure so the rule can be pinned in tests — same split as fanStep above.
+ *
+ * @param count     how many contracts the pack declares
+ * @param minePhase the human's contract, 1-based, or null before a deal
+ * @param occupied  every phase someone is standing on
+ * @param maxRungs  how many rungs the felt has room for. Five is what a 375px
+ *                  phone holds at the narrow breakpoint, measured rather than
+ *                  guessed: a rung is ~40px, a marker ~16px, the flex gap
+ *                  ~5px, and the row has ~348px. Five rungs with a marker
+ *                  between each pair is the widest the ladder ever gets.
+ * @returns [{ kind: 'rung', phase } | { kind: 'gap', from, to }]
+ */
+export function ladderRungs(count, { minePhase = null, occupied = [], maxRungs = 5 } = {}) {
+  if (count <= 0) return [];
+  // Room for the whole course: show the whole course. Truncation is a response
+  // to a narrow screen, not something the ladder wants to do.
+  if (maxRungs >= count) {
+    return Array.from({ length: count }, (unused, i) => ({ kind: 'rung', phase: i + 1 }));
+  }
+
+  const priority = [];
+  const want = (phase) => {
+    if (phase >= 1 && phase <= count && !priority.includes(phase)) priority.push(phase);
+  };
+  if (minePhase) want(minePhase);
+  want(count);
+  if (minePhase) want(minePhase + 1);
+  // Rivals nearest to you first: the player one rung ahead is the one you are
+  // actually racing, and the one five behind is a detail.
+  const anchor = minePhase || 1;
+  [...occupied]
+    .filter((phase) => phase !== minePhase)
+    .sort((a, b) => Math.abs(a - anchor) - Math.abs(b - anchor) || a - b)
+    .forEach(want);
+  want(1);
+
+  const keep = new Set(priority.slice(0, Math.max(1, maxRungs)));
+
+  const out = [];
+  let gapFrom = null;
+  for (let phase = 1; phase <= count; phase++) {
+    if (keep.has(phase)) {
+      if (gapFrom !== null) {
+        out.push({ kind: 'gap', from: gapFrom, to: phase - 1 });
+        gapFrom = null;
+      }
+      out.push({ kind: 'rung', phase });
+    } else if (gapFrom === null) {
+      gapFrom = phase;
+    }
+  }
+  // `count` is always kept, so a gap can never be left open at the end.
+  return out;
+}
+
+/* ------------------------------------------------------------------ *
  * Gathering a meld without tapping every card
  * ------------------------------------------------------------------ */
 

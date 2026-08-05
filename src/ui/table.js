@@ -61,7 +61,7 @@ import {
 } from './describe.js';
 import {
   interactionMode, buildUiModel, dropCandidates, draggableSources, pruneSelection,
-  isSelected, handAddress, implicitLandingZone, smartSelection,
+  isSelected, handAddress, implicitLandingZone, smartSelection, ladderRungs,
   describeContractItem, describeContract, shortContract,
 } from './interaction.js';
 import {
@@ -667,6 +667,22 @@ function buildMeldStrip(state, seat, ui, { mini = false } = {}) {
  * Rungs carry the SHORT form (`S3+R4`) with a one-line key, and hovering gives
  * the sentence — the same words-versus-badge split the pile labels use.
  */
+/**
+ * How many ladder rungs the row can hold at this width.
+ *
+ * Read from the same breakpoints table.css sizes the rungs at, rather than
+ * measured: a measurement here would be a forced layout on every render, and
+ * the widths that matter are exactly the ones the stylesheet already names.
+ * A desktop row fits the whole course, so it gets it — truncation is a
+ * response to a narrow screen, not the ladder's preference.
+ */
+function ladderBudget() {
+  if (typeof window.matchMedia !== 'function') return 5;
+  if (window.matchMedia('(max-width: 420px)').matches) return 5;
+  if (window.matchMedia('(max-width: 720px)').matches) return 7;
+  return Infinity;
+}
+
 function renderContractLadder(state) {
   const contracts = state.pack.rules.contracts;
   if (!Array.isArray(contracts) || !contracts.length) {
@@ -678,8 +694,55 @@ function renderContractLadder(state) {
   const minePhase = state.playerVars[HUMAN_SEAT]?.phase ?? null;
   el.contractLadder.replaceChildren();
 
-  contracts.forEach((items, index) => {
-    const phase = index + 1;
+  // Which rungs survive the squeeze, and where the collapsed runs go — see
+  // ladderRungs in src/ui/interaction.js for what may be dropped and why.
+  const occupied = [];
+  for (let seat = 0; seat < state.seats; seat++) {
+    const phase = state.playerVars[seat]?.phase ?? null;
+    if (phase) occupied.push(phase);
+  }
+
+  for (const entry of ladderRungs(contracts.length, { minePhase, occupied, maxRungs: ladderBudget() })) {
+    if (entry.kind === 'gap') {
+      const span = entry.to - entry.from + 1;
+      const where = span === 1 ? `Contract ${entry.from}` : `Contracts ${entry.from}–${entry.to}`;
+      const gap = document.createElement('div');
+      gap.className = 'ladder__gap';
+      gap.appendChild(line('ladder__gap-mark', '⋯'));
+
+      // ANYONE THE SQUEEZE HID IS DRAWN HERE. Collapsing a rung is only safe
+      // because the players standing on it come with it — "who is behind me"
+      // survives at coarser resolution rather than vanishing.
+      const inside = [];
+      for (let seat = 0; seat < state.seats; seat++) {
+        const phase = state.playerVars[seat]?.phase ?? null;
+        if (phase === null || phase < entry.from || phase > entry.to) continue;
+        const identity = identityOf(seat);
+        inside.push(identity);
+        const pip = document.createElement('span');
+        pip.className = 'ladder__pip ladder__pip--tucked';
+        pip.style.background = identity.color;
+        pip.textContent = identity.icon || identity.initials;
+        pip.setAttribute('aria-hidden', 'true');
+        gap.appendChild(pip);
+      }
+
+      const names = inside.map((i) => (i.seat === HUMAN_SEAT ? 'you' : i.name));
+      gap.setAttribute('aria-label', `${where}.`
+        + (names.length ? ` On them: ${names.join(', ')}.` : ' Nobody is on them.'));
+      attachInspector(gap, () => ({
+        title: where,
+        lines: contracts.slice(entry.from - 1, entry.to).map((items, n) => ({
+          label: String(entry.from + n), value: describeContract(items),
+        })),
+        notes: names.length ? [`Currently on these: ${names.join(', ')}.`] : ['Nobody is on these yet.'],
+      }), { isBusy: () => !!drag && drag.isDragging() });
+      el.contractLadder.appendChild(gap);
+      continue;
+    }
+
+    const phase = entry.phase;
+    const items = contracts[phase - 1];
     const rung = document.createElement('div');
     const mine = phase === minePhase;
     rung.className = `ladder__rung ${mine ? 'ladder__rung--mine' : ''} `
@@ -719,7 +782,7 @@ function renderContractLadder(state) {
     }), { isBusy: () => !!drag && drag.isDragging() });
 
     el.contractLadder.appendChild(rung);
-  });
+  }
 
   el.contractLadder.appendChild(line('ladder__key', 'S set · R run · C colour'));
   el.contractLadder.hidden = false;
@@ -1095,6 +1158,27 @@ function watchHandWidth() {
   // Observing the ROW, not the hand: the hand's own width is what layoutHand
   // changes, so watching it would be a feedback loop.
   new ResizeObserver(() => { if (liveState) layoutHand(); }).observe(el.handRow);
+}
+
+/**
+ * Re-draw the ladder when the window crosses a width where it holds a
+ * different number of rungs. Only the ladder: everything else on the felt
+ * resizes through CSS variables and needs no help.
+ */
+function watchLadderWidth() {
+  if (typeof window.matchMedia !== 'function') return;
+  let budget = ladderBudget();
+  const recheck = () => {
+    const next = ladderBudget();
+    if (next === budget) return;
+    budget = next;
+    if (liveState) renderContractLadder(liveState);
+  };
+  for (const query of ['(max-width: 420px)', '(max-width: 720px)']) {
+    const mq = window.matchMedia(query);
+    if (mq.addEventListener) mq.addEventListener('change', recheck);
+    else if (mq.addListener) mq.addListener(recheck);
+  }
 }
 
 /* ------------------------------------------------------------------ *
@@ -2362,6 +2446,7 @@ export function initTable({ onExit }) {
   // has, and it is a custom property rather than a re-render — so reacting to
   // a width change costs two measurements, not a repaint of the table.
   watchHandWidth();
+  watchLadderWidth();
   watchHandPeek();
 
   el.lobbyButton.addEventListener('click', () => exitToLobby());
