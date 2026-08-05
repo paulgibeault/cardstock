@@ -117,6 +117,8 @@ const el = {
   actionBar: document.getElementById('action-bar'),
   actionHint: document.getElementById('action-hint'),
   actionButton: document.getElementById('action-button'),
+  stageRow: document.getElementById('stage-row'),
+  stageTray: document.getElementById('stage-tray'),
   handRow: document.getElementById('hand-row'),
   hand: document.getElementById('hand'),
   handSort: document.getElementById('hand-sort'),
@@ -896,6 +898,66 @@ function renderPlayerZones(state, ui, draggable) {
   }
 }
 
+/**
+ * Which of the hand's cards are waiting in the tray rather than in the fan.
+ *
+ * Only in the modes that gather several cards before committing them — laying
+ * down a contract, choosing a pass. Everywhere else a selection is a single
+ * card that is about to be played somewhere, and lifting it out of the fan
+ * would be motion for a card that is leaving anyway.
+ */
+function stagedIds(state, ui) {
+  if (!ui.handMulti) return [];
+  if (!selection || selection.from !== handAddress(HUMAN_SEAT)) return [];
+  return selection.cardIds;
+}
+
+/**
+ * The gathered cards, at readable size, in the order they were picked.
+ *
+ * This is the answer to "assembling a meld on a phone is too cramped": a
+ * ten-card fan gives each card a strip about as wide as a fingertip is
+ * accurate, and picking a fourth card out of it after three are already
+ * chosen means hitting a sliver whose neighbours look the same. Staged cards
+ * LEAVE the fan, so every pick makes the next one easier — the fan re-fans
+ * wider on its own — and the meld you have built so far is shown as cards
+ * rather than as highlights buried in the row you are trying to read.
+ *
+ * The tray owns no state. It renders `selection`, and tapping a card in it
+ * runs the same toggle a tap in the fan runs.
+ */
+function renderStageTray(state, ui) {
+  const staged = stagedIds(state, ui);
+  el.stageRow.hidden = !ui.handMulti;
+  if (!ui.handMulti) {
+    el.stageTray.replaceChildren();
+    return;
+  }
+  el.stageTray.setAttribute('aria-label', staged.length
+    ? `Gathered: ${staged.length} cards. Tap one to put it back.`
+    : 'Gathered cards appear here.');
+  el.stageTray.replaceChildren();
+  for (const cardId of staged) {
+    const card = cardById(state, cardId);
+    if (!card) continue;
+    const node = svgNode(cardArt.face(card), 'stage-card');
+    node.dataset.cardId = cardId;
+    node.setAttribute('role', 'button');
+    node.tabIndex = 0;
+    node.setAttribute('aria-label', `${cardAriaLabel(card, state.pack)} Gathered. Tap to put it back.`);
+    const putBack = () => onHandCard(state, cardId, card, node, ui);
+    node.addEventListener('click', putBack);
+    node.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      putBack();
+    });
+    attachInspector(node, () => describeCard(card, state.pack),
+      { isBusy: () => !!drag && drag.isDragging() });
+    el.stageTray.appendChild(node);
+  }
+}
+
 function renderHand(state, ui, stagger, draggable) {
   el.hand.replaceChildren();
   const handAddr = handAddress(HUMAN_SEAT);
@@ -905,7 +967,13 @@ function renderHand(state, ui, stagger, draggable) {
   displayedHand = orderHand(engineHand, (id) => cardById(state, id), handPrefs.mode, handPrefs.order);
   const committedPass = state.playerVars[HUMAN_SEAT]?.__pendingPass;
 
-  displayedHand.forEach((cardId, i) => {
+  // Gathered cards are drawn in the tray instead, so the fan holds only what
+  // is still to be chosen from. handPrefs.order is NOT touched — a card put
+  // back returns to the exact slot it left, because it never left the order.
+  const staged = new Set(stagedIds(state, ui));
+  const fanned = staged.size ? displayedHand.filter((id) => !staged.has(id)) : displayedHand;
+
+  fanned.forEach((cardId, i) => {
     const card = cardById(state, cardId);
     const selectable = ui.handSelectable.has(cardId);
     const selected = isSelected(selection, handAddr, cardId) || (committedPass || []).includes(cardId);
@@ -928,7 +996,7 @@ function renderHand(state, ui, stagger, draggable) {
     wrapper.setAttribute('role', 'button');
     wrapper.tabIndex = 0;
     wrapper.setAttribute('aria-label',
-      `${cardAriaLabel(card, state.pack, { position: i + 1, of: displayedHand.length })}`
+      `${cardAriaLabel(card, state.pack, { position: i + 1, of: fanned.length })}`
       + (selectable ? ' Playable.' : ''));
     wrapper.setAttribute('aria-pressed', String(!!selected));
 
@@ -957,6 +1025,7 @@ function renderHand(state, ui, stagger, draggable) {
   el.handSort.textContent = SORT_LABELS[handPrefs.mode] || SORT_LABELS.auto;
   el.handSort.setAttribute('aria-label', `Hand order: ${SORT_LABELS[handPrefs.mode]}. Change it.`);
   el.handSort.hidden = engineHand.length < 2;
+  renderStageTray(state, ui);
   layoutHand();
 }
 
@@ -1745,11 +1814,38 @@ function onHandCard(state, cardId, card, sourceNode, ui) {
     if (at !== -1) ids.splice(at, 1);
     else ids.push(cardId);
     selection = ids.length ? { from: handAddr, cardIds: ids } : null;
-  } else {
-    selection = isSelected(selection, handAddr, cardId) ? null : { from: handAddr, cardIds: [cardId] };
+    // The card moves between the fan and the tray, so the fan's child count
+    // changes and it has to be rebuilt and re-measured — the fast path below
+    // deliberately does neither. The flight covers the rebuild.
+    const from = rectOf(sourceNode);
+    render(state);
+    flyToStage(state, cardId, from);
+    return;
   }
+  selection = isSelected(selection, handAddr, cardId) ? null : { from: handAddr, cardIds: [cardId] };
   // Nothing moved — repaint what is lit rather than rebuilding the table.
   renderSelection(state);
+}
+
+/**
+ * Carry a card between the fan and the tray, so the two rows read as one
+ * gesture rather than as the card vanishing from one place and appearing in
+ * another. `from` is measured BEFORE the render that moved it.
+ */
+function flyToStage(state, cardId, from) {
+  if (!from || !motionAllowed()) return;
+  const landed = el.stageTray.querySelector(`[data-card-id="${CSS.escape(cardId)}"]`)
+    || el.hand.querySelector(`[data-card-id="${CSS.escape(cardId)}"]`);
+  const to = rectOf(landed);
+  if (!to) return;
+  const card = cardById(state, cardId);
+  if (!card) return;
+  // Held invisible under the copy and revealed when it lands — the same
+  // clone-and-animate deal a played card gets. flyCard always resolves, so the
+  // card cannot be left permanently hidden.
+  landed.style.visibility = 'hidden';
+  flyCard(cardArt.face(card), from, to, { duration: 180 })
+    .then(() => { landed.style.visibility = ''; });
 }
 
 /* ------------------------------------------------------------------ *

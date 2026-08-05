@@ -705,6 +705,56 @@ button.pile-stack:focus-visible { outline: 2px solid var(--accent); outline-offs
  * The hand
  * ------------------------------------------------------------------ */
 
+/* ------------------------------------------------------------------ *
+ * The staging tray
+ * ------------------------------------------------------------------ */
+
+/* Where cards wait between being chosen and being committed — a meld you are
+ * assembling, the three you are passing.
+ *
+ * The row keeps a FIXED HEIGHT whether or not it holds anything. It sits above
+ * the hand, so a tray that appeared when the first card was picked would shove
+ * the fan down mid-gesture, which is precisely the kind of thing this pass
+ * exists to stop. It costs a strip of felt and buys a board that does not move
+ * while you are using it.
+ *
+ * Cards here are full size and side by side, not fanned: the point of the tray
+ * is that what you have gathered is READABLE, which is the one thing a closed
+ * fan cannot offer. */
+#stage-row {
+  display: flex;
+  justify-content: center;
+  min-height: calc(var(--hand-card-w, 70px) * 1.4 + 0.7rem);
+}
+#stage-row[hidden] { display: none; }
+
+#stage-tray {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  padding: 0.35rem 0.5rem;
+  border-radius: 12px;
+  border: 1px dashed var(--chip-border);
+}
+/* Empty, the tray is a dotted outline saying "cards go here" rather than an
+   invisible gap that appears to do nothing. */
+#stage-tray:empty { border-style: dashed; opacity: 0.45; min-width: 8rem; }
+
+.stage-card {
+  display: block;
+  cursor: pointer;
+  transition: transform 0.15s ease;
+}
+.stage-card:hover { transform: translateY(-3px); }
+.stage-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 6px; }
+.stage-card .card-face {
+  display: block;
+  width: var(--hand-card-w, 70px);
+  filter: drop-shadow(0 0 5px var(--glow)) drop-shadow(0 3px 4px var(--card-shadow));
+}
+
 #hand-row {
   display: flex;
   justify-content: center;

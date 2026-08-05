@@ -102,6 +102,16 @@
         <button type="button" id="action-button" hidden></button>
       </div>
 
+      <!-- Cards you have picked out but not yet committed — a meld you are
+           assembling, the three you are about to pass. They leave the fan and
+           wait here, which is what makes the next pick easier: the fan opens
+           up as it empties, and what you have gathered so far is legible at
+           full size instead of being read off slivers. A VIEW of the
+           selection, never state of its own (renderStageTray). -->
+      <div id="stage-row" hidden>
+        <div id="stage-tray" role="group"></div>
+      </div>
+
       <div id="hand-row">
         <div class="hand" id="hand"></div>
         <!-- Arrange your own fan. Presentation only — src/ui/handOrder.js
