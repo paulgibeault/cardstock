@@ -857,6 +857,18 @@ button.pile-stack:focus-visible { outline: 2px solid var(--accent); outline-offs
   transform: translateY(-20px) scale(1.06);
 }
 
+/* A held card that has nothing to be gathered with. Held on the card rather
+   than said in the hint, because the question was asked of that card and an
+   empty answer is not an error — see armSmartSelect in src/ui/table.js. */
+.hand .card-face-wrap--nomatch .card-face {
+  animation: nomatch-nudge 0.36s ease-in-out;
+}
+@keyframes nomatch-nudge {
+  0%, 100% { margin-left: 0; }
+  30% { margin-left: -5px; }
+  65% { margin-left: 4px; }
+}
+
 /* ------------------------------------------------------------------ *
  * Dragging (src/ui/dragController.js)
  * ------------------------------------------------------------------ */
@@ -1448,6 +1460,7 @@ body.is-dragging .card-face { cursor: grabbing; }
    needed; the JS-driven deal stagger is gated separately in src/main.js. */
 @media (prefers-reduced-motion: reduce) {
   .card-face--fresh,
+  .card-face-wrap--nomatch .card-face,
   .card-face-wrap.card-deal,
   .mini-hand .card-deal .card-face,
   .seat--active .seat__name,

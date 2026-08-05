@@ -179,7 +179,10 @@ export function buildUiModel(state, { seat, moves = [], acts = false, selection 
 
     if (!laidDown) {
       const contract = state.pack.rules.contracts?.[(state.playerVars[seat]?.phase ?? 1) - 1] || [];
-      ui.hint = `Contract: ${contract.map(describeContractItem).join(' + ')} — select cards to lay down, or discard`;
+      // The hold is worth a sentence: it is the fastest way to build a meld and
+      // nothing on the felt would otherwise say it is there.
+      ui.hint = `Contract: ${contract.map(describeContractItem).join(' + ')} — tap cards to gather them, `
+        + 'hold one to gather its whole meld, or discard';
       if (sel.length && selection.from === handAddr && state.pack.template.arrangeContract) {
         const melds = state.pack.template.arrangeContract(ctx, seat, sel);
         if (melds) {
@@ -224,6 +227,49 @@ export function buildUiModel(state, { seat, moves = [], acts = false, selection 
   else if (selection.from === handAddr) ui.hint = 'Tap a build pile to play it — or one of your discard piles to end your turn';
   else ui.hint = 'Tap a build pile to play it';
   return ui;
+}
+
+/* ------------------------------------------------------------------ *
+ * Gathering a meld without tapping every card
+ * ------------------------------------------------------------------ */
+
+/**
+ * The selection after asking the pack "what goes with this card?".
+ *
+ * A held card in a rummy hand is a question the RULES can answer — these two
+ * other sevens are the set you are reaching for — and making the player pick
+ * them out of a fan one sliver at a time is asking them to do by hand what the
+ * pack already knows. So a long press gathers the group instead.
+ *
+ * UNIONED WITH WHAT IS ALREADY CHOSEN, never replacing it: a contract is
+ * several items, so holding one card and then another builds "set of 3 + run
+ * of 4" a group at a time. And this only ever produces a SELECTION —
+ * `arrangeContract` in buildUiModel above is still the only thing that decides
+ * a lay-down is legal, so a suggestion the contract cannot use simply leaves
+ * the button unarmed rather than offering an illegal move.
+ *
+ * Pure, and null for every pack whose template has no opinion (the hook is
+ * optional), for a seat that has already laid down, and when nothing in hand
+ * fits — the caller's cue to do nothing rather than to guess.
+ */
+export function smartSelection(state, seat, cardId, selection) {
+  const template = state.pack.template;
+  if (typeof template.suggestMeld !== 'function') return null;
+  if (state.playerVars[seat]?.laidDown) return null;
+
+  const from = handAddress(seat);
+  const keep = selection && selection.from === from ? selection.cardIds : [];
+  // The already-gathered cards are spent: a contract's second item has to be
+  // built from what the first left, or holding two cards can reach for the
+  // same wild twice and produce a selection that lays down as nothing.
+  const suggestion = template.suggestMeld(makeCtx(state), seat, cardId, { exclude: keep });
+  if (!suggestion || !suggestion.cards?.length) return null;
+
+  const merged = keep.slice();
+  for (const id of suggestion.cards) if (!merged.includes(id)) merged.push(id);
+  // Nothing new to show for the press — the group was already gathered.
+  if (merged.length === keep.length) return null;
+  return { from, cardIds: merged };
 }
 
 /* ------------------------------------------------------------------ *

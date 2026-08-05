@@ -61,7 +61,7 @@ import {
 } from './describe.js';
 import {
   interactionMode, buildUiModel, dropCandidates, draggableSources, pruneSelection,
-  isSelected, handAddress, implicitLandingZone,
+  isSelected, handAddress, implicitLandingZone, smartSelection,
   describeContractItem, describeContract, shortContract,
 } from './interaction.js';
 import {
@@ -1014,8 +1014,12 @@ function renderHand(state, ui, stagger, draggable) {
     if (draggable.hand.has(cardId) && drag) {
       drag.attach(wrapper, { kind: 'hand', from: handAddr, cardId });
     }
+    // Where a hold gathers a meld, it cannot also open the inspector — two
+    // things on one gesture, and the one that changes the board must win.
+    // The card's description is still on its accessible name, and everywhere
+    // outside a rummy lay-down the long press means "what is this?" as before.
     attachInspector(wrapper, () => describeCard(card, state.pack),
-      { isBusy: () => !!drag && drag.isDragging() });
+      { isBusy: () => (!!drag && drag.isDragging()) || smartSelectArmed() });
 
     el.hand.appendChild(wrapper);
   });
@@ -1129,8 +1133,65 @@ function paintPeek(wrapper) {
 }
 
 function clearPeek() {
+  disarmSmartSelect();
   if (peek && peek.node) peek.node.classList.remove('card-face-wrap--peek');
   peek = null;
+}
+
+/* ------------------------------------------------------------------ *
+ * Gathering a meld by holding one card
+ * ------------------------------------------------------------------ */
+
+/** How long a hold has to last to mean "and the rest of this meld". */
+const SMART_SELECT_MS = 500;
+
+/**
+ * HOLD A CARD TO GATHER ITS MELD.
+ *
+ * The last of the three answers to "assembling a meld on a phone is too
+ * cramped", and the one that skips the problem rather than easing it: the pack
+ * already knows that the two other sevens go with this seven, so picking them
+ * out of the fan by hand is work the rules could have done. Hold the seven and
+ * the group arrives in the tray.
+ *
+ * Only where the question means something — a rummy hand still choosing what
+ * to lay down. Everywhere else a long press keeps meaning "what is this card?"
+ * (src/ui/inspector.js), which the inspector's own veto is told about below.
+ *
+ * The gathered cards go through the ORDINARY selection, so this can no more
+ * construct an illegal lay-down than tapping the same cards could.
+ */
+function smartSelectArmed() {
+  return !!currentUi && currentUi.mode === 'rummy-meld' && currentUi.handMulti;
+}
+
+function disarmSmartSelect() {
+  if (peek && peek.hold) {
+    peek.hold.cancel();
+    peek.hold = null;
+  }
+}
+
+function armSmartSelect(wrapper) {
+  if (!smartSelectArmed() || !peek) return;
+  peek.hold = sessionSchedule(() => {
+    if (!peek) return;
+    peek.hold = null;
+    const cardId = wrapper.dataset.cardId;
+    const next = smartSelection(liveState, HUMAN_SEAT, cardId, selection);
+    if (!next) {
+      // Nothing in hand goes with it. Say so on the card rather than in words:
+      // a group that does not exist is not an error, just an answer.
+      wrapper.classList.add('card-face-wrap--nomatch');
+      sessionSchedule(() => wrapper.classList.remove('card-face-wrap--nomatch'), 400);
+      return;
+    }
+    const gathered = next.cardIds.length - (selection ? selection.cardIds.length : 0);
+    selection = next;
+    clearPeek();
+    // A full render: the gathered cards leave the fan for the tray.
+    render(liveState, `Gathered ${gathered} cards.`);
+  }, SMART_SELECT_MS);
 }
 
 /** The fan card whose VISIBLE strip contains `clientX`. */
@@ -1158,14 +1219,19 @@ function watchHandPeek() {
       const r = node.getBoundingClientRect();
       return { node, left: r.left, right: r.right };
     });
-    peek = { node: null, strips, pointerId: event.pointerId, scrubbed: false };
+    peek = { node: null, strips, pointerId: event.pointerId, scrubbed: false, hold: null };
     paintPeek(wrapper);
+    armSmartSelect(wrapper);
   });
 
   el.hand.addEventListener('pointermove', (event) => {
     if (!peek || event.pointerId !== peek.pointerId) return;
     const under = cardStripAt(event.clientX);
-    if (under && under !== peek.node) peek.scrubbed = true;
+    if (under && under !== peek.node) {
+      peek.scrubbed = true;
+      // The press has become a slide, so it is no longer a hold.
+      disarmSmartSelect();
+    }
     if (under) paintPeek(under);
   });
 
