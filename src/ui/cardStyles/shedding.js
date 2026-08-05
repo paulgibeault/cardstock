@@ -16,7 +16,7 @@
 // the rename nothing to do.
 
 import {
-  actionIcon, cardAriaLabel, cardBase, cardKind, colorDots, diamondRosette,
+  actionIcon, blend, cardAriaLabel, cardBase, cardKind, colorDots, diamondRosette,
   drawCount, mirrored, num, openSvg, shade, text,
 } from './shared.js';
 
@@ -25,11 +25,11 @@ const WILD_BODY = '#26262b';
 const PANEL = '#fdfdfa';
 
 /** The rounded diamond, centred and stood on its corner. */
-function diamond(cx, cy, half, fill, extra = '') {
+function diamond(cx, cy, half, fill) {
   const side = num(half * Math.SQRT2);
   return `<rect x="${num(cx - (half * Math.SQRT2) / 2)}" y="${num(cy - (half * Math.SQRT2) / 2)}"`
     + ` width="${side}" height="${side}" rx="${num(half * 0.3)}"`
-    + ` transform="rotate(45 ${num(cx)} ${num(cy)})" fill="${fill}"${extra} />`;
+    + ` transform="rotate(45 ${num(cx)} ${num(cy)})" fill="${fill}" />`;
 }
 
 function cornerMark(kind, card, body) {
@@ -72,7 +72,10 @@ export function face(card, theme) {
     // #e1b12c on white is around 1.8:1, which is a shape you can see only
     // because you already know what it is.
     const ink = shade(body, -0.28);
-    parts.push(diamond(50, 70, 31, PANEL, ' opacity="0.95"'));
+    // The panel is a hair short of white so the card's colour bleeds through
+    // it. That used to be `opacity="0.95"`; it is the same colour blended
+    // against the body it sits on (no-alpha rule, shared.js).
+    parts.push(diamond(50, 70, 31, blend(body, PANEL, 0.95)));
     if (kind === 'number') {
       const rank = card.rank == null ? '' : String(card.rank).slice(0, 2);
       parts.push(text(rank, {

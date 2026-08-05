@@ -483,7 +483,26 @@ body {
 
 .mini-hand > * { flex: none; }
 .mini-hand > *:not(:first-child) { margin-left: calc(var(--mini-step) - var(--mini-w)); }
-.mini-hand .card-face { width: var(--mini-w); display: block; }
+.mini-hand .card-face,
+.mini-hand .mini-hand__edge { width: var(--mini-w); display: block; }
+
+/* THE SLIVER OF A CARD BACK THAT AN OVERLAPPED MINI-HAND ACTUALLY SHOWS.
+ *
+ * `--mini-step` closes this fan to as little as a fifth of a card, so all but
+ * the rightmost back is covered to within a few pixels of its left edge — and
+ * what is left is the white paper margin and the printed panel. No pattern, no
+ * emblem, none of the fifty-to-ninety vector lines a real back is made of. A
+ * seventeen-card hand times two opponents was drawing all of that, per card,
+ * per render, to fill a sliver. So src/ui/table.js draws the covered ones as
+ * these (one box each, panel colour handed down from the pack's own theme) and
+ * keeps the real SVG for the one card you can genuinely see. */
+.mini-hand__edge {
+  height: calc(var(--mini-w) * 1.4);
+  border-radius: 8% / 5.71%;
+  background: var(--back-panel, #3a3a3a);
+  border: 1px solid #fdfdfa;
+  box-shadow: 0 3px 4px var(--card-shadow);
+}
 
 /* The middle of the table takes whatever is left between the seats and the
    hand, and holds however many shared piles the pack declares — one for
@@ -825,7 +844,12 @@ button.pile-stack:focus-visible { outline: 2px solid var(--accent); outline-offs
 .hand .card-face-wrap:hover,
 .hand .card-face-wrap--selected { z-index: 2; }
 .hand .card-face:hover { transform: translateY(-10px); }
-.hand .card-face--disabled { cursor: default; opacity: 0.78; }
+/* A card you cannot play lies FLAT on the felt — no shadow, no lift — rather
+   than being faded to 78%. The old dim made every unplayable card its own
+   alpha-composited layer (no-alpha rule, src/ui/cardStyles/shared.js) for a
+   cue the lift below already carries, and it dimmed the rank you are trying
+   to read while you work out why the card is not playable. */
+.hand .card-face--disabled { cursor: default; box-shadow: none; }
 .hand .card-face--disabled:hover { transform: none; }
 
 /* A playable card is lifted a little even before you reach for it, so which
@@ -838,7 +862,10 @@ button.pile-stack:focus-visible { outline: 2px solid var(--accent); outline-offs
 .card-face-wrap--selected .card-face,
 .card-face-wrap--selected.card-face-wrap--playable .card-face {
   transform: translateY(-14px);
-  filter: drop-shadow(0 0 6px var(--accent)) drop-shadow(0 3px 4px var(--card-shadow));
+  /* Two stacked drop-shadow filters meant rasterising the card twice, every
+     frame it moved. The glow and the shadow are both shapes of the card's own
+     rounded rectangle, so both are box-shadows. */
+  box-shadow: 0 0 6px 2px var(--accent), 0 3px 4px var(--card-shadow);
 }
 
 /* THE CARD UNDER THE FINGER, RIGHT NOW.
@@ -885,12 +912,23 @@ body.is-dragging .card-face { cursor: grabbing; }
 
 .drag-ghost {
   /* Lifted off the felt: a shade bigger, a shade tilted, and a real shadow —
-     the card is in your hand, not on the table. */
+     the card is in your hand, not on the table.
+   *
+   * `will-change` is worth its cost on exactly this element and nowhere else:
+   * it is the ONE node whose transform changes every frame for as long as a
+   * finger is down, so promoting it to its own compositor layer up front means
+   * a drag never repaints the table underneath it. Putting it on cards in
+   * general would do the opposite — forty promoted layers is forty times the
+   * texture memory on a phone, for cards that are not moving. */
   transform-origin: center;
   z-index: 12;
+  will-change: transform;
 }
 .drag-ghost .card-face {
-  filter: drop-shadow(0 14px 22px var(--card-shadow));
+  /* A big soft drop-shadow filter under a card being redrawn at pointer rate
+     was the most expensive thing in a drag frame. Same shape, as a shadow the
+     compositor can draw. */
+  box-shadow: 0 14px 22px var(--card-shadow);
   transform: scale(1.06) rotate(-2deg);
 }
 
@@ -1503,26 +1541,39 @@ body.is-dragging .card-face { cursor: grabbing; }
 }
 
 /* `card-face` is the class on the SVG ELEMENT itself (src/ui/cardStyles) —
-   not on a wrapper — so the drop shadow belongs here. It used to sit on
+   not on a wrapper — so the shadow belongs here. It used to sit on
    `.card-face svg`, which matches a nested svg that does not exist, and so
-   every card on the table was shadowless. */
+   every card on the table was shadowless.
+ *
+ * BOX-SHADOW, NOT DROP-SHADOW. `filter: drop-shadow()` derives its shape from
+ * the element's own alpha channel, so it has to rasterise the whole SVG — a
+ * card back is up to ninety vector lines — into an offscreen buffer, blur it,
+ * and composite it back, and it redoes that whenever the card moves. On a
+ * phone with forty cards on the felt that is the single most expensive thing
+ * in the frame. A card is a rounded rectangle, so its shadow can simply be
+ * declared as one: `border-radius` here matches the rx="8" on the 100x140
+ * blank every style draws (8/100 across, 8/140 down), and box-shadow on a
+ * rounded box is a compositor operation with no rasterisation at all. */
 .card-face {
   display: inline-block;
-  filter: drop-shadow(0 3px 4px var(--card-shadow));
+  border-radius: 8% / 5.71%;
+  box-shadow: 0 3px 4px var(--card-shadow);
 }
 
 /* A card that has just ARRIVED settles onto the felt. This used to be on
    `.card-face` itself, which meant every card on the table replayed it on
    every render — and since a render rebuilds every node, that was every state
    change, including merely selecting a card. The whole table twitched because
-   you tapped one thing in it. renderHand adds this class only to ids the hand
-   did not hold a moment ago. */
+   you tapped one thing in it. markEntry (src/ui/table.js) adds this class only
+   where something genuinely arrived: a card the hand did not hold a moment
+   ago, a pile that has a new top, an opponent's fan that just grew. */
 .card-face--fresh {
   animation: settle-in 0.22s ease-out;
 }
 
 .card-face-wrap.card-deal,
-.mini-hand .card-deal .card-face {
+.mini-hand .card-deal .card-face,
+.mini-hand .card-deal .mini-hand__edge {
   animation: deal-in 0.4s cubic-bezier(0.2, 0.8, 0.3, 1) both;
 }
 
@@ -1551,6 +1602,7 @@ body.is-dragging .card-face { cursor: grabbing; }
   .card-face-wrap--nomatch .card-face,
   .card-face-wrap.card-deal,
   .mini-hand .card-deal .card-face,
+  .mini-hand .card-deal .mini-hand__edge,
   .seat--active .seat__name,
   .pile-stack--ready .pile-stack__top,
   .turn-token,
@@ -1612,7 +1664,10 @@ body.is-dragging .card-face { cursor: grabbing; }
 }
 
 /* Card faces: fixed across themes on purpose — see the header. */
-.card-face__bg { fill: #fdfdfa; stroke: #00000022; }
+/* An opaque edge, not black-at-13%: see the no-alpha rule at the top of
+   src/ui/cardStyles/shared.js. A painted vanilla card overrides the fill
+   below and keeps this edge, which reads as a printed border on all four. */
+.card-face__bg { fill: #fdfdfa; stroke: #dededa; }
 .card-face--red .card-face__corner,
 .card-face--red .card-face__pip { fill: #b91c1c; }
 .card-face--black .card-face__corner,

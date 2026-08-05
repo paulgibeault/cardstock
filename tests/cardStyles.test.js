@@ -316,8 +316,11 @@ function headline(svg) {
   let best = null;
   for (const m of svg.matchAll(/<text[^>]*>/g)) {
     // A faded layer is depth, not something anyone reads — sequencing draws its
-    // numeral twice, once as a 16% ghost offset behind the real one.
-    if (/opacity="/.test(m[0])) continue;
+    // numeral twice, once as a 16% ghost offset behind the real one. The ghost
+    // used to be findable by its `opacity` attribute; card art carries no alpha
+    // any more (see the rule at the top of src/ui/cardStyles/shared.js), so it
+    // is now blended into its fill and says what it is with a class instead.
+    if (/class="[^"]*\bcs-ghost\b/.test(m[0])) continue;
     const size = Number((/font-size="([\d.]+)"/.exec(m[0]) || [])[1]);
     if (!Number.isFinite(size) || (best && size <= best.size)) continue;
     // An outlined numeral is carried by its STROKE — that is the whole reason

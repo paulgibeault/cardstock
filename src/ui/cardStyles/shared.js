@@ -13,6 +13,18 @@
 //  2. Every card-derived string is escaped, and every colour that reaches an
 //     attribute was either written in this repo or passed the hex gate in
 //     src/ui/css.js (§7b). A pack is untrusted input the moment sharing ships.
+//
+// AND ONE RENDERING RULE: NO ALPHA. Not `opacity`, not an eight-digit fill.
+// Every colour in a card is an opaque hex literal.
+//
+// This is a performance rule, not a taste one. A card is an inline SVG that a
+// phone rasterises dozens of times over — a full hand, three opponents' backs,
+// the piles — and any partially-transparent element forces the renderer to
+// composite that element (and, for a `<g opacity>`, the whole group) through
+// its own offscreen buffer instead of painting it straight into the layer.
+// Every one of these was a flat colour over a KNOWN flat colour, so the blend
+// is computed here once with blend() and the card ships the resulting solid.
+// Identical pixels, none of the compositing.
 
 export const SUIT_GLYPH = { clubs: '♣', diamonds: '♦', hearts: '♥', spades: '♠' };
 
@@ -100,13 +112,43 @@ export function shade(hex, amount) {
   return `#${out.map((c) => clampByte(c).toString(16).padStart(2, '0')).join('')}`;
 }
 
+/**
+ * `over` painted at `alpha` on top of `under`, as one opaque hex.
+ *
+ * The whole no-alpha rule at the top of this file rests on this: everything a
+ * card used to fade sat on a flat colour this module already knew, so the blend
+ * that the compositor would have done per frame is done here once instead.
+ * Callers must pass the colour that is ACTUALLY underneath — blending against
+ * the wrong backdrop is the one way to get this visibly wrong.
+ */
+export function blend(under, over, alpha) {
+  const a = Math.max(0, Math.min(1, alpha));
+  const u = channels(under);
+  const o = channels(over);
+  return `#${u.map((c, i) => clampByte(c + (o[i] - c) * a).toString(16).padStart(2, '0')).join('')}`;
+}
+
+/** A guard for the few places a colour reaches shade()/blend() from a caller. */
+function isHex(value) {
+  return typeof value === 'string' && /^#[0-9a-fA-F]{6}$/.test(value);
+}
+
 /* ------------------------------------------------------------------ *
  * Shapes
  * ------------------------------------------------------------------ */
 
-/** The card blank every style starts from. */
-export function cardBase(fill, stroke = '#00000022') {
-  return `<rect x="1" y="1" width="98" height="138" rx="8" fill="${fill}" stroke="${stroke}" />`;
+/**
+ * The card blank every style starts from.
+ *
+ * The edge used to be `#00000022` — black at 13%, which made the outline of
+ * every single card on the table an alpha-composited element. It is now the
+ * card's own fill stepped down, which is what that black-over-fill actually
+ * resolved to and is opaque. A fill that is not a hex literal (no style ships
+ * one, but the guard is free) falls back to a fixed paper-grey.
+ */
+export function cardBase(fill, stroke = null) {
+  const edge = stroke || (isHex(fill) ? shade(fill, -0.13) : '#d5d5d0');
+  return `<rect x="1" y="1" width="98" height="138" rx="8" fill="${fill}" stroke="${edge}" />`;
 }
 
 /**
@@ -205,8 +247,12 @@ export function actionIcon(kind, cx, cy, r, color) {
  * `outline` is what makes a numeral survive being printed straight onto a
  * saturated colour; `paint-order: stroke` comes from the stylesheet so the
  * stroke sits behind the fill instead of eating into the letterform.
+ *
+ * There is no `opacity` option, by the no-alpha rule at the top of this file.
+ * A faded run of text is a `fill` blended against its own backdrop instead —
+ * see sequencing.js, which is the one style that draws one.
  */
-export function text(str, { x, y, size, fill, weight = 700, anchor = 'middle', outline = null, outlineWidth = 3, opacity = null, cls = 'cs-text' }) {
+export function text(str, { x, y, size, fill, weight = 700, anchor = 'middle', outline = null, outlineWidth = 3, cls = 'cs-text' }) {
   // `cls` is a literal at every call site today. Escaped anyway: it costs
   // nothing, and the next style to want a modifier per card is one refactor
   // away from routing a pack value through it.
@@ -215,7 +261,6 @@ export function text(str, { x, y, size, fill, weight = 700, anchor = 'middle', o
     ` text-anchor="${anchor}" fill="${fill}" class="${escapeXml(cls)}"`,
   ];
   if (outline) parts.push(` stroke="${outline}" stroke-width="${num(outlineWidth)}"`);
-  if (opacity !== null) parts.push(` opacity="${num(opacity)}"`);
   parts.push(`>${escapeXml(str)}</text>`);
   return parts.join('');
 }

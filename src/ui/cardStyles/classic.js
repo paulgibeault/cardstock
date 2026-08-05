@@ -14,7 +14,7 @@
 // card" instantly, which is the whole job.
 
 import {
-  SUIT_GLYPH, cardAriaLabel, cardBase, mirrored, num, openSvg, shade, text,
+  SUIT_GLYPH, blend, cardAriaLabel, cardBase, mirrored, num, openSvg, shade, text,
 } from './shared.js';
 
 const PAPER = '#fdfdfa';
@@ -92,7 +92,10 @@ export function face(card) {
   const ink = suit ? (isRed ? RED : BLACK) : '#3f3f46';
   const rank = card.rank == null ? '' : String(card.rank);
 
-  const parts = [cardBase(PAPER), '<rect x="4.5" y="4.5" width="91" height="131" rx="5.5" fill="none" stroke="#00000012" />'];
+  // The inner rule and the ace's ellipses are drawn straight onto PAPER, so
+  // both are blended against it here rather than shipped as alpha (see the
+  // no-alpha rule at the top of shared.js).
+  const parts = [cardBase(PAPER), `<rect x="4.5" y="4.5" width="91" height="131" rx="5.5" fill="none" stroke="${blend(PAPER, '#000000', 0.07)}" />`];
 
   if (glyph) parts.push(mirrored(cornerIndex(rank, glyph, ink)));
   else parts.push(mirrored(text(rank.slice(0, 5), { x: 15, y: 25, size: 13, fill: ink, anchor: 'start' })));
@@ -105,8 +108,9 @@ export function face(card) {
     // The one flourish a plain deck always has. No trade dress involved — the
     // ornamented ace is older than any of the companies that print one.
     if (suit === 'spades') {
-      parts.push('<ellipse cx="50" cy="70" rx="27" ry="34" fill="none" stroke="' + ink + '" stroke-width="1.2" opacity="0.5" />');
-      parts.push('<ellipse cx="50" cy="70" rx="24" ry="31" fill="none" stroke="' + ink + '" stroke-width="0.8" opacity="0.5" />');
+      const faded = blend(PAPER, ink, 0.5);
+      parts.push(`<ellipse cx="50" cy="70" rx="27" ry="34" fill="none" stroke="${faded}" stroke-width="1.2" />`);
+      parts.push(`<ellipse cx="50" cy="70" rx="24" ry="31" fill="none" stroke="${faded}" stroke-width="0.8" />`);
     }
     parts.push(glyphAt(glyph, 50, 70, 46, ink));
   } else if (pips && glyph) {

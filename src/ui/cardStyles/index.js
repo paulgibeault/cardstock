@@ -19,7 +19,7 @@
 //     and stringify a whole function into a fill attribute.
 
 import { safeAccent } from '../css.js';
-import { BACK_PATTERNS, renderBack } from './backs.js';
+import { BACK_PATTERNS, backPanelColor, renderBack } from './backs.js';
 import * as vanilla from './vanilla.js';
 import * as classic from './classic.js';
 import * as shedding from './shedding.js';
@@ -144,17 +144,45 @@ export function buildTheme(manifest, cardsById = null) {
 /**
  * One renderer for one pack.
  *
- * `back()` is memoised because a face-down card is the most-drawn thing on the
- * table — every opponent's whole hand, redrawn every frame — and it is the same
- * string every time by construction.
+ * EVERYTHING HERE IS MEMOISED, because a face is a pure function of a card and
+ * a theme and the theme is fixed for the life of the renderer. The table
+ * rebuilds its whole DOM on every render (see render() in src/ui/table.js), so
+ * without this the same forty-odd cards were re-derived from scratch — pip
+ * layouts, colour arithmetic, a hundred-odd string concatenations each — every
+ * time a bot moved or a card was tapped. They now cost one Map lookup after
+ * the first draw of each card.
+ *
+ * The cache is keyed by card ID and lives on the RENDERER, so it is per-table
+ * and per-pack: closing the table drops it, and two packs on screen at once
+ * (the lobby) cannot see each other's entries.
+ *
+ * ONLY CARDS FROM THE LOADED DECK ARE CACHED, and the check is identity
+ * against `cardsById` rather than "does it have an id". A deck's ids are
+ * unique by construction — cardsById is keyed by them — which is exactly what
+ * makes an id a sound cache key, and it is a guarantee a hand-written
+ * `heroCards` array in a manifest does not carry. The lobby therefore draws
+ * uncached, which costs it three faces once per tile.
  */
 export function makeCardRenderer(manifest, cardsById = null) {
   const theme = buildTheme(manifest, cardsById);
   const style = STYLES[theme.style];
+  const canCache = !!cardsById && typeof cardsById.get === 'function';
+  const faces = new Map();
   let back = null;
   return {
     theme,
-    face: (card) => style.face(card && typeof card === 'object' ? card : {}, theme),
+    /** The pack's back panel colour — what a mostly-covered back looks like. */
+    backPanel: backPanelColor(theme),
+    face: (card) => {
+      const safe = card && typeof card === 'object' ? card : {};
+      if (!canCache || cardsById.get(safe.id) !== safe) return style.face(safe, theme);
+      let markup = faces.get(safe.id);
+      if (markup === undefined) {
+        markup = style.face(safe, theme);
+        faces.set(safe.id, markup);
+      }
+      return markup;
+    },
     back: () => (back ??= renderBack(theme)),
   };
 }

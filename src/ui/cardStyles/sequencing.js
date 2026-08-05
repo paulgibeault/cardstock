@@ -12,7 +12,7 @@
 // disappearing into the white, and at full size it gives the card some depth.
 
 import {
-  actionIcon, cardAriaLabel, cardBase, cardKind, colorDots, mirrored,
+  actionIcon, blend, cardAriaLabel, cardBase, cardKind, colorDots, mirrored,
   openSvg, shade, text, wedgeDisc,
 } from './shared.js';
 
@@ -30,7 +30,7 @@ export function face(card, theme) {
   const parts = [
     cardBase(border),
     `<rect x="7" y="7" width="86" height="126" rx="5" fill="${PAPER}" />`,
-    `<rect x="10.5" y="10.5" width="79" height="119" rx="3.5" fill="none" stroke="${border}" stroke-width="1" opacity="0.55" />`,
+    `<rect x="10.5" y="10.5" width="79" height="119" rx="3.5" fill="none" stroke="${blend(PAPER, border, 0.55)}" stroke-width="1" />`,
   ];
 
   if (wild) {
@@ -55,7 +55,12 @@ export function face(card, theme) {
     // behind the numeral keeps the pack's actual colour.
     const ink = shade(border, -0.35);
     const size = rank.length > 1 ? 52 : 60;
-    parts.push(text(rank, { x: 52, y: 92, size, fill: border, weight: 800, opacity: 0.16 }));
+    // The ghost is the pack's colour at 16% on PAPER, blended rather than
+    // faded (no-alpha rule, shared.js). It carries `cs-ghost` so that what is
+    // decoration and what is the readable numeral stays tellable apart now
+    // that they no longer differ by an `opacity` attribute — the contrast test
+    // in tests/cardStyles.test.js reads that class.
+    parts.push(text(rank, { x: 52, y: 92, size, fill: blend(PAPER, border, 0.16), weight: 800, cls: 'cs-text cs-ghost' }));
     parts.push(text(rank, { x: 50, y: 89, size, fill: ink, weight: 800 }));
     parts.push(mirrored(text(rank, { x: 16, y: 27, size: 18, fill: ink })));
   }

@@ -167,11 +167,6 @@ let selection = null;
 let handPrefs = { mode: 'auto', order: [] };
 let displayedHand = [];
 
-// What the hand held on the previous render, so renderHand can tell a card
-// that just arrived from one that was already there and animate only the
-// former. Reset with the match — a resumed game deals itself back in.
-let prevHandIds = new Set();
-
 // The UI model the CURRENT render was built from. Pile and meld handlers read
 // it at click time rather than closing over a move, which is what lets a
 // selection change re-arm them without rebuilding the table (renderSelection).
@@ -339,6 +334,35 @@ function svgNode(markup, className) {
   return span;
 }
 
+/**
+ * Which cards were on the felt at the end of the last render.
+ *
+ * `.card-face--fresh` is opt-in per card because the table rebuilds its DOM
+ * wholesale: without this every card is a new element every render and replays
+ * the settle-in, so one bot move makes the whole table twitch. This started as
+ * a hand-only set, which fixed the loudest case but not the only one: a pile's
+ * top card, an opponent's fan and a laid-down meld are rebuilt on exactly the
+ * same schedule and were all still replaying it. One set of keys now covers
+ * every card the table draws.
+ *
+ * Keys are strings the renderers make up, not bare card ids, because not
+ * everything that arrives is a card with an id: an opponent's nth face-down
+ * back is `back:2:7`, and the same card in a different pile has genuinely
+ * arrived somewhere and should say so.
+ */
+let shownCardKeys = new Set();
+let enteringKeys = null;
+
+/** Note `key` as present, and mark `node` as fresh if it was not before. */
+function markEntry(node, key) {
+  if (!enteringKeys) return node;
+  enteringKeys.add(key);
+  if (shownCardKeys.has(key)) return node;
+  const face = node.querySelector('.card-face') || node.firstElementChild;
+  if (face) face.classList.add('card-face--fresh');
+  return node;
+}
+
 // A stable pseudo-random tilt per card. Seeded from the id rather than
 // Math.random() so a re-render — a resize, a settings change, a resumed match —
 // puts every card back exactly where it was. A discard pile that reshuffles
@@ -495,6 +519,9 @@ function buildPileNode(state, inst, ui, { mini = false, draggableTop = null } = 
   /** Place one card in the stack, carrying its index for the overlap offsets. */
   const placeCard = (markup, i, visibleCount, cardId, isTop) => {
     const node = svgNode(markup, `pile-stack__card ${isTop ? 'pile-stack__top' : ''}`);
+    // Keyed by zone as well as card: the same card arriving in a DIFFERENT
+    // pile has entered that pile, which is the moment worth animating.
+    markEntry(node, `${address}:${cardId}`);
     node.style.setProperty('--stack-index', String(i - (visibleCount - 1) / 2));
     node.style.setProperty('--overlap-index', String(i));
     if (cardId) node.style.setProperty('--stack-tilt', `${tiltFor(cardId, isTop ? 2 : 5).toFixed(2)}deg`);
@@ -507,6 +534,9 @@ function buildPileNode(state, inst, ui, { mini = false, draggableTop = null } = 
     topNode = svgNode(count > 0
       ? cardArt.back()
       : '<div class="card-face card-face--empty"></div>', 'pile-stack__top');
+    // A face-down pile is one node whatever its depth, so the thing that
+    // "enters" is the pile going from empty to not.
+    markEntry(topNode, `${address}:down:${count > 0}`);
     stack.appendChild(topNode);
   } else if (isSpread && !mini) {
     // A trick is not a pile: every card in it is live information about who
@@ -897,6 +927,20 @@ function renderSeats(state, stagger, acting, ui) {
       notes: identity.tagline ? [identity.tagline] : [],
     }), { isBusy: () => !!drag && drag.isDragging() });
 
+    // THE OPPONENT'S HAND, DRAWN AS WHAT IS ACTUALLY VISIBLE OF IT.
+    //
+    // `--mini-step` closes this fan to as little as a fifth of a card, so all
+    // but the rightmost back is covered to within a few pixels of its left
+    // edge — white paper margin, then the printed panel, and nothing else.
+    // Drawing a full back for the covered ones meant rasterising up to ninety
+    // vector lines apiece to fill that sliver, for every card in every
+    // opponent's hand, on every render. Two opponents holding seventeen cards
+    // is a couple of thousand invisible line segments per frame, and it is why
+    // a phone dropped frames on a table nothing was even moving on.
+    //
+    // So the covered ones are a box in the pack's own panel colour (see
+    // .mini-hand__edge in table.css) and the one card you can genuinely see is
+    // the real thing. Pixel-identical where it counts.
     const mini = document.createElement('div');
     mini.className = 'mini-hand';
     // The count is all the CSS needs to close the fan to a fixed width — see
@@ -905,11 +949,27 @@ function renderSeats(state, stagger, acting, ui) {
     // breakpoint-driven custom property, so the arithmetic belongs where that
     // property is defined rather than in a second copy that can drift from it.
     mini.style.setProperty('--mini-count', String(count));
+    mini.style.setProperty('--back-panel', cardArt.backPanel);
     for (let i = 0; i < count; i++) {
-      const back = svgNode(cardArt.back(), stagger ? 'card-deal' : '');
-      if (stagger) back.style.animationDelay = `${i * 35}ms`;
-      mini.appendChild(back);
+      const last = i === count - 1;
+      const node = last
+        ? svgNode(cardArt.back(), stagger ? 'card-deal' : '')
+        : document.createElement('span');
+      if (!last) {
+        if (stagger) node.className = 'card-deal';
+        const edge = document.createElement('span');
+        edge.className = 'mini-hand__edge';
+        node.appendChild(edge);
+      }
+      markEntry(node, `back:${seat}:${i}`);
+      if (stagger) node.style.animationDelay = `${i * 35}ms`;
+      mini.appendChild(node);
     }
+    // Decorative, and now genuinely unreadable: the covered cards are boxes
+    // with nothing to announce. No loss — the fan was announcing "Face-down
+    // card" once per card, thirteen times in a row, next to a count badge that
+    // already says "13 cards" in one breath.
+    mini.setAttribute('aria-hidden', 'true');
     wrap.appendChild(mini);
 
     // The seat's own piles, compact: a Stockpile stock and discards, laid-down
@@ -1060,16 +1120,11 @@ function renderHand(state, ui, stagger, draggable) {
     const selected = isSelected(selection, handAddr, cardId) || (committedPass || []).includes(cardId);
     const wrapper = svgNode(cardArt.face(card),
       `card-face-wrap ${selectable ? '' : 'card-face--disabled'} ${stagger ? 'card-deal' : ''} ${selected ? 'card-face-wrap--selected' : ''}`);
+    markEntry(wrapper, `hand:${cardId}`);
     wrapper.dataset.cardId = cardId;
     if (stagger) wrapper.style.animationDelay = `${i * 35}ms`;
     const svg = wrapper.querySelector('svg');
     svg.classList.toggle('card-face--disabled', !selectable);
-    // Settle in only if this card is NEW to the hand. The animation used to
-    // live on every .card-face, and because a render rebuilds every node it
-    // replayed on every card on every state change — the whole hand twitching
-    // because you tapped one card. A card arriving is worth animating; a card
-    // that has been sitting there is not.
-    if (!prevHandIds.has(cardId)) svg.classList.add('card-face--fresh');
 
     // Every hand card is reachable by keyboard, playable or not: a card that
     // cannot be focused cannot be inspected, and "why can't I play this?" is
@@ -1104,8 +1159,6 @@ function renderHand(state, ui, stagger, draggable) {
 
     el.hand.appendChild(wrapper);
   });
-
-  prevHandIds = new Set(displayedHand);
 
   el.handSort.textContent = SORT_LABELS[handPrefs.mode] || SORT_LABELS.auto;
   el.handSort.setAttribute('aria-label', `Hand order: ${SORT_LABELS[handPrefs.mode]}. Change it.`);
@@ -1503,6 +1556,9 @@ function render(state, message) {
     pendingRender = { state, message };
     return;
   }
+  // Collected as the sub-renderers run; swapped in at the end so the NEXT
+  // render knows what was already on the felt (see markEntry above).
+  enteringKeys = new Set();
   selection = pruneSelection(state, selection);
   const acting = actingSeatsOf(state);
   const humanActs = acting.includes(HUMAN_SEAT);
@@ -1528,6 +1584,8 @@ function render(state, message) {
   renderActionBar(state, ui, humanActs);
   renderHand(state, ui, stagger, draggable);
   dealAnimation = false;
+  shownCardKeys = enteringKeys;
+  enteringKeys = null;
 
   // A game-ending move can arrive with no message (the human's own winning play) or a
   // stale one from the mover ("Bot 2 played" right before Bot 2's own hand emptied) —
@@ -2337,7 +2395,11 @@ function adoptMatch(pack, state, message) {
   // is dead weight from here on — and left alone it would accumulate one
   // entry per card per pack for as long as the tab is open.
   svgTemplates.clear();
-  prevHandIds = new Set();
+  // Same reason, same moment: the keys name cards of the pack being replaced,
+  // so the new table gets a clean deal-in instead of inheriting this one's
+  // idea of what was already on the felt.
+  shownCardKeys = new Set();
+  enteringKeys = null;
   // Who is at this table — derived from the match SEED, so a resumed game
   // re-seats the same opponents and a fresh deal brings new ones.
   seating = buildSeating(state.seed, state.seats, {
@@ -2429,6 +2491,12 @@ export function closeTable() {
   hideInspector();
   if (drag) drag.cancel();
   flushTable();
+  // Keyed to the pack that just closed, so the next table gets a clean
+  // deal-in rather than inheriting this one's idea of what is already there.
+  // (adoptMatch clears these too — this is the leaving-for-the-lobby path,
+  // which may not be followed by another table at all.)
+  shownCardKeys = new Set();
+  enteringKeys = null;
   liveState = null;
   livePack = null;
   selection = null;
