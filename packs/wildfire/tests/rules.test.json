@@ -708,6 +708,145 @@
           "rule": "self-challenge"
         }
       ]
+    },
+    {
+      "name": "a second descent to the last card needs declaring again",
+      "setup": {
+        "seats": 2,
+        "turn": {
+          "seat": 1,
+          "phase": "play"
+        },
+        "zones": {
+          "discard": [
+            "green-7"
+          ],
+          "hand.0": [
+            "green-2",
+            "green-5",
+            "green-6"
+          ],
+          "hand.1": [
+            "green-3",
+            "wild"
+          ]
+        },
+        "vars": {
+          "activeColor": "green"
+        }
+      },
+      "assert": [
+        {
+          "apply": {
+            "actor": 1,
+            "type": "announce",
+            "id": "last-card-call"
+          }
+        },
+        {
+          "apply": {
+            "actor": 1,
+            "type": "playCard",
+            "cards": [
+              "green-3"
+            ]
+          }
+        },
+        {
+          "expect": {
+            "playerVars": {
+              "1": {
+                "__last-card-callCalled": true
+              }
+            },
+            "zones": {
+              "hand.1": 1
+            }
+          }
+        },
+        {
+          "move": {
+            "actor": 0,
+            "type": "challenge",
+            "id": "last-card-call",
+            "target": 1
+          },
+          "legal": false,
+          "rule": "not-catchable"
+        },
+        {
+          "apply": {
+            "actor": 0,
+            "type": "playCard",
+            "cards": [
+              "green-2"
+            ]
+          }
+        },
+        {
+          "apply": {
+            "actor": 1,
+            "type": "draw"
+          }
+        },
+        {
+          "expect": {
+            "playerVars": {
+              "1": {
+                "__last-card-callCalled": false
+              }
+            },
+            "zones": {
+              "hand.1": 2
+            }
+          }
+        },
+        {
+          "apply": {
+            "actor": 0,
+            "type": "playCard",
+            "cards": [
+              "green-5"
+            ]
+          }
+        },
+        {
+          "apply": {
+            "actor": 1,
+            "type": "playCard",
+            "cards": [
+              "wild"
+            ],
+            "choice": {
+              "color": "green"
+            }
+          }
+        },
+        {
+          "expect": {
+            "zones": {
+              "hand.1": 1
+            }
+          }
+        },
+        {
+          "move": {
+            "actor": 1,
+            "type": "announce",
+            "id": "last-card-call"
+          },
+          "legal": true
+        },
+        {
+          "move": {
+            "actor": 0,
+            "type": "challenge",
+            "id": "last-card-call",
+            "target": 1
+          },
+          "legal": true
+        }
+      ]
     }
   ]
 }
