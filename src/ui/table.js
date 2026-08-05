@@ -165,6 +165,16 @@ let selection = null;
 let handPrefs = { mode: 'auto', order: [] };
 let displayedHand = [];
 
+// What the hand held on the previous render, so renderHand can tell a card
+// that just arrived from one that was already there and animate only the
+// former. Reset with the match — a resumed game deals itself back in.
+let prevHandIds = new Set();
+
+// The UI model the CURRENT render was built from. Pile and meld handlers read
+// it at click time rather than closing over a move, which is what lets a
+// selection change re-arm them without rebuilding the table (renderSelection).
+let currentUi = null;
+
 // Pointer choreography for lifting a card (src/ui/dragController.js), created
 // once at init. A render that landed mid-drag would replace the very node the
 // pointer is holding, so renders are DEFERRED while one is live and replayed
@@ -301,10 +311,29 @@ function overlapFor(state, def) {
 // Card SVG is markup this repo authors, with every card-derived value escaped
 // inside src/ui/cardStyles — so innerHTML on a fresh node is safe here in a way
 // it is NOT for anything carrying a name or a label. Those use textContent.
+//
+// PARSED ONCE PER DISTINCT CARD, NOT ONCE PER APPEARANCE. cardArt memoizes the
+// markup STRING, but innerHTML still ran the HTML parser every time — and a
+// render rebuilds every card on the table, so a four-handed rummy table paid
+// for 60-100 parses on every tap. A <template> holds the parsed result and
+// cloneNode copies it, which is the same work the browser does for a repeated
+// element and a great deal less than re-reading the text.
+//
+// Keyed by the markup itself, so two cards that look identical (every card
+// back in the deck) share one entry and a change of card style simply misses
+// the old keys — adoptMatch clears it anyway when the renderer is rebuilt.
+const svgTemplates = new Map();
+
 function svgNode(markup, className) {
   const span = document.createElement('span');
   if (className) span.className = className;
-  span.innerHTML = markup;
+  let template = svgTemplates.get(markup);
+  if (!template) {
+    template = document.createElement('template');
+    template.innerHTML = markup;
+    svgTemplates.set(markup, template);
+  }
+  span.appendChild(template.content.cloneNode(true));
   return span;
 }
 
@@ -374,6 +403,52 @@ function meldChipNode(meldKey) {
 }
 
 /**
+ * Paint what a pile currently OFFERS: a place to put the selected card, a top
+ * card to pick up, or nothing.
+ *
+ * Split out of buildPileNode because this is the only part of a pile that a
+ * selection changes. Everything else about it — the cards, the depth cue, the
+ * badge — is the same before and after, so re-running it in place is what lets
+ * a tap on a hand card stop rebuilding the table (renderSelection).
+ *
+ * Reads the label off the node rather than the state: the accessible name's
+ * subject is fixed by the zone, and only the verb in front of it moves.
+ */
+function paintPileState(stack, ui) {
+  const address = stack.dataset.zone;
+  const ariaLabel = stack.dataset.zoneLabel || '';
+  const target = ui.readyTargets.get(address) || null;
+  const sourceTop = !target && ui.sourceTops.has(address) ? ui.sourceTops.get(address) : null;
+
+  stack.classList.toggle('pile-stack--ready', !!target);
+  stack.classList.toggle('pile-stack--source', !!sourceTop);
+  stack.classList.toggle('pile-stack--picked', !!sourceTop && isSelected(selection, address, sourceTop));
+
+  if (target) {
+    const verb = target.type === 'draw' ? 'Draw a card from'
+      : target.type === 'discard' ? 'Discard to'
+        : 'Play your selected card onto';
+    stack.disabled = false;
+    stack.setAttribute('aria-label', `${verb} ${ariaLabel}`);
+  } else if (sourceTop) {
+    stack.disabled = false;
+    stack.setAttribute('aria-label', `${ariaLabel} Pick up the top card to play it.`);
+  } else {
+    stack.disabled = true;
+    stack.setAttribute('aria-label', ariaLabel);
+  }
+}
+
+/** The same, for a meld chip: whether the selected card extends this meld. */
+function paintMeldState(chip, ui) {
+  const move = ui.readyMelds.get(chip.dataset.meld) || null;
+  const label = chip.dataset.meldLabel || '';
+  chip.classList.toggle('meld-chip--ready', !!move);
+  chip.disabled = !move;
+  chip.setAttribute('aria-label', move ? `${label} Add your selected card.` : label);
+}
+
+/**
  * One pile on the felt, for any zone. Always a <button>: whether it does
  * anything this render is decided by the UI model (a ready target applies its
  * move, a source top picks itself up), and a pile that does neither is simply
@@ -407,9 +482,6 @@ function buildPileNode(state, inst, ui, { mini = false, draggableTop = null } = 
 
   stack.classList.toggle('pile-stack--deep', count > 2);
   stack.classList.toggle('pile-stack--spread', isSpread && !mini);
-  stack.classList.toggle('pile-stack--ready', !!target);
-  stack.classList.toggle('pile-stack--source', !!sourceTop);
-  stack.classList.toggle('pile-stack--picked', !!sourceTop && isSelected(selection, address, sourceTop));
   if (overlap) {
     stack.classList.add(`pile-stack--overlap-${overlap === 'vertical' ? 'v' : 'h'}`);
     // How many card-widths the slot RESERVES — a constant, not the count on
@@ -465,27 +537,26 @@ function buildPileNode(state, inst, ui, { mini = false, draggableTop = null } = 
     if (!visible.length) stack.appendChild(svgNode('<div class="card-face card-face--empty"></div>', 'pile-stack__top'));
   }
 
-  const ariaLabel = zoneAriaLabel(state, inst);
+  stack.dataset.zoneLabel = zoneAriaLabel(state, inst);
 
-  if (target) {
-    stack.disabled = false;
-    const verb = target.type === 'draw' ? 'Draw a card from'
-      : target.type === 'discard' ? 'Discard to'
-        : 'Play your selected card onto';
-    stack.setAttribute('aria-label', `${verb} ${ariaLabel}`);
-    stack.addEventListener('click', () => liveState && performHumanMove(liveState, target, stack));
-  } else if (sourceTop) {
-    stack.disabled = false;
-    stack.setAttribute('aria-label', `${ariaLabel} Pick up the top card to play it.`);
-    stack.addEventListener('click', () => {
-      if (!liveState) return;
-      selection = isSelected(selection, address, sourceTop) ? null : { from: address, cardIds: [sourceTop] };
-      render(liveState);
-    });
-  } else {
-    stack.disabled = true;
-    stack.setAttribute('aria-label', ariaLabel);
-  }
+  // LATE-BOUND, and bound unconditionally. The handler asks the current UI
+  // model what this pile does at the moment it is clicked instead of closing
+  // over the move that happened to be ready when it was built — which is what
+  // lets a selection change re-arm every pile in place (paintPileState) rather
+  // than rebuilding the whole table to change which ones glow.
+  stack.addEventListener('click', () => {
+    if (!liveState || !currentUi) return;
+    const move = currentUi.readyTargets.get(address);
+    if (move) {
+      performHumanMove(liveState, move, stack);
+      return;
+    }
+    const top = currentUi.sourceTops.get(address);
+    if (top === undefined) return;
+    selection = isSelected(selection, address, top) ? null : { from: address, cardIds: [top] };
+    renderSelection(liveState);
+  });
+  paintPileState(stack, ui);
 
   // Any face-up top card the human owns lifts, whether or not it has anywhere
   // to go — a refused drop simply snaps home. That is the "cards on felt"
@@ -546,7 +617,7 @@ function buildMeldStrip(state, seat, ui, { mini = false } = {}) {
 
     const chip = document.createElement('button');
     chip.type = 'button';
-    chip.className = `meld-chip ${move ? 'meld-chip--ready' : ''}`;
+    chip.className = 'meld-chip';
     chip.dataset.meld = meldKey;
 
     const cards = document.createElement('span');
@@ -558,15 +629,13 @@ function buildMeldStrip(state, seat, ui, { mini = false } = {}) {
     chip.appendChild(cards);
     chip.appendChild(line('meld-chip__label', what));
 
-    const label = `${owner} ${what}, ${group.cards.length} cards.`;
-    if (move) {
-      chip.disabled = false;
-      chip.setAttribute('aria-label', `${label} Add your selected card.`);
-      chip.addEventListener('click', () => liveState && performHumanMove(liveState, move, chip));
-    } else {
-      chip.disabled = true;
-      chip.setAttribute('aria-label', label);
-    }
+    chip.dataset.meldLabel = `${owner} ${what}, ${group.cards.length} cards.`;
+    // Late-bound for the same reason the piles are — see paintPileState.
+    chip.addEventListener('click', () => {
+      const ready = currentUi && currentUi.readyMelds.get(meldKey);
+      if (ready && liveState) performHumanMove(liveState, ready, chip);
+    });
+    paintMeldState(chip, ui);
 
     // Reading a meld card by card is the thing a squeezed strip made
     // impossible, so the inspector spells the whole thing out.
@@ -686,6 +755,11 @@ function seatScoreChip(state, seat) {
 function renderSeats(state, stagger, acting, ui) {
   el.opponentsTop.replaceChildren();
   const scored = showsScores(state);
+  // Hoisted out of the seat loop: the answer does not depend on the seat, and
+  // enumerating announcements builds a fresh engine context every time. Asking
+  // once per opponent and throwing all but one answer away cost N contexts per
+  // render for a list that is the same list N times over.
+  const challenges = humanAnnouncements(state).filter((a) => a.type === 'challenge');
   for (let seat = 0; seat < state.seats; seat++) {
     if (seat === HUMAN_SEAT) continue;
     const identity = identityOf(seat);
@@ -778,7 +852,7 @@ function renderSeats(state, stagger, acting, ui) {
 
     // The catch affordance (§E2) lives on the seat it accuses, which is the
     // only place it reads as "you — you never said it".
-    const catchMove = humanAnnouncements(state).find((a) => a.type === 'challenge' && a.target === seat);
+    const catchMove = challenges.find((a) => a.target === seat);
     if (catchMove) {
       const button = document.createElement('button');
       button.type = 'button';
@@ -839,7 +913,14 @@ function renderHand(state, ui, stagger, draggable) {
       `card-face-wrap ${selectable ? '' : 'card-face--disabled'} ${stagger ? 'card-deal' : ''} ${selected ? 'card-face-wrap--selected' : ''}`);
     wrapper.dataset.cardId = cardId;
     if (stagger) wrapper.style.animationDelay = `${i * 35}ms`;
-    wrapper.querySelector('svg').classList.toggle('card-face--disabled', !selectable);
+    const svg = wrapper.querySelector('svg');
+    svg.classList.toggle('card-face--disabled', !selectable);
+    // Settle in only if this card is NEW to the hand. The animation used to
+    // live on every .card-face, and because a render rebuilds every node it
+    // replayed on every card on every state change — the whole hand twitching
+    // because you tapped one card. A card arriving is worth animating; a card
+    // that has been sitting there is not.
+    if (!prevHandIds.has(cardId)) svg.classList.add('card-face--fresh');
 
     // Every hand card is reachable by keyboard, playable or not: a card that
     // cannot be focused cannot be inspected, and "why can't I play this?" is
@@ -870,6 +951,8 @@ function renderHand(state, ui, stagger, draggable) {
 
     el.hand.appendChild(wrapper);
   });
+
+  prevHandIds = new Set(displayedHand);
 
   el.handSort.textContent = SORT_LABELS[handPrefs.mode] || SORT_LABELS.auto;
   el.handSort.setAttribute('aria-label', `Hand order: ${SORT_LABELS[handPrefs.mode]}. Change it.`);
@@ -1017,6 +1100,50 @@ function statusTextFor(state, acting) {
   return acting.includes(HUMAN_SEAT) ? 'Your turn' : `${seatLabel(state.turn.seat)}'s turn`;
 }
 
+/**
+ * A SELECTION changed, and nothing else did.
+ *
+ * Picking a card up in your own hand moves no cards, scores nothing and ends
+ * no turn. What it changes is which things are lit: the card itself, the piles
+ * and melds that would accept it, and the action button. Everything else on
+ * the felt — every opponent's fan, every pile, the contract ladder — is
+ * identical before and after, and rebuilding it was the single most expensive
+ * thing a tap did (issue #6 §3): every card's SVG re-parsed, every listener
+ * re-attached, every animation restarted, and the fan re-measured.
+ *
+ * So this repaints the three things that moved and leaves the DOM alone. It is
+ * the same UI model a full render would have built — the model is pure and
+ * cheap; it was only ever the DOM that was expensive.
+ *
+ * NOT for anything that changes what the hand CONTAINS. Cards leaving or
+ * entering the fan change its child count, and the fan has to be rebuilt and
+ * re-measured for that; those paths still call render().
+ */
+function renderSelection(state) {
+  if (drag && drag.isDragging()) {
+    pendingRender = { state };
+    return;
+  }
+  selection = pruneSelection(state, selection);
+  const acting = actingSeatsOf(state);
+  const humanActs = acting.includes(HUMAN_SEAT);
+  const humanMoves = humanActs ? enumerateLegalMoves(state, HUMAN_SEAT) : [];
+  const ui = buildUiModel(state, { seat: HUMAN_SEAT, moves: humanMoves, acts: humanActs, selection });
+  currentUi = ui;
+
+  const handAddr = handAddress(HUMAN_SEAT);
+  const committedPass = state.playerVars[HUMAN_SEAT]?.__pendingPass || [];
+  for (const wrapper of el.hand.children) {
+    const cardId = wrapper.dataset.cardId;
+    const selected = isSelected(selection, handAddr, cardId) || committedPass.includes(cardId);
+    wrapper.classList.toggle('card-face-wrap--selected', selected);
+    wrapper.setAttribute('aria-pressed', String(selected));
+  }
+  for (const stack of el.screen.querySelectorAll('.pile-stack[data-zone]')) paintPileState(stack, ui);
+  for (const chip of el.screen.querySelectorAll('.meld-chip[data-meld]')) paintMeldState(chip, ui);
+  renderActionBar(state, ui, humanActs);
+}
+
 function render(state, message) {
   // A render mid-drag would replace the very node the pointer is holding.
   // Deferred, then replayed by the controller's settle callback.
@@ -1032,14 +1159,22 @@ function render(state, message) {
   const draggable = draggableSources(state, { seat: HUMAN_SEAT, acts: humanActs });
   const stagger = dealAnimation && motionAllowed();
 
+  currentUi = ui;
+
   renderStatusBar(state, acting);
   renderSeats(state, stagger, acting, ui);
   renderContractLadder(state);
   renderCenterZones(state, ui, draggable);
   renderPlayerZones(state, ui, draggable);
-  renderHand(state, ui, stagger, draggable);
+  // The two bars go BEFORE the hand, and the order is load-bearing: both
+  // toggle [hidden], and renderHand ends by measuring how much room the fan
+  // has. Measured with the previous render's bars still showing, the fan was
+  // laid out against a row of the wrong height — and if that flipped a
+  // scrollbar, against the wrong width too. The ResizeObserver then corrected
+  // it a frame later, which the player saw as the hand re-fanning itself.
   renderAnnounceBar(state);
   renderActionBar(state, ui, humanActs);
+  renderHand(state, ui, stagger, draggable);
   dealAnimation = false;
 
   // A game-ending move can arrive with no message (the human's own winning play) or a
@@ -1613,7 +1748,8 @@ function onHandCard(state, cardId, card, sourceNode, ui) {
   } else {
     selection = isSelected(selection, handAddr, cardId) ? null : { from: handAddr, cardIds: [cardId] };
   }
-  render(state);
+  // Nothing moved — repaint what is lit rather than rebuilding the table.
+  renderSelection(state);
 }
 
 /* ------------------------------------------------------------------ *
@@ -1800,6 +1936,11 @@ function adoptMatch(pack, state, message) {
   // Before the first render, and from the PACK rather than the manifest alone:
   // the deck is what tells a style which colours it actually has to draw.
   cardArt = makeCardRenderer(pack.manifest, pack.cardsById);
+  // The parsed-SVG cache is keyed by markup the old renderer produced, so it
+  // is dead weight from here on — and left alone it would accumulate one
+  // entry per card per pack for as long as the tab is open.
+  svgTemplates.clear();
+  prevHandIds = new Set();
   // Who is at this table — derived from the match SEED, so a resumed game
   // re-seats the same opponents and a fresh deal brings new ones.
   seating = buildSeating(state.seed, state.seats, {

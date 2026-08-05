@@ -1342,8 +1342,17 @@ body.is-dragging .card-face { cursor: grabbing; }
    every card on the table was shadowless. */
 .card-face {
   display: inline-block;
-  animation: settle-in 0.22s ease-out;
   filter: drop-shadow(0 3px 4px var(--card-shadow));
+}
+
+/* A card that has just ARRIVED settles onto the felt. This used to be on
+   `.card-face` itself, which meant every card on the table replayed it on
+   every render — and since a render rebuilds every node, that was every state
+   change, including merely selecting a card. The whole table twitched because
+   you tapped one thing in it. renderHand adds this class only to ids the hand
+   did not hold a moment ago. */
+.card-face--fresh {
+  animation: settle-in 0.22s ease-out;
 }
 
 .card-face-wrap.card-deal,
@@ -1372,7 +1381,7 @@ body.is-dragging .card-face { cursor: grabbing; }
    which is a different signal and the only one a standalone visit has. Both are
    needed; the JS-driven deal stagger is gated separately in src/main.js. */
 @media (prefers-reduced-motion: reduce) {
-  .card-face,
+  .card-face--fresh,
   .card-face-wrap.card-deal,
   .mini-hand .card-deal .card-face,
   .seat--active .seat__name,
