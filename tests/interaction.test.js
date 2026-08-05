@@ -26,6 +26,7 @@ import {
 } from "../src/ui/interaction.js";
 import {
   orderHand, applyManual, reorder, nextMode, fanStep, fanWidth, SORT_MODES,
+  classifyHandGesture,
 } from "../src/ui/handOrder.js";
 
 function packFromDisk(packId) {
@@ -328,4 +329,39 @@ test("an unrecognised contract item degrades to its own text rather than vanishi
   assert.strictEqual(shortContractItem(""), "");
   assert.strictEqual(shortContract([]), "");
   assert.strictEqual(describeContract(undefined), "");
+});
+
+/* ------------------------------------------------------------------ *
+ * Reading the fan with a finger
+ * ------------------------------------------------------------------ */
+
+// A press on a hand card can become two different things, and the fan is the
+// only place in the game where that is true. Getting it wrong in one direction
+// costs a snap-back; in the other it drops a card the player was carrying.
+
+test("sliding along the fan reads it; lifting off it drags", () => {
+  // Straight along the row, either way.
+  assert.strictEqual(classifyHandGesture({ dx: 40, dy: 0 }), "scrub");
+  assert.strictEqual(classifyHandGesture({ dx: -40, dy: 0 }), "scrub");
+  // Straight up or down, off the row.
+  assert.strictEqual(classifyHandGesture({ dx: 0, dy: -40 }), "drag");
+  assert.strictEqual(classifyHandGesture({ dx: 0, dy: 40 }), "drag");
+});
+
+test("a diagonal lift stays a drag — a wrist pivots", () => {
+  // 45 degrees is NOT enough to mean "reading": a finger pulling a card up and
+  // out arrives with real sideways travel, and misreading that as a scrub would
+  // drop the card the player meant to play.
+  assert.strictEqual(classifyHandGesture({ dx: 30, dy: -30 }), "drag");
+  assert.strictEqual(classifyHandGesture({ dx: -30, dy: -30 }), "drag");
+  // Horizontal has to clearly dominate before it counts.
+  assert.strictEqual(classifyHandGesture({ dx: 30, dy: -20 }), "drag");   // ratio 1.5, not >
+  assert.strictEqual(classifyHandGesture({ dx: 31, dy: -20 }), "scrub");  // just over
+});
+
+test("a gesture with no vertical component at all is a scrub, not a divide by zero", () => {
+  assert.strictEqual(classifyHandGesture({ dx: 7, dy: 0 }), "scrub");
+  // And no movement at all is a drag, so a press that somehow reports zero
+  // travel cannot silently swallow the card.
+  assert.strictEqual(classifyHandGesture({ dx: 0, dy: 0 }), "drag");
 });

@@ -174,3 +174,39 @@ export function fanStep({ count, cardWidth, available }) {
 export function fanWidth({ count, cardWidth, step }) {
   return count < 1 ? 0 : cardWidth + Math.max(0, count - 1) * step;
 }
+
+/* ------------------------------------------------------------------ *
+ * Reading the fan with a finger
+ * ------------------------------------------------------------------ */
+
+/**
+ * How much more horizontal than vertical a movement must be to count as
+ * reading along the fan rather than lifting a card out of it.
+ *
+ * Not 1:1. A finger dragging a card upward off the row rarely goes straight
+ * up — the hand pivots at the wrist, so an honest lift arrives with real
+ * sideways travel in it. Requiring the horizontal component to clearly
+ * dominate keeps those lifts as drags. Erring this way is deliberate: a scrub
+ * misread as a drag costs a snap-back, while a drag misread as a scrub drops a
+ * card the player was carrying somewhere.
+ */
+const SCRUB_RATIO = 1.5;
+
+/**
+ * What a press on a hand card that has started to move MEANS.
+ *
+ * Two gestures share one starting position, because both are things you do to
+ * a card in your own hand:
+ *   'scrub' — sliding along the fan to see what is in it. The cards overlap,
+ *             so most of each one is hidden, and on a phone a card's visible
+ *             strip is thinner than a fingertip. Sliding raises whichever card
+ *             is under the finger, which is how you read a row you cannot see.
+ *   'drag'  — lifting a card out, to play it or to re-order the fan.
+ *
+ * Pure, and takes the delta rather than the event, so the rule can be pinned
+ * in tests while the pointer mechanics get a manual pass — same split as
+ * fanStep above and pickTarget in dragController.
+ */
+export function classifyHandGesture({ dx, dy }) {
+  return Math.abs(dx) > Math.abs(dy) * SCRUB_RATIO ? 'scrub' : 'drag';
+}

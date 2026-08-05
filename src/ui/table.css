@@ -841,6 +841,22 @@ button.pile-stack:focus-visible { outline: 2px solid var(--accent); outline-offs
   filter: drop-shadow(0 0 6px var(--accent)) drop-shadow(0 3px 4px var(--card-shadow));
 }
 
+/* THE CARD UNDER THE FINGER, RIGHT NOW.
+ *
+ * `:hover` above does this for a mouse. A finger has no hover, so on a phone
+ * the player was choosing from a row where each card shows a strip narrower
+ * than the finger covering it, and only found out what they had picked after
+ * committing. This raises the pressed card immediately and follows a finger
+ * sliding along the row (watchHandPeek in src/ui/table.js), which turns a tap
+ * into look-then-commit. Highest z-index of the three states: whatever else a
+ * card is, the one you are touching has to be the one you can see. */
+.hand .card-face-wrap--peek { z-index: 3; }
+.hand .card-face-wrap--peek .card-face,
+.hand .card-face-wrap--peek.card-face-wrap--playable .card-face,
+.hand .card-face-wrap--peek.card-face-wrap--selected .card-face {
+  transform: translateY(-20px) scale(1.06);
+}
+
 /* ------------------------------------------------------------------ *
  * Dragging (src/ui/dragController.js)
  * ------------------------------------------------------------------ */

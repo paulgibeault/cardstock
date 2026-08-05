@@ -88,12 +88,17 @@ function plainSchedule(fn, ms) {
  *                    this module stays SDK-free (see the header), but the app
  *                    wants its one timer on the launcher's session clock so it
  *                    freezes with a suspended frame like every other timer.
+ * @param classifyGesture ({dx, dy, handle, event}) => 'drag' | 'scrub', asked
+ *                    once, when a press first travels past the slop threshold.
+ *                    'scrub' abandons the press so the caller's own listener
+ *                    owns the gesture. Default: everything is a drag.
  */
 export function createDragController({
   layer,
   onLift,
   onSettle = () => {},
   schedule = plainSchedule,
+  classifyGesture = () => 'drag',
 }) {
   // Everything about the CURRENT drag. Null between drags; the presence of
   // `ghost` is what distinguishes "armed, might become a drag" from "dragging".
@@ -257,6 +262,17 @@ export function createDragController({
     const dy = event.clientY - pending.startY;
     if (dx * dx + dy * dy < SLOP * SLOP) return;
     const { handle, node, startX, startY } = pending;
+    // A press that has travelled far enough to mean SOMETHING still has to be
+    // asked what it means. The caller can claim the gesture for itself — the
+    // hand does, for a finger sliding along the fan to read it — and this
+    // module stays out of the question: it hands over the delta and takes the
+    // answer. Anything but 'scrub' is a drag, so a caller that does not care
+    // (the default) gets exactly the old behaviour.
+    if (classifyGesture({ dx, dy, handle, event }) === 'scrub') {
+      pending = null;
+      detach();
+      return;
+    }
     pending = null;
     if (!begin(handle, node, event, { x: startX, y: startY })) detach();
   }

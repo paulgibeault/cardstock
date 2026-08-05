@@ -65,7 +65,7 @@ import {
   describeContractItem, describeContract, shortContract,
 } from './interaction.js';
 import {
-  orderHand, reorder, nextMode, isSortMode, fanStep, SORT_LABELS,
+  orderHand, reorder, nextMode, isSortMode, fanStep, classifyHandGesture, SORT_LABELS,
 } from './handOrder.js';
 import {
   initPanels, showRoundSummary, hideRoundSummary, isRoundSummaryOpen,
@@ -1093,6 +1093,121 @@ function watchHandWidth() {
   new ResizeObserver(() => { if (liveState) layoutHand(); }).observe(el.handRow);
 }
 
+/* ------------------------------------------------------------------ *
+ * Reading the fan with a finger
+ * ------------------------------------------------------------------ */
+
+/**
+ * PEEK: the card under the finger rises out of the fan, before the finger is
+ * lifted, and follows the finger along the row.
+ *
+ * A fan overlaps, so all you can see of most cards is a strip down the left
+ * edge — on a phone, thinner than the finger covering it. `:hover` solves this
+ * for a mouse and does nothing for a touch, which left the player tapping a
+ * sliver and finding out afterwards what they had chosen. Raising on
+ * pointerDOWN turns a tap into look-then-commit: what you are on is legible
+ * while you are still on it, and sliding to a neighbour costs nothing.
+ *
+ * Hit-testing is by cached rect, not by event target: touch capture sends
+ * every move to the element the press began on, so the target is always the
+ * first card. The rects are measured once per press for the same reason the
+ * drag controller measures its targets once (issue #6) — the fan does not
+ * move while a finger is on it.
+ *
+ * The visible strip of card i runs from its own left edge to the NEXT card's,
+ * because later siblings paint over earlier ones; the last card owns its full
+ * width. That is exactly the region the player can see, which is what makes
+ * this feel like pointing at the card rather than at a hitbox.
+ */
+let peek = null;
+
+function paintPeek(wrapper) {
+  if (peek && peek.node === wrapper) return;
+  if (peek && peek.node) peek.node.classList.remove('card-face-wrap--peek');
+  if (peek) peek.node = wrapper;
+  if (wrapper) wrapper.classList.add('card-face-wrap--peek');
+}
+
+function clearPeek() {
+  if (peek && peek.node) peek.node.classList.remove('card-face-wrap--peek');
+  peek = null;
+}
+
+/** The fan card whose VISIBLE strip contains `clientX`. */
+function cardStripAt(clientX) {
+  if (!peek || !peek.strips.length) return null;
+  const strips = peek.strips;
+  if (clientX < strips[0].left) return strips[0].node;
+  for (let i = 0; i < strips.length; i++) {
+    const right = i + 1 < strips.length ? strips[i + 1].left : strips[i].right;
+    if (clientX < right) return strips[i].node;
+  }
+  return strips[strips.length - 1].node;
+}
+
+function watchHandPeek() {
+  el.hand.addEventListener('pointerdown', (event) => {
+    if (event.button !== 0) return;
+    // Whatever the last press left behind. A pointerup can go missing — the
+    // finger leaves the window, a drag takes the gesture over — and a card
+    // left raised is a card claiming to be under a finger that is not there.
+    clearPeek();
+    const wrapper = event.target.closest?.('.card-face-wrap');
+    if (!wrapper || !el.hand.contains(wrapper)) return;
+    const strips = [...el.hand.children].map((node) => {
+      const r = node.getBoundingClientRect();
+      return { node, left: r.left, right: r.right };
+    });
+    peek = { node: null, strips, pointerId: event.pointerId, scrubbed: false };
+    paintPeek(wrapper);
+  });
+
+  el.hand.addEventListener('pointermove', (event) => {
+    if (!peek || event.pointerId !== peek.pointerId) return;
+    const under = cardStripAt(event.clientX);
+    if (under && under !== peek.node) peek.scrubbed = true;
+    if (under) paintPeek(under);
+  });
+
+  // A scrub that ended on a card other than the one pressed has to activate
+  // THAT card: the browser's click will name the press target, which is the
+  // whole thing the player was scrubbing away from.
+  const finish = (event) => {
+    if (!peek || event.pointerId !== peek.pointerId) return;
+    const landed = peek.node;
+    const scrubbed = peek.scrubbed;
+    clearPeek();
+    if (!scrubbed || !landed || !liveState || !currentUi) return;
+    const cardId = landed.dataset.cardId;
+    // Only what a tap could already have done — the same model, the same
+    // guard. A scrub is a nicer way to reach a card, never a second rules path.
+    if (!currentUi.handSelectable.has(cardId)) return;
+    const card = cardById(liveState, cardId);
+    if (!card) return;
+    swallowClick();
+    onHandCard(liveState, cardId, card, landed, currentUi);
+  };
+  el.hand.addEventListener('pointerup', finish);
+  el.hand.addEventListener('pointercancel', () => clearPeek());
+}
+
+/**
+ * Eat the click that a pointerup is about to fire on the PRESS target.
+ * Capturing, so it beats the card's own handler. Same shape and the same
+ * reason as the drag controller's — a scrub has already acted, and letting the
+ * click through would act again on the wrong card.
+ */
+function swallowClick() {
+  const eat = (event) => {
+    event.stopPropagation();
+    event.preventDefault();
+    window.removeEventListener('click', eat, true);
+    timer.cancel();
+  };
+  window.addEventListener('click', eat, true);
+  const timer = sessionSchedule(() => window.removeEventListener('click', eat, true), 400);
+}
+
 /**
  * The out-of-turn bar: what the human may declare or call out right now.
  *
@@ -1282,6 +1397,9 @@ function onDragLift(handle) {
   const card = cardById(state, handle.cardId);
   if (!card) return null;
   hideInspector();
+  // The drag owns the gesture from here; the peek raise would fight the ghost
+  // for the same card, and the hand's own pointerup may never arrive.
+  clearPeek();
 
   const acting = actingSeatsOf(state);
   const humanActs = acting.includes(HUMAN_SEAT);
@@ -2161,6 +2279,10 @@ export function initTable({ onExit }) {
     // The controller is deliberately SDK-free, so the session clock is handed
     // to it rather than imported — same reasoning as the timers at §6c below.
     schedule: sessionSchedule,
+    // Only a hand card can be scrubbed along; a pile top has no row to read.
+    classifyGesture: ({ dx, dy, handle }) => (
+      handle.kind === 'hand' ? classifyHandGesture({ dx, dy }) : 'drag'
+    ),
   });
 
   initPanels({
@@ -2174,6 +2296,7 @@ export function initTable({ onExit }) {
   // has, and it is a custom property rather than a re-render — so reacting to
   // a width change costs two measurements, not a repaint of the table.
   watchHandWidth();
+  watchHandPeek();
 
   el.lobbyButton.addEventListener('click', () => exitToLobby());
   el.scoreChip.addEventListener('click', () => openScoreboard());
