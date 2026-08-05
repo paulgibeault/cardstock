@@ -596,6 +596,21 @@ function meldGroupsOf(state, seat) {
 }
 
 /**
+ * How a card in a laid-down meld reads.
+ *
+ * A wild on the felt is not a wild any more — it is the card it was played
+ * as, and the meld records which (`group.wilds`). Saying so is the difference
+ * between a run a player can read and one they have to reconstruct, and it is
+ * the only place the frozen value is visible: the card art still shows a wild,
+ * because that is the card that will go back in the box.
+ */
+function meldCardName(group, cardId, card) {
+  const pinned = group.wilds?.[cardId];
+  const value = pinned?.rank ?? pinned?.color;
+  return value === undefined ? cardName(card) : `${cardName(card)} — played as ${value}`;
+}
+
+/**
  * A seat's laid-down melds as chips — the hit targets, and the single most
  * useful piece of public information on the table.
  *
@@ -644,9 +659,12 @@ function buildMeldStrip(state, seat, ui, { mini = false } = {}) {
     attachInspector(chip, () => ({
       title: `${owner} ${what}`,
       lines: group.cards
-        .map((cardId) => cardById(state, cardId))
-        .filter(Boolean)
-        .map((card, n) => ({ label: `Card ${n + 1}`, value: cardName(card) })),
+        .map((cardId) => ({ cardId, card: cardById(state, cardId) }))
+        .filter((entry) => entry.card)
+        .map((entry, n) => ({
+          label: `Card ${n + 1}`,
+          value: meldCardName(group, entry.cardId, entry.card),
+        })),
       notes: move ? ['Your selected card extends this meld — tap to play it.'] : [],
     }), { isBusy: () => !!drag && drag.isDragging() });
 
@@ -2035,6 +2053,21 @@ async function performHumanMove(state, move, sourceNode) {
       // this move belongs to a match that is no longer the one on screen.
       if (picked === null || myEpoch !== epoch) return;
       move = { ...move, choice: { [attr]: picked } };
+    }
+  }
+
+  // A wild joining a meld has to become a specific card before it lands, and
+  // for a run there are two honest answers (either end). The template says
+  // when the question is real; a set has one answer and is never asked.
+  if (move.type === 'hit' && move.cards && state.pack.template.wildChoice) {
+    const ask = state.pack.template.wildChoice(makeCtx(state), move);
+    if (ask) {
+      const picked = await promptChoice(ask.attr, ask.values);
+      if (picked === null || myEpoch !== epoch) return;
+      move = {
+        ...move,
+        choice: { ...(move.choice || {}), wilds: { [ask.cardId]: { [ask.attr]: picked } } },
+      };
     }
   }
 
