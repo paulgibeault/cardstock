@@ -844,11 +844,13 @@ button.pile-stack:focus-visible { outline: 2px solid var(--accent); outline-offs
 .hand .card-face-wrap:hover,
 .hand .card-face-wrap--selected { z-index: 2; }
 .hand .card-face:hover { transform: translateY(-10px); }
-/* A card you cannot play lies FLAT on the felt — no shadow, no lift — rather
-   than being faded to 78%. The old dim made every unplayable card its own
-   alpha-composited layer (no-alpha rule, src/ui/cardStyles/shared.js) for a
-   cue the lift below already carries, and it dimmed the rank you are trying
-   to read while you work out why the card is not playable. */
+/* A card you cannot play lies FLAT on the felt — no shadow, no lift — on top
+   of being printed on grey stock by the card art itself (dullPaper/dullInk in
+   src/ui/cardStyles/shared.js, and the `.card-face--muted` rules below). The
+   stock does the talking; this is the quieter half of the same sentence, and
+   it is what makes a playable card stand OFF the felt by comparison. Neither
+   half costs a composited layer, which `opacity: 0.78` did for every
+   unplayable card in the hand, every frame. */
 .hand .card-face--disabled { cursor: default; box-shadow: none; }
 .hand .card-face--disabled:hover { transform: none; }
 
@@ -1668,6 +1670,27 @@ body.is-dragging .card-face { cursor: grabbing; }
    src/ui/cardStyles/shared.js. A painted vanilla card overrides the fill
    below and keeps this edge, which reads as a printed border on all four. */
 .card-face__bg { fill: #fdfdfa; stroke: #dededa; }
+
+/* THE MUTED VANILLA CARD — one you cannot play.
+ *
+ * The other four styles bake their grey stock into the markup (dullPaper and
+ * dullInk in src/ui/cardStyles/shared.js). Vanilla does it here instead, and
+ * that is not an inconsistency: this style's colours have always lived in the
+ * stylesheet rather than in its markup, its output is pinned by tests, and it
+ * is deliberately the renderer that shipped before the style registry existed.
+ * So it gets the same two colours by the route it already themes itself with.
+ * Every value below is dullPaper()/dullInk() of the live one, computed once. */
+.card-face--muted .card-face__bg { fill: #daddd9; stroke: #c5c7c3; }
+.card-face--muted.card-face--red .card-face__corner,
+.card-face--muted.card-face--red .card-face__pip { fill: #901616; }
+.card-face--muted.card-face--black .card-face__corner,
+.card-face--muted.card-face--black .card-face__pip { fill: #0d0d0d; }
+.card-face--muted.card-face--neutral .card-face__corner,
+.card-face--muted.card-face--neutral .card-face__pip { fill: #313137; }
+.card-face--muted.card-face--painted.card-face--red .card-face__bg { fill: #962c22; }
+.card-face--muted.card-face--painted.card-face--yellow .card-face__bg { fill: #b08a22; }
+.card-face--muted.card-face--painted.card-face--green .card-face__bg { fill: #1e884b; }
+.card-face--muted.card-face--painted.card-face--blue .card-face__bg { fill: #255789; }
 .card-face--red .card-face__corner,
 .card-face--red .card-face__pip { fill: #b91c1c; }
 .card-face--black .card-face__corner,

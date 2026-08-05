@@ -34,7 +34,12 @@ function cornerSizeClass(label) {
   return '';
 }
 
-export function face(card) {
+// `muted` reaches the CLASS LIST and nothing else, deliberately. This style's
+// colours live in the stylesheet rather than in its markup (see the header —
+// its output is pinned by tests and is meant to stay exactly what shipped
+// before the style registry existed), so the grey stock is applied by the
+// `.card-face--muted` rules in table.css instead of being interpolated here.
+export function face(card, theme, muted = false) {
   const color = cardFaceColor(card);
   const glyph = card.suit ? SUIT_GLYPH[card.suit] : '';
   const rankLabel = isWildRank(card) ? '' : card.rank ?? '';
@@ -52,9 +57,10 @@ export function face(card) {
   // colour too (a diamond is red), and without this distinction the stylesheet
   // painted every heart and diamond in a standard deck solid red.
   const painted = !card.suit && !!card.color ? ' card-face--painted' : '';
+  const dull = muted ? ' card-face--muted' : '';
 
   return `
-    <svg viewBox="0 0 100 140" class="card-face card-face--${escapeXml(color)}${painted}" role="img" aria-label="${escapeXml(cardAriaLabel(card))}">
+    <svg viewBox="0 0 100 140" class="card-face card-face--${escapeXml(color)}${painted}${dull}" role="img" aria-label="${escapeXml(cardAriaLabel(card))}">
       <rect x="1" y="1" width="98" height="138" rx="8" class="card-face__bg" />
       <text x="8" y="22" class="card-face__corner${sizeClass}">${escapeXml(corner)}</text>
       <text x="92" y="128" class="card-face__corner card-face__corner--br${sizeClass}">${escapeXml(corner)}</text>

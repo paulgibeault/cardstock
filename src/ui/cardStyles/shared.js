@@ -134,6 +134,66 @@ function isHex(value) {
 }
 
 /* ------------------------------------------------------------------ *
+ * Muting — what a card you cannot play looks like
+ * ------------------------------------------------------------------ */
+
+/**
+ * A CARD YOU CANNOT PLAY IS PRINTED ON GREY STOCK IN DEEPER INK.
+ *
+ * It used to be the live card at `opacity: 0.78`, which said the right thing
+ * and cost the wrong price: alpha below 1 puts an element on its own composited
+ * layer, and on a typical hand most cards are unplayable, so that was a layer
+ * per card per frame on a phone (see the no-alpha rule at the top of this file).
+ *
+ * Baking it into the art instead is not just cheaper, it is BETTER, and for a
+ * reason worth stating: a fade takes the ink down with the paper, so it dimmed
+ * the rank you are squinting at in the very moment you are working out why the
+ * card is unplayable. Greying the stock and DEEPENING the ink pulls the two
+ * apart — the card recedes, the value stays readable. The tightest case in the
+ * five packs (Milestones' yellow, which lives at 4.85:1 on white and could not
+ * afford to lose any of it) comes out at 5.27:1 muted, better than it is live.
+ *
+ * Two functions rather than one because a card has two kinds of colour and they
+ * must move in OPPOSITE directions. Every style routes its fields through
+ * dullPaper() and everything else through dullInk(); the split is per-style
+ * because only the style knows which of its rectangles is the paper.
+ */
+
+/** Which way is "up" for the paper: a neutral the stock is pulled toward. */
+const STOCK = '#8a928a';
+
+/**
+ * Near-white paper -> grey stock. Desaturated most of the way (so a warm white
+ * does not stay warm) and then pulled toward STOCK, which is what supplies the
+ * visible step: #fdfdfa lands on #daddd9, a 1.34:1 move.
+ */
+export function dullPaper(hex) {
+  if (!isHex(hex)) return '#daddd9';
+  const c = channels(hex);
+  const grey = 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+  const flat = c.map((v) => v + (grey - v) * 0.55);
+  const stock = channels(STOCK);
+  return `#${flat.map((v, i) => clampByte(v + (stock[i] - v) * 0.3).toString(16).padStart(2, '0')).join('')}`;
+}
+
+/**
+ * Everything that is not paper, one step deeper — ink, pips, a pack's colour
+ * bands, a shedding card's whole painted body.
+ *
+ * DARKER, NOT DESATURATED, and that is the load-bearing choice. Desaturating
+ * read better in isolation but destroys the thing the colour is FOR: in
+ * Wildfire the colour is the rule, and a hand of greyed-out cards you can no
+ * longer sort by colour is worse than no cue at all. It also drove white-on-
+ * yellow to 2.37:1. Darkening keeps every hue and every ratio.
+ *
+ * -0.22 is the smallest step that pays back the contrast the grey stock costs,
+ * across all five packs.
+ */
+export function dullInk(hex) {
+  return isHex(hex) ? shade(hex, -0.22) : hex;
+}
+
+/* ------------------------------------------------------------------ *
  * Shapes
  * ------------------------------------------------------------------ */
 

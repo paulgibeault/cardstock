@@ -167,19 +167,31 @@ export function makeCardRenderer(manifest, cardsById = null) {
   const theme = buildTheme(manifest, cardsById);
   const style = STYLES[theme.style];
   const canCache = !!cardsById && typeof cardsById.get === 'function';
+  // Two maps rather than one keyed by `id + muted`: a pack writes its own card
+  // ids, so any separator this composed a key with is a separator a pack could
+  // put in an id and collide on.
   const faces = new Map();
+  const mutedFaces = new Map();
   let back = null;
   return {
     theme,
     /** The pack's back panel colour — what a mostly-covered back looks like. */
     backPanel: backPanelColor(theme),
-    face: (card) => {
+    /**
+     * `muted` draws the card as one you cannot play: grey stock, deeper ink
+     * (see the muting note in shared.js). It is a SECOND VARIANT of the same
+     * card rather than a filter over the first, which is the whole point —
+     * a class the compositor has to honour costs a layer per card per frame,
+     * and this costs one more cache entry per card for the life of the table.
+     */
+    face: (card, muted = false) => {
       const safe = card && typeof card === 'object' ? card : {};
-      if (!canCache || cardsById.get(safe.id) !== safe) return style.face(safe, theme);
-      let markup = faces.get(safe.id);
+      if (!canCache || cardsById.get(safe.id) !== safe) return style.face(safe, theme, muted);
+      const cache = muted ? mutedFaces : faces;
+      let markup = cache.get(safe.id);
       if (markup === undefined) {
-        markup = style.face(safe, theme);
-        faces.set(safe.id, markup);
+        markup = style.face(safe, theme, muted);
+        cache.set(safe.id, markup);
       }
       return markup;
     },

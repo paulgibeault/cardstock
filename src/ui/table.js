@@ -1118,7 +1118,13 @@ function renderHand(state, ui, stagger, draggable) {
     const card = cardById(state, cardId);
     const selectable = ui.handSelectable.has(cardId);
     const selected = isSelected(selection, handAddr, cardId) || (committedPass || []).includes(cardId);
-    const wrapper = svgNode(cardArt.face(card),
+    // A card you cannot play is DRAWN as one — grey stock, deeper ink, baked
+    // into the art (src/ui/cardStyles/shared.js). It used to be the live card
+    // under `opacity: 0.78`, which cost a composited layer per unplayable card
+    // per frame and faded the rank you are reading to find out why it is
+    // unplayable. Only the hand does this: a pile or an opponent's card is not
+    // yours to play, so there is nothing for it to say there.
+    const wrapper = svgNode(cardArt.face(card, !selectable),
       `card-face-wrap ${selectable ? '' : 'card-face--disabled'} ${stagger ? 'card-deal' : ''} ${selected ? 'card-face-wrap--selected' : ''}`);
     markEntry(wrapper, `hand:${cardId}`);
     wrapper.dataset.cardId = cardId;

@@ -14,7 +14,8 @@
 // card" instantly, which is the whole job.
 
 import {
-  SUIT_GLYPH, blend, cardAriaLabel, cardBase, mirrored, num, openSvg, shade, text,
+  SUIT_GLYPH, blend, cardAriaLabel, cardBase, dullInk, dullPaper, mirrored, num,
+  openSvg, shade, text,
 } from './shared.js';
 
 const PAPER = '#fdfdfa';
@@ -85,30 +86,37 @@ function courtMotif(rank, glyph, fill, soft) {
   return crest + band + glyphAt(glyph, 50, 63, 15, fill);
 }
 
-export function face(card) {
+export function face(card, theme, muted = false) {
   const suit = card.suit;
   const glyph = (suit && SUIT_GLYPH[suit]) || '';
   const isRed = suit === 'hearts' || suit === 'diamonds';
-  const ink = suit ? (isRed ? RED : BLACK) : '#3f3f46';
+  // Grey stock, deeper ink — see the muting note in shared.js. The paper is the
+  // card blank; everything else on a standard card is ink.
+  const paper = muted ? dullPaper(PAPER) : PAPER;
+  const rawInk = suit ? (isRed ? RED : BLACK) : '#3f3f46';
+  const ink = muted ? dullInk(rawInk) : rawInk;
   const rank = card.rank == null ? '' : String(card.rank);
 
-  // The inner rule and the ace's ellipses are drawn straight onto PAPER, so
+  // The inner rule and the ace's ellipses are drawn straight onto the paper, so
   // both are blended against it here rather than shipped as alpha (see the
   // no-alpha rule at the top of shared.js).
-  const parts = [cardBase(PAPER), `<rect x="4.5" y="4.5" width="91" height="131" rx="5.5" fill="none" stroke="${blend(PAPER, '#000000', 0.07)}" />`];
+  const parts = [cardBase(paper), `<rect x="4.5" y="4.5" width="91" height="131" rx="5.5" fill="none" stroke="${blend(paper, '#000000', 0.07)}" />`];
 
   if (glyph) parts.push(mirrored(cornerIndex(rank, glyph, ink)));
   else parts.push(mirrored(text(rank.slice(0, 5), { x: 15, y: 25, size: 13, fill: ink, anchor: 'start' })));
 
   const pips = PIP_LAYOUT[Number(rank)];
   if (COURT.has(rank) && glyph) {
-    parts.push(`<rect x="21" y="27" width="58" height="86" rx="4" fill="${shade(ink, 0.92)}" stroke="${ink}" stroke-width="1.6" />`);
-    parts.push(mirrored(courtMotif(rank, glyph, ink, PAPER)));
+    // The court panel is a wash of the suit's ink over the paper, so on grey
+    // stock it is that same wash over the GREY — not a bright white window
+    // left behind on an otherwise muted card.
+    parts.push(`<rect x="21" y="27" width="58" height="86" rx="4" fill="${muted ? blend(paper, ink, 0.08) : shade(ink, 0.92)}" stroke="${ink}" stroke-width="1.6" />`);
+    parts.push(mirrored(courtMotif(rank, glyph, ink, paper)));
   } else if (rank === 'A' && glyph) {
     // The one flourish a plain deck always has. No trade dress involved — the
     // ornamented ace is older than any of the companies that print one.
     if (suit === 'spades') {
-      const faded = blend(PAPER, ink, 0.5);
+      const faded = blend(paper, ink, 0.5);
       parts.push(`<ellipse cx="50" cy="70" rx="27" ry="34" fill="none" stroke="${faded}" stroke-width="1.2" />`);
       parts.push(`<ellipse cx="50" cy="70" rx="24" ry="31" fill="none" stroke="${faded}" stroke-width="0.8" />`);
     }
@@ -122,7 +130,7 @@ export function face(card) {
   }
 
   const tone = suit ? (isRed ? ' card-face--red' : ' card-face--black') : '';
-  return openSvg(`card-face card-face--classic${tone}`, cardAriaLabel(card))
+  return openSvg(`card-face card-face--classic${tone}${muted ? ' card-face--muted' : ''}`, cardAriaLabel(card))
     + parts.join('') + '</svg>';
 }
 

@@ -14,7 +14,8 @@
 // and a deck of a different length still lands somewhere sensible.
 
 import {
-  cardAriaLabel, cardBase, cardKind, mirrored, num, openSvg, shade, text, wedgeDisc,
+  cardAriaLabel, cardBase, cardKind, dullInk, dullPaper, mirrored, num, openSvg,
+  shade, text, wedgeDisc,
 } from './shared.js';
 
 const PAPER = '#fdfdfa';
@@ -39,17 +40,22 @@ function cap(depth) {
   return `<path d="M1 ${num(depth)}L1 9A8 8 0 0 1 9 1L91 1A8 8 0 0 1 99 9L99 ${num(depth)}Z"`;
 }
 
-export function face(card, theme) {
+export function face(card, theme, muted = false) {
   const kind = cardKind(card);
   const wild = kind === 'wild' || kind === 'wildDrawN';
-  const bands = BAND_KEYS.map((k) => theme.palette[k]).filter(Boolean);
+  // Grey stock, deeper bands — see the muting note in shared.js. The caps are
+  // this deck's only colour and the only thing that says roughly where in the
+  // run a card sits, so they DARKEN rather than wash out.
+  const paper = muted ? dullPaper(PAPER) : PAPER;
+  const ink = (hex) => (muted ? dullInk(hex) : hex);
+  const bands = BAND_KEYS.map((k) => theme.palette[k]).filter(Boolean).map(ink);
   const rank = card.rank == null ? '' : String(card.rank).slice(0, 3);
   const band = wild ? bands[1] : bands[bandFor(rank, theme.rankHigh)];
   const top = wild ? bands[0] : band;
   const bottom = wild ? bands[2] : band;
 
   const parts = [
-    cardBase(PAPER),
+    cardBase(paper),
     `${cap(30)} fill="${top || band}" />`,
     `<g transform="rotate(180 50 70)">${cap(30)} fill="${bottom || band}" /></g>`,
   ];
@@ -59,18 +65,18 @@ export function face(card, theme) {
     // sentence as a picture.
     parts.push(`<circle cx="50" cy="70" r="30" fill="${shade(band, -0.25)}" />`);
     parts.push(wedgeDisc(50, 70, 27, bands.length >= 2 ? bands : [band]));
-    parts.push(`<circle cx="50" cy="70" r="27" fill="none" stroke="${PAPER}" stroke-width="2" />`);
-    parts.push(text('★', { x: 50, y: 81, size: 30, fill: PAPER, outline: shade(band, -0.5), outlineWidth: 3 }));
-    parts.push(mirrored(text('★', { x: 15, y: 24, size: 15, fill: PAPER })));
+    parts.push(`<circle cx="50" cy="70" r="27" fill="none" stroke="${paper}" stroke-width="2" />`);
+    parts.push(text('★', { x: 50, y: 81, size: 30, fill: paper, outline: shade(band, -0.5), outlineWidth: 3 }));
+    parts.push(mirrored(text('★', { x: 15, y: 24, size: 15, fill: paper })));
   } else {
     parts.push(text(rank, {
       x: 50, y: 89, size: rank.length > 1 ? 50 : 58, weight: 800,
       fill: band, outline: shade(band, -0.45), outlineWidth: 2.4,
     }));
-    parts.push(mirrored(text(rank, { x: 16, y: 23, size: 17, fill: PAPER })));
+    parts.push(mirrored(text(rank, { x: 16, y: 23, size: 17, fill: paper })));
   }
 
-  return openSvg('card-face card-face--rankrun', cardAriaLabel(card)) + parts.join('') + '</svg>';
+  return openSvg(`card-face card-face--rankrun${muted ? ' card-face--muted' : ''}`, cardAriaLabel(card)) + parts.join('') + '</svg>';
 }
 
 export const defaults = {
