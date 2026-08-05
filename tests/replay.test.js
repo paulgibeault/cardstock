@@ -119,3 +119,52 @@ test("a snapshot from another pack is refused rather than replayed", () => {
   const snapshot = serializeMatch(playOut(packFromDisk("crazy-eights"), "x-pack", 3, 5), { savedAt: 0 });
   assert.throws(() => rehydrateMatch(packFromDisk("hearts"), snapshot), /pack mismatch/);
 });
+
+/* ------------------------------------------------------------------ *
+ * The incremental strip (issue #6)
+ * ------------------------------------------------------------------ */
+
+// serializeMatch runs after EVERY applied move and every announcement, so
+// re-stripping the whole log each time made persistence grow with the match.
+// It now extends a cached array instead. These pin the two things that could
+// go wrong with a cache: a payload that misses the newest move, and two
+// payloads that turn out to be the same array.
+
+test("an incrementally stripped log matches stripping the whole thing", () => {
+  const pack = packFromDisk("crazy-eights");
+  const state = playOut(pack, "strip", 3, 0);
+  for (let i = 0; i < 25 && !state.gameOver; i++) {
+    const move = chooseBotMove(state, state.turn.seat);
+    if (!move) break;
+    applyMove(state, move);
+    // Serialize after every single move — the real call pattern, and the one
+    // the cache has to stay correct under.
+    const naive = state.log.map(({ seq, ...rest }) => rest);
+    assert.deepStrictEqual(serializeMatch(state, { savedAt: 0 }).log, naive,
+      `diverged after ${i + 1} moves`);
+  }
+  assert.ok(state.log.length > 5, "expected the game to have actually progressed");
+});
+
+test("an earlier payload does not grow a move it was never given", () => {
+  const pack = packFromDisk("crazy-eights");
+  const state = playOut(pack, "alias", 3, 6);
+  const first = serializeMatch(state, { savedAt: 0 });
+  const lengthWhenTaken = first.log.length;
+
+  const move = chooseBotMove(state, state.turn.seat);
+  applyMove(state, move);
+  const second = serializeMatch(state, { savedAt: 0 });
+
+  assert.strictEqual(first.log.length, lengthWhenTaken, "the old payload was mutated");
+  assert.strictEqual(second.log.length, lengthWhenTaken + 1);
+  assert.notStrictEqual(first.log, second.log, "payloads share one array");
+});
+
+test("a cached log still round-trips through rehydrate", () => {
+  const pack = packFromDisk("milestones");
+  const state = playOut(pack, "cached-rt", 3, 20);
+  serializeMatch(state, { savedAt: 0 });          // prime the cache
+  const snapshot = serializeMatch(state, { savedAt: 0 });
+  assert.deepStrictEqual(fingerprint(rehydrateMatch(pack, snapshot)), fingerprint(state));
+});

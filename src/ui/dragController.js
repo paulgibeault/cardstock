@@ -45,31 +45,79 @@ function overlapArea(a, b) {
 }
 
 /**
+ * Which target the ghost is most over — the one it overlaps by the largest
+ * area, or null when it overlaps none.
+ *
+ * Pure, and takes rects rather than nodes, because THE RECTS ARE MEASURED
+ * ONCE PER DRAG rather than once per pointer event. Reading a rect right after
+ * writing the ghost's transform forces a synchronous layout, and at 120Hz over
+ * a table full of drop-shadowed cards that was the single most expensive thing
+ * the drag did. Nothing reflows a target mid-drag — the caller defers renders
+ * while `isDragging()`, the hidden source keeps its box, and the hover paint is
+ * a pseudo-element — so a snapshot is as correct as a fresh read.
+ *
+ * @param targets [{ rect }] — entries with a null rect are skipped.
+ */
+export function pickTarget(ghostRect, targets) {
+  let best = null;
+  let bestArea = 0;
+  for (const target of targets) {
+    if (!target.rect) continue;
+    const area = overlapArea(ghostRect, target.rect);
+    if (area > bestArea) {
+      bestArea = area;
+      best = target;
+    }
+  }
+  return best;
+}
+
+/** setTimeout dressed as the launcher's cancellable-timer shape. */
+function plainSchedule(fn, ms) {
+  const id = setTimeout(fn, ms);
+  return { cancel: () => clearTimeout(id) };
+}
+
+/**
  * @param layer       () => the fixed-position element the ghost lives in
  * @param onLift      (handle) => { markup, targets: [{ node, onDrop }] } | null
  *                    Returning null refuses the drag before anything moves.
  * @param onSettle    () => void, after every drag ends (dropped or not) — the
  *                    caller's cue to re-render and clear its own selection.
+ * @param schedule    (fn, ms) => { cancel() }. Injected rather than imported:
+ *                    this module stays SDK-free (see the header), but the app
+ *                    wants its one timer on the launcher's session clock so it
+ *                    freezes with a suspended frame like every other timer.
+ * @param classifyGesture ({dx, dy, handle, event}) => 'drag' | 'scrub', asked
+ *                    once, when a press first travels past the slop threshold.
+ *                    'scrub' abandons the press so the caller's own listener
+ *                    owns the gesture. Default: everything is a drag.
  */
-export function createDragController({ layer, onLift, onSettle = () => {} }) {
+export function createDragController({
+  layer,
+  onLift,
+  onSettle = () => {},
+  schedule = plainSchedule,
+  classifyGesture = () => 'drag',
+}) {
   // Everything about the CURRENT drag. Null between drags; the presence of
   // `ghost` is what distinguishes "armed, might become a drag" from "dragging".
   let pending = null;
   let drag = null;
 
+  /**
+   * Measure every drop target. Called once at lift, and again only when the
+   * page geometry moves under the drag — a scroll or a viewport resize, the
+   * two things that invalidate a viewport-relative rect without any layout of
+   * ours having changed.
+   */
+  function measureTargets() {
+    if (!drag) return;
+    for (const target of drag.targets) target.rect = rectOf(target.node);
+  }
+
   function targetUnder(ghostRect) {
-    let best = null;
-    let bestArea = 0;
-    for (const target of drag.targets) {
-      const r = rectOf(target.node);
-      if (!r) continue;
-      const area = overlapArea(ghostRect, r);
-      if (area > bestArea) {
-        bestArea = area;
-        best = target;
-      }
-    }
-    return best;
+    return pickTarget(ghostRect, drag.targets);
   }
 
   function paintHover(next) {
@@ -193,7 +241,12 @@ export function createDragController({ layer, onLift, onSettle = () => {} }) {
       targets: lift.targets || [],
       hover: null,
     };
+    // Classes first, THEN measure: `.drop-target` only paints a pseudo-element
+    // ring (src/ui/table.css), so it moves nothing — but measuring after the
+    // write keeps the one forced layout of the whole drag right here, where it
+    // is unavoidable, instead of once per pointer event.
     for (const target of drag.targets) target.node.classList.add('drop-target');
+    measureTargets();
     paintHover(targetUnder(moveGhost(event.clientX, event.clientY)));
     return true;
   }
@@ -209,6 +262,17 @@ export function createDragController({ layer, onLift, onSettle = () => {} }) {
     const dy = event.clientY - pending.startY;
     if (dx * dx + dy * dy < SLOP * SLOP) return;
     const { handle, node, startX, startY } = pending;
+    // A press that has travelled far enough to mean SOMETHING still has to be
+    // asked what it means. The caller can claim the gesture for itself — the
+    // hand does, for a finger sliding along the fan to read it — and this
+    // module stays out of the question: it hands over the delta and takes the
+    // answer. Anything but 'scrub' is a drag, so a caller that does not care
+    // (the default) gets exactly the old behaviour.
+    if (classifyGesture({ dx, dy, handle, event }) === 'scrub') {
+      pending = null;
+      detach();
+      return;
+    }
     pending = null;
     if (!begin(handle, node, event, { x: startX, y: startY })) detach();
   }
@@ -225,13 +289,15 @@ export function createDragController({ layer, onLift, onSettle = () => {} }) {
    * (a drop onto a non-interactive area).
    */
   function swallowNextClick() {
+    let timer = null;
     const eat = (event) => {
       event.stopPropagation();
       event.preventDefault();
       window.removeEventListener('click', eat, true);
+      if (timer) timer.cancel();
     };
     window.addEventListener('click', eat, true);
-    setTimeout(() => window.removeEventListener('click', eat, true), 400);
+    timer = schedule(() => window.removeEventListener('click', eat, true), 400);
   }
 
   function onPointerUp(event) {
@@ -276,6 +342,10 @@ export function createDragController({ layer, onLift, onSettle = () => {} }) {
     window.addEventListener('pointerup', onPointerUp);
     window.addEventListener('pointercancel', onPointerCancel);
     window.addEventListener('keydown', onKeyDown);
+    // Capturing, because a scroll inside any scrollable ancestor moves the
+    // targets just as surely as a document scroll and does not bubble.
+    window.addEventListener('scroll', measureTargets, { capture: true, passive: true });
+    window.addEventListener('resize', measureTargets);
   }
 
   function detach() {
@@ -283,6 +353,8 @@ export function createDragController({ layer, onLift, onSettle = () => {} }) {
     window.removeEventListener('pointerup', onPointerUp);
     window.removeEventListener('pointercancel', onPointerCancel);
     window.removeEventListener('keydown', onKeyDown);
+    window.removeEventListener('scroll', measureTargets, { capture: true });
+    window.removeEventListener('resize', measureTargets);
   }
 
   return {

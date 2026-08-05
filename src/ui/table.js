@@ -61,11 +61,11 @@ import {
 } from './describe.js';
 import {
   interactionMode, buildUiModel, dropCandidates, draggableSources, pruneSelection,
-  isSelected, handAddress, implicitLandingZone,
+  isSelected, handAddress, implicitLandingZone, smartSelection, ladderRungs,
   describeContractItem, describeContract, shortContract,
 } from './interaction.js';
 import {
-  orderHand, reorder, nextMode, isSortMode, fanStep, SORT_LABELS,
+  orderHand, reorder, nextMode, isSortMode, fanStep, classifyHandGesture, SORT_LABELS,
 } from './handOrder.js';
 import {
   initPanels, showRoundSummary, hideRoundSummary, isRoundSummaryOpen,
@@ -117,6 +117,8 @@ const el = {
   actionBar: document.getElementById('action-bar'),
   actionHint: document.getElementById('action-hint'),
   actionButton: document.getElementById('action-button'),
+  stageRow: document.getElementById('stage-row'),
+  stageTray: document.getElementById('stage-tray'),
   handRow: document.getElementById('hand-row'),
   hand: document.getElementById('hand'),
   handSort: document.getElementById('hand-sort'),
@@ -165,12 +167,37 @@ let selection = null;
 let handPrefs = { mode: 'auto', order: [] };
 let displayedHand = [];
 
+// What the hand held on the previous render, so renderHand can tell a card
+// that just arrived from one that was already there and animate only the
+// former. Reset with the match — a resumed game deals itself back in.
+let prevHandIds = new Set();
+
+// The UI model the CURRENT render was built from. Pile and meld handlers read
+// it at click time rather than closing over a move, which is what lets a
+// selection change re-arm them without rebuilding the table (renderSelection).
+let currentUi = null;
+
 // Pointer choreography for lifting a card (src/ui/dragController.js), created
 // once at init. A render that landed mid-drag would replace the very node the
 // pointer is holding, so renders are DEFERRED while one is live and replayed
 // when it settles.
 let drag = null;
 let pendingRender = null;
+
+/**
+ * The launcher's session clock, in the cancellable-timer shape, with a plain
+ * fallback so a module can be exercised without the SDK on the page.
+ *
+ * Exists so modules that must not import the SDK — dragController.js is
+ * game-agnostic by design — can still have their timers freeze with a
+ * suspended frame (§6c) rather than burning battery in a hidden iframe.
+ */
+function sessionSchedule(fn, ms) {
+  const session = typeof window !== 'undefined' && window.Arcade && window.Arcade.session;
+  if (session && typeof session.setTimeout === 'function') return session.setTimeout(fn, ms);
+  const id = setTimeout(fn, ms);
+  return { cancel: () => clearTimeout(id) };
+}
 
 // Announcement beats (§E2) — a bot remembering to declare, or noticing that
 // you did not. Timers, so they are cancelled on every path that closes or
@@ -286,10 +313,29 @@ function overlapFor(state, def) {
 // Card SVG is markup this repo authors, with every card-derived value escaped
 // inside src/ui/cardStyles — so innerHTML on a fresh node is safe here in a way
 // it is NOT for anything carrying a name or a label. Those use textContent.
+//
+// PARSED ONCE PER DISTINCT CARD, NOT ONCE PER APPEARANCE. cardArt memoizes the
+// markup STRING, but innerHTML still ran the HTML parser every time — and a
+// render rebuilds every card on the table, so a four-handed rummy table paid
+// for 60-100 parses on every tap. A <template> holds the parsed result and
+// cloneNode copies it, which is the same work the browser does for a repeated
+// element and a great deal less than re-reading the text.
+//
+// Keyed by the markup itself, so two cards that look identical (every card
+// back in the deck) share one entry and a change of card style simply misses
+// the old keys — adoptMatch clears it anyway when the renderer is rebuilt.
+const svgTemplates = new Map();
+
 function svgNode(markup, className) {
   const span = document.createElement('span');
   if (className) span.className = className;
-  span.innerHTML = markup;
+  let template = svgTemplates.get(markup);
+  if (!template) {
+    template = document.createElement('template');
+    template.innerHTML = markup;
+    svgTemplates.set(markup, template);
+  }
+  span.appendChild(template.content.cloneNode(true));
   return span;
 }
 
@@ -359,6 +405,52 @@ function meldChipNode(meldKey) {
 }
 
 /**
+ * Paint what a pile currently OFFERS: a place to put the selected card, a top
+ * card to pick up, or nothing.
+ *
+ * Split out of buildPileNode because this is the only part of a pile that a
+ * selection changes. Everything else about it — the cards, the depth cue, the
+ * badge — is the same before and after, so re-running it in place is what lets
+ * a tap on a hand card stop rebuilding the table (renderSelection).
+ *
+ * Reads the label off the node rather than the state: the accessible name's
+ * subject is fixed by the zone, and only the verb in front of it moves.
+ */
+function paintPileState(stack, ui) {
+  const address = stack.dataset.zone;
+  const ariaLabel = stack.dataset.zoneLabel || '';
+  const target = ui.readyTargets.get(address) || null;
+  const sourceTop = !target && ui.sourceTops.has(address) ? ui.sourceTops.get(address) : null;
+
+  stack.classList.toggle('pile-stack--ready', !!target);
+  stack.classList.toggle('pile-stack--source', !!sourceTop);
+  stack.classList.toggle('pile-stack--picked', !!sourceTop && isSelected(selection, address, sourceTop));
+
+  if (target) {
+    const verb = target.type === 'draw' ? 'Draw a card from'
+      : target.type === 'discard' ? 'Discard to'
+        : 'Play your selected card onto';
+    stack.disabled = false;
+    stack.setAttribute('aria-label', `${verb} ${ariaLabel}`);
+  } else if (sourceTop) {
+    stack.disabled = false;
+    stack.setAttribute('aria-label', `${ariaLabel} Pick up the top card to play it.`);
+  } else {
+    stack.disabled = true;
+    stack.setAttribute('aria-label', ariaLabel);
+  }
+}
+
+/** The same, for a meld chip: whether the selected card extends this meld. */
+function paintMeldState(chip, ui) {
+  const move = ui.readyMelds.get(chip.dataset.meld) || null;
+  const label = chip.dataset.meldLabel || '';
+  chip.classList.toggle('meld-chip--ready', !!move);
+  chip.disabled = !move;
+  chip.setAttribute('aria-label', move ? `${label} Add your selected card.` : label);
+}
+
+/**
  * One pile on the felt, for any zone. Always a <button>: whether it does
  * anything this render is decided by the UI model (a ready target applies its
  * move, a source top picks itself up), and a pile that does neither is simply
@@ -392,10 +484,13 @@ function buildPileNode(state, inst, ui, { mini = false, draggableTop = null } = 
 
   stack.classList.toggle('pile-stack--deep', count > 2);
   stack.classList.toggle('pile-stack--spread', isSpread && !mini);
-  stack.classList.toggle('pile-stack--ready', !!target);
-  stack.classList.toggle('pile-stack--source', !!sourceTop);
-  stack.classList.toggle('pile-stack--picked', !!sourceTop && isSelected(selection, address, sourceTop));
-  if (overlap) stack.classList.add(`pile-stack--overlap-${overlap === 'vertical' ? 'v' : 'h'}`);
+  if (overlap) {
+    stack.classList.add(`pile-stack--overlap-${overlap === 'vertical' ? 'v' : 'h'}`);
+    // How many card-widths the slot RESERVES — a constant, not the count on
+    // hand. See .pile-stack--overlap-v in table.css: a pile that resized as it
+    // filled re-centred every other pile in its row on every discard.
+    stack.style.setProperty('--overlap-slots', String(DISCARD_DEPTH - 1));
+  }
 
   /** Place one card in the stack, carrying its index for the overlap offsets. */
   const placeCard = (markup, i, visibleCount, cardId, isTop) => {
@@ -433,7 +528,6 @@ function buildPileNode(state, inst, ui, { mini = false, draggableTop = null } = 
     // the cards are not.
     const depth = mini ? 1 : DISCARD_DEPTH;
     const visible = cards.slice(-depth);
-    stack.style.setProperty('--overlap-count', String(Math.max(0, visible.length - 1)));
     visible.forEach((cardId, i) => {
       const isTop = i === visible.length - 1;
       const card = cardById(state, cardId);
@@ -445,27 +539,26 @@ function buildPileNode(state, inst, ui, { mini = false, draggableTop = null } = 
     if (!visible.length) stack.appendChild(svgNode('<div class="card-face card-face--empty"></div>', 'pile-stack__top'));
   }
 
-  const ariaLabel = zoneAriaLabel(state, inst);
+  stack.dataset.zoneLabel = zoneAriaLabel(state, inst);
 
-  if (target) {
-    stack.disabled = false;
-    const verb = target.type === 'draw' ? 'Draw a card from'
-      : target.type === 'discard' ? 'Discard to'
-        : 'Play your selected card onto';
-    stack.setAttribute('aria-label', `${verb} ${ariaLabel}`);
-    stack.addEventListener('click', () => liveState && performHumanMove(liveState, target, stack));
-  } else if (sourceTop) {
-    stack.disabled = false;
-    stack.setAttribute('aria-label', `${ariaLabel} Pick up the top card to play it.`);
-    stack.addEventListener('click', () => {
-      if (!liveState) return;
-      selection = isSelected(selection, address, sourceTop) ? null : { from: address, cardIds: [sourceTop] };
-      render(liveState);
-    });
-  } else {
-    stack.disabled = true;
-    stack.setAttribute('aria-label', ariaLabel);
-  }
+  // LATE-BOUND, and bound unconditionally. The handler asks the current UI
+  // model what this pile does at the moment it is clicked instead of closing
+  // over the move that happened to be ready when it was built — which is what
+  // lets a selection change re-arm every pile in place (paintPileState) rather
+  // than rebuilding the whole table to change which ones glow.
+  stack.addEventListener('click', () => {
+    if (!liveState || !currentUi) return;
+    const move = currentUi.readyTargets.get(address);
+    if (move) {
+      performHumanMove(liveState, move, stack);
+      return;
+    }
+    const top = currentUi.sourceTops.get(address);
+    if (top === undefined) return;
+    selection = isSelected(selection, address, top) ? null : { from: address, cardIds: [top] };
+    renderSelection(liveState);
+  });
+  paintPileState(stack, ui);
 
   // Any face-up top card the human owns lifts, whether or not it has anywhere
   // to go — a refused drop simply snaps home. That is the "cards on felt"
@@ -526,7 +619,7 @@ function buildMeldStrip(state, seat, ui, { mini = false } = {}) {
 
     const chip = document.createElement('button');
     chip.type = 'button';
-    chip.className = `meld-chip ${move ? 'meld-chip--ready' : ''}`;
+    chip.className = 'meld-chip';
     chip.dataset.meld = meldKey;
 
     const cards = document.createElement('span');
@@ -538,15 +631,13 @@ function buildMeldStrip(state, seat, ui, { mini = false } = {}) {
     chip.appendChild(cards);
     chip.appendChild(line('meld-chip__label', what));
 
-    const label = `${owner} ${what}, ${group.cards.length} cards.`;
-    if (move) {
-      chip.disabled = false;
-      chip.setAttribute('aria-label', `${label} Add your selected card.`);
-      chip.addEventListener('click', () => liveState && performHumanMove(liveState, move, chip));
-    } else {
-      chip.disabled = true;
-      chip.setAttribute('aria-label', label);
-    }
+    chip.dataset.meldLabel = `${owner} ${what}, ${group.cards.length} cards.`;
+    // Late-bound for the same reason the piles are — see paintPileState.
+    chip.addEventListener('click', () => {
+      const ready = currentUi && currentUi.readyMelds.get(meldKey);
+      if (ready && liveState) performHumanMove(liveState, ready, chip);
+    });
+    paintMeldState(chip, ui);
 
     // Reading a meld card by card is the thing a squeezed strip made
     // impossible, so the inspector spells the whole thing out.
@@ -576,6 +667,22 @@ function buildMeldStrip(state, seat, ui, { mini = false } = {}) {
  * Rungs carry the SHORT form (`S3+R4`) with a one-line key, and hovering gives
  * the sentence — the same words-versus-badge split the pile labels use.
  */
+/**
+ * How many ladder rungs the row can hold at this width.
+ *
+ * Read from the same breakpoints table.css sizes the rungs at, rather than
+ * measured: a measurement here would be a forced layout on every render, and
+ * the widths that matter are exactly the ones the stylesheet already names.
+ * A desktop row fits the whole course, so it gets it — truncation is a
+ * response to a narrow screen, not the ladder's preference.
+ */
+function ladderBudget() {
+  if (typeof window.matchMedia !== 'function') return 5;
+  if (window.matchMedia('(max-width: 420px)').matches) return 5;
+  if (window.matchMedia('(max-width: 720px)').matches) return 7;
+  return Infinity;
+}
+
 function renderContractLadder(state) {
   const contracts = state.pack.rules.contracts;
   if (!Array.isArray(contracts) || !contracts.length) {
@@ -587,8 +694,55 @@ function renderContractLadder(state) {
   const minePhase = state.playerVars[HUMAN_SEAT]?.phase ?? null;
   el.contractLadder.replaceChildren();
 
-  contracts.forEach((items, index) => {
-    const phase = index + 1;
+  // Which rungs survive the squeeze, and where the collapsed runs go — see
+  // ladderRungs in src/ui/interaction.js for what may be dropped and why.
+  const occupied = [];
+  for (let seat = 0; seat < state.seats; seat++) {
+    const phase = state.playerVars[seat]?.phase ?? null;
+    if (phase) occupied.push(phase);
+  }
+
+  for (const entry of ladderRungs(contracts.length, { minePhase, occupied, maxRungs: ladderBudget() })) {
+    if (entry.kind === 'gap') {
+      const span = entry.to - entry.from + 1;
+      const where = span === 1 ? `Contract ${entry.from}` : `Contracts ${entry.from}–${entry.to}`;
+      const gap = document.createElement('div');
+      gap.className = 'ladder__gap';
+      gap.appendChild(line('ladder__gap-mark', '⋯'));
+
+      // ANYONE THE SQUEEZE HID IS DRAWN HERE. Collapsing a rung is only safe
+      // because the players standing on it come with it — "who is behind me"
+      // survives at coarser resolution rather than vanishing.
+      const inside = [];
+      for (let seat = 0; seat < state.seats; seat++) {
+        const phase = state.playerVars[seat]?.phase ?? null;
+        if (phase === null || phase < entry.from || phase > entry.to) continue;
+        const identity = identityOf(seat);
+        inside.push(identity);
+        const pip = document.createElement('span');
+        pip.className = 'ladder__pip ladder__pip--tucked';
+        pip.style.background = identity.color;
+        pip.textContent = identity.icon || identity.initials;
+        pip.setAttribute('aria-hidden', 'true');
+        gap.appendChild(pip);
+      }
+
+      const names = inside.map((i) => (i.seat === HUMAN_SEAT ? 'you' : i.name));
+      gap.setAttribute('aria-label', `${where}.`
+        + (names.length ? ` On them: ${names.join(', ')}.` : ' Nobody is on them.'));
+      attachInspector(gap, () => ({
+        title: where,
+        lines: contracts.slice(entry.from - 1, entry.to).map((items, n) => ({
+          label: String(entry.from + n), value: describeContract(items),
+        })),
+        notes: names.length ? [`Currently on these: ${names.join(', ')}.`] : ['Nobody is on these yet.'],
+      }), { isBusy: () => !!drag && drag.isDragging() });
+      el.contractLadder.appendChild(gap);
+      continue;
+    }
+
+    const phase = entry.phase;
+    const items = contracts[phase - 1];
     const rung = document.createElement('div');
     const mine = phase === minePhase;
     rung.className = `ladder__rung ${mine ? 'ladder__rung--mine' : ''} `
@@ -628,7 +782,7 @@ function renderContractLadder(state) {
     }), { isBusy: () => !!drag && drag.isDragging() });
 
     el.contractLadder.appendChild(rung);
-  });
+  }
 
   el.contractLadder.appendChild(line('ladder__key', 'S set · R run · C colour'));
   el.contractLadder.hidden = false;
@@ -666,6 +820,11 @@ function seatScoreChip(state, seat) {
 function renderSeats(state, stagger, acting, ui) {
   el.opponentsTop.replaceChildren();
   const scored = showsScores(state);
+  // Hoisted out of the seat loop: the answer does not depend on the seat, and
+  // enumerating announcements builds a fresh engine context every time. Asking
+  // once per opponent and throwing all but one answer away cost N contexts per
+  // render for a list that is the same list N times over.
+  const challenges = humanAnnouncements(state).filter((a) => a.type === 'challenge');
   for (let seat = 0; seat < state.seats; seat++) {
     if (seat === HUMAN_SEAT) continue;
     const identity = identityOf(seat);
@@ -722,6 +881,12 @@ function renderSeats(state, stagger, acting, ui) {
 
     const mini = document.createElement('div');
     mini.className = 'mini-hand';
+    // The count is all the CSS needs to close the fan to a fixed width — see
+    // .mini-hand in table.css for why a seat's geometry must not track how
+    // many cards it holds. Deliberately not measured here: the card width is a
+    // breakpoint-driven custom property, so the arithmetic belongs where that
+    // property is defined rather than in a second copy that can drift from it.
+    mini.style.setProperty('--mini-count', String(count));
     for (let i = 0; i < count; i++) {
       const back = svgNode(cardArt.back(), stagger ? 'card-deal' : '');
       if (stagger) back.style.animationDelay = `${i * 35}ms`;
@@ -752,7 +917,7 @@ function renderSeats(state, stagger, acting, ui) {
 
     // The catch affordance (§E2) lives on the seat it accuses, which is the
     // only place it reads as "you — you never said it".
-    const catchMove = humanAnnouncements(state).find((a) => a.type === 'challenge' && a.target === seat);
+    const catchMove = challenges.find((a) => a.target === seat);
     if (catchMove) {
       const button = document.createElement('button');
       button.type = 'button';
@@ -796,6 +961,66 @@ function renderPlayerZones(state, ui, draggable) {
   }
 }
 
+/**
+ * Which of the hand's cards are waiting in the tray rather than in the fan.
+ *
+ * Only in the modes that gather several cards before committing them — laying
+ * down a contract, choosing a pass. Everywhere else a selection is a single
+ * card that is about to be played somewhere, and lifting it out of the fan
+ * would be motion for a card that is leaving anyway.
+ */
+function stagedIds(state, ui) {
+  if (!ui.handMulti) return [];
+  if (!selection || selection.from !== handAddress(HUMAN_SEAT)) return [];
+  return selection.cardIds;
+}
+
+/**
+ * The gathered cards, at readable size, in the order they were picked.
+ *
+ * This is the answer to "assembling a meld on a phone is too cramped": a
+ * ten-card fan gives each card a strip about as wide as a fingertip is
+ * accurate, and picking a fourth card out of it after three are already
+ * chosen means hitting a sliver whose neighbours look the same. Staged cards
+ * LEAVE the fan, so every pick makes the next one easier — the fan re-fans
+ * wider on its own — and the meld you have built so far is shown as cards
+ * rather than as highlights buried in the row you are trying to read.
+ *
+ * The tray owns no state. It renders `selection`, and tapping a card in it
+ * runs the same toggle a tap in the fan runs.
+ */
+function renderStageTray(state, ui) {
+  const staged = stagedIds(state, ui);
+  el.stageRow.hidden = !ui.handMulti;
+  if (!ui.handMulti) {
+    el.stageTray.replaceChildren();
+    return;
+  }
+  el.stageTray.setAttribute('aria-label', staged.length
+    ? `Gathered: ${staged.length} cards. Tap one to put it back.`
+    : 'Gathered cards appear here.');
+  el.stageTray.replaceChildren();
+  for (const cardId of staged) {
+    const card = cardById(state, cardId);
+    if (!card) continue;
+    const node = svgNode(cardArt.face(card), 'stage-card');
+    node.dataset.cardId = cardId;
+    node.setAttribute('role', 'button');
+    node.tabIndex = 0;
+    node.setAttribute('aria-label', `${cardAriaLabel(card, state.pack)} Gathered. Tap to put it back.`);
+    const putBack = () => onHandCard(state, cardId, card, node, ui);
+    node.addEventListener('click', putBack);
+    node.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      putBack();
+    });
+    attachInspector(node, () => describeCard(card, state.pack),
+      { isBusy: () => !!drag && drag.isDragging() });
+    el.stageTray.appendChild(node);
+  }
+}
+
 function renderHand(state, ui, stagger, draggable) {
   el.hand.replaceChildren();
   const handAddr = handAddress(HUMAN_SEAT);
@@ -805,7 +1030,13 @@ function renderHand(state, ui, stagger, draggable) {
   displayedHand = orderHand(engineHand, (id) => cardById(state, id), handPrefs.mode, handPrefs.order);
   const committedPass = state.playerVars[HUMAN_SEAT]?.__pendingPass;
 
-  displayedHand.forEach((cardId, i) => {
+  // Gathered cards are drawn in the tray instead, so the fan holds only what
+  // is still to be chosen from. handPrefs.order is NOT touched — a card put
+  // back returns to the exact slot it left, because it never left the order.
+  const staged = new Set(stagedIds(state, ui));
+  const fanned = staged.size ? displayedHand.filter((id) => !staged.has(id)) : displayedHand;
+
+  fanned.forEach((cardId, i) => {
     const card = cardById(state, cardId);
     const selectable = ui.handSelectable.has(cardId);
     const selected = isSelected(selection, handAddr, cardId) || (committedPass || []).includes(cardId);
@@ -813,7 +1044,14 @@ function renderHand(state, ui, stagger, draggable) {
       `card-face-wrap ${selectable ? '' : 'card-face--disabled'} ${stagger ? 'card-deal' : ''} ${selected ? 'card-face-wrap--selected' : ''}`);
     wrapper.dataset.cardId = cardId;
     if (stagger) wrapper.style.animationDelay = `${i * 35}ms`;
-    wrapper.querySelector('svg').classList.toggle('card-face--disabled', !selectable);
+    const svg = wrapper.querySelector('svg');
+    svg.classList.toggle('card-face--disabled', !selectable);
+    // Settle in only if this card is NEW to the hand. The animation used to
+    // live on every .card-face, and because a render rebuilds every node it
+    // replayed on every card on every state change — the whole hand twitching
+    // because you tapped one card. A card arriving is worth animating; a card
+    // that has been sitting there is not.
+    if (!prevHandIds.has(cardId)) svg.classList.add('card-face--fresh');
 
     // Every hand card is reachable by keyboard, playable or not: a card that
     // cannot be focused cannot be inspected, and "why can't I play this?" is
@@ -821,7 +1059,7 @@ function renderHand(state, ui, stagger, draggable) {
     wrapper.setAttribute('role', 'button');
     wrapper.tabIndex = 0;
     wrapper.setAttribute('aria-label',
-      `${cardAriaLabel(card, state.pack, { position: i + 1, of: displayedHand.length })}`
+      `${cardAriaLabel(card, state.pack, { position: i + 1, of: fanned.length })}`
       + (selectable ? ' Playable.' : ''));
     wrapper.setAttribute('aria-pressed', String(!!selected));
 
@@ -839,15 +1077,22 @@ function renderHand(state, ui, stagger, draggable) {
     if (draggable.hand.has(cardId) && drag) {
       drag.attach(wrapper, { kind: 'hand', from: handAddr, cardId });
     }
+    // Where a hold gathers a meld, it cannot also open the inspector — two
+    // things on one gesture, and the one that changes the board must win.
+    // The card's description is still on its accessible name, and everywhere
+    // outside a rummy lay-down the long press means "what is this?" as before.
     attachInspector(wrapper, () => describeCard(card, state.pack),
-      { isBusy: () => !!drag && drag.isDragging() });
+      { isBusy: () => (!!drag && drag.isDragging()) || smartSelectArmed() });
 
     el.hand.appendChild(wrapper);
   });
 
+  prevHandIds = new Set(displayedHand);
+
   el.handSort.textContent = SORT_LABELS[handPrefs.mode] || SORT_LABELS.auto;
   el.handSort.setAttribute('aria-label', `Hand order: ${SORT_LABELS[handPrefs.mode]}. Change it.`);
   el.handSort.hidden = engineHand.length < 2;
+  renderStageTray(state, ui);
   layoutHand();
 }
 
@@ -913,6 +1158,204 @@ function watchHandWidth() {
   // Observing the ROW, not the hand: the hand's own width is what layoutHand
   // changes, so watching it would be a feedback loop.
   new ResizeObserver(() => { if (liveState) layoutHand(); }).observe(el.handRow);
+}
+
+/**
+ * Re-draw the ladder when the window crosses a width where it holds a
+ * different number of rungs. Only the ladder: everything else on the felt
+ * resizes through CSS variables and needs no help.
+ */
+function watchLadderWidth() {
+  if (typeof window.matchMedia !== 'function') return;
+  let budget = ladderBudget();
+  const recheck = () => {
+    const next = ladderBudget();
+    if (next === budget) return;
+    budget = next;
+    if (liveState) renderContractLadder(liveState);
+  };
+  for (const query of ['(max-width: 420px)', '(max-width: 720px)']) {
+    const mq = window.matchMedia(query);
+    if (mq.addEventListener) mq.addEventListener('change', recheck);
+    else if (mq.addListener) mq.addListener(recheck);
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * Reading the fan with a finger
+ * ------------------------------------------------------------------ */
+
+/**
+ * PEEK: the card under the finger rises out of the fan, before the finger is
+ * lifted, and follows the finger along the row.
+ *
+ * A fan overlaps, so all you can see of most cards is a strip down the left
+ * edge — on a phone, thinner than the finger covering it. `:hover` solves this
+ * for a mouse and does nothing for a touch, which left the player tapping a
+ * sliver and finding out afterwards what they had chosen. Raising on
+ * pointerDOWN turns a tap into look-then-commit: what you are on is legible
+ * while you are still on it, and sliding to a neighbour costs nothing.
+ *
+ * Hit-testing is by cached rect, not by event target: touch capture sends
+ * every move to the element the press began on, so the target is always the
+ * first card. The rects are measured once per press for the same reason the
+ * drag controller measures its targets once (issue #6) — the fan does not
+ * move while a finger is on it.
+ *
+ * The visible strip of card i runs from its own left edge to the NEXT card's,
+ * because later siblings paint over earlier ones; the last card owns its full
+ * width. That is exactly the region the player can see, which is what makes
+ * this feel like pointing at the card rather than at a hitbox.
+ */
+let peek = null;
+
+function paintPeek(wrapper) {
+  if (peek && peek.node === wrapper) return;
+  if (peek && peek.node) peek.node.classList.remove('card-face-wrap--peek');
+  if (peek) peek.node = wrapper;
+  if (wrapper) wrapper.classList.add('card-face-wrap--peek');
+}
+
+function clearPeek() {
+  disarmSmartSelect();
+  if (peek && peek.node) peek.node.classList.remove('card-face-wrap--peek');
+  peek = null;
+}
+
+/* ------------------------------------------------------------------ *
+ * Gathering a meld by holding one card
+ * ------------------------------------------------------------------ */
+
+/** How long a hold has to last to mean "and the rest of this meld". */
+const SMART_SELECT_MS = 500;
+
+/**
+ * HOLD A CARD TO GATHER ITS MELD.
+ *
+ * The last of the three answers to "assembling a meld on a phone is too
+ * cramped", and the one that skips the problem rather than easing it: the pack
+ * already knows that the two other sevens go with this seven, so picking them
+ * out of the fan by hand is work the rules could have done. Hold the seven and
+ * the group arrives in the tray.
+ *
+ * Only where the question means something — a rummy hand still choosing what
+ * to lay down. Everywhere else a long press keeps meaning "what is this card?"
+ * (src/ui/inspector.js), which the inspector's own veto is told about below.
+ *
+ * The gathered cards go through the ORDINARY selection, so this can no more
+ * construct an illegal lay-down than tapping the same cards could.
+ */
+function smartSelectArmed() {
+  return !!currentUi && currentUi.mode === 'rummy-meld' && currentUi.handMulti;
+}
+
+function disarmSmartSelect() {
+  if (peek && peek.hold) {
+    peek.hold.cancel();
+    peek.hold = null;
+  }
+}
+
+function armSmartSelect(wrapper) {
+  if (!smartSelectArmed() || !peek) return;
+  peek.hold = sessionSchedule(() => {
+    if (!peek) return;
+    peek.hold = null;
+    const cardId = wrapper.dataset.cardId;
+    const next = smartSelection(liveState, HUMAN_SEAT, cardId, selection);
+    if (!next) {
+      // Nothing in hand goes with it. Say so on the card rather than in words:
+      // a group that does not exist is not an error, just an answer.
+      wrapper.classList.add('card-face-wrap--nomatch');
+      sessionSchedule(() => wrapper.classList.remove('card-face-wrap--nomatch'), 400);
+      return;
+    }
+    const gathered = next.cardIds.length - (selection ? selection.cardIds.length : 0);
+    selection = next;
+    clearPeek();
+    // A full render: the gathered cards leave the fan for the tray.
+    render(liveState, `Gathered ${gathered} cards.`);
+  }, SMART_SELECT_MS);
+}
+
+/** The fan card whose VISIBLE strip contains `clientX`. */
+function cardStripAt(clientX) {
+  if (!peek || !peek.strips.length) return null;
+  const strips = peek.strips;
+  if (clientX < strips[0].left) return strips[0].node;
+  for (let i = 0; i < strips.length; i++) {
+    const right = i + 1 < strips.length ? strips[i + 1].left : strips[i].right;
+    if (clientX < right) return strips[i].node;
+  }
+  return strips[strips.length - 1].node;
+}
+
+function watchHandPeek() {
+  el.hand.addEventListener('pointerdown', (event) => {
+    if (event.button !== 0) return;
+    // Whatever the last press left behind. A pointerup can go missing — the
+    // finger leaves the window, a drag takes the gesture over — and a card
+    // left raised is a card claiming to be under a finger that is not there.
+    clearPeek();
+    const wrapper = event.target.closest?.('.card-face-wrap');
+    if (!wrapper || !el.hand.contains(wrapper)) return;
+    const strips = [...el.hand.children].map((node) => {
+      const r = node.getBoundingClientRect();
+      return { node, left: r.left, right: r.right };
+    });
+    peek = { node: null, strips, pointerId: event.pointerId, scrubbed: false, hold: null };
+    paintPeek(wrapper);
+    armSmartSelect(wrapper);
+  });
+
+  el.hand.addEventListener('pointermove', (event) => {
+    if (!peek || event.pointerId !== peek.pointerId) return;
+    const under = cardStripAt(event.clientX);
+    if (under && under !== peek.node) {
+      peek.scrubbed = true;
+      // The press has become a slide, so it is no longer a hold.
+      disarmSmartSelect();
+    }
+    if (under) paintPeek(under);
+  });
+
+  // A scrub that ended on a card other than the one pressed has to activate
+  // THAT card: the browser's click will name the press target, which is the
+  // whole thing the player was scrubbing away from.
+  const finish = (event) => {
+    if (!peek || event.pointerId !== peek.pointerId) return;
+    const landed = peek.node;
+    const scrubbed = peek.scrubbed;
+    clearPeek();
+    if (!scrubbed || !landed || !liveState || !currentUi) return;
+    const cardId = landed.dataset.cardId;
+    // Only what a tap could already have done — the same model, the same
+    // guard. A scrub is a nicer way to reach a card, never a second rules path.
+    if (!currentUi.handSelectable.has(cardId)) return;
+    const card = cardById(liveState, cardId);
+    if (!card) return;
+    swallowClick();
+    onHandCard(liveState, cardId, card, landed, currentUi);
+  };
+  el.hand.addEventListener('pointerup', finish);
+  el.hand.addEventListener('pointercancel', () => clearPeek());
+}
+
+/**
+ * Eat the click that a pointerup is about to fire on the PRESS target.
+ * Capturing, so it beats the card's own handler. Same shape and the same
+ * reason as the drag controller's — a scrub has already acted, and letting the
+ * click through would act again on the wrong card.
+ */
+function swallowClick() {
+  const eat = (event) => {
+    event.stopPropagation();
+    event.preventDefault();
+    window.removeEventListener('click', eat, true);
+    timer.cancel();
+  };
+  window.addEventListener('click', eat, true);
+  const timer = sessionSchedule(() => window.removeEventListener('click', eat, true), 400);
 }
 
 /**
@@ -991,6 +1434,50 @@ function statusTextFor(state, acting) {
   return acting.includes(HUMAN_SEAT) ? 'Your turn' : `${seatLabel(state.turn.seat)}'s turn`;
 }
 
+/**
+ * A SELECTION changed, and nothing else did.
+ *
+ * Picking a card up in your own hand moves no cards, scores nothing and ends
+ * no turn. What it changes is which things are lit: the card itself, the piles
+ * and melds that would accept it, and the action button. Everything else on
+ * the felt — every opponent's fan, every pile, the contract ladder — is
+ * identical before and after, and rebuilding it was the single most expensive
+ * thing a tap did (issue #6 §3): every card's SVG re-parsed, every listener
+ * re-attached, every animation restarted, and the fan re-measured.
+ *
+ * So this repaints the three things that moved and leaves the DOM alone. It is
+ * the same UI model a full render would have built — the model is pure and
+ * cheap; it was only ever the DOM that was expensive.
+ *
+ * NOT for anything that changes what the hand CONTAINS. Cards leaving or
+ * entering the fan change its child count, and the fan has to be rebuilt and
+ * re-measured for that; those paths still call render().
+ */
+function renderSelection(state) {
+  if (drag && drag.isDragging()) {
+    pendingRender = { state };
+    return;
+  }
+  selection = pruneSelection(state, selection);
+  const acting = actingSeatsOf(state);
+  const humanActs = acting.includes(HUMAN_SEAT);
+  const humanMoves = humanActs ? enumerateLegalMoves(state, HUMAN_SEAT) : [];
+  const ui = buildUiModel(state, { seat: HUMAN_SEAT, moves: humanMoves, acts: humanActs, selection });
+  currentUi = ui;
+
+  const handAddr = handAddress(HUMAN_SEAT);
+  const committedPass = state.playerVars[HUMAN_SEAT]?.__pendingPass || [];
+  for (const wrapper of el.hand.children) {
+    const cardId = wrapper.dataset.cardId;
+    const selected = isSelected(selection, handAddr, cardId) || committedPass.includes(cardId);
+    wrapper.classList.toggle('card-face-wrap--selected', selected);
+    wrapper.setAttribute('aria-pressed', String(selected));
+  }
+  for (const stack of el.screen.querySelectorAll('.pile-stack[data-zone]')) paintPileState(stack, ui);
+  for (const chip of el.screen.querySelectorAll('.meld-chip[data-meld]')) paintMeldState(chip, ui);
+  renderActionBar(state, ui, humanActs);
+}
+
 function render(state, message) {
   // A render mid-drag would replace the very node the pointer is holding.
   // Deferred, then replayed by the controller's settle callback.
@@ -1006,14 +1493,22 @@ function render(state, message) {
   const draggable = draggableSources(state, { seat: HUMAN_SEAT, acts: humanActs });
   const stagger = dealAnimation && motionAllowed();
 
+  currentUi = ui;
+
   renderStatusBar(state, acting);
   renderSeats(state, stagger, acting, ui);
   renderContractLadder(state);
   renderCenterZones(state, ui, draggable);
   renderPlayerZones(state, ui, draggable);
-  renderHand(state, ui, stagger, draggable);
+  // The two bars go BEFORE the hand, and the order is load-bearing: both
+  // toggle [hidden], and renderHand ends by measuring how much room the fan
+  // has. Measured with the previous render's bars still showing, the fan was
+  // laid out against a row of the wrong height — and if that flipped a
+  // scrollbar, against the wrong width too. The ResizeObserver then corrected
+  // it a frame later, which the player saw as the hand re-fanning itself.
   renderAnnounceBar(state);
   renderActionBar(state, ui, humanActs);
+  renderHand(state, ui, stagger, draggable);
   dealAnimation = false;
 
   // A game-ending move can arrive with no message (the human's own winning play) or a
@@ -1052,6 +1547,9 @@ function onDragLift(handle) {
   const card = cardById(state, handle.cardId);
   if (!card) return null;
   hideInspector();
+  // The drag owns the gesture from here; the peek raise would fight the ghost
+  // for the same card, and the hand's own pointerup may never arrive.
+  clearPeek();
 
   const acting = actingSeatsOf(state);
   const humanActs = acting.includes(HUMAN_SEAT);
@@ -1584,10 +2082,38 @@ function onHandCard(state, cardId, card, sourceNode, ui) {
     if (at !== -1) ids.splice(at, 1);
     else ids.push(cardId);
     selection = ids.length ? { from: handAddr, cardIds: ids } : null;
-  } else {
-    selection = isSelected(selection, handAddr, cardId) ? null : { from: handAddr, cardIds: [cardId] };
+    // The card moves between the fan and the tray, so the fan's child count
+    // changes and it has to be rebuilt and re-measured — the fast path below
+    // deliberately does neither. The flight covers the rebuild.
+    const from = rectOf(sourceNode);
+    render(state);
+    flyToStage(state, cardId, from);
+    return;
   }
-  render(state);
+  selection = isSelected(selection, handAddr, cardId) ? null : { from: handAddr, cardIds: [cardId] };
+  // Nothing moved — repaint what is lit rather than rebuilding the table.
+  renderSelection(state);
+}
+
+/**
+ * Carry a card between the fan and the tray, so the two rows read as one
+ * gesture rather than as the card vanishing from one place and appearing in
+ * another. `from` is measured BEFORE the render that moved it.
+ */
+function flyToStage(state, cardId, from) {
+  if (!from || !motionAllowed()) return;
+  const landed = el.stageTray.querySelector(`[data-card-id="${CSS.escape(cardId)}"]`)
+    || el.hand.querySelector(`[data-card-id="${CSS.escape(cardId)}"]`);
+  const to = rectOf(landed);
+  if (!to) return;
+  const card = cardById(state, cardId);
+  if (!card) return;
+  // Held invisible under the copy and revealed when it lands — the same
+  // clone-and-animate deal a played card gets. flyCard always resolves, so the
+  // card cannot be left permanently hidden.
+  landed.style.visibility = 'hidden';
+  flyCard(cardArt.face(card), from, to, { duration: 180 })
+    .then(() => { landed.style.visibility = ''; });
 }
 
 /* ------------------------------------------------------------------ *
@@ -1774,6 +2300,11 @@ function adoptMatch(pack, state, message) {
   // Before the first render, and from the PACK rather than the manifest alone:
   // the deck is what tells a style which colours it actually has to draw.
   cardArt = makeCardRenderer(pack.manifest, pack.cardsById);
+  // The parsed-SVG cache is keyed by markup the old renderer produced, so it
+  // is dead weight from here on — and left alone it would accumulate one
+  // entry per card per pack for as long as the tab is open.
+  svgTemplates.clear();
+  prevHandIds = new Set();
   // Who is at this table — derived from the match SEED, so a resumed game
   // re-seats the same opponents and a fresh deal brings new ones.
   seating = buildSeating(state.seed, state.seats, {
@@ -1891,7 +2422,18 @@ export function initTable({ onExit }) {
   exitToLobby = onExit;
   settings = loadSettings();
 
-  drag = createDragController({ layer: flightLayer, onLift: onDragLift, onSettle: onDragSettled });
+  drag = createDragController({
+    layer: flightLayer,
+    onLift: onDragLift,
+    onSettle: onDragSettled,
+    // The controller is deliberately SDK-free, so the session clock is handed
+    // to it rather than imported — same reasoning as the timers at §6c below.
+    schedule: sessionSchedule,
+    // Only a hand card can be scrubbed along; a pile top has no row to read.
+    classifyGesture: ({ dx, dy, handle }) => (
+      handle.kind === 'hand' ? classifyHandGesture({ dx, dy }) : 'drag'
+    ),
+  });
 
   initPanels({
     onContinueRound: () => dismissRoundSummary(),
@@ -1904,6 +2446,8 @@ export function initTable({ onExit }) {
   // has, and it is a custom property rather than a re-render — so reacting to
   // a width change costs two measurements, not a repaint of the table.
   watchHandWidth();
+  watchLadderWidth();
+  watchHandPeek();
 
   el.lobbyButton.addEventListener('click', () => exitToLobby());
   el.scoreChip.addEventListener('click', () => openScoreboard());

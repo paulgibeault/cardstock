@@ -119,6 +119,9 @@ body {
   font-family: system-ui, sans-serif;
   color: var(--chrome-text);
   min-height: 100vh;
+  /* Reserve the scrollbar's width whether or not one is showing, so arriving
+     at a scrolling lobby cannot resize the felt behind it. */
+  scrollbar-gutter: stable;
   display: flex;
   flex-direction: column;
   background:
@@ -136,6 +139,21 @@ body {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  /* THE TABLE NEVER SCROLLS THE PAGE.
+     body is `min-height: 100vh`, so a felt taller than the window grew the
+     DOCUMENT — and a document scrollbar takes ~15px off the width, which near
+     a breakpoint re-sized every card on the table. A pile gaining a card could
+     change how big the player's own hand was drawn.
+     Capping the screen at the viewport keeps that scrollbar off the document.
+     The overflow is contained rather than hidden: a window genuinely too short
+     for a pack should let the player reach the rest of the felt, not clip the
+     hand off the bottom. `scrollbar-gutter` reserves the room whether or not
+     that inner bar shows, so it cannot restart the loop one level down.
+     The lobby keeps its own scrolling; this rule clamps the felt only. */
+  max-height: 100vh;
+  max-height: 100dvh;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 #table-screen[hidden] { display: none; }
 
@@ -273,6 +291,11 @@ body {
   --pile-w: 90px;
   --hand-card-w: 70px;
   flex: 1;
+  /* Deliberately NOT `min-height: 0`. Letting the felt shrink below its
+     content does keep it inside the window, but it does it by sliding the
+     rows into each other — the deck ends up drawn over the contract ladder.
+     A row that cannot fit should be reachable, not overlapped, so the felt
+     keeps its natural height and #table-screen contains the overflow. */
   display: flex;
   flex-direction: column;
   gap: 1rem;
@@ -373,6 +396,7 @@ body {
 /* "Catch!" — the accusation, worn by the seat it accuses. Deliberately loud:
    the window is short and the whole mechanic is about noticing in time. */
 .seat__catch {
+  position: relative;
   display: block;
   width: 100%;
   margin-top: 0.4rem;
@@ -385,22 +409,81 @@ body {
   cursor: pointer;
   background: var(--danger-bg);
   color: #fff;
-  animation: catch-pulse 1s ease-in-out infinite;
 }
 .seat__catch:hover { background: var(--danger-bg-hover); }
 
-@keyframes catch-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.4); }
-  50% { box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.14); }
+.seat__catch::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.22);
+  opacity: 0;
+  pointer-events: none;
+  animation: ring-pulse 1s ease-in-out infinite;
 }
 
+/* ------------------------------------------------------------------ *
+ * Pulsing without repainting
+ * ------------------------------------------------------------------ */
+
+/* EVERY INFINITE PULSE ON THIS TABLE IS A FADING RING, NEVER A GROWING SHADOW.
+ *
+ * `box-shadow` is not a compositable property: animating it repaints the
+ * element's shadow region on the main thread, every frame, forever. The turn
+ * token alone is on screen for essentially the whole match, so four such
+ * animations meant the browser never reached idle — a rAF loop that never
+ * stops, expressed in CSS, costing battery on a phone even when nobody was
+ * touching the screen (issue #6 §2).
+ *
+ * The shape that costs nothing: put the ring on a pseudo-element with a
+ * STATIC box-shadow, and animate only its `opacity`. Opacity is compositor-
+ * only, so the ring is painted once and then faded by the GPU. The pseudo
+ * needs `pointer-events: none` — it covers its host, and a ring that ate the
+ * click would make the loudest button on the table the one that does nothing.
+ *
+ * `transform` is the other compositable property, which is why the announce
+ * button keeps its scale() in the element's own keyframes below. */
+@keyframes ring-pulse {
+  0%, 100% { opacity: 0; }
+  50% { opacity: 1; }
+}
+
+/* An opponent's hand, face down.
+ *
+ * THE SEAT'S WIDTH DOES NOT DEPEND ON HOW MANY CARDS IT HOLDS. `.opponent-row`
+ * centres its seats and wraps them, so a seat that grew by a card-width every
+ * draw shoved every other seat sideways — and past the row width, dropped one
+ * onto a second line and moved the whole table down. A hand you are not
+ * holding is a COUNT, drawn as a fan; it has no business setting the geometry
+ * of the felt. So the fan closes to fit `--mini-max` instead of spreading.
+ *
+ * That is the same shape as the player's own fan (fanStep, handOrder.js) with
+ * constants suited to a 28px card: half a card of spacing when there is room,
+ * closing as far as a fifth of a card when there is not. It stays in CSS
+ * rather than being measured in JS because `--mini-w` is set by the viewport
+ * breakpoints — a JS copy would have to re-read it, and would drift from it.
+ * renderSeats writes only `--mini-count`, which it already knows.
+ *
+ * The margin goes on the WRAPPER, not the card. Every back is its own <span>
+ * (svgNode), so `.card-face:first-child` matched all of them and the overlap
+ * silently never applied — the same trap the player's fan documents below.
+ * That is why a ten-card seat used to be 280px wide instead of 154px. */
 .mini-hand {
+  --mini-w: 28px;
+  --mini-max: 118px;
+  --mini-step: clamp(
+    calc(var(--mini-w) * 0.2),
+    calc((var(--mini-max) - var(--mini-w)) / max(1, var(--mini-count, 1) - 1)),
+    calc(var(--mini-w) / 2)
+  );
   display: flex;
   justify-content: center;
 }
 
-.mini-hand .card-face { width: 28px; margin-left: -14px; }
-.mini-hand .card-face:first-child { margin-left: 0; }
+.mini-hand > * { flex: none; }
+.mini-hand > *:not(:first-child) { margin-left: calc(var(--mini-step) - var(--mini-w)); }
+.mini-hand .card-face { width: var(--mini-w); display: block; }
 
 /* The middle of the table takes whatever is left between the seats and the
    hand, and holds however many shared piles the pack declares — one for
@@ -447,13 +530,20 @@ body {
 .pile-count {
   display: block;
   width: fit-content;
+  /* Capped to the pile it labels, so the BADGE can never be what decides how
+     much room the pile's column takes. An empty pile wears its name ("Discard
+     2") and a filled one wears a number, and letting the wider of those two
+     set the column meant a row of piles re-laid-out the moment a card landed
+     on one. `--pile-w` is a real length inherited from #table, so this is a
+     definite cap and a long name wraps onto a second line instead. */
+  max-width: var(--pile-w, 90px);
   margin: 0.5rem auto 0;
   padding: 0.05rem 0.45rem;
   border-radius: 999px;
   font-size: 0.72rem;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
-  white-space: nowrap;
+  text-align: center;
   background: var(--chip-bg);
   border: 1px solid var(--chip-border);
 }
@@ -486,14 +576,19 @@ button.pile-stack:not(:disabled) { cursor: pointer; }
 button.pile-stack:not(:disabled):hover { transform: translateY(-4px); }
 button.pile-stack:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
 
-.pile-stack--ready .pile-stack__top {
-  animation: pile-beckon 1.8s ease-in-out infinite;
+/* The beckon: a fading ring, per "Pulsing without repainting" above. The host
+   is `.pile-stack > *`, already `position: absolute; inset: 0`, so the ring
+   lands on the card's own box. */
+.pile-stack--ready .pile-stack__top { border-radius: 8px; }
+.pile-stack--ready .pile-stack__top::after {
+  content: "";
+  position: absolute;
+  inset: 0;
   border-radius: 8px;
-}
-
-@keyframes pile-beckon {
-  0%, 100% { box-shadow: 0 0 0 0 var(--glow); }
-  50% { box-shadow: 0 0 0 5px var(--glow); }
+  box-shadow: 0 0 0 5px var(--glow);
+  opacity: 0;
+  pointer-events: none;
+  animation: ring-pulse 1.8s ease-in-out infinite;
 }
 
 /* A pile whose top card can be picked up as a SOURCE (Stockpile's stock and
@@ -573,10 +668,15 @@ button.pile-stack:focus-visible { outline: 2px solid var(--accent); outline-offs
    rather than only the top one. Which piles do is a PACK decision
    (`ui.zoneOverlap`), not a template one — Stockpile's personal discards want
    to be read at a glance, a Crazy Eights discard is genuinely just a pile.
-   The box grows with the fan so a fanned pile never lies about how much room
-   it takes and never overlaps its neighbour. */
+   The box RESERVES the room a full fan needs rather than growing into it.
+   Sizing it to the cards actually present made every discard re-centre the
+   row it sits in — `#center-piles` and `#player-piles` both centre and wrap —
+   so playing a card visibly shoved its neighbours sideways. A pile is a place
+   on the table, and a place does not move because something landed on it. The
+   slot count is fixed (DISCARD_DEPTH − 1, written by buildPileNode); only
+   --overlap-index, which positions the cards inside it, still varies. */
 .pile-stack--overlap-v {
-  height: calc(var(--pile-w, 90px) * 1.4 + var(--overlap-count, 0) * var(--pile-w, 90px) * 0.34);
+  height: calc(var(--pile-w, 90px) * 1.4 + var(--overlap-slots, 0) * var(--pile-w, 90px) * 0.34);
 }
 .pile-stack--overlap-v .pile-stack__card {
   top: calc(var(--overlap-index, 0) * var(--pile-w, 90px) * 0.34);
@@ -586,7 +686,7 @@ button.pile-stack:focus-visible { outline: 2px solid var(--accent); outline-offs
 }
 
 .pile-stack--overlap-h {
-  width: calc(var(--pile-w, 90px) + var(--overlap-count, 0) * var(--pile-w, 90px) * 0.42);
+  width: calc(var(--pile-w, 90px) + var(--overlap-slots, 0) * var(--pile-w, 90px) * 0.42);
 }
 .pile-stack--overlap-h .pile-stack__card {
   left: calc(var(--overlap-index, 0) * var(--pile-w, 90px) * 0.42);
@@ -605,6 +705,56 @@ button.pile-stack:focus-visible { outline: 2px solid var(--accent); outline-offs
  * The hand
  * ------------------------------------------------------------------ */
 
+/* ------------------------------------------------------------------ *
+ * The staging tray
+ * ------------------------------------------------------------------ */
+
+/* Where cards wait between being chosen and being committed — a meld you are
+ * assembling, the three you are passing.
+ *
+ * The row keeps a FIXED HEIGHT whether or not it holds anything. It sits above
+ * the hand, so a tray that appeared when the first card was picked would shove
+ * the fan down mid-gesture, which is precisely the kind of thing this pass
+ * exists to stop. It costs a strip of felt and buys a board that does not move
+ * while you are using it.
+ *
+ * Cards here are full size and side by side, not fanned: the point of the tray
+ * is that what you have gathered is READABLE, which is the one thing a closed
+ * fan cannot offer. */
+#stage-row {
+  display: flex;
+  justify-content: center;
+  min-height: calc(var(--hand-card-w, 70px) * 1.4 + 0.7rem);
+}
+#stage-row[hidden] { display: none; }
+
+#stage-tray {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  padding: 0.35rem 0.5rem;
+  border-radius: 12px;
+  border: 1px dashed var(--chip-border);
+}
+/* Empty, the tray is a dotted outline saying "cards go here" rather than an
+   invisible gap that appears to do nothing. */
+#stage-tray:empty { border-style: dashed; opacity: 0.45; min-width: 8rem; }
+
+.stage-card {
+  display: block;
+  cursor: pointer;
+  transition: transform 0.15s ease;
+}
+.stage-card:hover { transform: translateY(-3px); }
+.stage-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 6px; }
+.stage-card .card-face {
+  display: block;
+  width: var(--hand-card-w, 70px);
+  filter: drop-shadow(0 0 5px var(--glow)) drop-shadow(0 3px 4px var(--card-shadow));
+}
+
 #hand-row {
   display: flex;
   justify-content: center;
@@ -613,10 +763,18 @@ button.pile-stack:focus-visible { outline: 2px solid var(--accent); outline-offs
 }
 
 /* The sort toggle sits at the fan's edge, and flips sides with handedness
-   along with everything else that has a side. */
+   along with everything else that has a side.
+
+   Its width is FIXED to the longest label it can wear. The row centres the fan
+   and the button as a group, and layoutHand subtracts the button's width from
+   the room the fan may use — so a label cycling "Deal order" → "By suit" →
+   "By rank" slid the whole hand sideways and re-fanned it, for pressing a
+   button that sorts cards. */
 .hand-sort {
   font: inherit;
   font-size: 0.7rem;
+  min-width: 6.2em;
+  text-align: center;
   padding: 0.2rem 0.55rem;
   margin-bottom: 0.6rem;
   border-radius: 999px;
@@ -681,6 +839,34 @@ button.pile-stack:focus-visible { outline: 2px solid var(--accent); outline-offs
 .card-face-wrap--selected.card-face-wrap--playable .card-face {
   transform: translateY(-14px);
   filter: drop-shadow(0 0 6px var(--accent)) drop-shadow(0 3px 4px var(--card-shadow));
+}
+
+/* THE CARD UNDER THE FINGER, RIGHT NOW.
+ *
+ * `:hover` above does this for a mouse. A finger has no hover, so on a phone
+ * the player was choosing from a row where each card shows a strip narrower
+ * than the finger covering it, and only found out what they had picked after
+ * committing. This raises the pressed card immediately and follows a finger
+ * sliding along the row (watchHandPeek in src/ui/table.js), which turns a tap
+ * into look-then-commit. Highest z-index of the three states: whatever else a
+ * card is, the one you are touching has to be the one you can see. */
+.hand .card-face-wrap--peek { z-index: 3; }
+.hand .card-face-wrap--peek .card-face,
+.hand .card-face-wrap--peek.card-face-wrap--playable .card-face,
+.hand .card-face-wrap--peek.card-face-wrap--selected .card-face {
+  transform: translateY(-20px) scale(1.06);
+}
+
+/* A held card that has nothing to be gathered with. Held on the card rather
+   than said in the hint, because the question was asked of that card and an
+   empty answer is not an error — see armSmartSelect in src/ui/table.js. */
+.hand .card-face-wrap--nomatch .card-face {
+  animation: nomatch-nudge 0.36s ease-in-out;
+}
+@keyframes nomatch-nudge {
+  0%, 100% { margin-left: 0; }
+  30% { margin-left: -5px; }
+  65% { margin-left: 4px; }
 }
 
 /* ------------------------------------------------------------------ *
@@ -776,6 +962,7 @@ body.is-dragging .card-face { cursor: grabbing; }
 /* Loud, and pulsing, because the window is measured in seconds and missing it
    costs you two cards. */
 .announce-button {
+  position: relative;
   font: inherit;
   font-size: 0.95rem;
   font-weight: 800;
@@ -791,9 +978,22 @@ body.is-dragging .card-face { cursor: grabbing; }
 .announce-button:hover { filter: brightness(1.08); }
 .announce-button:focus-visible { outline: 2px solid var(--chrome-text); outline-offset: 3px; }
 
+/* The scale stays on the element — transform composites. Only the 18px glow
+   moves to the ring (see "Pulsing without repainting"), because a blurred
+   shadow is the most expensive thing on this page to repaint per frame. */
 @keyframes announce-pulse {
-  0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 var(--accent); }
-  50% { transform: scale(1.05); box-shadow: 0 0 18px 2px var(--accent); }
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.05); }
+}
+.announce-button::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  box-shadow: 0 0 18px 2px var(--accent);
+  opacity: 0;
+  pointer-events: none;
+  animation: ring-pulse 1.1s ease-in-out infinite;
 }
 
 /* ------------------------------------------------------------------ *
@@ -812,8 +1012,20 @@ body.is-dragging .card-face { cursor: grabbing; }
   flex: none;
   display: inline-block;
   background: radial-gradient(circle at 35% 30%, #ffe9a8, var(--accent) 72%);
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.3), 0 0 6px var(--accent);
-  animation: token-pulse 1.6s ease-in-out infinite;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.3), 0 0 3px var(--accent);
+}
+/* ::after is the glyph, so the glow rides ::before. This is the pulse that
+   matters most: some seat is always acting, so the token is on screen for the
+   whole match and its repaint never stopped. */
+.turn-token::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  box-shadow: 0 0 12px var(--accent);
+  opacity: 0;
+  pointer-events: none;
+  animation: ring-pulse 1.6s ease-in-out infinite;
 }
 .turn-token::after {
   content: "\25B6"; /* ▶ */
@@ -826,10 +1038,6 @@ body.is-dragging .card-face { cursor: grabbing; }
   color: #4a3200;
 }
 
-@keyframes token-pulse {
-  0%, 100% { box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.3), 0 0 3px var(--accent); }
-  50% { box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.3), 0 0 12px var(--accent); }
-}
 
 /* ------------------------------------------------------------------ *
  * The action bar
@@ -917,6 +1125,7 @@ body.is-dragging .card-face { cursor: grabbing; }
   gap: 0.4rem;
 }
 .meld-chip {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -946,7 +1155,19 @@ body.is-dragging .card-face { cursor: grabbing; }
 .meld-chip--ready {
   cursor: pointer;
   border-color: var(--accent);
-  animation: pile-beckon 1.8s ease-in-out infinite;
+}
+/* The same fading ring the ready piles wear — see "Pulsing without
+   repainting". Several chips can be ready at once, which made this the
+   highest-multiplicity of the four box-shadow animations. */
+.meld-chip--ready::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 8px;
+  box-shadow: 0 0 0 5px var(--glow);
+  opacity: 0;
+  pointer-events: none;
+  animation: ring-pulse 1.8s ease-in-out infinite;
 }
 .meld-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
@@ -973,15 +1194,45 @@ body.is-dragging .card-face { cursor: grabbing; }
  * it was a two-character chip on a name plate. The ladder makes the whole
  * course visible and puts each player's face on the rung they are actually
  * standing on. Rendered only for packs that declare `rules.contracts`. */
+/* ONE LINE, ALWAYS. Ten rungs do not fit across a phone, and letting them wrap
+   cost the felt a whole row of height — the row the hand needs. The ladder is
+   truncated instead (ladderRungs in src/ui/interaction.js decides what may be
+   dropped), so `nowrap` here is the constraint that truncation exists to
+   satisfy rather than a hope that it fits. */
 #contract-ladder {
   flex: none;
   display: flex;
   justify-content: center;
   align-items: stretch;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 0.3rem;
 }
 #contract-ladder[hidden] { display: none; }
+
+/* A run of collapsed rungs. Still a target: holding it names every contract it
+   stands for, and anyone standing in it rides along as a tucked pip — see
+   renderContractLadder for why that is what makes collapsing safe. */
+.ladder__gap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.1rem;
+  padding: 0 0.1rem;
+}
+.ladder__gap-mark {
+  font-size: 0.75rem;
+  font-weight: 700;
+  opacity: 0.45;
+  letter-spacing: -0.05em;
+}
+/* Smaller than a rung's pip: these players are somewhere in here, not on a
+   named contract, and the size difference is what says so. */
+.ladder__pip--tucked {
+  width: 0.8rem;
+  height: 0.8rem;
+  font-size: 0.5rem;
+}
 
 .ladder__rung {
   display: flex;
@@ -1045,6 +1296,13 @@ body.is-dragging .card-face { cursor: grabbing; }
   .ladder__rung { min-width: 2.5rem; font-size: 0.62rem; padding: 0.2rem 0.25rem; }
   .ladder__pip { width: 0.9rem; height: 0.9rem; font-size: 0.55rem; }
   .ladder__key { display: none; }
+}
+
+/* Phones: the ladder cannot wrap, so what it gives up here is padding rather
+   than a row. maxRungs in ladderRungs is measured against these numbers. */
+@media (max-width: 420px) {
+  .ladder__rung { min-width: 2.2rem; padding: 0.18rem 0.2rem; }
+  .ladder__pip--tucked { width: 0.72rem; height: 0.72rem; }
 }
 
 /* ------------------------------------------------------------------ *
@@ -1118,9 +1376,45 @@ body.is-dragging .card-face { cursor: grabbing; }
   80% { transform: translateX(-3px); }
 }
 
-/* Narrow screens: everything on the felt steps down together (the sizes all
-   derive from the two variables on #table), and the pile gaps tighten. This
-   is what keeps Stockpile's nine piles on a phone. */
+/* ------------------------------------------------------------------ *
+ * Stepping the whole felt down
+ * ------------------------------------------------------------------ */
+
+/* Everything on the table derives from the two variables on #table, so a
+ * viewport gets smaller cards by changing those two numbers and nothing else.
+ *
+ * BOTH AXES CONSTRAIN, AND THE TIGHTER ONE MUST WIN. A table is a horizontal
+ * problem — Stockpile's deck plus four builds have to fit on one line — and
+ * equally a vertical one: seats, shared piles, your own piles, the action bar
+ * and your hand are a stack, and Milestones adds melds AND a contract ladder
+ * to it. Past a point the hand slides off the bottom, which is the one row a
+ * player cannot do without.
+ *
+ * THESE FOUR BLOCKS ARE ORDERED BY THE SIZE THEY PRODUCE, LARGEST FIRST, AND
+ * THE ORDER IS LOAD-BEARING. They have identical specificity, so on a viewport
+ * matching several of them the last one wins — and since each is smaller than
+ * the one above, "last match wins" is exactly "the tightest constraint wins".
+ * Grouping them by axis instead is what broke it: a 390x750 phone matches both
+ * width rules and the 800px-tall rule, and with the height rules written last
+ * it took 74/60px cards — BIGGER than the 52/46 the phone rule intends — which
+ * then overflowed, raised a scrollbar, narrowed the viewport, and could flip
+ * the breakpoint back mid-game. */
+
+/* Short: a laptop window, or a phone in landscape. */
+@media (max-height: 800px) {
+  #table {
+    --pile-w: 74px;
+    --hand-card-w: 60px;
+    gap: 0.5rem;
+    padding: 0.7rem 0.9rem;
+    margin: 0.4rem;
+  }
+  .opponent-row { gap: 0.8rem; }
+  .pile-count { margin-top: 0.35rem; }
+  .ladder__rung { padding: 0.15rem 0.3rem 0.12rem; gap: 0; }
+}
+
+/* Narrow: tablets and split-screen. The pile gaps tighten too. */
 @media (max-width: 720px) {
   #table {
     --pile-w: 62px;
@@ -1133,6 +1427,34 @@ body.is-dragging .card-face { cursor: grabbing; }
   .opponent-row { gap: 0.6rem; }
 }
 
+/* Very short: everything the vertical stack can give back.
+   The cards are the LAST thing to shrink — what goes first is the space
+   between things, because a felt with tight margins still reads as a table
+   and a felt you have to scroll does not. */
+@media (max-height: 660px) {
+  #table {
+    --pile-w: 58px;
+    --hand-card-w: 50px;
+    gap: 0.35rem;
+    padding: 0.45rem 0.6rem;
+    margin: 0.35rem;
+  }
+  /* Only the card width: the overlap is derived from it (see .mini-hand). */
+  .mini-hand { --mini-w: 22px; --mini-max: 96px; }
+  .seat { padding: 0.3rem 0.4rem 0.35rem; }
+  .ladder__rung { font-size: 0.6rem; min-width: 2.4rem; }
+  .ladder__pip { width: 0.9rem; height: 0.9rem; font-size: 0.55rem; }
+  .hand { padding: 0.3rem; }
+  .pile-count { margin-top: 0.3rem; }
+  /* The tray reserves its height whether or not it holds anything, so on a
+     short screen it is charged for during every turn of a lay-down phase.
+     Smaller cards here, not a collapsing row — a tray that appeared on the
+     first pick would shove the fan down mid-gesture. */
+  #stage-row { min-height: calc(var(--hand-card-w, 70px) * 1.1 + 0.5rem); }
+  .stage-card .card-face { width: calc(var(--hand-card-w, 70px) * 0.78); }
+  #stage-tray { padding: 0.25rem 0.4rem; }
+}
+
 /* Phones: small enough that Stockpile's deck-plus-four-builds row still fits
    on one line (5 × 52px + gaps < 375px). */
 @media (max-width: 420px) {
@@ -1142,42 +1464,42 @@ body.is-dragging .card-face { cursor: grabbing; }
   .pile--mini { --pile-w: 24px; }
 }
 
-/* SHORT WINDOWS STEP DOWN TOO.
- *
- * The felt has always scaled with WIDTH, and that was only ever half the
- * problem: a table is a vertical stack of rows — seats, shared piles, your own
- * piles, the action bar, your hand — and every row a pack adds (Milestones
- * puts melds AND a contract ladder on screen) costs height that no width
- * breakpoint gives back. Past a point the hand slides off the bottom, which is
- * the one row a player cannot do without.
- *
- * Same mechanism as the width rules, on purpose: the two variables on #table
- * drive every card and pile, so shrinking them steps the whole table down
- * together rather than letting one row win an argument with the others. */
-@media (max-height: 800px) {
+/* The smallest phones still in the wild, 320px.
+   A WRAPPED ROW COSTS FAR MORE HEIGHT THAN SMALLER CARDS DO. Stockpile puts
+   five piles in a row twice over, and at 52px they no longer fit across — so
+   each row folded in two and the felt grew by hundreds of pixels for want of
+   a few. This is the floor: below it the cards would stop being readable, and
+   scrolling would genuinely be the better trade. */
+@media (max-width: 360px) {
   #table {
-    --pile-w: 74px;
-    --hand-card-w: 60px;
-    gap: 0.6rem;
-    padding: 0.8rem 0.9rem;
-    margin: 0.55rem;
+    --pile-w: 44px;
+    --hand-card-w: 40px;
+    gap: 0.3rem;
+    padding: 0.4rem 0.3rem;
+    margin: 0.3rem;
   }
-  .opponent-row { gap: 0.8rem; }
-  .pile-count { margin-top: 0.35rem; }
-  .ladder__rung { padding: 0.15rem 0.3rem 0.12rem; gap: 0; }
-}
-
-@media (max-height: 660px) {
-  #table {
-    --pile-w: 58px;
-    --hand-card-w: 50px;
-    gap: 0.4rem;
-    padding: 0.6rem 0.7rem;
-  }
-  .mini-hand .card-face { width: 22px; margin-left: -11px; }
-  .seat { padding: 0.3rem 0.4rem 0.35rem; }
-  .ladder__rung { font-size: 0.6rem; min-width: 2.4rem; }
-  .ladder__pip { width: 0.9rem; height: 0.9rem; font-size: 0.55rem; }
+  #center-piles { gap: 0.3rem 0.35rem; }
+  #player-piles { gap: 0.25rem 0.3rem; }
+  .pile--mini { --pile-w: 20px; }
+  .mini-hand { --mini-w: 20px; --mini-max: 76px; }
+  .seat { padding: 0.25rem 0.3rem 0.3rem; }
+  .seat__head { gap: 0.3rem; }
+  .ladder__rung { min-width: 2rem; padding: 0.15rem; }
+  /* Two seats side by side or two seats stacked — and stacked costs a whole
+     seat's height. A laid-down opponent's meld strip is what decides which,
+     so it gives up card size before the row gives up its shape. */
+  .meld-strip--mini .meld-chip { padding: 0.15rem 0.2rem; }
+  .meld-strip--mini .meld-chip__card { width: 20px; }
+  .meld-strip--mini .meld-chip__card:not(:first-child) { margin-left: -9px; }
+  .meld-strip--mini .meld-chip__card .card-face { width: 20px; }
+  .meld-strip--mini .meld-chip__label { font-size: 0.46rem; }
+  /* The hint is a sentence, and a sentence that wraps costs a whole line of
+     felt. Smaller type keeps it on one. */
+  #action-bar { padding: 0.3rem 0.7rem; font-size: 0.78rem; gap: 0.45rem; }
+  /* The chrome bar is not the game, and at this width it was wrapping to two
+     lines and charging the felt for both. */
+  #status-bar { padding: 0.35rem 0.5rem; font-size: 0.82rem; gap: 0.35rem; }
+  #game-name { font-size: 0.9em; }
 }
 
 /* `card-face` is the class on the SVG ELEMENT itself (src/ui/cardStyles) —
@@ -1186,8 +1508,17 @@ body.is-dragging .card-face { cursor: grabbing; }
    every card on the table was shadowless. */
 .card-face {
   display: inline-block;
-  animation: settle-in 0.22s ease-out;
   filter: drop-shadow(0 3px 4px var(--card-shadow));
+}
+
+/* A card that has just ARRIVED settles onto the felt. This used to be on
+   `.card-face` itself, which meant every card on the table replayed it on
+   every render — and since a render rebuilds every node, that was every state
+   change, including merely selecting a card. The whole table twitched because
+   you tapped one thing in it. renderHand adds this class only to ids the hand
+   did not hold a moment ago. */
+.card-face--fresh {
+  animation: settle-in 0.22s ease-out;
 }
 
 .card-face-wrap.card-deal,
@@ -1216,7 +1547,8 @@ body.is-dragging .card-face { cursor: grabbing; }
    which is a different signal and the only one a standalone visit has. Both are
    needed; the JS-driven deal stagger is gated separately in src/main.js. */
 @media (prefers-reduced-motion: reduce) {
-  .card-face,
+  .card-face--fresh,
+  .card-face-wrap--nomatch .card-face,
   .card-face-wrap.card-deal,
   .mini-hand .card-deal .card-face,
   .seat--active .seat__name,
@@ -1236,6 +1568,19 @@ body.is-dragging .card-face { cursor: grabbing; }
   #scoreboard-overlay .panel,
   #game-over-overlay .panel {
     animation: none !important;
+  }
+
+  /* The pulses now live on pseudo-element rings, and stopping the animation
+     alone would freeze one at whatever opacity it happened to hold. Hidden
+     outright: the thing each ring emphasises is already said by a colour — the
+     accent border, the red catch button, the gold token. */
+  .seat__catch::after,
+  .announce-button::after,
+  .turn-token::before,
+  .pile-stack--ready .pile-stack__top::after,
+  .meld-chip--ready::after {
+    animation: none !important;
+    opacity: 0;
   }
 
   /* A card in flight is JS-driven and gated in src/ui/flight.js; what is left

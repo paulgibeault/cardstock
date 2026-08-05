@@ -467,6 +467,83 @@ const contractRummy = {
     return null;
   },
 
+  /**
+   * The cards in `seat`'s hand that would go WITH `cardId` toward one item of
+   * their current contract — the group a player would gather by hand.
+   *
+   * Exists because gathering a meld is the hardest thing to do on a phone: a
+   * ten-card fan gives each card a strip about a third as wide as a finger is
+   * accurate, and a set of three means finding two more slivers that match one
+   * you can barely see. Holding a card asks this question instead, and the
+   * answer is a group the player can accept or put back.
+   *
+   * A SUGGESTION, NOT A DECISION. It returns cards, never a move; the caller
+   * feeds them to the ordinary selection, and arrangeContract above remains
+   * the only thing that decides a lay-down is legal. Nothing here can produce
+   * a play the player could not have assembled by tapping.
+   *
+   * The search is findMeldForItem, unchanged, with its input narrowed to cards
+   * that could share a meld with the pressed one — same rank for a set, same
+   * colour for a colour group, a reachable rank window for a run — and the
+   * pressed card first, because both branches take the first candidate they
+   * see and that is what guarantees it ends up in the answer.
+   *
+   * A wild returns null on purpose: a wild belongs to whichever meld you
+   * decide to spend it on, so "the cards that go with this one" has no answer
+   * the player has not already given.
+   *
+   * @param exclude cards already spoken for by a meld gathered earlier. A
+   *                contract is several items and they are gathered one at a
+   *                time, so the second group must be built from what the first
+   *                LEFT — otherwise a hold that reaches for the same wild
+   *                twice hands back a selection no lay-down can use.
+   * @returns { item, cards: [cardId, ...] } | null
+   */
+  suggestMeld(ctx, seat, cardId, { exclude = [] } = {}) {
+    const contract = ctx.rules.contracts?.[ctx.playerVar(seat, 'phase') - 1];
+    const pressed = ctx.cardById(cardId);
+    if (!contract || !pressed || isWildCard(ctx, pressed)) return null;
+
+    const spent = new Set(exclude);
+    spent.delete(cardId);
+    const hand = ctx.cardIdsIn(ctx.zoneAddr('hand', seat))
+      .filter((id) => !spent.has(id))
+      .map((id) => ({ id, card: ctx.cardById(id) }))
+      .filter((c) => c.card);
+    if (!hand.some((c) => c.id === cardId)) return null;
+
+    const wilds = hand.filter((c) => isWildCard(ctx, c.card));
+    const naturals = hand.filter((c) => !isWildCard(ctx, c.card) && c.id !== cardId);
+    const self = hand.find((c) => c.id === cardId);
+    const pressedRank = Number(pressed.rank);
+
+    for (const item of contract) {
+      const parsed = parseItem(item);
+      if (!parsed) continue;
+      let kin;
+      if (parsed.kind === 'set') {
+        kin = naturals.filter((c) => c.card.rank === pressed.rank);
+      } else if (parsed.kind === 'colorGroup') {
+        kin = naturals.filter((c) => c.card.color === pressed.color);
+      } else if (parsed.kind === 'run') {
+        if (Number.isNaN(pressedRank)) continue;
+        // Only ranks that could share a window of this length with the pressed
+        // one; anything further out cannot be in the same run whatever else is.
+        kin = naturals.filter((c) => {
+          const r = Number(c.card.rank);
+          return !Number.isNaN(r) && Math.abs(r - pressedRank) < parsed.n;
+        });
+      } else {
+        continue;
+      }
+      const found = findMeldForItem(ctx, parsed, [self, ...kin, ...wilds]);
+      // The narrowing makes this near-certain, but a run window can still slide
+      // off the pressed rank — so it is checked rather than assumed.
+      if (found && found.includes(cardId)) return { item, cards: found };
+    }
+    return null;
+  },
+
   enumerateLegalMoves(ctx, seat) {
     const moves = [];
     if (ctx.turn.phase === 'draw') {

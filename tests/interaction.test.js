@@ -23,9 +23,11 @@ import {
   interactionMode, buildUiModel, dropCandidates, draggableSources,
   pruneSelection, isSelected, handAddress, implicitLandingZone,
   shortContract, shortContractItem, describeContract, describeContractItem,
+  ladderRungs,
 } from "../src/ui/interaction.js";
 import {
   orderHand, applyManual, reorder, nextMode, fanStep, fanWidth, SORT_MODES,
+  classifyHandGesture,
 } from "../src/ui/handOrder.js";
 
 function packFromDisk(packId) {
@@ -328,4 +330,204 @@ test("an unrecognised contract item degrades to its own text rather than vanishi
   assert.strictEqual(shortContractItem(""), "");
   assert.strictEqual(shortContract([]), "");
   assert.strictEqual(describeContract(undefined), "");
+});
+
+/* ------------------------------------------------------------------ *
+ * Reading the fan with a finger
+ * ------------------------------------------------------------------ */
+
+// A press on a hand card can become two different things, and the fan is the
+// only place in the game where that is true. Getting it wrong in one direction
+// costs a snap-back; in the other it drops a card the player was carrying.
+
+test("sliding along the fan reads it; lifting off it drags", () => {
+  // Straight along the row, either way.
+  assert.strictEqual(classifyHandGesture({ dx: 40, dy: 0 }), "scrub");
+  assert.strictEqual(classifyHandGesture({ dx: -40, dy: 0 }), "scrub");
+  // Straight up or down, off the row.
+  assert.strictEqual(classifyHandGesture({ dx: 0, dy: -40 }), "drag");
+  assert.strictEqual(classifyHandGesture({ dx: 0, dy: 40 }), "drag");
+});
+
+test("a diagonal lift stays a drag — a wrist pivots", () => {
+  // 45 degrees is NOT enough to mean "reading": a finger pulling a card up and
+  // out arrives with real sideways travel, and misreading that as a scrub would
+  // drop the card the player meant to play.
+  assert.strictEqual(classifyHandGesture({ dx: 30, dy: -30 }), "drag");
+  assert.strictEqual(classifyHandGesture({ dx: -30, dy: -30 }), "drag");
+  // Horizontal has to clearly dominate before it counts.
+  assert.strictEqual(classifyHandGesture({ dx: 30, dy: -20 }), "drag");   // ratio 1.5, not >
+  assert.strictEqual(classifyHandGesture({ dx: 31, dy: -20 }), "scrub");  // just over
+});
+
+test("a gesture with no vertical component at all is a scrub, not a divide by zero", () => {
+  assert.strictEqual(classifyHandGesture({ dx: 7, dy: 0 }), "scrub");
+  // And no movement at all is a drag, so a press that somehow reports zero
+  // travel cannot silently swallow the card.
+  assert.strictEqual(classifyHandGesture({ dx: 0, dy: 0 }), "drag");
+});
+
+/* ------------------------------------------------------------------ *
+ * Fitting the contract ladder on one line
+ * ------------------------------------------------------------------ */
+
+// Ten rungs do not fit across a phone, and wrapping cost the felt the row the
+// hand needs. Truncation is only acceptable if the four things a player reads
+// the ladder FOR always survive it, so that is what these pin.
+
+/** The phases a rendered ladder actually shows. */
+function shown(entries) {
+  return entries.filter((e) => e.kind === "rung").map((e) => e.phase);
+}
+
+test("the ladder always shows where you are and what is next", () => {
+  const entries = ladderRungs(10, { minePhase: 4, occupied: [4] });
+  assert.ok(shown(entries).includes(4), "your own contract went missing");
+  assert.ok(shown(entries).includes(5), "the contract you are racing toward went missing");
+});
+
+test("the ladder shows every rung somebody is standing on while there is room", () => {
+  const occupied = [2, 6, 9];
+  const entries = ladderRungs(10, { minePhase: 2, occupied });
+  for (const phase of occupied) {
+    assert.ok(shown(entries).includes(phase), `lost the player on contract ${phase}`);
+  }
+});
+
+test("a player squeezed off the ladder is inside a marker, never nowhere", () => {
+  // Six seats can stand on six different rungs and no arrangement of ten fits
+  // a phone, so the budget is a hard cap. It is only safe because the renderer
+  // draws the hidden players' pips on the marker covering them — which means
+  // every occupied rung must be either shown or inside some gap's range.
+  const occupied = [1, 2, 4, 6, 8, 10];
+  for (let mine = 1; mine <= 10; mine++) {
+    const entries = ladderRungs(10, { minePhase: mine, occupied: [...occupied, mine] });
+    const visible = new Set(shown(entries));
+    const gaps = entries.filter((e) => e.kind === "gap");
+    for (const phase of [...occupied, mine]) {
+      const covered = visible.has(phase)
+        || gaps.some((g) => phase >= g.from && phase <= g.to);
+      assert.ok(covered, `player on ${phase} is unreachable at mine=${mine}`);
+    }
+    assert.ok(visible.has(mine), `your own contract was squeezed out at mine=${mine}`);
+  }
+});
+
+test("the rung budget is never exceeded, however crowded the ladder", () => {
+  for (let mine = 1; mine <= 10; mine++) {
+    for (const budget of [1, 3, 6]) {
+      const entries = ladderRungs(10, {
+        minePhase: mine, occupied: [1,2,3,4,5,6,7,8,9,10], maxRungs: budget,
+      });
+      assert.ok(shown(entries).length <= budget,
+        `mine=${mine} budget=${budget} kept ${shown(entries).length}`);
+      assert.ok(shown(entries).includes(mine), "your own contract must survive any budget");
+    }
+  }
+});
+
+test("the ladder always shows how long the course is", () => {
+  const entries = ladderRungs(10, { minePhase: 5, occupied: [5] });
+  assert.ok(shown(entries).includes(1), "lost the first rung");
+  assert.ok(shown(entries).includes(10), "lost the last rung");
+});
+
+test("empty stretches collapse into one marker that says what it covers", () => {
+  // Everyone on contract 1 of ten: 3..9 is the compressible part.
+  const entries = ladderRungs(10, { minePhase: 1, occupied: [1] });
+  assert.deepStrictEqual(entries, [
+    { kind: "rung", phase: 1 },
+    { kind: "rung", phase: 2 },
+    { kind: "gap", from: 3, to: 9 },
+    { kind: "rung", phase: 10 },
+  ]);
+});
+
+test("the nearest rival is the one that keeps its rung", () => {
+  // Racing is local: the player one ahead of you matters more than the one
+  // five behind, so a tight budget spends its last rung on the former.
+  const entries = ladderRungs(10, { minePhase: 5, occupied: [5, 6, 1], maxRungs: 3 });
+  const visible = shown(entries);
+  assert.ok(visible.includes(5), "your own rung");
+  assert.ok(visible.includes(10), "the finish line");
+  assert.ok(visible.includes(6), "the rival one rung ahead");
+  assert.ok(!visible.includes(1), "the distant rival should have been collapsed first");
+});
+
+test("a collapsed run never swallows a rung that is being shown", () => {
+  // Every gap must sit strictly between two shown rungs and cover only phases
+  // that are not shown — otherwise the marker is lying about what it hides.
+  for (let mine = 1; mine <= 10; mine++) {
+    const entries = ladderRungs(10, { minePhase: mine, occupied: [mine, 3, 8] });
+    const visible = new Set(shown(entries));
+    for (const e of entries) {
+      if (e.kind !== "gap") continue;
+      assert.ok(e.from <= e.to, `empty gap at mine=${mine}`);
+      for (let p = e.from; p <= e.to; p++) {
+        assert.ok(!visible.has(p), `gap ${e.from}-${e.to} covers visible rung ${p}`);
+      }
+    }
+  }
+});
+
+test("every contract is accounted for exactly once, shown or collapsed", () => {
+  // The ladder may compress the course but must never lose a rung off it.
+  for (let mine = 1; mine <= 10; mine++) {
+    const entries = ladderRungs(10, { minePhase: mine, occupied: [mine, 5] });
+    const seen = [];
+    for (const e of entries) {
+      if (e.kind === "rung") seen.push(e.phase);
+      else for (let p = e.from; p <= e.to; p++) seen.push(p);
+    }
+    seen.sort((a, b) => a - b);
+    assert.deepStrictEqual(seen, [1,2,3,4,5,6,7,8,9,10], `mine=${mine}`);
+  }
+});
+
+test("a ladder that already fits is left alone", () => {
+  const entries = ladderRungs(4, { minePhase: 2, occupied: [1, 2, 3, 4] });
+  assert.deepStrictEqual(shown(entries), [1, 2, 3, 4]);
+  assert.ok(!entries.some((e) => e.kind === "gap"));
+});
+
+test("a ladder with no deal yet still draws its ends", () => {
+  const entries = ladderRungs(10, {});
+  assert.deepStrictEqual(entries, [
+    { kind: "rung", phase: 1 },
+    { kind: "gap", from: 2, to: 9 },
+    { kind: "rung", phase: 10 },
+  ]);
+});
+
+test("degenerate ladders do not produce stray markers", () => {
+  assert.deepStrictEqual(ladderRungs(0, {}), []);
+  assert.deepStrictEqual(ladderRungs(1, { minePhase: 1, occupied: [1] }),
+    [{ kind: "rung", phase: 1 }]);
+  assert.deepStrictEqual(ladderRungs(2, { minePhase: 1, occupied: [1] }),
+    [{ kind: "rung", phase: 1 }, { kind: "rung", phase: 2 }]);
+});
+
+test("the real packs' ladders truncate to something that fits a phone", () => {
+  // The whole point is a single row. Six items is what the 375px felt holds at
+  // the phone breakpoint; more than that and nowrap starts clipping.
+  for (const packId of PACKS) {
+    const state = tableFor(packId);
+    const contracts = state.pack.rules.contracts;
+    if (!Array.isArray(contracts) || !contracts.length) continue;
+    for (let mine = 1; mine <= contracts.length; mine++) {
+      const entries = ladderRungs(contracts.length, {
+        minePhase: mine,
+        // Worst case: every other seat on a different rung of its own.
+        occupied: [mine, ((mine + 2) % contracts.length) + 1, ((mine + 5) % contracts.length) + 1],
+      });
+      // The widest the ladder can get is every kept rung separated by a
+      // marker. Pinned as a SHAPE rather than a pixel model, because the
+      // pixels live in table.css and the fit is verified on the real felt —
+      // this is here to catch the rule quietly deciding to keep more.
+      const rungs = entries.filter((e) => e.kind === "rung").length;
+      assert.ok(rungs <= 5, `${packId} at phase ${mine} kept ${rungs} rungs`);
+      assert.ok(entries.length <= 2 * rungs,
+        `${packId} at phase ${mine} produced ${entries.length} items for ${rungs} rungs`);
+    }
+  }
 });
