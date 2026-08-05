@@ -45,25 +45,24 @@
   </main>
 
   <div id="table-screen" hidden>
+    <!-- Three items, one line, always. The bar sits above the felt in a
+         viewport-capped flex column, so a bar that grows a second line pushes
+         the whole table down under the player's hand mid-turn. Nothing here
+         may wrap, and nothing else belongs here: the variant's name is in the
+         launcher title bar, and abandoning a game is the lobby's door
+         (src/ui/lobby.js, the tile's "Start over"). -->
     <div id="status-bar">
-      <div class="status-bar__side">
-        <button id="lobby-button" class="ghost-button" aria-label="Back to the lobby">
-          <span aria-hidden="true">←</span> Lobby
-        </button>
-        <span id="game-name" class="status-bar__game"></span>
-      </div>
-      <div class="status-bar__side">
-        <span id="status-text">Loading…</span>
-        <!-- Your score, always on screen, and the way into the full sheet.
-             A number you have to open a menu to see is a number you stop
-             checking. -->
-        <button type="button" id="score-chip" class="score-chip" hidden>
-          <span id="score-chip-value"></span>
-        </button>
-        <button type="button" id="forfeit-button" class="ghost-button ghost-button--quiet" hidden>
-          Forfeit
-        </button>
-      </div>
+      <button id="lobby-button" class="ghost-button" aria-label="Back to the lobby">
+        <span aria-hidden="true">←</span> Lobby
+      </button>
+      <span id="status-text">Loading…</span>
+      <!-- Your score, always on screen, and the way into the full sheet.
+           A number you have to open a menu to see is a number you stop
+           checking. -->
+      <button type="button" id="score-chip" class="score-chip" hidden>
+        <span class="score-chip__label">You</span>
+        <span id="score-chip-value"></span>
+      </button>
     </div>
 
     <div id="table">

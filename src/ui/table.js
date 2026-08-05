@@ -53,7 +53,7 @@ import { makeCardRenderer } from './cardStyles/index.js';
 import { fetchPack } from './packSource.js';
 import { flyCard, landOn, motionAllowed, flightLayer } from './flight.js';
 import { safeCssColor } from './css.js';
-import { confirmAction, closeConfirm } from './confirm.js';
+import { closeConfirm } from './confirm.js';
 import { createDragController } from './dragController.js';
 import { attachInspector, hideInspector } from './inspector.js';
 import {
@@ -104,11 +104,9 @@ const el = {
   screen: document.getElementById('table-screen'),
   status: document.getElementById('status-bar'),
   statusText: document.getElementById('status-text'),
-  gameName: document.getElementById('game-name'),
   lobbyButton: document.getElementById('lobby-button'),
   scoreChip: document.getElementById('score-chip'),
   scoreChipValue: document.getElementById('score-chip-value'),
-  forfeitButton: document.getElementById('forfeit-button'),
   opponentsTop: document.getElementById('opponents-top'),
   centerPiles: document.getElementById('center-piles'),
   playerPiles: document.getElementById('player-piles'),
@@ -204,11 +202,6 @@ let announceTimers = [];
 const botCallDecision = new Map();
 const botCatchDecision = new Map();
 
-// A forfeited match is over without `state.gameOver` being true — the engine
-// never decided anything, the player walked away. Kept as its own flag so no
-// engine invariant has to be faked to represent it.
-let forfeited = false;
-
 // openTable() awaits a fetch, and the player can be back in the lobby before it
 // lands. `epoch` cannot cover that gap — it is bumped when the match is ADOPTED,
 // which is the thing we are trying not to do. So opening carries its own token:
@@ -270,7 +263,7 @@ function seatLabel(seat) {
  * bot may act, not whoever nominally holds the turn.
  */
 function actingSeatsOf(state) {
-  if (state.gameOver || forfeited) return [];
+  if (state.gameOver) return [];
   const template = state.pack.template;
   if (template.actingSeats) return template.actingSeats(makeCtx(state));
   return [state.turn.seat];
@@ -283,7 +276,7 @@ function cardById(state, cardId) {
 /** What a seat may SAY right now, out of turn (§E2). Never enumerated as a play. */
 function announcementsFor(state, seat) {
   const template = state.pack.template;
-  if (!template.enumerateAnnouncements || forfeited) return [];
+  if (!template.enumerateAnnouncements) return [];
   return template.enumerateAnnouncements(makeCtx(state), seat) || [];
 }
 
@@ -1488,7 +1481,7 @@ function renderStatusBar(state, acting) {
   el.statusText.textContent = statusTextFor(state, acting);
   const humanActs = acting.includes(HUMAN_SEAT);
   el.status.classList.toggle('status-bar--your-turn', humanActs);
-  el.status.classList.toggle('status-bar--thinking', !state.gameOver && !forfeited && !humanActs);
+  el.status.classList.toggle('status-bar--thinking', !state.gameOver && !humanActs);
 
   const scored = showsScores(state);
   el.scoreChip.hidden = !scored;
@@ -1499,11 +1492,9 @@ function renderStatusBar(state, acting) {
       : String(state.scores[HUMAN_SEAT]);
     el.scoreChip.setAttribute('aria-label', `Your score: ${state.scores[HUMAN_SEAT]}. Open the scoreboard.`);
   }
-  el.forfeitButton.hidden = state.gameOver || forfeited;
 }
 
 function statusTextFor(state, acting) {
-  if (forfeited) return 'Game forfeited.';
   if (state.gameOver) return `Game over — ${seatLabel(state.winner)} ${state.winner === HUMAN_SEAT ? 'win' : 'wins'}!`;
   if (state.turn.phase === 'pass') {
     return acting.includes(HUMAN_SEAT) ? 'Passing — your pick' : 'Waiting for passes…';
@@ -1894,15 +1885,14 @@ function safeStats(state) {
 }
 
 /** The per-opponent outcomes this match contributes to the head-to-head record. */
-function opponentOutcomes(state, stats, { forfeit }) {
-  const rank = stats && !forfeit
+function opponentOutcomes(state, stats) {
+  const rank = stats
     ? placements(state.pack, { totals: stats.totals, winner: state.winner, seats: state.seats })
     : null;
   return seating
     .filter((identity) => identity.isBot && identity.opponentKey)
     .map((identity) => ({
       key: identity.opponentKey,
-      // Walking away is not beating anybody.
       beaten: !!rank && rank[HUMAN_SEAT] < rank[identity.seat],
     }));
 }
@@ -1926,12 +1916,13 @@ function recordSentence(state) {
 /**
  * End the match in the books: record it, stop it resuming, and show the panel.
  *
- * One door for both endings — the engine deciding, and the player walking
- * away — because the two must agree about what a loss is. They differ only in
- * `forfeit`, which is recorded honestly rather than being hidden as an
- * ordinary defeat.
+ * This is the ENGINE deciding. The other ending — the player walking away —
+ * is the lobby's, recorded through the same `recordResult` contract with
+ * `forfeit: true` (src/ui/lobby.js). The two doors must never disagree about
+ * what a loss is, which is why the storage payload still carries the field
+ * even though the only value written here is `false`.
  */
-function concludeMatch(state, { forfeit = false } = {}) {
+function concludeMatch(state) {
   cancelBotTurn();
   cancelAnnouncementBeats();
   matchDirty = false;
@@ -1939,9 +1930,9 @@ function concludeMatch(state, { forfeit = false } = {}) {
   clearMatch(state.pack.id);
   const stats = safeStats(state);
   recordResult(state.pack.id, {
-    won: !forfeit && state.winner === HUMAN_SEAT,
-    forfeit,
-    opponents: opponentOutcomes(state, stats, { forfeit }),
+    won: state.winner === HUMAN_SEAT,
+    forfeit: false,
+    opponents: opponentOutcomes(state, stats),
   });
   showGameOver(state, {
     seating,
@@ -1949,7 +1940,6 @@ function concludeMatch(state, { forfeit = false } = {}) {
     recordText: recordSentence(state),
     heroFaces: heroFaces(state.pack),
     renderFace: (face) => cardArt.face(face),
-    forfeited: forfeit,
   });
 }
 
@@ -1957,20 +1947,6 @@ function concludeMatch(state, { forfeit = false } = {}) {
 function heroFaces(pack) {
   const faces = pack.manifest.heroCards;
   return Array.isArray(faces) ? faces.slice(0, 3) : [];
-}
-
-async function forfeitMatch() {
-  if (!liveState || liveState.gameOver || forfeited) return;
-  const name = livePack.manifest.name;
-  const ok = await confirmAction(
-    `Forfeit your game of ${name}? It counts as a loss and the game is gone.`,
-    { okLabel: 'Forfeit', cancelLabel: 'Keep playing' },
-  );
-  if (!ok || !liveState || liveState.gameOver || forfeited) return;
-  forfeited = true;
-  if (drag) drag.cancel();
-  concludeMatch(liveState, { forfeit: true });
-  render(liveState);
 }
 
 function openScoreboard() {
@@ -2275,7 +2251,7 @@ function cancelAnnouncementBeats() {
  */
 function scheduleAnnouncementBeats(state, myEpoch) {
   cancelAnnouncementBeats();
-  if (state.gameOver || forfeited) return;
+  if (state.gameOver) return;
   if (!state.pack.template.enumerateAnnouncements) return;
 
   const schedule = (fn, ms) => {
@@ -2339,7 +2315,7 @@ function scheduleNextTurn(state, myEpoch) {
   // Cancel first: an announcement or a re-entry could otherwise leave two
   // timers racing to move the same bot.
   cancelBotTurn();
-  if (state.gameOver || forfeited) return;
+  if (state.gameOver) return;
   const acting = actingSeatsOf(state);
   const seat = acting.find((s) => s !== HUMAN_SEAT);
   if (seat === undefined) return;
@@ -2389,7 +2365,6 @@ function adoptMatch(pack, state, message) {
   livePack = pack;
   liveState = state;
   selection = null;
-  forfeited = false;
   pendingRender = null;
   botCallDecision.clear();
   botCatchDecision.clear();
@@ -2449,9 +2424,6 @@ export async function openTable(packId) {
   closeChoiceModal();
   matchDirty = false;
 
-  // The pack has to be fetched before anything can be drawn, and the chrome
-  // would otherwise keep the PREVIOUS game's name on screen while it lands.
-  el.gameName.textContent = '';
   el.statusText.textContent = 'Dealing…';
 
   // A stored match pins the variant set: the same pack loaded with different
@@ -2461,8 +2433,12 @@ export async function openTable(packId) {
   if (myToken !== openToken) return; // the player left before the pack landed
 
   rememberPack(packId);
-  Arcade.ui.setTitle(`Cardstock — ${pack.manifest.name}`);
-  el.gameName.textContent = pack.manifest.name;
+  // The variant's name ALONE, and only in the launcher's title bar. At a table
+  // the game you are playing is the only name that means anything, and saying
+  // it twice — once in the launcher bar, once in our own — cost the status bar
+  // the room it needed to stay on one line. The lobby restores the wordmark
+  // (src/main.js).
+  Arcade.ui.setTitle(pack.manifest.name);
   hideAllPanels();
 
   if (stored) {
@@ -2507,7 +2483,6 @@ export function closeTable() {
   livePack = null;
   selection = null;
   seating = [];
-  forfeited = false;
   pendingRender = null;
   hideBanner();
   hideAllPanels();
@@ -2558,7 +2533,6 @@ export function initTable({ onExit }) {
 
   el.lobbyButton.addEventListener('click', () => exitToLobby());
   el.scoreChip.addEventListener('click', () => openScoreboard());
-  el.forfeitButton.addEventListener('click', () => { forfeitMatch(); });
   el.handSort.addEventListener('click', () => cycleHandSort());
 }
 
