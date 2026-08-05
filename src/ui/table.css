@@ -119,6 +119,9 @@ body {
   font-family: system-ui, sans-serif;
   color: var(--chrome-text);
   min-height: 100vh;
+  /* Reserve the scrollbar's width whether or not one is showing, so arriving
+     at a scrolling lobby cannot resize the felt behind it. */
+  scrollbar-gutter: stable;
   display: flex;
   flex-direction: column;
   background:
@@ -136,6 +139,21 @@ body {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  /* THE TABLE NEVER SCROLLS THE PAGE.
+     body is `min-height: 100vh`, so a felt taller than the window grew the
+     DOCUMENT — and a document scrollbar takes ~15px off the width, which near
+     a breakpoint re-sized every card on the table. A pile gaining a card could
+     change how big the player's own hand was drawn.
+     Capping the screen at the viewport keeps that scrollbar off the document.
+     The overflow is contained rather than hidden: a window genuinely too short
+     for a pack should let the player reach the rest of the felt, not clip the
+     hand off the bottom. `scrollbar-gutter` reserves the room whether or not
+     that inner bar shows, so it cannot restart the loop one level down.
+     The lobby keeps its own scrolling; this rule clamps the felt only. */
+  max-height: 100vh;
+  max-height: 100dvh;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 #table-screen[hidden] { display: none; }
 
@@ -273,6 +291,11 @@ body {
   --pile-w: 90px;
   --hand-card-w: 70px;
   flex: 1;
+  /* Deliberately NOT `min-height: 0`. Letting the felt shrink below its
+     content does keep it inside the window, but it does it by sliding the
+     rows into each other — the deck ends up drawn over the contract ladder.
+     A row that cannot fit should be reachable, not overlapped, so the felt
+     keeps its natural height and #table-screen contains the overflow. */
   display: flex;
   flex-direction: column;
   gap: 1rem;
@@ -426,13 +449,41 @@ body {
   50% { opacity: 1; }
 }
 
+/* An opponent's hand, face down.
+ *
+ * THE SEAT'S WIDTH DOES NOT DEPEND ON HOW MANY CARDS IT HOLDS. `.opponent-row`
+ * centres its seats and wraps them, so a seat that grew by a card-width every
+ * draw shoved every other seat sideways — and past the row width, dropped one
+ * onto a second line and moved the whole table down. A hand you are not
+ * holding is a COUNT, drawn as a fan; it has no business setting the geometry
+ * of the felt. So the fan closes to fit `--mini-max` instead of spreading.
+ *
+ * That is the same shape as the player's own fan (fanStep, handOrder.js) with
+ * constants suited to a 28px card: half a card of spacing when there is room,
+ * closing as far as a fifth of a card when there is not. It stays in CSS
+ * rather than being measured in JS because `--mini-w` is set by the viewport
+ * breakpoints — a JS copy would have to re-read it, and would drift from it.
+ * renderSeats writes only `--mini-count`, which it already knows.
+ *
+ * The margin goes on the WRAPPER, not the card. Every back is its own <span>
+ * (svgNode), so `.card-face:first-child` matched all of them and the overlap
+ * silently never applied — the same trap the player's fan documents below.
+ * That is why a ten-card seat used to be 280px wide instead of 154px. */
 .mini-hand {
+  --mini-w: 28px;
+  --mini-max: 118px;
+  --mini-step: clamp(
+    calc(var(--mini-w) * 0.2),
+    calc((var(--mini-max) - var(--mini-w)) / max(1, var(--mini-count, 1) - 1)),
+    calc(var(--mini-w) / 2)
+  );
   display: flex;
   justify-content: center;
 }
 
-.mini-hand .card-face { width: 28px; margin-left: -14px; }
-.mini-hand .card-face:first-child { margin-left: 0; }
+.mini-hand > * { flex: none; }
+.mini-hand > *:not(:first-child) { margin-left: calc(var(--mini-step) - var(--mini-w)); }
+.mini-hand .card-face { width: var(--mini-w); display: block; }
 
 /* The middle of the table takes whatever is left between the seats and the
    hand, and holds however many shared piles the pack declares — one for
@@ -479,13 +530,20 @@ body {
 .pile-count {
   display: block;
   width: fit-content;
+  /* Capped to the pile it labels, so the BADGE can never be what decides how
+     much room the pile's column takes. An empty pile wears its name ("Discard
+     2") and a filled one wears a number, and letting the wider of those two
+     set the column meant a row of piles re-laid-out the moment a card landed
+     on one. `--pile-w` is a real length inherited from #table, so this is a
+     definite cap and a long name wraps onto a second line instead. */
+  max-width: var(--pile-w, 90px);
   margin: 0.5rem auto 0;
   padding: 0.05rem 0.45rem;
   border-radius: 999px;
   font-size: 0.72rem;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
-  white-space: nowrap;
+  text-align: center;
   background: var(--chip-bg);
   border: 1px solid var(--chip-border);
 }
@@ -610,10 +668,15 @@ button.pile-stack:focus-visible { outline: 2px solid var(--accent); outline-offs
    rather than only the top one. Which piles do is a PACK decision
    (`ui.zoneOverlap`), not a template one — Stockpile's personal discards want
    to be read at a glance, a Crazy Eights discard is genuinely just a pile.
-   The box grows with the fan so a fanned pile never lies about how much room
-   it takes and never overlaps its neighbour. */
+   The box RESERVES the room a full fan needs rather than growing into it.
+   Sizing it to the cards actually present made every discard re-centre the
+   row it sits in — `#center-piles` and `#player-piles` both centre and wrap —
+   so playing a card visibly shoved its neighbours sideways. A pile is a place
+   on the table, and a place does not move because something landed on it. The
+   slot count is fixed (DISCARD_DEPTH − 1, written by buildPileNode); only
+   --overlap-index, which positions the cards inside it, still varies. */
 .pile-stack--overlap-v {
-  height: calc(var(--pile-w, 90px) * 1.4 + var(--overlap-count, 0) * var(--pile-w, 90px) * 0.34);
+  height: calc(var(--pile-w, 90px) * 1.4 + var(--overlap-slots, 0) * var(--pile-w, 90px) * 0.34);
 }
 .pile-stack--overlap-v .pile-stack__card {
   top: calc(var(--overlap-index, 0) * var(--pile-w, 90px) * 0.34);
@@ -623,7 +686,7 @@ button.pile-stack:focus-visible { outline: 2px solid var(--accent); outline-offs
 }
 
 .pile-stack--overlap-h {
-  width: calc(var(--pile-w, 90px) + var(--overlap-count, 0) * var(--pile-w, 90px) * 0.42);
+  width: calc(var(--pile-w, 90px) + var(--overlap-slots, 0) * var(--pile-w, 90px) * 0.42);
 }
 .pile-stack--overlap-h .pile-stack__card {
   left: calc(var(--overlap-index, 0) * var(--pile-w, 90px) * 0.42);
@@ -650,10 +713,18 @@ button.pile-stack:focus-visible { outline: 2px solid var(--accent); outline-offs
 }
 
 /* The sort toggle sits at the fan's edge, and flips sides with handedness
-   along with everything else that has a side. */
+   along with everything else that has a side.
+
+   Its width is FIXED to the longest label it can wear. The row centres the fan
+   and the button as a group, and layoutHand subtracts the button's width from
+   the room the fan may use — so a label cycling "Deal order" → "By suit" →
+   "By rank" slid the whole hand sideways and re-fanned it, for pressing a
+   button that sorts cards. */
 .hand-sort {
   font: inherit;
   font-size: 0.7rem;
+  min-width: 6.2em;
+  text-align: center;
   padding: 0.2rem 0.55rem;
   margin-bottom: 0.6rem;
   border-radius: 999px;
@@ -1190,42 +1261,31 @@ body.is-dragging .card-face { cursor: grabbing; }
   80% { transform: translateX(-3px); }
 }
 
-/* Narrow screens: everything on the felt steps down together (the sizes all
-   derive from the two variables on #table), and the pile gaps tighten. This
-   is what keeps Stockpile's nine piles on a phone. */
-@media (max-width: 720px) {
-  #table {
-    --pile-w: 62px;
-    --hand-card-w: 54px;
-    gap: 0.7rem;
-    padding: 0.9rem 0.5rem;
-  }
-  .pile-count { font-size: 0.66rem; margin-top: 0.5rem; }
-  .pile--mini { --pile-w: 28px; }
-  .opponent-row { gap: 0.6rem; }
-}
+/* ------------------------------------------------------------------ *
+ * Stepping the whole felt down
+ * ------------------------------------------------------------------ */
 
-/* Phones: small enough that Stockpile's deck-plus-four-builds row still fits
-   on one line (5 × 52px + gaps < 375px). */
-@media (max-width: 420px) {
-  #table { --pile-w: 52px; --hand-card-w: 46px; }
-  #center-piles { gap: 0.4rem 0.7rem; }
-  #player-piles { gap: 0.3rem 0.55rem; }
-  .pile--mini { --pile-w: 24px; }
-}
+/* Everything on the table derives from the two variables on #table, so a
+ * viewport gets smaller cards by changing those two numbers and nothing else.
+ *
+ * BOTH AXES CONSTRAIN, AND THE TIGHTER ONE MUST WIN. A table is a horizontal
+ * problem — Stockpile's deck plus four builds have to fit on one line — and
+ * equally a vertical one: seats, shared piles, your own piles, the action bar
+ * and your hand are a stack, and Milestones adds melds AND a contract ladder
+ * to it. Past a point the hand slides off the bottom, which is the one row a
+ * player cannot do without.
+ *
+ * THESE FOUR BLOCKS ARE ORDERED BY THE SIZE THEY PRODUCE, LARGEST FIRST, AND
+ * THE ORDER IS LOAD-BEARING. They have identical specificity, so on a viewport
+ * matching several of them the last one wins — and since each is smaller than
+ * the one above, "last match wins" is exactly "the tightest constraint wins".
+ * Grouping them by axis instead is what broke it: a 390x750 phone matches both
+ * width rules and the 800px-tall rule, and with the height rules written last
+ * it took 74/60px cards — BIGGER than the 52/46 the phone rule intends — which
+ * then overflowed, raised a scrollbar, narrowed the viewport, and could flip
+ * the breakpoint back mid-game. */
 
-/* SHORT WINDOWS STEP DOWN TOO.
- *
- * The felt has always scaled with WIDTH, and that was only ever half the
- * problem: a table is a vertical stack of rows — seats, shared piles, your own
- * piles, the action bar, your hand — and every row a pack adds (Milestones
- * puts melds AND a contract ladder on screen) costs height that no width
- * breakpoint gives back. Past a point the hand slides off the bottom, which is
- * the one row a player cannot do without.
- *
- * Same mechanism as the width rules, on purpose: the two variables on #table
- * drive every card and pile, so shrinking them steps the whole table down
- * together rather than letting one row win an argument with the others. */
+/* Short: a laptop window, or a phone in landscape. */
 @media (max-height: 800px) {
   #table {
     --pile-w: 74px;
@@ -1239,6 +1299,20 @@ body.is-dragging .card-face { cursor: grabbing; }
   .ladder__rung { padding: 0.15rem 0.3rem 0.12rem; gap: 0; }
 }
 
+/* Narrow: tablets and split-screen. The pile gaps tighten too. */
+@media (max-width: 720px) {
+  #table {
+    --pile-w: 62px;
+    --hand-card-w: 54px;
+    gap: 0.7rem;
+    padding: 0.9rem 0.5rem;
+  }
+  .pile-count { font-size: 0.66rem; margin-top: 0.5rem; }
+  .pile--mini { --pile-w: 28px; }
+  .opponent-row { gap: 0.6rem; }
+}
+
+/* Very short: everything the vertical stack can give back. */
 @media (max-height: 660px) {
   #table {
     --pile-w: 58px;
@@ -1246,10 +1320,20 @@ body.is-dragging .card-face { cursor: grabbing; }
     gap: 0.4rem;
     padding: 0.6rem 0.7rem;
   }
-  .mini-hand .card-face { width: 22px; margin-left: -11px; }
+  /* Only the card width: the overlap is derived from it (see .mini-hand). */
+  .mini-hand { --mini-w: 22px; --mini-max: 96px; }
   .seat { padding: 0.3rem 0.4rem 0.35rem; }
   .ladder__rung { font-size: 0.6rem; min-width: 2.4rem; }
   .ladder__pip { width: 0.9rem; height: 0.9rem; font-size: 0.55rem; }
+}
+
+/* Phones: small enough that Stockpile's deck-plus-four-builds row still fits
+   on one line (5 × 52px + gaps < 375px). */
+@media (max-width: 420px) {
+  #table { --pile-w: 52px; --hand-card-w: 46px; }
+  #center-piles { gap: 0.4rem 0.7rem; }
+  #player-piles { gap: 0.3rem 0.55rem; }
+  .pile--mini { --pile-w: 24px; }
 }
 
 /* `card-face` is the class on the SVG ELEMENT itself (src/ui/cardStyles) —

@@ -410,7 +410,13 @@ function buildPileNode(state, inst, ui, { mini = false, draggableTop = null } = 
   stack.classList.toggle('pile-stack--ready', !!target);
   stack.classList.toggle('pile-stack--source', !!sourceTop);
   stack.classList.toggle('pile-stack--picked', !!sourceTop && isSelected(selection, address, sourceTop));
-  if (overlap) stack.classList.add(`pile-stack--overlap-${overlap === 'vertical' ? 'v' : 'h'}`);
+  if (overlap) {
+    stack.classList.add(`pile-stack--overlap-${overlap === 'vertical' ? 'v' : 'h'}`);
+    // How many card-widths the slot RESERVES — a constant, not the count on
+    // hand. See .pile-stack--overlap-v in table.css: a pile that resized as it
+    // filled re-centred every other pile in its row on every discard.
+    stack.style.setProperty('--overlap-slots', String(DISCARD_DEPTH - 1));
+  }
 
   /** Place one card in the stack, carrying its index for the overlap offsets. */
   const placeCard = (markup, i, visibleCount, cardId, isTop) => {
@@ -448,7 +454,6 @@ function buildPileNode(state, inst, ui, { mini = false, draggableTop = null } = 
     // the cards are not.
     const depth = mini ? 1 : DISCARD_DEPTH;
     const visible = cards.slice(-depth);
-    stack.style.setProperty('--overlap-count', String(Math.max(0, visible.length - 1)));
     visible.forEach((cardId, i) => {
       const isTop = i === visible.length - 1;
       const card = cardById(state, cardId);
@@ -737,6 +742,12 @@ function renderSeats(state, stagger, acting, ui) {
 
     const mini = document.createElement('div');
     mini.className = 'mini-hand';
+    // The count is all the CSS needs to close the fan to a fixed width — see
+    // .mini-hand in table.css for why a seat's geometry must not track how
+    // many cards it holds. Deliberately not measured here: the card width is a
+    // breakpoint-driven custom property, so the arithmetic belongs where that
+    // property is defined rather than in a second copy that can drift from it.
+    mini.style.setProperty('--mini-count', String(count));
     for (let i = 0; i < count; i++) {
       const back = svgNode(cardArt.back(), stagger ? 'card-deal' : '');
       if (stagger) back.style.animationDelay = `${i * 35}ms`;
