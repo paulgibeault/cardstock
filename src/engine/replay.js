@@ -27,6 +27,41 @@ import { applyMove } from './movePipeline.js';
 export const MATCH_FORMAT_VERSION = 1;
 
 /**
+ * The seq-stripped log, built once and EXTENDED rather than rebuilt.
+ *
+ * `seq` is the engine's own ordering handle; the payload carries the moves in
+ * order, so it is redundant on the wire. Stripping it re-allocated the entire
+ * log — array and one object per entry — and the table persists after every
+ * applied move AND every announcement, so the cost grew with the match and
+ * added up to quadratic work over a long one.
+ *
+ * The log is append-only (movePipeline.js pushes and never rewrites), so the
+ * entries already stripped can never go stale, and only the tail is new. Keyed
+ * on the log ARRAY rather than the state: rehydrateMatch builds fresh state
+ * objects around a log, and a WeakMap lets an abandoned match's cache go with
+ * it. The length guard is for a hypothetical truncation — cheap insurance
+ * against a cache that would otherwise be silently wrong rather than slow.
+ */
+const strippedLogs = new WeakMap();
+
+function strippedLog(log) {
+  let entry = strippedLogs.get(log);
+  if (!entry || entry.len > log.length) {
+    entry = { len: 0, moves: [] };
+    strippedLogs.set(log, entry);
+  }
+  for (let i = entry.len; i < log.length; i++) {
+    const { seq, ...move } = log[i];
+    entry.moves.push(move);
+  }
+  entry.len = log.length;
+  // A copy, because the payload is handed to storage and to the stats reader,
+  // and neither should be able to see a later move appear in a log it was
+  // given earlier.
+  return entry.moves.slice();
+}
+
+/**
  * The persistable/​sendable form of a live match.
  * `variants` is recorded because a pack loaded with different variants active
  * is a different rule set, and replaying a log against it would diverge.
@@ -38,7 +73,7 @@ export function serializeMatch(state, { savedAt = Date.now() } = {}) {
     variants: state.pack.activeVariants ?? [],
     seats: state.seats,
     seed: state.seed,
-    log: state.log.map(({ seq, ...move }) => move),
+    log: strippedLog(state.log),
     savedAt,
   };
 }
