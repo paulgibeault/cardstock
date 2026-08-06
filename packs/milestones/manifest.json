@@ -32,6 +32,7 @@
     "hitting": "own-and-others-after-laydown",
     "drawFrom": ["draw", "discard"],
     "discardPickupForbidden": ["tag:skip"],
+    "meldForbidden": ["tag:skip"],
     "goingOut": "play-or-discard-last"
   },
   "scoring": {

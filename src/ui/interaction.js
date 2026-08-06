@@ -18,6 +18,7 @@
 // mechanics get a manual pass.
 
 import { makeCtx } from '../engine/context.js';
+import { selectorMatches } from '../engine/selectors.js';
 
 export function handAddress(seat) {
   return `hand.${seat}`;
@@ -174,7 +175,15 @@ export function buildUiModel(state, { seat, moves = [], acts = false, selection 
   if (mode === 'rummy-meld') {
     const ctx = makeCtx(state);
     const laidDown = state.playerVars[seat]?.laidDown;
-    for (const id of hand) ui.handSelectable.add(id);
+    // A card the pack bars from melds (a skip) stays in hand and stays
+    // discardable, but it never enters the staging tray: the engine would
+    // refuse it anyway, and the only feedback that gives is a Lay down button
+    // that mysteriously fails to appear.
+    const meldForbidden = state.pack.rules.meldForbidden || [];
+    const staged = meldForbidden.length
+      ? hand.filter((id) => !meldForbidden.some((sel) => selectorMatches(ctx.cardById(id), sel)))
+      : hand;
+    for (const id of laidDown ? hand : staged) ui.handSelectable.add(id);
     ui.handMulti = !laidDown;
 
     if (!laidDown) {

@@ -5,10 +5,26 @@
       "name": "a valid phase-1 laydown (two sets of three, one wild used)",
       "setup": {
         "seats": 3,
-        "turn": { "seat": 0, "phase": "meld" },
-        "playerVars": { "0": { "phase": 1, "laidDown": false } },
+        "turn": {
+          "seat": 0,
+          "phase": "meld"
+        },
+        "playerVars": {
+          "0": {
+            "phase": 1,
+            "laidDown": false
+          }
+        },
         "zones": {
-          "hand.0": ["red-3", "blue-3", "wild", "green-9", "yellow-9", "red-9", "blue-12"]
+          "hand.0": [
+            "red-3",
+            "blue-3",
+            "wild",
+            "green-9",
+            "yellow-9",
+            "red-9",
+            "blue-12"
+          ]
         }
       },
       "assert": [
@@ -18,8 +34,22 @@
             "type": "layDown",
             "choice": {
               "melds": [
-                { "item": "set(3)", "cards": ["red-3", "blue-3", "wild"] },
-                { "item": "set(3)", "cards": ["green-9", "yellow-9", "red-9"] }
+                {
+                  "item": "set(3)",
+                  "cards": [
+                    "red-3",
+                    "blue-3",
+                    "wild"
+                  ]
+                },
+                {
+                  "item": "set(3)",
+                  "cards": [
+                    "green-9",
+                    "yellow-9",
+                    "red-9"
+                  ]
+                }
               ]
             }
           },
@@ -31,10 +61,26 @@
       "name": "a meld needs at least one natural card",
       "setup": {
         "seats": 3,
-        "turn": { "seat": 0, "phase": "meld" },
-        "playerVars": { "0": { "phase": 1, "laidDown": false } },
+        "turn": {
+          "seat": 0,
+          "phase": "meld"
+        },
+        "playerVars": {
+          "0": {
+            "phase": 1,
+            "laidDown": false
+          }
+        },
         "zones": {
-          "hand.0": ["wild", "wild#2", "wild#3", "green-9", "yellow-9", "red-9", "blue-12"]
+          "hand.0": [
+            "wild",
+            "wild#2",
+            "wild#3",
+            "green-9",
+            "yellow-9",
+            "red-9",
+            "blue-12"
+          ]
         }
       },
       "assert": [
@@ -44,8 +90,22 @@
             "type": "layDown",
             "choice": {
               "melds": [
-                { "item": "set(3)", "cards": ["wild", "wild#2", "wild#3"] },
-                { "item": "set(3)", "cards": ["green-9", "yellow-9", "red-9"] }
+                {
+                  "item": "set(3)",
+                  "cards": [
+                    "wild",
+                    "wild#2",
+                    "wild#3"
+                  ]
+                },
+                {
+                  "item": "set(3)",
+                  "cards": [
+                    "green-9",
+                    "yellow-9",
+                    "red-9"
+                  ]
+                }
               ]
             }
           },
@@ -58,10 +118,26 @@
       "name": "the laydown must match the player's own current phase",
       "setup": {
         "seats": 3,
-        "turn": { "seat": 0, "phase": "meld" },
-        "playerVars": { "0": { "phase": 1, "laidDown": false } },
+        "turn": {
+          "seat": 0,
+          "phase": "meld"
+        },
+        "playerVars": {
+          "0": {
+            "phase": 1,
+            "laidDown": false
+          }
+        },
         "zones": {
-          "hand.0": ["red-4", "blue-5", "green-6", "yellow-7", "blue-12", "red-1", "green-2"]
+          "hand.0": [
+            "red-4",
+            "blue-5",
+            "green-6",
+            "yellow-7",
+            "blue-12",
+            "red-1",
+            "green-2"
+          ]
         }
       },
       "assert": [
@@ -71,7 +147,15 @@
             "type": "layDown",
             "choice": {
               "melds": [
-                { "item": "run(4)", "cards": ["red-4", "blue-5", "green-6", "yellow-7"] }
+                {
+                  "item": "run(4)",
+                  "cards": [
+                    "red-4",
+                    "blue-5",
+                    "green-6",
+                    "yellow-7"
+                  ]
+                }
               ]
             }
           },
@@ -84,21 +168,44 @@
       "name": "hitting is not allowed before laying down",
       "setup": {
         "seats": 3,
-        "turn": { "seat": 0, "phase": "meld" },
+        "turn": {
+          "seat": 0,
+          "phase": "meld"
+        },
         "playerVars": {
-          "0": { "phase": 2, "laidDown": false },
-          "1": { "phase": 1, "laidDown": true }
+          "0": {
+            "phase": 2,
+            "laidDown": false
+          },
+          "1": {
+            "phase": 1,
+            "laidDown": true
+          }
         },
         "zones": {
-          "hand.0": ["blue-5", "red-8"],
-          "melds.1": ["red-5", "green-5", "yellow-5"]
+          "hand.0": [
+            "blue-5",
+            "red-8"
+          ],
+          "melds.1": [
+            "red-5",
+            "green-5",
+            "yellow-5"
+          ]
         }
       },
       "assert": [
         {
           "move": {
-            "actor": 0, "type": "hit", "cards": ["blue-5"],
-            "choice": { "seat": 1, "meld": 0 }
+            "actor": 0,
+            "type": "hit",
+            "cards": [
+              "blue-5"
+            ],
+            "choice": {
+              "seat": 1,
+              "meld": 0
+            }
           },
           "legal": false,
           "rule": "not-laid-down"
@@ -109,21 +216,44 @@
       "name": "hitting any player's meld is allowed after laying down",
       "setup": {
         "seats": 3,
-        "turn": { "seat": 0, "phase": "meld" },
+        "turn": {
+          "seat": 0,
+          "phase": "meld"
+        },
         "playerVars": {
-          "0": { "phase": 2, "laidDown": true },
-          "1": { "phase": 1, "laidDown": true }
+          "0": {
+            "phase": 2,
+            "laidDown": true
+          },
+          "1": {
+            "phase": 1,
+            "laidDown": true
+          }
         },
         "zones": {
-          "hand.0": ["blue-5", "red-8"],
-          "melds.1": ["red-5", "green-5", "yellow-5"]
+          "hand.0": [
+            "blue-5",
+            "red-8"
+          ],
+          "melds.1": [
+            "red-5",
+            "green-5",
+            "yellow-5"
+          ]
         }
       },
       "assert": [
         {
           "move": {
-            "actor": 0, "type": "hit", "cards": ["blue-5"],
-            "choice": { "seat": 1, "meld": 0 }
+            "actor": 0,
+            "type": "hit",
+            "cards": [
+              "blue-5"
+            ],
+            "choice": {
+              "seat": 1,
+              "meld": 0
+            }
           },
           "legal": true
         }
@@ -133,10 +263,28 @@
       "name": "a wild takes a value the moment it is played, and the slot it filled is gone",
       "setup": {
         "seats": 3,
-        "turn": { "seat": 0, "phase": "meld" },
-        "playerVars": { "0": { "phase": 2, "laidDown": false } },
+        "turn": {
+          "seat": 0,
+          "phase": "meld"
+        },
+        "playerVars": {
+          "0": {
+            "phase": 2,
+            "laidDown": false
+          }
+        },
         "zones": {
-          "hand.0": ["red-9", "blue-9", "green-9", "green-3", "wild", "wild#2", "blue-6", "red-4", "blue-7"]
+          "hand.0": [
+            "red-9",
+            "blue-9",
+            "green-9",
+            "green-3",
+            "wild",
+            "wild#2",
+            "blue-6",
+            "red-4",
+            "blue-7"
+          ]
         }
       },
       "assert": [
@@ -146,8 +294,23 @@
             "type": "layDown",
             "choice": {
               "melds": [
-                { "item": "set(3)", "cards": ["red-9", "blue-9", "green-9"] },
-                { "item": "run(4)", "cards": ["green-3", "wild", "wild#2", "blue-6"] }
+                {
+                  "item": "set(3)",
+                  "cards": [
+                    "red-9",
+                    "blue-9",
+                    "green-9"
+                  ]
+                },
+                {
+                  "item": "run(4)",
+                  "cards": [
+                    "green-3",
+                    "wild",
+                    "wild#2",
+                    "blue-6"
+                  ]
+                }
               ]
             }
           }
@@ -157,11 +320,31 @@
             "playerVars": {
               "0": {
                 "melds": [
-                  { "item": "set(3)", "cards": ["red-9", "blue-9", "green-9"], "wilds": {} },
+                  {
+                    "item": "set(3)",
+                    "cards": [
+                      "red-9",
+                      "blue-9",
+                      "green-9"
+                    ],
+                    "wilds": {}
+                  },
                   {
                     "item": "run(4)",
-                    "cards": ["green-3", "wild", "wild#2", "blue-6"],
-                    "wilds": { "wild": { "rank": "4" }, "wild#2": { "rank": "5" } }
+                    "cards": [
+                      "green-3",
+                      "wild",
+                      "wild#2",
+                      "blue-6"
+                    ],
+                    "wilds": {
+                      "wild": {
+                        "rank": "4"
+                      },
+                      "wild#2": {
+                        "rank": "5"
+                      }
+                    }
                   }
                 ]
               }
@@ -169,12 +352,32 @@
           }
         },
         {
-          "move": { "actor": 0, "type": "hit", "cards": ["red-4"], "choice": { "seat": 0, "meld": 1 } },
+          "move": {
+            "actor": 0,
+            "type": "hit",
+            "cards": [
+              "red-4"
+            ],
+            "choice": {
+              "seat": 0,
+              "meld": 1
+            }
+          },
           "legal": false,
           "rule": "invalid-meld"
         },
         {
-          "move": { "actor": 0, "type": "hit", "cards": ["blue-7"], "choice": { "seat": 0, "meld": 1 } },
+          "move": {
+            "actor": 0,
+            "type": "hit",
+            "cards": [
+              "blue-7"
+            ],
+            "choice": {
+              "seat": 0,
+              "meld": 1
+            }
+          },
           "legal": true
         }
       ]
@@ -183,37 +386,85 @@
       "name": "a wild already on the table cannot be re-valued to make room for a card",
       "setup": {
         "seats": 3,
-        "turn": { "seat": 0, "phase": "meld" },
+        "turn": {
+          "seat": 0,
+          "phase": "meld"
+        },
         "playerVars": {
-          "0": { "phase": 3, "laidDown": true },
+          "0": {
+            "phase": 3,
+            "laidDown": true
+          },
           "1": {
             "phase": 2,
             "laidDown": true,
             "melds": [
               {
                 "item": "run(4)",
-                "cards": ["green-3", "wild", "wild#2", "blue-6"],
-                "wilds": { "wild": { "rank": "4" }, "wild#2": { "rank": "5" } }
+                "cards": [
+                  "green-3",
+                  "wild",
+                  "wild#2",
+                  "blue-6"
+                ],
+                "wilds": {
+                  "wild": {
+                    "rank": "4"
+                  },
+                  "wild#2": {
+                    "rank": "5"
+                  }
+                }
               }
             ]
           }
         },
         "zones": {
-          "hand.0": ["red-4", "blue-2"],
-          "melds.1": ["green-3", "wild", "wild#2", "blue-6"]
+          "hand.0": [
+            "red-4",
+            "blue-2"
+          ],
+          "melds.1": [
+            "green-3",
+            "wild",
+            "wild#2",
+            "blue-6"
+          ]
         }
       },
       "assert": [
         {
           "move": {
-            "actor": 0, "type": "hit", "cards": ["red-4"],
-            "choice": { "seat": 1, "meld": 0, "wilds": { "wild": { "rank": "9" } } }
+            "actor": 0,
+            "type": "hit",
+            "cards": [
+              "red-4"
+            ],
+            "choice": {
+              "seat": 1,
+              "meld": 0,
+              "wilds": {
+                "wild": {
+                  "rank": "9"
+                }
+              }
+            }
           },
           "legal": false,
           "rule": "invalid-meld"
         },
         {
-          "move": { "actor": 0, "type": "hit", "cards": ["blue-2"], "choice": { "seat": 1, "meld": 0 } },
+          "move": {
+            "actor": 0,
+            "type": "hit",
+            "cards": [
+              "blue-2"
+            ],
+            "choice": {
+              "seat": 1,
+              "meld": 0
+            }
+          },
           "legal": true
         }
       ]
@@ -222,24 +473,61 @@
       "name": "a meld laid down without recorded values still has them pinned before anyone hits it",
       "setup": {
         "seats": 3,
-        "turn": { "seat": 0, "phase": "meld" },
+        "turn": {
+          "seat": 0,
+          "phase": "meld"
+        },
         "playerVars": {
-          "0": { "phase": 3, "laidDown": true },
-          "1": { "phase": 2, "laidDown": true }
+          "0": {
+            "phase": 3,
+            "laidDown": true
+          },
+          "1": {
+            "phase": 2,
+            "laidDown": true
+          }
         },
         "zones": {
-          "hand.0": ["red-4", "blue-7"],
-          "melds.1": ["green-3", "wild", "wild#2", "blue-6"]
+          "hand.0": [
+            "red-4",
+            "blue-7"
+          ],
+          "melds.1": [
+            "green-3",
+            "wild",
+            "wild#2",
+            "blue-6"
+          ]
         }
       },
       "assert": [
         {
-          "move": { "actor": 0, "type": "hit", "cards": ["red-4"], "choice": { "seat": 1, "meld": 0 } },
+          "move": {
+            "actor": 0,
+            "type": "hit",
+            "cards": [
+              "red-4"
+            ],
+            "choice": {
+              "seat": 1,
+              "meld": 0
+            }
+          },
           "legal": false,
           "rule": "invalid-meld"
         },
         {
-          "move": { "actor": 0, "type": "hit", "cards": ["blue-7"], "choice": { "seat": 1, "meld": 0 } },
+          "move": {
+            "actor": 0,
+            "type": "hit",
+            "cards": [
+              "blue-7"
+            ],
+            "choice": {
+              "seat": 1,
+              "meld": 0
+            }
+          },
           "legal": true
         }
       ]
@@ -248,10 +536,27 @@
       "name": "a wild in a run cannot be frozen to a rank the deck does not have",
       "setup": {
         "seats": 3,
-        "turn": { "seat": 0, "phase": "meld" },
-        "playerVars": { "0": { "phase": 2, "laidDown": false } },
+        "turn": {
+          "seat": 0,
+          "phase": "meld"
+        },
+        "playerVars": {
+          "0": {
+            "phase": 2,
+            "laidDown": false
+          }
+        },
         "zones": {
-          "hand.0": ["red-9", "blue-9", "green-9", "red-11", "blue-12", "wild", "wild#2", "red-1"]
+          "hand.0": [
+            "red-9",
+            "blue-9",
+            "green-9",
+            "red-11",
+            "blue-12",
+            "wild",
+            "wild#2",
+            "red-1"
+          ]
         }
       },
       "assert": [
@@ -261,11 +566,30 @@
             "type": "layDown",
             "choice": {
               "melds": [
-                { "item": "set(3)", "cards": ["red-9", "blue-9", "green-9"] },
+                {
+                  "item": "set(3)",
+                  "cards": [
+                    "red-9",
+                    "blue-9",
+                    "green-9"
+                  ]
+                },
                 {
                   "item": "run(4)",
-                  "cards": ["red-11", "blue-12", "wild", "wild#2"],
-                  "wilds": { "wild": { "rank": "13" }, "wild#2": { "rank": "14" } }
+                  "cards": [
+                    "red-11",
+                    "blue-12",
+                    "wild",
+                    "wild#2"
+                  ],
+                  "wilds": {
+                    "wild": {
+                      "rank": "13"
+                    },
+                    "wild#2": {
+                      "rank": "14"
+                    }
+                  }
                 }
               ]
             }
@@ -279,8 +603,23 @@
             "type": "layDown",
             "choice": {
               "melds": [
-                { "item": "set(3)", "cards": ["red-9", "blue-9", "green-9"] },
-                { "item": "run(4)", "cards": ["red-11", "blue-12", "wild", "wild#2"] }
+                {
+                  "item": "set(3)",
+                  "cards": [
+                    "red-9",
+                    "blue-9",
+                    "green-9"
+                  ]
+                },
+                {
+                  "item": "run(4)",
+                  "cards": [
+                    "red-11",
+                    "blue-12",
+                    "wild",
+                    "wild#2"
+                  ]
+                }
               ]
             }
           }
@@ -290,11 +629,31 @@
             "playerVars": {
               "0": {
                 "melds": [
-                  { "item": "set(3)", "cards": ["red-9", "blue-9", "green-9"], "wilds": {} },
+                  {
+                    "item": "set(3)",
+                    "cards": [
+                      "red-9",
+                      "blue-9",
+                      "green-9"
+                    ],
+                    "wilds": {}
+                  },
                   {
                     "item": "run(4)",
-                    "cards": ["red-11", "blue-12", "wild", "wild#2"],
-                    "wilds": { "wild": { "rank": "9" }, "wild#2": { "rank": "10" } }
+                    "cards": [
+                      "red-11",
+                      "blue-12",
+                      "wild",
+                      "wild#2"
+                    ],
+                    "wilds": {
+                      "wild": {
+                        "rank": "9"
+                      },
+                      "wild#2": {
+                        "rank": "10"
+                      }
+                    }
                   }
                 ]
               }
@@ -307,10 +666,27 @@
       "name": "a player may say which card their wild is, and the meld is judged on it",
       "setup": {
         "seats": 3,
-        "turn": { "seat": 0, "phase": "meld" },
-        "playerVars": { "0": { "phase": 2, "laidDown": false } },
+        "turn": {
+          "seat": 0,
+          "phase": "meld"
+        },
+        "playerVars": {
+          "0": {
+            "phase": 2,
+            "laidDown": false
+          }
+        },
         "zones": {
-          "hand.0": ["red-9", "blue-9", "green-9", "green-3", "wild", "blue-5", "blue-6", "red-1"]
+          "hand.0": [
+            "red-9",
+            "blue-9",
+            "green-9",
+            "green-3",
+            "wild",
+            "blue-5",
+            "blue-6",
+            "red-1"
+          ]
         }
       },
       "assert": [
@@ -320,11 +696,27 @@
             "type": "layDown",
             "choice": {
               "melds": [
-                { "item": "set(3)", "cards": ["red-9", "blue-9", "green-9"] },
+                {
+                  "item": "set(3)",
+                  "cards": [
+                    "red-9",
+                    "blue-9",
+                    "green-9"
+                  ]
+                },
                 {
                   "item": "run(4)",
-                  "cards": ["green-3", "wild", "blue-5", "blue-6"],
-                  "wilds": { "wild": { "rank": "9" } }
+                  "cards": [
+                    "green-3",
+                    "wild",
+                    "blue-5",
+                    "blue-6"
+                  ],
+                  "wilds": {
+                    "wild": {
+                      "rank": "9"
+                    }
+                  }
                 }
               ]
             }
@@ -338,11 +730,27 @@
             "type": "layDown",
             "choice": {
               "melds": [
-                { "item": "set(3)", "cards": ["red-9", "blue-9", "green-9"] },
+                {
+                  "item": "set(3)",
+                  "cards": [
+                    "red-9",
+                    "blue-9",
+                    "green-9"
+                  ]
+                },
                 {
                   "item": "run(4)",
-                  "cards": ["green-3", "wild", "blue-5", "blue-6"],
-                  "wilds": { "wild": { "rank": "4" } }
+                  "cards": [
+                    "green-3",
+                    "wild",
+                    "blue-5",
+                    "blue-6"
+                  ],
+                  "wilds": {
+                    "wild": {
+                      "rank": "4"
+                    }
+                  }
                 }
               ]
             }
@@ -355,19 +763,45 @@
       "name": "a wild hit on a set takes the set's rank, so the set stays a set",
       "setup": {
         "seats": 3,
-        "turn": { "seat": 0, "phase": "meld" },
+        "turn": {
+          "seat": 0,
+          "phase": "meld"
+        },
         "playerVars": {
-          "0": { "phase": 3, "laidDown": true },
-          "1": { "phase": 1, "laidDown": true }
+          "0": {
+            "phase": 3,
+            "laidDown": true
+          },
+          "1": {
+            "phase": 1,
+            "laidDown": true
+          }
         },
         "zones": {
-          "hand.0": ["wild", "red-8"],
-          "melds.1": ["red-5", "green-5", "yellow-5"]
+          "hand.0": [
+            "wild",
+            "red-8"
+          ],
+          "melds.1": [
+            "red-5",
+            "green-5",
+            "yellow-5"
+          ]
         }
       },
       "assert": [
         {
-          "apply": { "actor": 0, "type": "hit", "cards": ["wild"], "choice": { "seat": 1, "meld": 0 } }
+          "apply": {
+            "actor": 0,
+            "type": "hit",
+            "cards": [
+              "wild"
+            ],
+            "choice": {
+              "seat": 1,
+              "meld": 0
+            }
+          }
         },
         {
           "expect": {
@@ -376,8 +810,17 @@
                 "melds": [
                   {
                     "item": "set(4)",
-                    "cards": ["red-5", "green-5", "yellow-5", "wild"],
-                    "wilds": { "wild": { "rank": "5" } }
+                    "cards": [
+                      "red-5",
+                      "green-5",
+                      "yellow-5",
+                      "wild"
+                    ],
+                    "wilds": {
+                      "wild": {
+                        "rank": "5"
+                      }
+                    }
                   }
                 ]
               }
@@ -390,31 +833,96 @@
       "name": "a skip may not be picked up from the discard pile",
       "setup": {
         "seats": 3,
-        "turn": { "seat": 0, "phase": "draw" },
-        "playerVars": { "0": { "phase": 1, "laidDown": false } },
-        "zones": { "discard": ["red-4", "skip"], "hand.0": ["blue-5"] }
+        "turn": {
+          "seat": 0,
+          "phase": "draw"
+        },
+        "playerVars": {
+          "0": {
+            "phase": 1,
+            "laidDown": false
+          }
+        },
+        "zones": {
+          "discard": [
+            "red-4",
+            "skip"
+          ],
+          "hand.0": [
+            "blue-5"
+          ]
+        }
       },
       "assert": [
-        { "move": { "actor": 0, "type": "draw", "from": "discard" }, "legal": false, "rule": "discard-pickup-forbidden" },
-        { "move": { "actor": 0, "type": "draw", "from": "draw" }, "legal": true }
+        {
+          "move": {
+            "actor": 0,
+            "type": "draw",
+            "from": "discard"
+          },
+          "legal": false,
+          "rule": "discard-pickup-forbidden"
+        },
+        {
+          "move": {
+            "actor": 0,
+            "type": "draw",
+            "from": "draw"
+          },
+          "legal": true
+        }
       ]
     },
     {
       "name": "discarding a skip makes the chosen player lose their next turn",
       "setup": {
         "seats": 3,
-        "turn": { "seat": 0, "phase": "discard" },
-        "playerVars": { "0": { "phase": 1, "laidDown": false } },
+        "turn": {
+          "seat": 0,
+          "phase": "discard"
+        },
+        "playerVars": {
+          "0": {
+            "phase": 1,
+            "laidDown": false
+          }
+        },
         "zones": {
-          "discard": ["red-4"],
-          "hand.0": ["skip", "red-2"],
-          "hand.1": ["blue-1"],
-          "hand.2": ["green-1"]
+          "discard": [
+            "red-4"
+          ],
+          "hand.0": [
+            "skip",
+            "red-2"
+          ],
+          "hand.1": [
+            "blue-1"
+          ],
+          "hand.2": [
+            "green-1"
+          ]
         }
       },
       "assert": [
-        { "apply": { "actor": 0, "type": "discard", "cards": ["skip"], "choice": { "target": 1 } } },
-        { "expect": { "turn": { "seat": 2 } } }
+        {
+          "apply": {
+            "actor": 0,
+            "type": "discard",
+            "cards": [
+              "skip"
+            ],
+            "choice": {
+              "target": 1
+            }
+          }
+        },
+        {
+          "expect": {
+            "turn": {
+              "seat": 2
+            }
+          }
+        }
       ]
     },
     {
@@ -423,12 +931,157 @@
         "seats": 3,
         "zones": {
           "hand.0": [],
-          "hand.1": ["red-3", "wild"],
-          "hand.2": ["blue-9"]
+          "hand.1": [
+            "red-3",
+            "wild"
+          ],
+          "hand.2": [
+            "blue-9"
+          ]
         }
       },
       "assert": [
-        { "score": { "0": 0, "1": 30, "2": 5 } }
+        {
+          "score": {
+            "0": 0,
+            "1": 30,
+            "2": 5
+          }
+        }
+      ]
+    },
+    {
+      "name": "skips are not meldable, however set-like three of them look",
+      "setup": {
+        "seats": 3,
+        "turn": {
+          "seat": 0,
+          "phase": "meld"
+        },
+        "playerVars": {
+          "0": {
+            "phase": 1,
+            "laidDown": false
+          }
+        },
+        "zones": {
+          "hand.0": [
+            "skip",
+            "skip#2",
+            "skip#3",
+            "wild",
+            "green-9",
+            "yellow-9",
+            "red-9",
+            "blue-12"
+          ]
+        }
+      },
+      "assert": [
+        {
+          "move": {
+            "actor": 0,
+            "type": "layDown",
+            "choice": {
+              "melds": [
+                {
+                  "item": "set(3)",
+                  "cards": [
+                    "skip",
+                    "skip#2",
+                    "skip#3"
+                  ]
+                },
+                {
+                  "item": "set(3)",
+                  "cards": [
+                    "green-9",
+                    "yellow-9",
+                    "red-9"
+                  ]
+                }
+              ]
+            }
+          },
+          "legal": false,
+          "rule": "not-meldable"
+        },
+        {
+          "move": {
+            "actor": 0,
+            "type": "layDown",
+            "choice": {
+              "melds": [
+                {
+                  "item": "set(3)",
+                  "cards": [
+                    "skip",
+                    "skip#2",
+                    "wild"
+                  ]
+                },
+                {
+                  "item": "set(3)",
+                  "cards": [
+                    "green-9",
+                    "yellow-9",
+                    "red-9"
+                  ]
+                }
+              ]
+            }
+          },
+          "legal": false,
+          "rule": "not-meldable"
+        }
+      ]
+    },
+    {
+      "name": "a skip cannot be hit onto somebody else's meld either",
+      "setup": {
+        "seats": 3,
+        "turn": {
+          "seat": 0,
+          "phase": "meld"
+        },
+        "playerVars": {
+          "0": {
+            "phase": 2,
+            "laidDown": true
+          },
+          "1": {
+            "phase": 1,
+            "laidDown": true
+          }
+        },
+        "zones": {
+          "hand.0": [
+            "skip",
+            "blue-12"
+          ],
+          "melds.1": [
+            "red-5",
+            "green-5",
+            "yellow-5"
+          ]
+        }
+      },
+      "assert": [
+        {
+          "move": {
+            "actor": 0,
+            "type": "hit",
+            "cards": [
+              "skip"
+            ],
+            "choice": {
+              "seat": 1,
+              "meld": 0
+            }
+          },
+          "legal": false,
+          "rule": "not-meldable"
+        }
       ]
     }
   ]
