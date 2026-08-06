@@ -57,7 +57,7 @@ import { closeConfirm, confirmAction } from './confirm.js';
 import { createDragController } from './dragController.js';
 import { attachInspector, hideInspector } from './inspector.js';
 import {
-  describeCard, describeZone, cardAriaLabel, zoneAriaLabel, zoneBadgeText, cardName,
+  describeCard, describeZone, cardAriaLabel, zoneAriaLabel, zoneBadge, cardName,
 } from './describe.js';
 import {
   interactionMode, buildUiModel, dropCandidates, draggableSources, pruneSelection,
@@ -613,10 +613,23 @@ function buildPileNode(state, inst, ui, { mini = false, draggableTop = null } = 
     badge.className = 'pile-count';
     // The words moved to the accessible name and the inspector; what is left
     // on the felt is the number you actually watch.
-    badge.textContent = zoneBadgeText(state, inst);
-    // The badge already carries the WORD for an active colour (zoneBadgeText);
-    // this adds the swatch, and only in the case a card cannot show for itself.
-    // Said aloud by describeZone's note, which reaches the pile's own name.
+    const { text: badgeText, kind, suit } = zoneBadge(state, inst);
+    badge.textContent = badgeText;
+    if (kind === 'match') {
+      // THE SUIT IN FORCE IS NOT A PILE LABEL, so it does not get a pile
+      // label's voice. It is the rule every hand at the table is playing to,
+      // and after an eight it is the ONLY place that rule is written — the
+      // card underneath shows the suit it was, not the suit it chose. Big
+      // glyph, suit-inked, no pill. See .pile-count--match.
+      badge.classList.add('pile-count--match');
+      // dataset, and only for a suit describe.js recognised: a pack's own var
+      // never reaches an attribute the stylesheet then matches on (§7b).
+      if (suit) badge.dataset.suit = suit;
+    }
+    // The badge already carries the suit or the word for an active colour
+    // (zoneBadge); this adds the swatch, and only in the case a card cannot
+    // show for itself. Said aloud by describeZone's note, which reaches the
+    // pile's own name.
     const active = activeMatchTint(state, address);
     if (active) {
       badge.classList.add('pile-count--active-match');
@@ -633,7 +646,7 @@ function buildPileNode(state, inst, ui, { mini = false, draggableTop = null } = 
  *
  * There is exactly one case and it is the most consequential card in the game:
  * a wild sits on the discard showing no colour at all, while what every hand
- * now has to match is a value living in a var. zoneBadgeText already writes
+ * now has to match is a value living in a var. zoneBadge already writes
  * the WORD there (describe.js) — this is what turns that word into something
  * readable at a glance, which for a colour is a swatch.
  *
