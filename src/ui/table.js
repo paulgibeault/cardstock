@@ -53,12 +53,13 @@ import { flyCard, landOn, motionAllowed, flightLayer, rectOf, cardSizedRect } fr
 import { safeCssColor } from './css.js';
 import { createSession, stopSession } from './session.js';
 import { createBotDriver, botVerb } from './botDriver.js';
-import { schedule, swallowNextClick } from './clock.js';
+import { schedule } from './clock.js';
 import { line, svgNode, clearSvgCache } from './dom.js';
 import { promptChoice, closeChoiceDialog } from './choiceDialog.js';
 import { createCelebrations } from './celebrations.js';
 import { createContractLadder } from './contractLadder.js';
 import { createMatchRecord } from './matchRecord.js';
+import { watchHandGestures } from './handGestures.js';
 import { closeConfirm, confirmAction } from './confirm.js';
 import { createDragController } from './dragController.js';
 import { attachInspector, hideInspector } from './inspector.js';
@@ -67,8 +68,8 @@ import {
 } from './describe.js';
 import {
   interactionMode, stagingPhase, buildUiModel, dropCandidates, draggableSources, pruneSelection,
-  isSelected, handAddress, implicitLandingZone, smartSelection, ladderRungs,
-  describeContractItem, describeContract, shortContract, CONTRACT_LADDER_KEY,
+  isSelected, handAddress, implicitLandingZone,
+  describeContractItem,
 } from './interaction.js';
 import {
   orderHand, reorder, nextMode, isSortMode, fanStep, classifyHandGesture, SORT_LABELS,
@@ -1079,7 +1080,7 @@ function renderHand(state, ui, stagger, draggable) {
     // The card's description is still on its accessible name, and everywhere
     // outside a rummy lay-down the long press means "what is this?" as before.
     attachInspector(wrapper, () => describeCard(card, state.pack),
-      { isBusy: () => (!!drag && drag.isDragging()) || smartSelectArmed() });
+      { isBusy: () => (!!drag && drag.isDragging()) || !!gestures?.smartSelectArmed() });
 
     el.hand.appendChild(wrapper);
   });
@@ -1153,166 +1154,6 @@ function watchHandWidth() {
   // Observing the ROW, not the hand: the hand's own width is what layoutHand
   // changes, so watching it would be a feedback loop.
   new ResizeObserver(() => { if (liveState()) layoutHand(); }).observe(el.handRow);
-}
-
-/* ------------------------------------------------------------------ *
- * Reading the fan with a finger
- * ------------------------------------------------------------------ */
-
-/**
- * PEEK: the card under the finger rises out of the fan, before the finger is
- * lifted, and follows the finger along the row.
- *
- * A fan overlaps, so all you can see of most cards is a strip down the left
- * edge — on a phone, thinner than the finger covering it. `:hover` solves this
- * for a mouse and does nothing for a touch, which left the player tapping a
- * sliver and finding out afterwards what they had chosen. Raising on
- * pointerDOWN turns a tap into look-then-commit: what you are on is legible
- * while you are still on it, and sliding to a neighbour costs nothing.
- *
- * Hit-testing is by cached rect, not by event target: touch capture sends
- * every move to the element the press began on, so the target is always the
- * first card. The rects are measured once per press for the same reason the
- * drag controller measures its targets once (issue #6) — the fan does not
- * move while a finger is on it.
- *
- * The visible strip of card i runs from its own left edge to the NEXT card's,
- * because later siblings paint over earlier ones; the last card owns its full
- * width. That is exactly the region the player can see, which is what makes
- * this feel like pointing at the card rather than at a hitbox.
- */
-function paintPeek(wrapper) {
-  if (!session) return;
-  if (session.peek && session.peek.node === wrapper) return;
-  if (session.peek && session.peek.node) session.peek.node.classList.remove('card-face-wrap--peek');
-  if (session.peek) session.peek.node = wrapper;
-  if (wrapper) wrapper.classList.add('card-face-wrap--peek');
-}
-
-function clearPeek() {
-  if (!session) return;
-  disarmSmartSelect();
-  if (session.peek && session.peek.node) session.peek.node.classList.remove('card-face-wrap--peek');
-  session.peek = null;
-}
-
-/* ------------------------------------------------------------------ *
- * Gathering a meld by holding one card
- * ------------------------------------------------------------------ */
-
-/** How long a hold has to last to mean "and the rest of this meld". */
-const SMART_SELECT_MS = 500;
-
-/**
- * HOLD A CARD TO GATHER ITS MELD.
- *
- * The last of the three answers to "assembling a meld on a phone is too
- * cramped", and the one that skips the problem rather than easing it: the pack
- * already knows that the two other sevens go with this seven, so picking them
- * out of the fan by hand is work the rules could have done. Hold the seven and
- * the group arrives in the tray.
- *
- * Only where the question means something — a rummy hand still choosing what
- * to lay down. Everywhere else a long press keeps meaning "what is this card?"
- * (src/ui/inspector.js), which the inspector's own veto is told about below.
- *
- * The gathered cards go through the ORDINARY selection, so this can no more
- * construct an illegal lay-down than tapping the same cards could.
- */
-function smartSelectArmed() {
-  return !!session?.ui && session.ui.mode === 'rummy-meld' && session.ui.handMulti;
-}
-
-function disarmSmartSelect() {
-  if (session?.peek && session.peek.hold) {
-    session.peek.hold.cancel();
-    session.peek.hold = null;
-  }
-}
-
-function armSmartSelect(wrapper) {
-  if (!smartSelectArmed() || !session.peek) return;
-  session.peek.hold = schedule(() => {
-    if (!session.peek) return;
-    session.peek.hold = null;
-    const cardId = wrapper.dataset.cardId;
-    const next = smartSelection(liveState(), HUMAN_SEAT, cardId, session.selection);
-    if (!next) {
-      // Nothing in hand goes with it. Say so on the card rather than in words:
-      // a group that does not exist is not an error, just an answer.
-      wrapper.classList.add('card-face-wrap--nomatch');
-      schedule(() => wrapper.classList.remove('card-face-wrap--nomatch'), 400);
-      return;
-    }
-    const gathered = next.cardIds.length - (session.selection ? session.selection.cardIds.length : 0);
-    session.selection = next;
-    clearPeek();
-    // A full render: the gathered cards leave the fan for the tray.
-    render(liveState(), `Gathered ${gathered} cards.`);
-  }, SMART_SELECT_MS);
-}
-
-/** The fan card whose VISIBLE strip contains `clientX`. */
-function cardStripAt(clientX) {
-  if (!session.peek || !session.peek.strips.length) return null;
-  const strips = session.peek.strips;
-  if (clientX < strips[0].left) return strips[0].node;
-  for (let i = 0; i < strips.length; i++) {
-    const right = i + 1 < strips.length ? strips[i + 1].left : strips[i].right;
-    if (clientX < right) return strips[i].node;
-  }
-  return strips[strips.length - 1].node;
-}
-
-function watchHandPeek() {
-  el.hand.addEventListener('pointerdown', (event) => {
-    if (event.button !== 0) return;
-    // Whatever the last press left behind. A pointerup can go missing — the
-    // finger leaves the window, a drag takes the gesture over — and a card
-    // left raised is a card claiming to be under a finger that is not there.
-    clearPeek();
-    const wrapper = event.target.closest?.('.card-face-wrap');
-    if (!wrapper || !el.hand.contains(wrapper)) return;
-    const strips = [...el.hand.children].map((node) => {
-      const r = node.getBoundingClientRect();
-      return { node, left: r.left, right: r.right };
-    });
-    session.peek = { node: null, strips, pointerId: event.pointerId, scrubbed: false, hold: null };
-    paintPeek(wrapper);
-    armSmartSelect(wrapper);
-  });
-
-  el.hand.addEventListener('pointermove', (event) => {
-    if (!session.peek || event.pointerId !== session.peek.pointerId) return;
-    const under = cardStripAt(event.clientX);
-    if (under && under !== session.peek.node) {
-      session.peek.scrubbed = true;
-      // The press has become a slide, so it is no longer a hold.
-      disarmSmartSelect();
-    }
-    if (under) paintPeek(under);
-  });
-
-  // A scrub that ended on a card other than the one pressed has to activate
-  // THAT card: the browser's click will name the press target, which is the
-  // whole thing the player was scrubbing away from.
-  const finish = (event) => {
-    if (!session.peek || event.pointerId !== session.peek.pointerId) return;
-    const landed = session.peek.node;
-    const scrubbed = session.peek.scrubbed;
-    clearPeek();
-    if (!scrubbed || !landed || !liveState() || !session.ui) return;
-    const cardId = landed.dataset.cardId;
-    // Only what a tap could already have done — the same model, the same
-    // guard. A scrub is a nicer way to reach a card, never a second rules path.
-    if (!session.ui.handSelectable.has(cardId)) return;
-    const card = cardById(liveState(), cardId);
-    if (!card) return;
-    swallowNextClick();
-    onHandCard(liveState(), cardId, card, landed, session.ui);
-  };
-  el.hand.addEventListener('pointerup', finish);
-  el.hand.addEventListener('pointercancel', () => clearPeek());
 }
 
 /**
@@ -1553,7 +1394,7 @@ function onDragLift(handle) {
   hideInspector();
   // The drag owns the gesture from here; the peek raise would fight the ghost
   // for the same card, and the hand's own pointerup may never arrive.
-  clearPeek();
+  if (gestures) gestures.clearPeek();
 
   const acting = actingSeatsOf(state);
   const humanActs = acting.includes(HUMAN_SEAT);
@@ -1691,6 +1532,7 @@ function animateMove(state, move, from) {
 
 let moments = null;
 let ladder = null;
+let gestures = null;
 let record = null;
 
 function hideBanner() { if (moments) moments.hideBanner(session); }
@@ -2338,7 +2180,15 @@ export function initTable({ onExit }) {
   // a width change costs two measurements, not a repaint of the table.
   watchHandWidth();
   ladder.watch(liveState);
-  watchHandPeek();
+  gestures = watchHandGestures({
+    hand: el.hand,
+    session: () => session,
+    humanSeat: HUMAN_SEAT,
+    cardById,
+    onSelect: onHandCard,
+    // A full render: the gathered cards leave the fan for the tray.
+    onGathered: (state, count) => render(state, `Gathered ${count} cards.`),
+  });
 
   el.lobbyButton.addEventListener('click', () => exitToLobby());
   el.scoreChip.addEventListener('click', () => openScoreboard());
