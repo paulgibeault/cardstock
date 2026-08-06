@@ -28,6 +28,55 @@ const C = 50;
 const R = 68;
 
 /**
+ * How big things are drawn, in card units (the face is 100x140).
+ *
+ * THE INDEX IS THE CARD, not a footnote to it. A hand is dealt at 46-70px on a
+ * phone and fanned so that the corner is the ONLY part of every card but the
+ * last one you can see — so the corner is not a caption on the art, it is the
+ * whole card for four cards out of five. At the sizes a real deck uses it came
+ * out four or five actual pixels of ink, which is enough to tell there is
+ * something there and not enough to tell what. These are sized against the
+ * screen, not against a physical deck.
+ *
+ * Each of these is up against a different edge, which is why they are not one
+ * number:
+ *
+ *  - CORNER_RANK is barely constrained at all, which is easy to miss. It sits
+ *    ABOVE everything else on the card: the top pip row inks from y=31 and the
+ *    court panel starts at y=27, so the rank only has to clear the inner rule
+ *    on the left. That is what lets it be the biggest mark in the corner, and
+ *    why two-digit "10" only has to come down enough to fit that same width.
+ *  - CORNER_SUIT is the one hemmed in. It hangs BESIDE the top pip row, so its
+ *    ink has to stop before a pip's starts at x=24.5 — and stop well before,
+ *    not just short of it, or a hand of 9s and 10s reads as a smear. It is also
+ *    deliberately a hair under PIP: the corner mark must never be mistaken for
+ *    one of the pips you are counting.
+ *  - PIP is up against ITS OWN NEIGHBOURS: the 9 and 10 layouts put rows 17
+ *    units apart, ink runs about 0.72 of font size tall, so 20 fills 14.4 of
+ *    that 17 and anything past ~22 closes the gaps that make a hand countable.
+ *  - ACE and COURT_SUIT have the middle of the card and are sized to look like
+ *    the centrepiece they are.
+ */
+const PIP = 20;
+const CORNER_RANK = 22;
+const CORNER_RANK_WIDE = 17;
+const CORNER_SUIT = 19;
+const CORNER_X = 14;
+const ACE = 58;
+const COURT_SUIT = 18;
+
+/**
+ * The court card's panel, narrowed from its old 21..79 to clear the corner.
+ *
+ * The index grew into the space the panel used to start in. Giving the panel's
+ * two units to the corner is the right trade every time: the panel is a frame
+ * around an ornament that reads fine at any width, and the index is the thing
+ * you are actually trying to read off a fanned hand.
+ */
+const COURT_PANEL_X = 24;
+const COURT_PANEL_W = 52;
+
+/**
  * Where the pips go, per rank.
  *
  * These are the arrangements on a physical deck, not an even grid: 7 is two
@@ -65,8 +114,15 @@ function glyphAt(glyph, cx, cy, size, fill, { flip = false } = {}) {
 }
 
 function cornerIndex(rank, glyph, fill) {
-  return `<g>${text(rank, { x: 13, y: 25, size: rank.length > 1 ? 14 : 16, fill, cls: 'cs-text' })}`
-    + glyphAt(glyph, 13, 34, 13, fill)
+  // The rank hangs off a BASELINE and the suit is centred on a point, so the
+  // two numbers are not comparable: at these sizes the digits ink from y=10
+  // down to the baseline at 26 — clear of the court panel, which starts at 27 —
+  // and the suit inks from y=35 to y=48, beside the top pip row rather than
+  // above it. Together they fill the corner instead of huddling in the top of
+  // it, which is most of what makes the pair readable off a fanned hand.
+  const size = rank.length > 1 ? CORNER_RANK_WIDE : CORNER_RANK;
+  return `<g>${text(rank, { x: CORNER_X, y: 26, size, fill, cls: 'cs-text' })}`
+    + glyphAt(glyph, CORNER_X, 42, CORNER_SUIT, fill)
     + '</g>';
 }
 
@@ -83,7 +139,7 @@ function courtMotif(rank, glyph, fill, soft) {
   } else {
     crest = `<polygon points="50,31 61,38.5 57.5,52 50,48 42.5,52 39,38.5" fill="${fill}" />`;
   }
-  return crest + band + glyphAt(glyph, 50, 63, 15, fill);
+  return crest + band + glyphAt(glyph, 50, 63, COURT_SUIT, fill);
 }
 
 export function face(card, theme, muted = false) {
@@ -110,7 +166,7 @@ export function face(card, theme, muted = false) {
     // The court panel is a wash of the suit's ink over the paper, so on grey
     // stock it is that same wash over the GREY — not a bright white window
     // left behind on an otherwise muted card.
-    parts.push(`<rect x="21" y="27" width="58" height="86" rx="4" fill="${muted ? blend(paper, ink, 0.08) : shade(ink, 0.92)}" stroke="${ink}" stroke-width="1.6" />`);
+    parts.push(`<rect x="${COURT_PANEL_X}" y="27" width="${COURT_PANEL_W}" height="86" rx="4" fill="${muted ? blend(paper, ink, 0.08) : shade(ink, 0.92)}" stroke="${ink}" stroke-width="1.6" />`);
     parts.push(mirrored(courtMotif(rank, glyph, ink, paper)));
   } else if (rank === 'A' && glyph) {
     // The one flourish a plain deck always has. No trade dress involved — the
@@ -120,13 +176,15 @@ export function face(card, theme, muted = false) {
       parts.push(`<ellipse cx="50" cy="70" rx="27" ry="34" fill="none" stroke="${faded}" stroke-width="1.2" />`);
       parts.push(`<ellipse cx="50" cy="70" rx="24" ry="31" fill="none" stroke="${faded}" stroke-width="0.8" />`);
     }
-    parts.push(glyphAt(glyph, 50, 70, 46, ink));
+    parts.push(glyphAt(glyph, 50, 70, ACE, ink));
   } else if (pips && glyph) {
-    for (const [x, y] of pips) parts.push(glyphAt(glyph, x, y, 17, ink, { flip: y > 70 }));
+    for (const [x, y] of pips) parts.push(glyphAt(glyph, x, y, PIP, ink, { flip: y > 70 }));
   } else {
     // A joker, or any rank a standard layout has no arrangement for. Saying
-    // the rank large is better than an empty card.
-    parts.push(text(rank.slice(0, 6), { x: 50, y: 80, size: rank.length > 2 ? 20 : 40, fill: ink }));
+    // the rank large is better than an empty card. 21 rather than 20 for the
+    // long form so that PIP is the only thing on any card drawn at 20 — which
+    // is what tests/cardStyles.test.js counts pips by.
+    parts.push(text(rank.slice(0, 6), { x: 50, y: 80, size: rank.length > 2 ? 21 : 40, fill: ink }));
   }
 
   const tone = suit ? (isRed ? ' card-face--red' : ' card-face--black') : '';

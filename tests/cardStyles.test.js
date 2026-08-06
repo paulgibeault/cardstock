@@ -176,9 +176,9 @@ test("a pack with no style declaration is rendered by vanilla, unchanged", () =>
 
 const classic = makeCardRenderer({ deck: "standard-52" });
 
-/** Centre pips are the only glyphs drawn at 17px; the two indices are smaller. */
+/** Centre pips are the only glyphs drawn at 20 units; the two indices are smaller. */
 function pipCount(svg) {
-  return (svg.match(/font-size="17"/g) || []).length;
+  return (svg.match(/font-size="20"/g) || []).length;
 }
 
 test("a number card shows one pip per rank, not one pip full stop", () => {
@@ -201,7 +201,7 @@ test("pips in the lower half of the card are turned around", () => {
 test("court cards get a panel and an ornament rather than a bare letter", () => {
   for (const rank of ["J", "Q", "K"]) {
     const svg = classic.face({ rank, suit: "diamonds" });
-    assert.ok(svg.includes('<rect x="21" y="27"'), `${rank} has no court panel`);
+    assert.ok(svg.includes('<rect x="24" y="27"'), `${rank} has no court panel`);
     assert.ok(/<polygon|<path/.test(svg), `${rank} has no ornament`);
     assert.strictEqual(pipCount(svg), 0, `${rank} should not be laid out as pips`);
   }

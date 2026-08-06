@@ -59,6 +59,11 @@
 
   --chip-bg: rgba(0, 0, 0, 0.28);
   --chip-border: rgba(255, 255, 255, 0.14);
+  /* The red a heart or a diamond is inked in when it is drawn as CHROME rather
+     than on a card — the suit medallion under the discard. A card's own red is
+     a hex literal in classic.js because it sits on paper; this one sits on a
+     chip over felt and has to be a different red in each theme to survive it. */
+  --suit-red: #ff6f61;
   --tile-bg: #16281f;
   --tile-border: rgba(255, 255, 255, 0.16);
   --tile-accent-strong: 62%;
@@ -110,6 +115,7 @@
 
   --chip-bg: rgba(255, 255, 255, 0.55);
   --chip-border: rgba(20, 38, 28, 0.16);
+  --suit-red: #a81b12;
   --tile-bg: #ffffff;
   --tile-border: rgba(20, 38, 28, 0.14);
   --tile-accent-strong: 34%;
@@ -1499,9 +1505,51 @@ body.is-dragging .card-face { cursor: grabbing; }
   80% { transform: translateX(-3px); }
 }
 
+/* The suit — or colour — the table is playing to.
+ *
+ * This is the one badge on the felt that is NOT a label. Every other pile badge
+ * counts something you could also see by looking at the pile; this one carries
+ * a rule that exists nowhere else on the table. After an eight the discard shows
+ * the suit the card WAS, and the suit everyone must now follow lives only here.
+ * At 0.72rem in a grey pill it read as a footnote to the card it sat under, and
+ * across a room or on a phone held at arm's length it did not read at all.
+ *
+ * So it stops being type and becomes a MEDALLION: the glyph at chip size, in
+ * the suit's own ink, on a round chip that borrows the felt's chrome colours so
+ * it works in both themes. It is the size of a real suit marker on a table.
+ *
+ * Only a four-suit glyph gets the medallion — `[data-suit]` is set by table.js
+ * and only for a suit describe.js recognised. A pack whose active value is a
+ * WORD ("Red", in Wildfire) keeps the pill, because a word blown up to 1.6rem
+ * would be wider than the pile it belongs to; the swatch below is what carries
+ * a colour instead. */
+.pile-count--match { font-size: 0.78rem; }
+
+.pile-count--match[data-suit] {
+  display: grid;
+  place-items: center;
+  width: 2.3rem;
+  height: 2.3rem;
+  /* Overrides the base cap, which exists so a badge cannot decide the pile's
+     column width. A fixed 2.3rem cannot either — it is narrower than --pile-w
+     at every breakpoint, phones included. */
+  max-width: none;
+  margin-top: 0.35rem;
+  padding: 0;
+  border-radius: 50%;
+  font-size: 1.55rem;
+  /* The glyph is the whole box: no leading, or the chip grows a chin. */
+  line-height: 1;
+  color: var(--chrome-text);
+  box-shadow: 0 2px 6px var(--card-shadow);
+}
+
+.pile-count--match[data-suit="hearts"],
+.pile-count--match[data-suit="diamonds"] { color: var(--suit-red); }
+
 /* The colour a wild left behind.
  *
- * The discard's badge already writes the word (zoneBadgeText); this is the
+ * The discard's badge already writes the word (zoneBadge); this is the
  * swatch that makes it readable without reading. It appears ONLY when the top
  * card cannot show the colour itself — see activeMatchTint() — so a dot on the
  * badge means "a wild chose this", not merely "this is a discard pile". */
@@ -1517,25 +1565,45 @@ body.is-dragging .card-face { cursor: grabbing; }
   border: 1px solid color-mix(in srgb, var(--active-tint, var(--accent)) 65%, transparent);
 }
 
+/* Sized like the suit medallion above, for the same reason: this dot IS the
+   rule in a pack that matches on colour, so it is the thing to see first and
+   the word beside it is the caption. */
 .pile-count--active-match::before {
   content: "";
-  width: 0.58rem;
-  height: 0.58rem;
+  width: 0.95rem;
+  height: 0.95rem;
   flex: none;
   border-radius: 50%;
   background: var(--active-tint, var(--accent));
-  box-shadow: 0 0 6px color-mix(in srgb, var(--active-tint, var(--accent)) 60%, transparent);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--active-tint, var(--accent)) 60%, transparent);
 }
 
-/* Play has turned round. Absent until it does — see directionBadge(). */
+/* Play has turned round. Absent until it does — see directionBadge().
+ *
+ * A REVERSE IS THE BIGGEST THING A SINGLE CARD DOES IN WILDFIRE — it changes
+ * whose problem the next card is — and this used to report it at 1.05rem and
+ * 75% opacity in a corner, quieter than the seat names it sits above. It is now
+ * an emblem: the same medallion as the suit badge, in the accent, big enough to
+ * catch the eye when it appears and to answer "which way is it going?" without
+ * being hunted for afterwards.
+ *
+ * Still corner-parked and still pointer-transparent — it is a sign on the wall,
+ * not a control, and the seats own the middle of that row. */
 .direction-badge {
   position: absolute;
-  top: 0;
+  top: -0.1rem;
   right: 0.15rem;
-  font-size: 1.05rem;
+  display: grid;
+  place-items: center;
+  width: 2.4rem;
+  height: 2.4rem;
+  border-radius: 50%;
+  font-size: 1.7rem;
   line-height: 1;
-  color: var(--chrome-text);
-  opacity: 0.75;
+  color: var(--accent);
+  background: var(--chip-bg);
+  border: 1px solid var(--chip-border);
+  box-shadow: 0 2px 6px var(--card-shadow);
   pointer-events: none;
 }
 
@@ -1646,6 +1714,10 @@ body.is-dragging .card-face { cursor: grabbing; }
   .ladder__pip { width: 0.9rem; height: 0.9rem; font-size: 0.55rem; }
   .hand { padding: 0.3rem; }
   .pile-count { margin-top: 0.3rem; }
+  /* The medallions give height back too, but only a third of it: they shrink
+     one step and stop, because the whole point of them is being seeable. */
+  .pile-count--match[data-suit] { width: 1.9rem; height: 1.9rem; font-size: 1.3rem; margin-top: 0.25rem; }
+  .direction-badge { width: 2rem; height: 2rem; font-size: 1.4rem; }
   /* The tray reserves its height whether or not it holds anything, so on a
      short screen it is charged for during every turn of a lay-down phase.
      Smaller cards here, not a collapsing row — a tray that appeared on the

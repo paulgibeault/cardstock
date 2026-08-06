@@ -170,19 +170,36 @@ export function describeZone(state, { def, n, address }) {
  * it and no way to know what the box is for, which is worse than the noise the
  * diet was meant to cut. So the count is the badge while there are cards, and
  * the name is the badge while there are none.
+ *
+ * Returns `{ text, kind, suit }` rather than a bare string. `kind` is how loud
+ * the badge should be — 'count' and 'name' are labels, 'match' is the suit or
+ * colour the table is playing to — and `suit` is the four-suit name behind a
+ * 'match' glyph when there is one, so the caller can ink a heart red.
  */
-export function zoneBadgeText(state, { def, n, address }) {
+export function zoneBadge(state, { def, n, address }) {
   const count = state.zones.count(address);
   if (count === 0) {
     // The empty slot already reads as zero; the word is the missing half.
-    return `${def.label || titleCase(def.id)}${n != null ? ` ${n}` : ''}`;
+    return { text: `${def.label || titleCase(def.id)}${n != null ? ` ${n}` : ''}`, kind: 'name' };
   }
-  if (def.capacity != null) return `${count}/${def.capacity}`;
+  if (def.capacity != null) return { text: `${count}/${def.capacity}`, kind: 'count' };
   if (def.id === 'discard' && def.per !== 'player') {
     const active = state.vars.activeSuit || state.vars.activeColor;
-    if (active) return `${SUIT_GLYPH[active] || titleCase(active)}`;
+    // `kind: 'match'` is what lets the caller draw this one BIG. Everywhere else
+    // the badge is a number you glance at; here it is the rule in force — what
+    // the whole table must play to — and a 0.72rem pill said that in the same
+    // voice as a card count. Own the glyph, hand the styling decision over
+    // rather than making it here: this module stays DOM-free (see the header).
+    //
+    // hasOwn, not a bare lookup: `active` is a var a PACK writes, and on a plain
+    // object a pack setting it to "constructor" would resolve to a function and
+    // stringify the whole thing into the badge.
+    if (active) {
+      const suit = Object.hasOwn(SUIT_GLYPH, active) ? active : null;
+      return { text: suit ? SUIT_GLYPH[suit] : titleCase(active), kind: 'match', suit };
+    }
   }
-  return String(count);
+  return { text: String(count), kind: 'count' };
 }
 
 /** The accessible name for a pile — the words the badge no longer shows. */
