@@ -45,12 +45,15 @@ async function goToLobby() {
   }
 }
 
-async function goToTable(packId) {
+async function goToTable(packId, setup) {
   hideLobby();
   hideInspector();
   document.getElementById('table-screen').hidden = false;
   try {
-    await openTable(packId);
+    // `setup` is the new-game sheet's answer (variants + seat count), absent
+    // for a resume or a deep link — openTable treats a stored match as
+    // authoritative over it either way.
+    await openTable(packId, setup);
   } catch (err) {
     console.error(err);
     reportTableError(`Could not start that game: ${err.message}`);
@@ -124,7 +127,7 @@ async function boot() {
   // dismissals (scroll, resize, Escape). Created once — see src/ui/inspector.js.
   initInspector();
   initTable({ onExit: () => { goToLobby().catch(reportBootFailure); } });
-  initLobby({ onOpenTable: (packId) => { goToTable(packId).catch(reportBootFailure); } });
+  initLobby({ onOpenTable: (packId, setup) => { goToTable(packId, setup).catch(reportBootFailure); } });
 
   await route();
 }

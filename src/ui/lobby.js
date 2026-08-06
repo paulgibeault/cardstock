@@ -20,6 +20,7 @@ import { buildSeating } from '../players/roster.js';
 import { confirmAction } from './confirm.js';
 import { showRules } from './panels.js';
 import { packRules } from './rules.js';
+import { askNewGame, hasChoices, closeNewGame } from './newGame.js';
 import { FULLY_PLAYABLE_TEMPLATES } from './table.js';
 
 const el = {
@@ -38,7 +39,7 @@ const GENRE = {
 
 const DEFAULT_ACCENT = '#3d7a5a';
 
-let openTable = () => {};
+let openTable = () => {};   // (packId, setup?) — set by initLobby
 
 /* ------------------------------------------------------------------ *
  * Formatting
@@ -151,7 +152,19 @@ function buildTile(manifest, summary, { featured }) {
   foot.appendChild(line('tile__cta', summary ? 'Resume' : (preview ? 'Take a look' : 'Deal me in')));
   open.appendChild(foot);
 
-  open.addEventListener('click', () => openTable(manifest.id));
+  // A game already in progress is resumed under the rules it was dealt with —
+  // there is nothing to ask, and asking would imply the answer could change
+  // something it cannot. Only a NEW game gets the sheet, and only when the
+  // pack actually offers a choice.
+  open.addEventListener('click', async () => {
+    if (summary || !hasChoices(manifest)) {
+      openTable(manifest.id);
+      return;
+    }
+    const setup = await askNewGame(manifest);
+    if (!setup) return;
+    openTable(manifest.id, setup);
+  });
   tile.appendChild(open);
 
   // "How to play" before you commit to a game, which is when the question is
@@ -204,7 +217,10 @@ function buildTile(manifest, summary, { featured }) {
         });
       }
       clearMatch(manifest.id);
-      openTable(manifest.id);
+      // Re-dealing is a NEW game, so it gets the same choices a new game gets.
+      const setup = hasChoices(manifest) ? await askNewGame(manifest) : {};
+      if (!setup) { renderLobby(); return; }   // backed out after abandoning
+      openTable(manifest.id, setup);
     });
     tile.appendChild(restart);
   }

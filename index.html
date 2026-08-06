@@ -175,6 +175,20 @@
     </div>
   </div>
 
+  <!-- The new-game sheet: house rules and seat count, chosen before the deal
+       because both are part of the rule set a match is replayed under and
+       neither can change once cards are out (src/ui/newGame.js). -->
+  <div id="new-game-overlay" hidden>
+    <div class="panel">
+      <div id="new-game-title" class="panel__title"></div>
+      <div id="new-game-body" class="new-game__body"></div>
+      <div class="panel__actions">
+        <button id="new-game-deal">Deal</button>
+        <button id="new-game-cancel" class="ghost-button">Cancel</button>
+      </div>
+    </div>
+  </div>
+
   <!-- How to play, generated from the pack's own declarations rather than
        written per game (src/ui/rules.js). Reachable from a lobby tile and
        from the scoreboard — deliberately NOT from the status bar, which is

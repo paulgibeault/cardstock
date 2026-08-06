@@ -32,6 +32,7 @@
   "variants": [
     {
       "id": "stacking",
+      "available": false,
       "name": "Stacking draw cards",
       "description": "A Draw 2 may be answered with another Draw 2, passing the accumulated penalty on.",
       "default": false,
@@ -39,6 +40,7 @@
     },
     {
       "id": "jump-in",
+      "available": false,
       "name": "Jump-in",
       "description": "A player holding the identical card may play it out of turn.",
       "default": false,

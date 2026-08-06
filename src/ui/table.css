@@ -326,8 +326,49 @@ body {
   display: flex;
   justify-content: center;
   gap: 1.25rem;
-  flex-wrap: wrap;
+  /* NOT wrap. Seats wrapping to a second row is how the felt loses its height
+     to the players and pushes the piles under the hand — and with the seat
+     picker a table can now be eight-handed. One row, always; when it will not
+     fit, the seats get smaller (below), and the ones that are not acting give
+     up their fan first. */
+  flex-wrap: nowrap;
+  gap: clamp(0.35rem, 1.5vw, 1.25rem);
 }
+
+/* ------------------------------------------------------------------ *
+ * Crowded tables
+ * ------------------------------------------------------------------ *
+ *
+ * Applied by renderSeats once the row holds more seats than it can show at
+ * full size. The ACTIVE seat always keeps everything: whose turn it is, and
+ * what they are holding, is the one thing a player is reading the row for.
+ * Everyone else keeps their face, name and count — which is the information —
+ * and gives up the fan of card backs, which is decoration that happens to be
+ * the widest thing on the plate.
+ */
+.opponent-row--compact .seat {
+  padding: 0.3rem 0.4rem 0.35rem;
+}
+
+/* The fan of backs only. NOT .seat__zones — a seat's melds are live hit
+   targets in Milestones and its piles are real destinations in Stockpile, and
+   a crowded table is not a reason to make a legal move unreachable. */
+.opponent-row--compact .seat:not(.seat--active) .mini-hand {
+  display: none;
+}
+
+.opponent-row--compact .seat__name {
+  max-width: 5.5rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Past a certain crowd even the names have to go; the avatar and the card
+   count are the last things standing, and they are still a player and how
+   close they are to going out. */
+.opponent-row--tight .seat:not(.seat--active) .seat__name { display: none; }
+.opponent-row--tight .seat .mini-hand { --mini-max: 60px; }
 
 /* A seat is a player, so it gets a face and a name plate rather than a line of
    text. The count is a badge on the plate — the number you actually watch. */
@@ -1709,7 +1750,8 @@ body.is-dragging .card-face { cursor: grabbing; }
   #round-overlay .panel,
   #scoreboard-overlay .panel,
   #game-over-overlay .panel,
-  #rules-overlay .panel {
+  #rules-overlay .panel,
+  #new-game-overlay .panel {
     animation: none !important;
   }
 
@@ -1848,7 +1890,8 @@ body.is-dragging .card-face { cursor: grabbing; }
 #round-overlay,
 #scoreboard-overlay,
 #game-over-overlay,
-#rules-overlay {
+#rules-overlay,
+#new-game-overlay {
   position: fixed;
   inset: 0;
   background: var(--scrim);
@@ -1864,14 +1907,16 @@ body.is-dragging .card-face { cursor: grabbing; }
 #round-overlay[hidden],
 #scoreboard-overlay[hidden],
 #game-over-overlay[hidden],
-#rules-overlay[hidden] { display: none; }
+#rules-overlay[hidden],
+#new-game-overlay[hidden] { display: none; }
 
 #choice-modal .panel,
 #confirm-modal .panel,
 #round-overlay .panel,
 #scoreboard-overlay .panel,
 #game-over-overlay .panel,
-#rules-overlay .panel {
+#rules-overlay .panel,
+#new-game-overlay .panel {
   background: var(--panel-bg);
   color: var(--panel-text);
   border: 1px solid var(--panel-border);
@@ -2404,3 +2449,67 @@ body.is-dragging .card-face { cursor: grabbing; }
 }
 .tile--broken .tile__name,
 .tile--broken .tile__tagline { display: block; }
+
+/* ------------------------------------------------------------------ *
+ * The new-game sheet
+ * ------------------------------------------------------------------ */
+
+.new-game__body {
+  max-height: min(58vh, 30rem);
+  overflow-y: auto;
+  text-align: left;
+  margin-bottom: 1rem;
+}
+
+.new-game__heading {
+  margin: 1rem 0 0.5rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.6;
+}
+.new-game__heading:first-child { margin-top: 0; }
+
+.new-game__seats { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+
+.new-game__seat {
+  min-width: 2.2rem;
+  padding: 0.35rem 0.5rem;
+  font: inherit;
+  font-weight: 700;
+  color: var(--panel-text);
+  background: var(--chip-bg);
+  border: 1px solid var(--chip-border);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.new-game__seat[aria-pressed="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #10240f;
+}
+
+.new-game__seat-count {
+  display: block;
+  margin-top: 0.45rem;
+  font-size: 0.8rem;
+  opacity: 0.7;
+}
+
+/* A whole row is the hit target, not just the box — a 13px checkbox is not a
+   touch target, and this sheet is used on a phone. */
+.new-game__row {
+  display: flex;
+  gap: 0.6rem;
+  align-items: flex-start;
+  padding: 0.5rem 0.4rem;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.new-game__row:hover { background: var(--ghost-hover); }
+
+.new-game__check { margin-top: 0.2rem; flex: none; width: 1rem; height: 1rem; }
+.new-game__text { display: flex; flex-direction: column; gap: 0.15rem; }
+.new-game__name { font-size: 0.92rem; font-weight: 600; }
+.new-game__desc { font-size: 0.8rem; opacity: 0.72; line-height: 1.4; }

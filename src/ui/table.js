@@ -82,7 +82,19 @@ import {
 } from '../arcade/audio.js';
 
 const HUMAN_SEAT = 0;
+// The table's own default when nothing asks for anything else — a deep link,
+// a resumed match with its own seat count, a pack whose minimum is higher.
+// The new-game sheet (src/ui/newGame.js) is what usually decides this now.
 const SEAT_COUNT = 3;
+
+/** Clamp a requested seat count to what the pack says it can seat. */
+function seatsFor(pack, requested) {
+  const players = pack.manifest.players || {};
+  const min = players.min ?? 2;
+  const max = players.max ?? 8;
+  const want = Number.isFinite(requested) ? requested : SEAT_COUNT;
+  return Math.max(min, Math.min(max, want));
+}
 
 /** How many discards stay visible under the top one. Enough to read as a pile. */
 const DISCARD_DEPTH = 3;
@@ -919,8 +931,21 @@ function directionBadge(state) {
   return badge;
 }
 
+// How many opponent plates fit on one line before they have to give things up.
+// Measured in seats rather than pixels because the plates are all the same
+// width: the mini-hand closes its own fan to a fixed cap (see .mini-hand), so
+// a seat holding seventeen cards is exactly as wide as one holding two.
+const COMPACT_FROM_SEATS = 4;
+const TIGHT_FROM_SEATS = 6;
+
 function renderSeats(state, stagger, acting, ui) {
   el.opponentsTop.replaceChildren();
+  // One row, always — see .opponent-row. Past these counts the seats that are
+  // not acting shed their card fan, then their names, so the row narrows
+  // instead of wrapping and stealing the felt's height.
+  const opponents = state.seats - 1;
+  el.opponentsTop.classList.toggle('opponent-row--compact', opponents >= COMPACT_FROM_SEATS);
+  el.opponentsTop.classList.toggle('opponent-row--tight', opponents >= TIGHT_FROM_SEATS);
   const reversed = directionBadge(state);
   if (reversed) el.opponentsTop.appendChild(reversed);
   const scored = showsScores(state);
@@ -2630,17 +2655,18 @@ function adoptMatch(pack, state, message) {
   scheduleAnnouncementBeats(state, epoch);
 }
 
-function startGame(pack) {
+function startGame(pack, seats) {
   cancelBotTurn();
   cancelAnnouncementBeats();
+  const seatCount = seatsFor(pack, seats);
   // Date.now() is only the entropy source. The seed itself is persisted with
   // the match from the first write, which is what makes the log replayable
   // (src/engine/replay.js) rather than merely re-runnable — and, since the
   // seating is derived from it, what rotates the opponents per game.
-  const state = createState({ pack, seats: SEAT_COUNT, seed: Date.now() });
+  const state = createState({ pack, seats: seatCount, seed: Date.now() });
   pack.template.setup(makeCtx(state));
   dealAnimation = true;
-  playDeal(SEAT_COUNT);
+  playDeal(seatCount);
   adoptMatch(state.pack, state, `Playing ${pack.manifest.name}.`);
 }
 
@@ -2651,7 +2677,7 @@ function startGame(pack) {
  * Every entry to the table goes through here — a lobby tap, a `?pack=` deep
  * link, and a save import (`onStateReplaced` is a fresh boot by contract, §3).
  */
-export async function openTable(packId) {
+export async function openTable(packId, { variants, seats } = {}) {
   const myToken = ++openToken;
   cancelBotTurn();
   cancelAnnouncementBeats();
@@ -2662,8 +2688,11 @@ export async function openTable(packId) {
 
   // A stored match pins the variant set: the same pack loaded with different
   // variants is a different rule set, and replaying a log against it diverges.
+  // A stored match wins over anything the caller asked for: its log was
+  // recorded under ITS rule set and seating, and replaying it under another is
+  // divergence, not a preference.
   const stored = loadMatch(packId);
-  const pack = await fetchPack(packId, stored ? stored.variants : undefined);
+  const pack = await fetchPack(packId, stored ? stored.variants : variants);
   if (myToken !== openToken) return; // the player left before the pack landed
 
   rememberPack(packId);
@@ -2690,7 +2719,7 @@ export async function openTable(packId) {
     }
     clearMatch(packId);
   }
-  startGame(pack);
+  startGame(pack, seats);
 }
 
 /**
@@ -2753,7 +2782,7 @@ export function initTable({ onExit }) {
 
   initPanels({
     onContinueRound: () => dismissRoundSummary(),
-    onPlayAgain: () => livePack && startGame(livePack),
+    onPlayAgain: () => livePack && startGame(livePack, liveState?.seats),
     onLobby: () => exitToLobby(),
     onEndMatch: () => endMatchFromSummary(),
     onRules: () => livePack && showRules(packRules(livePack)),

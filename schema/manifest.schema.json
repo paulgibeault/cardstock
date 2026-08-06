@@ -576,6 +576,10 @@
           "type": "object",
           "description": "Dotted-path \u2192 value applied over the manifest ('rules.drawWhenStuck': 'until-playable'). null deletes the key. Path segments split on '.'; selector keys therefore must not contain dots.",
           "minProperties": 1
+        },
+        "available": {
+          "type": "boolean",
+          "description": "False for a variant the pack DECLARES but the template does not implement yet \u2014 kept as a statement of intent, but never offered in the new-game sheet, because a house rule you can switch on that changes nothing is worse than one that is not offered. Defaults to true."
         }
       }
     },
