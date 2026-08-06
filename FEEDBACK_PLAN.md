@@ -6,20 +6,39 @@ do first), **game feel** (the experience improvements), and **platform
 features** (house rules, rules dialog, many-player layout). Each item below
 records the root cause found in code, the fix approach, and tests.
 
+**Status: all ten shipped** on `feat/playtest-feedback-pass`. What each
+commit actually did is in its message; the sections below are the plan as
+written, kept for the root-cause analysis. Two things were deliberately
+left, both noted in place: the tap route to the discard while a meld is
+staged (item 6), and Wildfire's `stacking` / `jump-in` variants, which stay
+declared but unoffered until the template implements them (item 9).
+
 ## Triage summary
 
-| # | Item | Type | Size | Phase |
-|---|------|------|------|-------|
-| 1 | Wildfire: Call doesn't re-trigger at one card | Bug | S | 1 |
-| 2 | Wildfire: wild starter allowed (reflip instead) | Bug | S | 1 |
-| 3 | Milestones: skip cards accepted in melds | Bug | S | 1 |
-| 4 | All: bot card lands low, then snaps | Bug | S | 1 |
-| 5 | Wildfire: celebrate reverse/skip/draw cards | Feel | M | 2 |
-| 6 | Milestones: meld tray persists across turns | Feel | M | 2 |
-| 7 | All: leave option at end of game / pacing | Feel | S | 2 |
-| 8 | All: rules dialog generated from the pack | Platform | M | 3 |
-| 9 | Wildfire: house rules / variants UI | Platform | M–L | 3 |
-| 10 | All: single-bar hand, minimized seats | Platform | M | 3 |
+| # | Item | Type | Size | Phase | Status |
+|---|------|------|------|-------|--------|
+| 1 | Wildfire: Call doesn't re-trigger at one card | Bug | S | 1 | done |
+| 2 | Wildfire: wild starter allowed (reflip instead) | Bug | S | 1 | done |
+| 3 | Milestones: skip cards accepted in melds | Bug | S | 1 | done |
+| 4 | All: bot card lands low, then snaps | Bug | S | 1 | done |
+| 5 | Wildfire: celebrate reverse/skip/draw cards | Feel | M | 2 | done |
+| 6 | Milestones: meld tray persists across turns | Feel | M | 2 | done¹ |
+| 7 | All: leave option at end of game / pacing | Feel | S | 2 | done |
+| 8 | All: rules dialog generated from the pack | Platform | M | 3 | done |
+| 9 | Wildfire: house rules / variants UI | Platform | M–L | 3 | done² |
+| 10 | All: single-bar hand, minimized seats | Platform | M | 3 | done |
+
+¹ The tray persists and can be arranged off-turn. Not changed: the tray and
+the single-card selection are still the same variable, so with two or more
+cards staged the discard has to be reached by dragging. Separating "the
+meld I am building" from "the card I have selected" is the real fix, and is
+an interaction change worth deciding on its own.
+
+² The sheet ships with seat count and the two implemented variants.
+`stacking` and `jump-in` are declared in the manifest and read by no code,
+so they are marked `available: false` and not offered. Implementing them is
+the remaining work — stacking is template-only; jump-in needs an
+out-of-turn input surface, for which announcements are the precedent.
 
 Three findings adjusted the framing:
 
