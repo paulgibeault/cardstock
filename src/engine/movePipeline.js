@@ -118,9 +118,50 @@ export function applyAnnouncementUnlogged(state, announcement) {
   template.applyAnnouncement(ctx, announcement);
 }
 
+/** The exact answer, computed every time. Always correct; never cached. */
 export function enumerateLegalMoves(state, seat) {
   const ctx = makeCtx(state);
   return state.pack.template.enumerateLegalMoves(ctx, seat);
+}
+
+/**
+ * A ONE-ENTRY MEMO OVER THE COSTLIEST CALL IN THE CODEBASE, for the callers
+ * that ask the same question several times about one unchanged state.
+ *
+ * Contract-rummy's enumeration is expensive in a way no other template's is:
+ * once seats have laid down, `findContractLayDown` runs a permutation search
+ * over the contract and `findHits` pushes every
+ * (seat × meld × hand-card × wild-value) candidate through a full validateMove.
+ * Late in a four-handed Milestones game that is hundreds of validations. The
+ * table asked for it THREE TIMES PER GESTURE — `render`, `renderSelection`, and
+ * again on every drag lift, moments after a render had computed the identical
+ * list — and the bot driver asks once more on its own timer.
+ *
+ * The key is (log length, round, whose turn, which phase, which seat).
+ * Selection deliberately does not appear: picking a card up changes
+ * buildUiModel, never what is legal. Invalidation is implicit — the key
+ * changes — so there is no hook to forget to call.
+ *
+ * A SEPARATE FUNCTION RATHER THAN CACHING enumerateLegalMoves ITSELF, because
+ * the key is only sound while state changes ONLY through applyMove. That holds
+ * for every live path and for the bot, which is who this is for. It does not
+ * hold for a harness that constructs a state and edits zones in place —
+ * tools/pack-test.mjs and several tests do exactly that — and a memo that is
+ * quietly wrong there is worse than no memo at all. Those callers use the exact
+ * function above.
+ *
+ * The returned array is the CACHED one. Callers read it; nobody may sort or
+ * splice it in place (src/engine/bot.js maps to a fresh array for that reason).
+ */
+const enumerationMemo = new WeakMap();
+
+export function legalMovesFor(state, seat) {
+  const key = `${state.log.length}:${state.roundNumber}:${state.turn.seat}:${state.turn.phase}:${seat}`;
+  const cached = enumerationMemo.get(state);
+  if (cached && cached.key === key) return cached.moves;
+  const moves = state.pack.template.enumerateLegalMoves(makeCtx(state), seat);
+  enumerationMemo.set(state, { key, moves });
+  return moves;
 }
 
 export function runScoreRound(state) {

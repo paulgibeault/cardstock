@@ -42,7 +42,7 @@
 
 import { createState } from '../engine/state.js';
 import { makeCtx } from '../engine/context.js';
-import { validateMove, applyMove, enumerateLegalMoves } from '../engine/movePipeline.js';
+import { validateMove, applyMove, legalMovesFor } from '../engine/movePipeline.js';
 import { rehydrateMatch, serializeMatch } from '../engine/replay.js';
 import { chooseBotMove } from '../engine/bot.js';
 import { baseId } from '../engine/selectors.js';
@@ -1699,7 +1699,7 @@ function renderSelection(state) {
   selection = pruneSelection(state, selection);
   const acting = actingSeatsOf(state);
   const humanActs = acting.includes(HUMAN_SEAT);
-  const humanMoves = humanActs ? enumerateLegalMoves(state, HUMAN_SEAT) : [];
+  const humanMoves = humanActs ? legalMovesFor(state, HUMAN_SEAT) : [];
   const ui = buildUiModel(state, { seat: HUMAN_SEAT, moves: humanMoves, acts: humanActs, selection });
   currentUi = ui;
 
@@ -1729,7 +1729,7 @@ function render(state, message) {
   selection = pruneSelection(state, selection);
   const acting = actingSeatsOf(state);
   const humanActs = acting.includes(HUMAN_SEAT);
-  const humanMoves = humanActs ? enumerateLegalMoves(state, HUMAN_SEAT) : [];
+  const humanMoves = humanActs ? legalMovesFor(state, HUMAN_SEAT) : [];
   const ui = buildUiModel(state, { seat: HUMAN_SEAT, moves: humanMoves, acts: humanActs, selection });
   const draggable = draggableSources(state, { seat: HUMAN_SEAT, acts: humanActs });
   const stagger = dealAnimation && motionAllowed();
@@ -1803,7 +1803,7 @@ function onDragLift(handle) {
   const targets = [];
 
   if (humanActs) {
-    const moves = enumerateLegalMoves(state, HUMAN_SEAT);
+    const moves = legalMovesFor(state, HUMAN_SEAT);
     for (const candidate of dropCandidates(state, {
       seat: HUMAN_SEAT,
       moves,

@@ -58,19 +58,6 @@
     ],
     "winner": "first-empty-stock"
   },
-  "reactions": [
-    {
-      "when": "zoneFull:build.*",
-      "do": "moveAll",
-      "to": "recycled"
-    },
-    {
-      "when": "zoneEmpty:draw",
-      "do": "recycle",
-      "from": "recycled",
-      "shuffle": true
-    }
-  ],
   "ui": {
     "cardStyle": "rankrun",
     "cardPalette": {

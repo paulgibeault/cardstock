@@ -3,7 +3,7 @@
 // constraints relax automatically when they'd leave the actor with zero legal cards
 // (design doc §5).
 
-import { RANKS } from '../engine/cards.js';
+import { rankOrder } from '../engine/cards.js';
 import { selectorMatches } from '../engine/selectors.js';
 import { cardValue } from '../engine/scoring.js';
 
@@ -137,7 +137,10 @@ function resolveTrick(ctx) {
   for (let i = 0; i < trickCards.length; i++) {
     const card = ctx.cardById(trickCards[i]);
     if (card.suit !== led) continue;
-    const rank = RANKS.indexOf(card.rank);
+    // Within the led suit, every rank ladder agrees — see rankOrder in
+    // src/engine/cards.js for why the standard-52 array is no longer the only
+    // answer, and why deck order is the last of the three rather than the first.
+    const rank = rankOrder(card);
     if (rank > bestRank) {
       bestRank = rank;
       winnerSeat = seats[i];
@@ -232,14 +235,24 @@ function determineFirstLeader(ctx) {
     }
     return 0;
   }
-  if (fl === 'left-of-dealer') return ctx.nextSeat(0, 1);
-  return 0;
+  if (fl === 'left-of-dealer') return ctx.nextSeat(ctx.openingSeat(), 1);
+  return ctx.openingSeat();
 }
 
+/**
+ * The whole deck, round-robin, starting at whoever this round opens on.
+ *
+ * THE DEALER ROTATES. It did not: this started at seat 0 every round, which
+ * contradicts the design doc's `"dealer": "rotate"` and the two templates that
+ * already rotate. Writing the zones directly rather than going through
+ * ctx.moveCards is sanctioned for the initial deal only — see
+ * src/templates/CONTRACT.md — because there is nothing for a zoneEmpty reaction
+ * to respond to while the deck is being handed out.
+ */
 function dealAll(ctx) {
   const removeIds = new Set(ctx.rules.dealAdjust?.[String(ctx.seats)] || []);
   const ids = ctx.rng.shuffle([...ctx.pack.cardsById.keys()].filter((id) => !removeIds.has(id)));
-  let seat = 0;
+  let seat = ctx.openingSeat();
   for (const id of ids) {
     const addr = ctx.zoneAddr('hand', seat);
     ctx.zone(addr).cards.push(id);
@@ -327,7 +340,7 @@ const trickTaking = {
       const count = ctx.rules.passing.count;
       const cards = hand
         .slice()
-        .sort((a, b) => RANKS.indexOf(ctx.cardById(b).rank) - RANKS.indexOf(ctx.cardById(a).rank))
+        .sort((a, b) => rankOrder(ctx.cardById(b)) - rankOrder(ctx.cardById(a)))
         .slice(0, count);
       return [{ actor: seat, type: 'passCards', cards }];
     }
@@ -394,8 +407,13 @@ const trickTaking = {
 
   botHeuristic(ctx, move) {
     const card = ctx.cardById(move.cards[0]);
-    let score = -RANKS.indexOf(card.rank);
-    if (card.tags?.includes('penalty')) score -= 5;
+    // Play low, and shed anything the pack charges you for holding. The second
+    // clause used to be `card.tags?.includes('penalty')` — Hearts' own tag name,
+    // hardcoded into the template, and worth exactly −5 whether the card was a
+    // two of hearts or the queen of spades. The pack's scoring config already
+    // says what each card costs, so it says it here too.
+    let score = -rankOrder(card);
+    score -= cardValue(card, ctx.pack.scoring || {});
     return score;
   },
 };

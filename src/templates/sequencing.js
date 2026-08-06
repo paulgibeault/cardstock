@@ -3,9 +3,10 @@
 // races to empty their stock pile through hand/stock/discard plays, ending their turn
 // by discarding one card to an own numbered discard pile.
 
-import { selectorMatches, selectorMatchesAny } from '../engine/selectors.js';
+import { selectorMatchesAny } from '../engine/selectors.js';
 import { initializeDeckInto } from '../engine/state.js';
 import { resolveByPlayers } from '../engine/deal.js';
+import { isWild } from '../engine/cards.js';
 
 // Zone addresses this template cares about are always `<kind>[.n].<seat>` for
 // per-player zones (hand/stock/discard) — the seat is always the last segment.
@@ -15,7 +16,7 @@ function zoneKindAndSeat(address) {
 }
 
 function isWildCard(ctx, card) {
-  return selectorMatches(card, `tag:${ctx.rules.wilds.tag}`);
+  return isWild(card, ctx.rules.wilds);
 }
 
 // The rank a build pile needs next is just its current length offset from buildRule.from
@@ -33,11 +34,8 @@ function cardPlayableOn(ctx, card, buildAddr) {
 function topUpHand(ctx, seat) {
   const to = ctx.rules.handRefill?.to ?? 5;
   const handAddr = ctx.zoneAddr('hand', seat);
-  while (ctx.countIn(handAddr) < to) {
-    const top = ctx.topOf('draw');
-    if (top === undefined) break; // draw and recycled both exhausted
-    ctx.moveCards([top], 'draw', handAddr);
-  }
+  // ctx.deal stops on its own when draw AND its recycled backlog are exhausted.
+  ctx.deal(handAddr, Math.max(0, to - ctx.countIn(handAddr)));
 }
 
 function applyPlayCard(ctx, move) {
@@ -103,14 +101,7 @@ const sequencing = {
 
   setup(ctx) {
     initializeDeckInto(ctx.state, 'draw');
-    const stockSize = resolveByPlayers(ctx.rules.stockSize, ctx.seats);
-    for (let s = 0; s < ctx.seats; s++) {
-      for (let i = 0; i < stockSize; i++) {
-        const top = ctx.topOf('draw');
-        if (top === undefined) break;
-        ctx.moveCards([top], 'draw', ctx.zoneAddr('stock', s));
-      }
-    }
+    ctx.dealEach(resolveByPlayers(ctx.rules.stockSize, ctx.seats), { to: 'stock' });
     for (let s = 0; s < ctx.seats; s++) topUpHand(ctx, s);
     ctx.setPhase('play');
   },

@@ -47,6 +47,48 @@ export function makeCtx(state) {
 
     moveCards: (cardIds, from, to, opts) => moveCardsInState(state, cardIds, from, to, opts),
 
+    /**
+     * Move `n` cards off the top of `from` into `to`, stopping early when the
+     * source runs dry. Returns how many actually moved, which is not always
+     * what was asked for — an exhausted pile that could not be recycled hands
+     * over fewer, and the table should say what really happened.
+     *
+     * This loop existed five times over: shedding's drawCards and its deal,
+     * contract-rummy's deal, and sequencing's stock deal and hand top-up.
+     */
+    deal: (to, n, { from = 'draw' } = {}) => {
+      let dealt = 0;
+      for (let i = 0; i < n; i++) {
+        const top = state.zones.top(from);
+        if (top === undefined) break;
+        moveCardsInState(state, [top], from, to);
+        dealt++;
+      }
+      return dealt;
+    },
+
+    /** `n` cards to every seat's `to` zone, seat 0 first — the opening deal. */
+    dealEach: (n, { to = 'hand', from = 'draw' } = {}) => {
+      for (let seat = 0; seat < state.seats; seat++) {
+        for (let i = 0; i < n; i++) {
+          const top = state.zones.top(from);
+          if (top === undefined) return;
+          moveCardsInState(state, [top], from, zoneAddr(to, seat));
+        }
+      }
+    },
+
+    /**
+     * Who this round opens on. The deal rotates a seat per round, as it would
+     * at a table — without it a new round opens on whoever just won, because
+     * the winning play returns before advancing the turn.
+     *
+     * `(roundNumber - 1) % seats` was written out in shedding and
+     * contract-rummy and simply missing from trick-taking, whose dealer was
+     * permanently seat 0 in contradiction of the design doc's `dealer: rotate`.
+     */
+    openingSeat: () => (state.roundNumber - 1) % state.seats,
+
     nextSeat: (from = state.turn.seat, dir = state.direction) => (((from + dir) % state.seats) + state.seats) % state.seats,
     setTurnSeat: (seat) => {
       state.turn.seat = seat;

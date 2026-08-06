@@ -78,6 +78,26 @@ function patternToRegex(pattern) {
   return new RegExp(`^${escaped}$`);
 }
 
+/**
+ * A reaction with its trigger pre-parsed, and the zone addresses it can fire on
+ * already worked out.
+ *
+ * Compiled once at createState rather than inside checkReactions' loop. The
+ * sweep itself is deliberate and stays — it is what fixed the Stockpile recycle
+ * deadlock (IMPLEMENTATION_NOTES bug 1) — but it ran `new RegExp` per reaction
+ * per sweep iteration per moveCards call, and then tested it against every zone
+ * address in the game. Zone addresses are fixed after createState, so the match
+ * is a fact about the pack, not about the move.
+ */
+function compileReaction(reaction, zones) {
+  const colonIdx = reaction.when.indexOf(':');
+  if (colonIdx === -1) return null;
+  const kind = reaction.when.slice(0, colonIdx);
+  const regex = patternToRegex(reaction.when.slice(colonIdx + 1));
+  const addresses = zones.allAddresses().filter((address) => regex.test(address));
+  return addresses.length ? { reaction, kind, addresses } : null;
+}
+
 export function createState({ pack, seats, seed }) {
   const zones = new ZoneSet();
   const defsById = new Map();
@@ -97,6 +117,10 @@ export function createState({ pack, seats, seed }) {
     rng: createRng(seed),
     zones,
     reactions,
+    // Same list, pre-parsed — see compileReaction. `reactions` stays as the
+    // declared form because describe.js reads it to tell a player that the draw
+    // pile refills from the discard.
+    compiledReactions: reactions.map((r) => compileReaction(r, zones)).filter(Boolean),
     cardLocation: new Map(),
     turn: { seat: 0, phase: null },
     direction: 1,
@@ -163,19 +187,15 @@ export function moveCards(state, cardIds, fromAddress, toAddress, { position = '
 // zone until nothing fires, rather than only re-checking the zone that was just
 // directly touched.
 function checkReactions(state) {
+  const compiled = state.compiledReactions;
+  if (!compiled || compiled.length === 0) return;
   let firedAny = true;
   let guard = 0;
-  const maxIterations = (state.reactions.length + 1) * state.zones.allAddresses().length + 8;
+  const maxIterations = (compiled.length + 1) * state.zones.allAddresses().length + 8;
   while (firedAny && guard++ < maxIterations) {
     firedAny = false;
-    for (const reaction of state.reactions) {
-      const colonIdx = reaction.when.indexOf(':');
-      if (colonIdx === -1) continue;
-      const kind = reaction.when.slice(0, colonIdx);
-      const pattern = reaction.when.slice(colonIdx + 1);
-      const regex = patternToRegex(pattern);
-      for (const address of state.zones.allAddresses()) {
-        if (!regex.test(address)) continue;
+    for (const { reaction, kind, addresses } of compiled) {
+      for (const address of addresses) {
         const zone = state.zones.instances.get(address);
         const triggered =
           (kind === 'zoneEmpty' && zone.cards.length === 0) ||
