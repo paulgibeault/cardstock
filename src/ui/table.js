@@ -1705,7 +1705,13 @@ function rectOf(node) {
 /** Where a seat's cards live on screen — the source or target of a card in flight. */
 function seatRect(seat) {
   if (seat === HUMAN_SEAT) return rectOf(el.hand);
-  return rectOf(el.opponentsTop.querySelector(`[data-seat="${seat}"] .mini-hand`));
+  const mini = el.opponentsTop.querySelector(`[data-seat="${seat}"] .mini-hand`);
+  if (!mini) return null;
+  // The fan's last child is the one genuinely rendered card; the rest are the
+  // cheap edge boxes renderSeats draws instead of real SVG. Preferring it gives
+  // a card-shaped rect where the row is a squat strip, which is what a card
+  // leaving this seat should be seen to launch from.
+  return rectOf(mini.lastElementChild) || rectOf(mini);
 }
 
 /**
