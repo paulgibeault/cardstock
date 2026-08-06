@@ -102,6 +102,20 @@ engine or template bug (confirmed by direct trace). A house-rule fix
 a manifest-level design decision, not something to patch silently into the
 engine.
 
+> **TODO (issue #20, WS5.6) — the house rule is not yet expressible.** The
+> intended fix is a default-on variant on `packs/stockpile/manifest.json` that
+> recycles the personal discard piles once `draw` and `recycled` are both
+> exhausted. The reaction vocabulary cannot say it today: `do: recycle` takes a
+> single literal `from` zone, and the piles in question are `discard.<n>.<seat>`
+> — four per seat, at a seat count the manifest does not know. A glob is
+> supported in a reaction's `when` pattern but not in its `from`.
+>
+> Two honest ways forward, neither of them a silent engine patch: teach `from`
+> the same glob `when` already understands (a small, general change to
+> `applyReaction` in `src/engine/state.js`), or wait for the `logic.js` hook
+> wiring §7 specifies. Until then Stockpile's completion rate is floored rather
+> than gated — see `tests/simulate.test.js`.
+
 **Milestones (31%)**: also traced directly — the hit mechanism itself is
 correct (verified with a hand-constructed scenario: a matching card is
 found and offered). The slowness is structural to greedy bot play: a

@@ -16,8 +16,9 @@ import { createState } from "../src/engine/state.js";
 import { makeCtx } from "../src/engine/context.js";
 import { applyMove } from "../src/engine/movePipeline.js";
 import { chooseBotMove } from "../src/engine/bot.js";
-import { serializeMatch, rehydrateMatch, isReplayableMatch, MATCH_FORMAT_VERSION }
-  from "../src/engine/replay.js";
+import {
+  serializeMatch, rehydrateMatch, isReplayableMatch, invalidateLogCache, MATCH_FORMAT_VERSION,
+} from "../src/engine/replay.js";
 import { ROOT } from "../tools/stage.mjs";
 import { listPackIds } from "../tools/pack-test.mjs";
 
@@ -201,4 +202,41 @@ test("a cached log still round-trips through rehydrate", () => {
   serializeMatch(state, { savedAt: 0 });          // prime the cache
   const snapshot = serializeMatch(state, { savedAt: 0 });
   assert.deepStrictEqual(fingerprint(rehydrateMatch(pack, snapshot)), fingerprint(state));
+});
+
+// THE LANDMINE UNDO WOULD HAVE STEPPED ON. §8's undo is "replay the log minus
+// the last events" — truncate, then re-grow. A log that goes 40 → 38 → 40 is
+// back at a length the cache has already seen, so a guard of
+// `entry.len > log.length` never fires: the payload would carry two moves that
+// had been taken back, and the next persist would write them to storage.
+//
+// Nothing truncates a log today, which is exactly why this needs a test rather
+// than a comment — the guard has to already be right when the feature that
+// exercises it arrives.
+test("truncating and re-growing a log does not serve the cache's old tail", () => {
+  const pack = packFromDisk("crazy-eights");
+  const state = playOut(pack, "truncate-regrow", 3, 12);
+
+  const full = serializeMatch(state, { savedAt: 0 }).log;   // primes the cache
+  assert.ok(full.length >= 4, "need a few moves to take back");
+
+  // Take two back, the way an undo would, and put two DIFFERENT ones on.
+  const taken = state.log.splice(-2, 2);
+  state.log.push({ seq: taken[0].seq, actor: 9, type: "invented-a" });
+  state.log.push({ seq: taken[1].seq, actor: 9, type: "invented-b" });
+
+  const after = serializeMatch(state, { savedAt: 0 }).log;
+  assert.strictEqual(after.length, full.length, "same length — the case the length guard misses");
+  assert.deepStrictEqual(after.slice(-2).map((m) => m.type), ["invented-a", "invented-b"],
+    "the cache served moves that had been taken back");
+  assert.deepStrictEqual(after.slice(0, -2), full.slice(0, -2), "the untouched prefix changed");
+});
+
+test("invalidateLogCache is a name a future truncation site can call", () => {
+  const pack = packFromDisk("crazy-eights");
+  const state = playOut(pack, "explicit-invalidate", 3, 8);
+  const full = serializeMatch(state, { savedAt: 0 }).log;
+  state.log.length = full.length - 3;
+  invalidateLogCache(state.log);
+  assert.strictEqual(serializeMatch(state, { savedAt: 0 }).log.length, full.length - 3);
 });

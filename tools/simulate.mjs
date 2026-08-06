@@ -34,7 +34,17 @@ async function readJson(p) {
   return JSON.parse(await readFile(p, 'utf8'));
 }
 
-async function loadPackFromDisk(packId) {
+/**
+ * `variants` is the id list to switch on, or undefined for the pack's own
+ * defaults — the same contract tools/pack-test.mjs and src/ui/packSource.js use.
+ *
+ * VARIANTS WERE NEVER SIMULATED. A house rule is a rule change: `seven-zero`
+ * moves whole hands between seats, `draw-until-playable` can drain the pile in
+ * one turn, and `no-passing` deletes a phase. Every one of those is exactly the
+ * shape of thing this tool exists to find a deadlock in, and none of them had
+ * ever been run through it.
+ */
+async function loadPackFromDisk(packId, variants) {
   const dir = path.join(PACKS_DIR, packId);
   const manifest = await readJson(path.join(dir, 'manifest.json'));
   let deckJson;
@@ -43,7 +53,9 @@ async function loadPackFromDisk(packId) {
   } catch {
     deckJson = undefined;
   }
-  return loadPack(manifest, { deckJson });
+  // Cloned: loadPack patches the manifest it is given, and this one is re-read
+  // per variant set.
+  return loadPack(structuredClone(manifest), { deckJson, variants });
 }
 
 // Which seats may currently act. Defaults to just the nominal turn.seat; a template
@@ -91,8 +103,8 @@ function playOne(pack, seats, seed) {
   return { outcome: 'complete', moves, effectCounts };
 }
 
-async function simulatePack(packId, games, seats) {
-  const pack = await loadPackFromDisk(packId);
+async function simulatePack(packId, games, { seats, variants } = {}) {
+  const pack = await loadPackFromDisk(packId, variants);
   const seatCount = seats ?? pack.manifest.players.best ?? pack.manifest.players.min;
   let completed = 0;
   let stalled = 0;
@@ -111,7 +123,8 @@ async function simulatePack(packId, games, seats) {
     }
   }
 
-  console.log(`\n=== ${packId} (${seatCount} seats, ${games} games) ===`);
+  const label = variants?.length ? `${packId} + ${variants.join(', ')}` : packId;
+  console.log(`\n=== ${label} (${seatCount} seats, ${games} games) ===`);
   console.log(`  completed: ${completed}  stalled: ${stalled}  errored: ${errored}`);
   console.log(`  avg moves/game: ${(totalMoves / games).toFixed(1)}`);
   if (stallReasons.size) {
@@ -121,11 +134,24 @@ async function simulatePack(packId, games, seats) {
   return { completed, stalled, errored };
 }
 
+/** Every variant a pack OFFERS, one at a time. `available: false` ones are skipped. */
+async function availableVariantIds(packId) {
+  const manifest = await readJson(path.join(PACKS_DIR, packId, 'manifest.json'));
+  return (manifest.variants || []).filter((v) => v.available !== false).map((v) => v.id);
+}
+
+export { simulatePack, availableVariantIds };
+
 async function main() {
   const args = process.argv.slice(2);
   const gamesArg = args.find((a) => a.startsWith('--games='));
   const games = gamesArg ? Number(gamesArg.split('=')[1]) : 1000;
   const all = args.includes('--all');
+  const variantsArg = args.find((a) => a === '--variants' || a.startsWith('--variants='));
+  // `--variants=a,b` runs one named set; `--variants` alone runs each of the
+  // pack's available house rules on its own, which is the sweep CI wants.
+  const variantSets = variantsArg === undefined ? null
+    : (variantsArg === '--variants' ? 'each' : [variantsArg.split('=')[1].split(',').filter(Boolean)]);
   // Directories only — packs/ also holds index.json (see pack-test.mjs's
   // listPackIds, which dodges the same trap).
   const packIds = all
@@ -142,8 +168,13 @@ async function main() {
   let anyBad = false;
   for (const packId of packIds) {
     try {
-      const { stalled, errored } = await simulatePack(packId, games);
-      if (stalled > 0 || errored > 0) anyBad = true;
+      const sets = variantSets === 'each'
+        ? [undefined, ...(await availableVariantIds(packId)).map((id) => [id])]
+        : (variantSets ?? [undefined]);
+      for (const variants of sets) {
+        const { stalled, errored } = await simulatePack(packId, games, { variants });
+        if (stalled > 0 || errored > 0) anyBad = true;
+      }
     } catch (e) {
       console.error(`\n=== ${packId} ===\n  ERROR: ${e.stack}`);
       anyBad = true;
@@ -152,4 +183,8 @@ async function main() {
   process.exit(anyBad ? 1 : 0);
 }
 
-main();
+// CLI only — importing this module (the CI gate in tests/) must not run the
+// suite, and must never reach the process.exit above.
+if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
+  main();
+}

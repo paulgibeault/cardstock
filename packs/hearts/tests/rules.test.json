@@ -384,6 +384,183 @@
           }
         }
       ]
+    },
+    {
+      "name": "Jack of Diamonds: capturing it subtracts ten",
+      "variants": [
+        "jack-of-diamonds"
+      ],
+      "setup": {
+        "seats": 4,
+        "zones": {
+          "won.0": [
+            "diamonds-J",
+            "hearts-2",
+            "hearts-3"
+          ],
+          "won.1": [
+            "hearts-4"
+          ]
+        }
+      },
+      "assert": [
+        {
+          "score": {
+            "0": -8,
+            "1": 1,
+            "2": 0,
+            "3": 0
+          }
+        }
+      ]
+    },
+    {
+      "name": "without the variant the Jack of Diamonds is worth nothing",
+      "setup": {
+        "seats": 4,
+        "zones": {
+          "won.0": [
+            "diamonds-J",
+            "hearts-2",
+            "hearts-3"
+          ],
+          "won.1": [
+            "hearts-4"
+          ]
+        }
+      },
+      "assert": [
+        {
+          "score": {
+            "0": 2,
+            "1": 1,
+            "2": 0,
+            "3": 0
+          }
+        }
+      ]
+    },
+    {
+      "name": "Old-style moon: shooting it subtracts 26 from you instead of adding it to everyone else",
+      "variants": [
+        "old-moon"
+      ],
+      "setup": {
+        "seats": 4,
+        "zones": {
+          "won.2": [
+            "hearts-2",
+            "hearts-3",
+            "hearts-4",
+            "hearts-5",
+            "hearts-6",
+            "hearts-7",
+            "hearts-8",
+            "hearts-9",
+            "hearts-10",
+            "hearts-J",
+            "hearts-Q",
+            "hearts-K",
+            "hearts-A",
+            "spades-Q"
+          ]
+        }
+      },
+      "assert": [
+        {
+          "score": {
+            "0": 0,
+            "1": 0,
+            "2": -26,
+            "3": 0
+          }
+        }
+      ]
+    },
+    {
+      "name": "Points on the first trick: the queen may be played on trick one",
+      "variants": [
+        "first-blood"
+      ],
+      "setup": {
+        "seats": 4,
+        "turn": {
+          "seat": 1,
+          "phase": "play"
+        },
+        "zones": {
+          "trick": [
+            "clubs-2"
+          ],
+          "hand.1": [
+            "spades-Q",
+            "diamonds-3"
+          ]
+        },
+        "vars": {
+          "led": "clubs",
+          "leader": 0,
+          "heartsBroken": false,
+          "trickNumber": 1
+        }
+      },
+      "assert": [
+        {
+          "move": {
+            "actor": 1,
+            "type": "playCard",
+            "cards": [
+              "spades-Q"
+            ]
+          },
+          "legal": true
+        },
+        {
+          "move": {
+            "actor": 1,
+            "type": "playCard",
+            "cards": [
+              "diamonds-3"
+            ]
+          },
+          "legal": true
+        }
+      ]
+    },
+    {
+      "name": "No passing: a hand is dealt straight into play, with nothing to pass",
+      "variants": [
+        "no-passing"
+      ],
+      "setup": {
+        "seats": 4,
+        "turn": {
+          "seat": 0,
+          "phase": "pass"
+        },
+        "zones": {
+          "hand.0": [
+            "clubs-2",
+            "hearts-5",
+            "spades-9"
+          ]
+        }
+      },
+      "assert": [
+        {
+          "move": {
+            "actor": 0,
+            "type": "passCards",
+            "cards": [
+              "clubs-2",
+              "hearts-5",
+              "spades-9"
+            ]
+          },
+          "legal": false,
+          "rule": "no-passing"
+        }
+      ]
     }
   ]
 }

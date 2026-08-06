@@ -321,6 +321,18 @@ and reference them from its deck file by name.
 
 ## 8. State, determinism, and P2P sync
 
+> **STATUS: half built.** The event-sourcing half is real and shipped — the
+> reducer, the seeded PRNG, the log-is-the-state save format
+> (`src/engine/replay.js`), headless simulation. The P2P half is **designed,
+> not built**: there is no peer code in `src/` at all. That is deliberate
+> rather than missing (the seams are pre-laid — `serializeMatch` is already the
+> snapshot payload, the bot driver is already extracted for host-side
+> scheduling), but the section below reads as shipped and is not. See
+> ARCADE_ENHANCEMENTS.md Phase 8 for what actually lands when.
+>
+> Undo (§8) is also unbuilt. `src/engine/replay.js` carries the cache guard it
+> will need, with a test, so the feature does not arrive on top of a landmine.
+
 **The keystone decision: the game is event-sourced.** Game state is the
 result of a deterministic reducer over an ordered event log, with all
 randomness drawn from a seeded PRNG whose seed is in the log. One decision,
@@ -890,10 +902,20 @@ disagree, the arcade docs win and this section gets updated.
 
 ### 17.3 Storage map
 
+> **STATUS: the second row is aspirational.** Match logs live in `Arcade.state`
+> today, under `arcade.v1.cardstock.match.<packId>` — one key per pack, written
+> synchronously after every applied move (`src/arcade/storage.js`). The move to
+> `Arcade.store.open('matches')` has not happened, and the reason it has not is
+> the row's own "async is fine here", which turns out to be false: a session
+> timer freezes with a suspended frame, so a pending async write can be frozen
+> at exactly the moment eviction follows. A few KB of log per pack sits inside
+> the sync budget comfortably. Revisit if a pack ever stores replays.
+
 | Data | Where | Why |
 |------|-------|-----|
 | Active-match pointer, per-pack prefs, last table config | `Arcade.state` (sync) | small + hot; keys `arcade.v1.cardstock.*` |
-| Match event logs + snapshots (autosave) | `Arcade.store.open('matches')` | grows beyond comfort in the shared ~5 MB localStorage budget; async is fine here |
+| Match event logs (autosave) | `Arcade.state` (sync) — see the status note above | a match log is a few KB; the write must land before a suspend, not after it |
+| Match event logs + snapshots, *as designed* | `Arcade.store.open('matches')` | grows beyond comfort in the shared ~5 MB localStorage budget; async is fine here |
 | Finished-match replays | `Arcade.store.open('replays')` | ride the schema-v2 save bundle automatically |
 | Pack-dev scratch assets (dev mode) | `Arcade.files` | binary blobs |
 | Diagnostics / telemetry buffers | `Arcade.state.set(k, v, { exportable: false })` | never inflate save files |
@@ -933,6 +955,10 @@ disagree, the arcade docs win and this section gets updated.
   reload rather than desyncing mid-hand.
 
 ### 17.5 Multiplayer mapping — the §8 protocol on the real transport
+
+> **STATUS: designed, not built.** The transport facts below were verified in
+> the launcher's source, and the mapping is the plan; no line of it exists in
+> `src/` yet. Nothing here should be read as describing current behaviour.
 
 Transport facts the protocol is built on (verified in source):
 

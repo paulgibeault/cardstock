@@ -16,9 +16,7 @@
 // and src/ui/table.js's header explains why that is enough to guarantee a
 // game nobody is looking at never advances.
 
-import {
-  registerStorageErrorHandler, packOverride, migrateLegacyMatch,
-} from './arcade/storage.js';
+import { registerStorageErrorHandler, packOverride } from './arcade/storage.js';
 import {
   initTable, openTable, closeTable, flushTable, rerenderTable, isTableOpen, reportTableError,
 } from './ui/table.js';
@@ -115,12 +113,6 @@ async function boot() {
   // §2: nothing may read state before this resolves. Framed, a pre-ready read
   // returns empty because the launcher's snapshot has not arrived yet.
   await Arcade.ready;
-
-  // Before anything reads a match: moves a pre-lobby `activeMatch` payload to
-  // its per-pack key, so upgrading does not silently drop the game someone
-  // was in the middle of.
-  const migrated = migrateLegacyMatch();
-  if (migrated) console.info(`[cardstock] migrated the saved ${migrated} match to its own key`);
 
   wireLauncherHooks();
   // The one floating panel every card and pile shares, plus its global

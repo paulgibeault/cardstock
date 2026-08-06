@@ -43,7 +43,7 @@
 import { createState } from '../engine/state.js';
 import { makeCtx } from '../engine/context.js';
 import { validateMove, applyMove, legalMovesFor } from '../engine/movePipeline.js';
-import { rehydrateMatch } from '../engine/replay.js';
+import { rehydrateMatch, packVersionChanged } from '../engine/replay.js';
 import { baseId } from '../engine/selectors.js';
 import { handValue } from '../engine/scoring.js';
 import { buildSeating } from '../players/roster.js';
@@ -1596,9 +1596,25 @@ function dismissRoundSummary() {
  * Persistence
  * ------------------------------------------------------------------ */
 
+/**
+ * Write the match. §17.3 says a match-critical write must CHECK its result, and
+ * this one did not: a quota-full or otherwise refused save returned false and
+ * the table carried on as if the game were safe, so the loss only surfaced when
+ * the player came back to a lobby tile that had forgotten their game.
+ *
+ * Said once per session, not once per move: a storage backend that has started
+ * refusing writes will refuse the next forty too, and forty identical banners
+ * is not information.
+ */
+let saveFailureReported = false;
+
 function persistMatch() {
-  if (!liveState()) return;
-  saveMatch(liveState());
+  const state = liveState();
+  if (!state) return;
+  const ok = saveMatch(state);
+  if (ok !== false || saveFailureReported) return;
+  saveFailureReported = true;
+  reportTableError('This game could not be saved — it may not be here when you come back.');
 }
 
 /**
@@ -1694,6 +1710,19 @@ function applyStateChange(state, move, { far }) {
   // happened — and the drawn card's own sound already played a beat ago.
   if (move.type === 'draw') playDraw();
   else if (move.type !== 'pass') playCardPlayed({ far });
+  soundReactions(state);
+}
+
+/**
+ * The sounds a move's REACTIONS make, whatever kind of move surfaced them.
+ *
+ * A reshuffle is not inferred from pile counts: the engine's reactions announce
+ * themselves on state.events (src/engine/state.js), and 'recycled' during a move
+ * IS the shuffle. Split out of applyStateChange because an ANNOUNCEMENT can
+ * surface one too — a challenge penalty-draw that empties the pile recycles it —
+ * and the announcement path skipped this entirely, so that shuffle was silent.
+ */
+function soundReactions(state) {
   if (state.events.some((e) => e.type === 'recycled')) playShuffle();
 }
 
@@ -1922,6 +1951,7 @@ function performAnnouncement(state, move, myEpoch = epoch) {
   if (!check.legal) return;
 
   applyMove(state, move);
+  soundReactions(state);
   const caught = state.events.find((e) => e.type === 'caught');
   const announced = state.events.find((e) => e.type === 'announced');
   playAnnouncement({ caught: !!caught });
@@ -1945,6 +1975,22 @@ function performAnnouncement(state, move, myEpoch = epoch) {
   // point of the rule, and a number is not a thing you watch happen.
   if (caught) animatePenaltyDraw(state, caught.target, caught.drew, 120);
   persistMatch();
+  // An announcement can end a round — a challenge penalty that empties the
+  // draw pile, a declaration that is the last thing before somebody goes out —
+  // and the summary is `afterMove`'s job, which this path deliberately does not
+  // re-enter (re-scheduling the turn would restart a bot's think time every
+  // time anybody spoke). So the ONE thing it has to notice for itself is that.
+  const roundOver = state.events.find((e) => e.type === 'roundOver' && !e.over);
+  if (roundOver) {
+    cancelAnnouncementBeats();
+    const beatEpoch = epoch;
+    Arcade.session.setTimeout(() => {
+      if (beatEpoch !== epoch) return;
+      session.roundSummaryOpen = true;
+      showRoundSummary(state, roundOver, session.seating);
+    }, 250);
+    return;
+  }
   scheduleAnnouncementBeats();
 }
 
@@ -2051,7 +2097,15 @@ export async function openTable(packId, { variants, seats } = {}) {
   hideAllPanels();
 
   if (stored) {
+    // Asked BEFORE the replay, because a version bump is the one cause of a
+    // failed replay we can name. Reordering two entries in a deck file changes
+    // cardsById's insertion order, which changes the seeded shuffle, which
+    // deals every stored match a different hand — so the log replays into a
+    // state its own moves are illegal in. "The rules changed" is the honest
+    // sentence; "could not replay" is not one a player can do anything with.
+    const rulesMoved = packVersionChanged(pack, stored);
     try {
+      if (rulesMoved) throw new Error(`pack version changed: ${stored.packVersion} → ${pack.manifest.version}`);
       const state = rehydrateMatch(pack, stored);
       if (!state.gameOver) {
         adoptMatch(pack, state, `Resumed ${pack.manifest.name}.`);
@@ -2062,6 +2116,7 @@ export async function openTable(packId, { variants, seats } = {}) {
       // right cost; resuming into a state the current rules could never have
       // produced is not.
       console.warn('[cardstock] could not replay the stored match, starting fresh', err);
+      if (rulesMoved) reportTableError(`${pack.manifest.name}'s rules have changed — dealing a fresh game.`);
     }
     clearMatch(packId);
   }

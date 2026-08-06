@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://paulgibeault.github.io/cardstock/schema/manifest.schema.json",
   "title": "Cardstock pack manifest (v0)",
-  "description": "The declarative half of a card-pack. Anything this schema cannot express belongs in the pack's logic.js hooks \u2014 see CARD_PLATFORM_DESIGN.md \u00a711. This schema is normative for the manifest format.",
+  "description": "The declarative half of a card-pack. Anything this schema cannot express belongs in the pack's logic.js hooks \u2014 see CARD_PLATFORM_DESIGN.md \u00a711. This schema is normative for the manifest format, and is ENFORCED: tools/pack-test.mjs validates every pack against it and tests/repo-gates.test.js gates the same check in CI. NOTE: logic.js itself is specified but NOT WIRED \u2014 no loader reads a pack's logic.js and no 'hook:' value is resolved anywhere in src/ (src/engine/movePipeline.js says so in its header). Every 'hook:<fn>' below is therefore a forward declaration, not a working escape hatch.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -172,7 +172,7 @@
     },
     "custom": {
       "type": "object",
-      "description": "Free-form bag read by logic.js; the engine ignores it."
+      "description": "Free-form bag intended for logic.js; the engine ignores it, and logic.js is UNWIRED, so nothing reads it today."
     },
     "credits": {
       "type": "string"
@@ -301,7 +301,7 @@
           "properties": {
             "type": {
               "type": "string",
-              "description": "Built-in: skip, reverse, drawN, wild, wildDrawN, skipTarget, swapHands, rotateHands \u2014 or a custom effect name exported by logic.js."
+              "description": "Built-in: skip, reverse, drawN, wild, wildDrawN, skipTarget, swapHands, rotateHands (src/engine/effects.js) \u2014 or a custom effect name exported by logic.js, which is UNWIRED; an unrecognised type is applied as no effect at all."
             },
             "n": {
               "type": "integer",
@@ -332,7 +332,7 @@
     },
     "strategyOrHook": {
       "type": "string",
-      "description": "A template-provided strategy name, or 'hook:<fn>' referencing an export of the pack's logic.js."
+      "description": "A template-provided strategy name, or 'hook:<fn>' referencing an export of the pack's logic.js. UNWIRED: nothing resolves a 'hook:' value today \u2014 see the note on the root description."
     },
     "zone": {
       "type": "object",
@@ -549,7 +549,7 @@
         },
         "resolve": {
           "type": "string",
-          "description": "'hook:<fn>' in logic.js"
+          "description": "'hook:<fn>' in logic.js. UNWIRED \u2014 see the note on the root description."
         }
       }
     },

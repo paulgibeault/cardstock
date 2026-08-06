@@ -18,7 +18,7 @@ import { serializeMatch } from "../src/engine/replay.js";
 import { ROOT } from "../tools/stage.mjs";
 import {
   KEYS, MATCH_KEY_PREFIX, matchKey, isMatchKey, saveMatch, loadMatch, clearMatch,
-  listMatchSummaries, migrateLegacyMatch, lastPlayedPack, rememberPack,
+  listMatchSummaries, lastPlayedPack, rememberPack,
 } from "../src/arcade/storage.js";
 
 // The SDK's synchronous state surface is a key/value store; a Map is the whole
@@ -123,35 +123,6 @@ test("summaries describe the waiting games without replaying them", () => {
   assert.strictEqual(s.moves, hearts.log.length);
   assert.strictEqual(s.seats, 3);
   assert.ok(typeof s.savedAt === "number");
-});
-
-test("a pre-lobby activeMatch survives the upgrade under its own pack's key", () => {
-  const legacy = serializeMatch(playedMatch("wildfire", 9));
-  store.set(KEYS.legacyActiveMatch, legacy);
-
-  assert.strictEqual(migrateLegacyMatch(), "wildfire");
-  assert.strictEqual(loadMatch("wildfire").log.length, legacy.log.length);
-  assert.ok(!store.has(KEYS.legacyActiveMatch), "the legacy key must not linger in the save bundle");
-});
-
-test("migration is idempotent and never runs backwards over a newer match", () => {
-  assert.strictEqual(migrateLegacyMatch(), null, "nothing to migrate is not an error");
-
-  const current = playedMatch("wildfire", 12);
-  saveMatch(current);
-  store.set(KEYS.legacyActiveMatch, serializeMatch(playedMatch("wildfire", 3)));
-
-  assert.strictEqual(migrateLegacyMatch(), null);
-  assert.strictEqual(loadMatch("wildfire").log.length, current.log.length,
-    "the stale legacy payload overwrote the live match");
-  assert.ok(!store.has(KEYS.legacyActiveMatch));
-});
-
-test("an unreplayable legacy payload is dropped rather than carried forever", () => {
-  store.set(KEYS.legacyActiveMatch, { formatVersion: 0, packId: "hearts" });
-  assert.strictEqual(migrateLegacyMatch(), null);
-  assert.ok(!store.has(KEYS.legacyActiveMatch));
-  assert.strictEqual(loadMatch("hearts"), null);
 });
 
 test("the last pack played is a hint the lobby can trust or ignore", () => {

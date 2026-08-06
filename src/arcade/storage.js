@@ -23,11 +23,11 @@ import { serializeMatch, isReplayableMatch } from '../engine/replay.js';
 export const KEYS = {
   lastPack: 'lastPack',
   settings: 'settings',
-  // The pre-lobby single-match key. Read exactly once, by migrateLegacyMatch()
-  // at boot, and removed; see LOBBY_PLAN.md "storage model". Delete this entry
-  // and its migration one release after the lobby ships.
-  legacyActiveMatch: 'activeMatch',
 };
+// The pre-lobby single-match key (`activeMatch`) and its boot-time migration
+// are GONE. They said "delete one release after the lobby ships"; the lobby
+// shipped in v0.1.2 and this is v0.1.15, so the migration had been running at
+// every boot for thirteen releases to move a payload nobody can still have.
 
 // One saved table PER PACK — `match.<packId>` — which is what lets a Hearts
 // game and a Crazy Eights game both sit waiting. The single `activeMatch` key
@@ -220,29 +220,6 @@ export function listMatchSummaries(packIds) {
   return summaries;
 }
 
-/**
- * Move a pre-lobby `activeMatch` payload to its per-pack key. Idempotent, and
- * called once at boot before anything reads a match.
- *
- * The legacy key is removed whether or not the payload survived the move: a
- * value this build cannot replay is not going to become replayable later, and
- * leaving it costs quota in the launcher's save bundle forever.
- *
- * @returns {string|null} the pack id that was migrated, for logging.
- */
-export function migrateLegacyMatch() {
-  const legacy = Arcade.state.get(KEYS.legacyActiveMatch);
-  if (legacy === undefined || legacy === null) return null;
-  Arcade.state.remove(KEYS.legacyActiveMatch);
-
-  if (!isReplayableMatch(legacy) || !isValidPackId(legacy.packId)) return null;
-  // A per-pack match already present is newer by construction — this key has
-  // not been written since the lobby shipped — so it wins.
-  if (loadMatch(legacy.packId)) return null;
-
-  Arcade.state.set(matchKey(legacy.packId), legacy);
-  return legacy.packId;
-}
 
 /* ------------------------------------------------------------------ *
  * Stats
