@@ -147,10 +147,16 @@
     </div>
   </div>
 
+  <!-- A wild's question, asked with cards rather than with words. The card you
+       just played sits at the top, the options under it are drawn by the same
+       renderer that drew it (src/ui/cardStyles/chooser.js), and the panel
+       lights up in whichever one is under the finger. -->
   <div id="choice-modal" hidden>
-    <div class="panel">
+    <div class="panel choice-dialog" id="choice-dialog" role="dialog" aria-modal="true"
+         aria-labelledby="choice-prompt">
+      <div id="choice-card" class="choice-dialog__card" aria-hidden="true" hidden></div>
       <div id="choice-prompt" class="panel__title"></div>
-      <div id="choice-options" class="panel__options"></div>
+      <div id="choice-options" class="choice-grid"></div>
       <button id="choice-cancel" class="ghost-button">Cancel</button>
     </div>
   </div>
@@ -206,6 +212,21 @@
       <div class="panel__actions">
         <button id="rules-close">Close</button>
       </div>
+    </div>
+  </div>
+
+  <!-- The last card, left on the table.
+       A match ends the instant somebody's hand empties, and the results panel
+       used to land on that instant — so the play that actually won it was
+       covered before anyone had looked at it. This is the beat in between: no
+       scrim, nothing over the felt, just a pill saying what happened and one
+       way forward. The felt underneath stays live, so the winning card can
+       still be held and inspected while this waits. -->
+  <div id="final-look" hidden>
+    <div class="final-look__bar">
+      <p id="final-look-result" class="final-look__result"></p>
+      <p id="final-look-play" class="final-look__play"></p>
+      <button type="button" id="final-look-continue">See the results</button>
     </div>
   </div>
 

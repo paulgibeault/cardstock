@@ -20,6 +20,7 @@
 
 import { safeAccent } from '../css.js';
 import { BACK_PATTERNS, backPanelColor, renderBack } from './backs.js';
+import { chooserTile, chooserTint } from './chooser.js';
 import * as vanilla from './vanilla.js';
 import * as classic from './classic.js';
 import * as shedding from './shedding.js';
@@ -196,5 +197,17 @@ export function makeCardRenderer(manifest, cardsById = null) {
       return markup;
     },
     back: () => (back ??= renderBack(theme)),
+    /**
+     * The picture on one option of a wild's question (src/ui/cardStyles/chooser.js),
+     * and the colour that option lights the panel with. Both go through the
+     * renderer rather than being imported at the call site so the choice is
+     * drawn in the SAME theme as the card that asked it — a pack that recolours
+     * its suits gets a chooser that matches its deck for free.
+     *
+     * Uncached: a chooser opens once per wild played, which is nothing next to
+     * the forty faces a render redraws.
+     */
+    chooser: (attr, value) => chooserTile(attr, value, theme),
+    chooserTint: (attr, value) => chooserTint(attr, value, theme),
   };
 }

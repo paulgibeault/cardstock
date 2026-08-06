@@ -150,3 +150,23 @@ test("the event window is one move wide", async () => {
   applyMove(state, { actor: 2, type: "playCard", cards: ["red-2"] });
   assert.equal(eventOf(state, "skipped"), undefined, "last move's event did not linger");
 });
+
+// The table flies `drew` copies from the deck to the seat that was hit, and it
+// picks WHICH faces to draw by taking the last `drew` of that seat's hand
+// (animatePenaltyDraw in src/ui/table.js). That is only true while a draw
+// APPENDS, so pin it here rather than in a comment: the day a template inserts
+// a drawn card anywhere else, the human's own penalty would fly the wrong
+// cards — a wrong card is worse than no animation, and nothing else would fail.
+test("a penalty's cards arrive at the END of the hand it lands on", async () => {
+  const { state } = await wildfireTable({
+    hands: { "hand.0": ["red-draw2", "green-3"], "hand.1": ["blue-1"], "hand.2": ["blue-2"] },
+  });
+  const deckTop = state.zones.cards("draw").slice(-2);
+  applyMove(state, { actor: 0, type: "playCard", cards: ["red-draw2"] });
+
+  const ev = eventOf(state, "penalty");
+  const hand = state.zones.cards(`hand.${ev.seat}`);
+  assert.deepEqual(hand.slice(-ev.drew), deckTop.slice().reverse(),
+    "the last `drew` cards of the hand are the ones just taken off the deck");
+  assert.deepEqual(hand.slice(0, -ev.drew), ["blue-1"], "and nothing it held moved");
+});
