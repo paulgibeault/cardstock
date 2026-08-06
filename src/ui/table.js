@@ -60,7 +60,7 @@ import {
   describeCard, describeZone, cardAriaLabel, zoneAriaLabel, zoneBadge, cardName,
 } from './describe.js';
 import {
-  interactionMode, buildUiModel, dropCandidates, draggableSources, pruneSelection,
+  interactionMode, stagingPhase, buildUiModel, dropCandidates, draggableSources, pruneSelection,
   isSelected, handAddress, implicitLandingZone, smartSelection, ladderRungs,
   describeContractItem, describeContract, shortContract,
 } from './interaction.js';
@@ -1163,7 +1163,14 @@ function stagedIds(state, ui) {
  */
 function renderStageTray(state, ui) {
   const staged = stagedIds(state, ui);
-  el.stageRow.hidden = !ui.handMulti;
+  // The SLOT belongs to the phase, the CONTENTS belong to the human. Gating
+  // the row itself on `ui.handMulti` meant it left the felt's flex column
+  // every time the answer changed — twice a turn in contract rummy, once the
+  // bots start drawing and melding — and took a card's height of table with
+  // it (#13). A pack that never stages still gets no row at all.
+  el.stageRow.hidden = !stagingPhase(state);
+  el.stageRow.classList.toggle('stage-row--empty', !ui.handMulti);
+  el.stageRow.inert = !ui.handMulti;
   if (!ui.handMulti) {
     el.stageTray.replaceChildren();
     return;
@@ -1545,10 +1552,39 @@ function humanAnnouncements(state) {
   return announcementsFor(state, HUMAN_SEAT);
 }
 
+/**
+ * Can this pack ever fill the announce bar?
+ *
+ * A PROPERTY OF THE PACK, not of the moment — the same question
+ * `announcementsFor` asks, asked once so the bar's slot can be reserved for
+ * the whole match rather than appearing with the button in it (see the bar's
+ * note in src/ui/table.css).
+ *
+ * The TEMPLATE's hook, deliberately, rather than the rules block a particular
+ * template reads: Crazy Eights is a shedding pack with no last-card rule, so
+ * it pays a strip of felt for a bar it can never fill. That is the safe way to
+ * be wrong. Asking the pack instead would reserve nothing for the next kind of
+ * announcement somebody adds, and the table would silently start jumping again
+ * — which is the bug this whole surface is here to have fixed (#13).
+ */
+function packAnnounces(state) {
+  return !!state.pack.template.enumerateAnnouncements;
+}
+
 function renderAnnounceBar(state) {
   const options = humanAnnouncements(state).filter((a) => a.type === 'announce');
+  // `hidden` is now the PACK's answer and nothing else; whether there is
+  // anything to say right now is a class, so the bar keeps its slot in the
+  // felt's column either way. See #action-bar below for the full story — this
+  // is the same bug and the same fix (#13).
+  el.announceBar.hidden = !packAnnounces(state);
+  el.announceBar.classList.toggle('announce-bar--empty', options.length === 0);
+  // The buttons are left standing while the bar fades out, so `inert` is what
+  // stops a keyboard or a screen reader reaching a call whose window has
+  // already closed — `visibility: hidden` only lands when the fade ends.
+  el.announceBar.inert = options.length === 0;
+  if (options.length === 0) return;
   el.announceBar.replaceChildren();
-  el.announceBar.hidden = options.length === 0;
   for (const option of options) {
     const button = document.createElement('button');
     button.type = 'button';
@@ -1566,7 +1602,21 @@ function renderActionBar(state, ui, humanActs) {
     && !humanActs && !state.gameOver
     && state.playerVars[HUMAN_SEAT]?.__pendingPass !== undefined;
   const hint = humanActs ? ui.hint : (waitingOnPass ? 'Waiting for the other players to pass…' : '');
-  el.actionBar.hidden = !hint;
+  // NOT `hidden`. This bar sits in the felt's flex column, and a bar that
+  // leaves the column takes its height with it — which meant the turn cue
+  // moved the whole table every time the turn changed hands (#13). It keeps
+  // its slot now and only stops being visible; src/ui/table.css holds the
+  // reserved height and the reasoning.
+  el.actionBar.classList.toggle('action-bar--empty', !hint);
+  // Nothing else changes on the way out. The bar keeps its last words and its
+  // token while it fades — clearing them first would collapse the pill
+  // mid-fade — and `inert` is what makes those leftovers unreachable at once,
+  // by keyboard and by screen reader, rather than when the fade ends.
+  el.actionBar.inert = !hint;
+  if (!hint) {
+    el.actionButton.onclick = null;
+    return;
+  }
   el.actionBar.classList.toggle('action-bar--acting', humanActs);
   el.actionHint.textContent = hint;
   if (ui.action && humanActs) {
@@ -1676,12 +1726,16 @@ function render(state, message) {
   renderContractLadder(state);
   renderCenterZones(state, ui, draggable);
   renderPlayerZones(state, ui, draggable);
-  // The two bars go BEFORE the hand, and the order is load-bearing: both
-  // toggle [hidden], and renderHand ends by measuring how much room the fan
-  // has. Measured with the previous render's bars still showing, the fan was
-  // laid out against a row of the wrong height — and if that flipped a
-  // scrollbar, against the wrong width too. The ResizeObserver then corrected
-  // it a frame later, which the player saw as the hand re-fanning itself.
+  // The two bars go BEFORE the hand, and the order is load-bearing: renderHand
+  // ends by measuring how much room the fan has. Measured with the previous
+  // render's bars still showing, the fan was laid out against a row of the
+  // wrong height — and if that flipped a scrollbar, against the wrong width
+  // too. The ResizeObserver then corrected it a frame later, which the player
+  // saw as the hand re-fanning itself.
+  // Neither bar changes height with the turn any more (#13), so the ordinary
+  // turn no longer costs a re-measure at all — but the announce bar still
+  // leaves the column entirely for a pack that cannot announce, and a hint
+  // long enough to wrap is still a taller bar. The order stays.
   renderAnnounceBar(state);
   renderActionBar(state, ui, humanActs);
   renderHand(state, ui, stagger, draggable);
