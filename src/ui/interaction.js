@@ -29,6 +29,8 @@ export function handAddress(seat) {
  * template and the current phase, never stored:
  *   'tap'        one tap plays the card; the destination is implicit
  *                (shedding's discard, a trick).
+ *   'play-drawn' the same tap, but only the card just drawn answers to it;
+ *                the action button keeps it and ends the turn.
  *   'pass'       multi-select exactly N cards, commit with the action button.
  *   'rummy-draw' tap the deck or the discard pile to draw from it.
  *   'rummy-meld' multi-select for a lay-down; a single selected card arms
@@ -41,6 +43,7 @@ export function interactionMode(state) {
   if (id === 'trick-taking') return state.turn.phase === 'pass' ? 'pass' : 'tap';
   if (id === 'contract-rummy') return state.turn.phase === 'draw' ? 'rummy-draw' : 'rummy-meld';
   if (id === 'sequencing') return 'place';
+  if (id === 'shedding' && state.turn.phase === 'playDrawn') return 'play-drawn';
   return 'tap';
 }
 
@@ -176,16 +179,35 @@ export function buildUiModel(state, { seat, moves = [], acts = false, selection 
     return ui;
   }
 
-  if (mode === 'tap') {
+  if (mode === 'tap' || mode === 'play-drawn') {
+    // Both dressings read the same enumerated moves; in 'play-drawn' the
+    // template has already narrowed them to the one card that is live, so
+    // nothing here has to know the rule to obey it.
     for (const move of moves) {
       if (move.type === 'playCard') ui.handSelectable.add(move.cards[0]);
     }
-    // Drawing is offered only when there is nothing legal to play, which is
-    // the rule these packs share — so the pile lighting up is itself the hint
-    // that you are stuck, and no separate prompt has to say so.
-    if (ui.handSelectable.size === 0) {
-      const draw = moves.find((m) => m.type === 'draw');
-      if (draw) ui.readyTargets.set('draw', draw);
+
+    if (mode === 'play-drawn') {
+      // The whole answer to "how does a turn end after a draw": one button, in
+      // the bar that already holds exactly one hint and one button. No timeout,
+      // no auto-pass — and the pass is a real move, so tapping it is logged and
+      // replays (src/templates/shedding.js).
+      ui.hint = 'Play the card you drew, or keep it';
+      const pass = moves.find((m) => m.type === 'pass');
+      if (pass) ui.action = { label: 'Keep it', makeMove: () => ({ actor: seat, type: 'pass' }) };
+      return ui;
+    }
+
+    // DRAWING IS A TURN OPTION, NOT A CONFESSION OF BEING STUCK. It used to be
+    // offered only when nothing in hand was playable, which read as a helpful
+    // hint and was in fact a missing rule: `mustPlayIfAble: false` — what both
+    // shedding packs declare — means you may draw while holding a perfectly
+    // good card, which is how you keep a wild for the turn it matters. The old
+    // gate survives for a pack that really does compel a play, where the pile
+    // lighting up IS the news that you have nothing.
+    const draw = moves.find((m) => m.type === 'draw');
+    if (draw && (state.pack.rules.mustPlayIfAble !== true || ui.handSelectable.size === 0)) {
+      ui.readyTargets.set('draw', draw);
     }
     ui.hint = 'Your turn';
     return ui;
@@ -449,7 +471,10 @@ export function dropCandidates(state, { seat, moves = [], source }) {
   const handAddr = handAddress(seat);
   const out = [];
 
-  if (mode === 'tap') {
+  // 'play-drawn' rides the same branch on purpose: `moves` has already been
+  // narrowed to the drawn card, so a dragged pre-draw card finds nothing here
+  // and snaps home — the dead hand is enforced once, in the template.
+  if (mode === 'tap' || mode === 'play-drawn') {
     for (const move of moves) {
       if (move.type !== 'playCard' || move.cards[0] !== source.cardId) continue;
       const address = implicitLandingZone(state, move);

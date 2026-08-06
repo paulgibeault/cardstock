@@ -83,11 +83,25 @@ function turnLines(pack) {
     // much worse game, and this is the sentence a new player reads first.
     const on = list((rules.matchOn || []).map((a) => `the same ${a}`), 'or');
     const out = [`On your turn, play one card matching ${on || 'the top card'}.`];
+    // "If you cannot play, draw" and "you may draw whenever you like" are
+    // different games, and the pack already says which one this is. Reading
+    // `mustPlayIfAble` here is what stops the help page from teaching a rule
+    // the table no longer enforces.
+    const optional = rules.mustPlayIfAble !== true;
     if (rules.drawWhenStuck === 'until-playable') {
-      out.push('If you cannot play, draw until you can.');
+      out.push(optional
+        ? 'You may draw instead of playing, and you keep drawing until something fits.'
+        : 'If you cannot play, draw until you can.');
     } else if (rules.drawWhenStuck) {
       const n = rules.drawWhenStuck;
-      out.push(`If you cannot play, draw ${n === 1 ? 'a card' : `${n} cards`} and your turn ends.`);
+      const cards = n === 1 ? 'a card' : `${n} cards`;
+      out.push(optional
+        ? `You may draw ${cards} instead of playing — even holding something that fits, which is how you hang on to a card you would rather not spend yet.`
+        : `If you cannot play, draw ${cards} and your turn ends.`);
+    }
+    if (rules.playAfterDraw && rules.drawWhenStuck) {
+      out.push('A card you draw can be played straight away if it fits, or kept — either ends your turn, '
+        + 'and the rest of your hand is out of play until your next one.');
     }
     return out;
   }

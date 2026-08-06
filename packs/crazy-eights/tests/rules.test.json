@@ -72,6 +72,29 @@
       ]
     },
     {
+      "name": "the same draw rule as Wildfire, because it is the same template and the same flags",
+      "setup": {
+        "seats": 3,
+        "turn": { "seat": 0, "phase": "play" },
+        "zones": {
+          "discard": ["hearts-7"],
+          "hand.0": ["hearts-4", "clubs-9"],
+          "draw": ["spades-2", "hearts-3"]
+        },
+        "vars": { "activeSuit": "hearts" }
+      },
+      "assert": [
+        { "move": { "actor": 0, "type": "draw" }, "legal": true },
+        { "move": { "actor": 0, "type": "pass" }, "legal": false, "rule": "phase" },
+        { "apply": { "actor": 0, "type": "draw" } },
+        { "expect": { "turn": { "seat": 0, "phase": "playDrawn" }, "vars": { "drawnCardId": "hearts-3" } } },
+        { "move": { "actor": 0, "type": "playCard", "cards": ["hearts-4"] }, "legal": false, "rule": "drawn-only" },
+        { "move": { "actor": 0, "type": "playCard", "cards": ["hearts-3"] }, "legal": true },
+        { "apply": { "actor": 0, "type": "pass" } },
+        { "expect": { "turn": { "seat": 1, "phase": "play" }, "vars": { "drawnCardId": null }, "zones": { "hand.0": 3 } } }
+      ]
+    },
+    {
       "name": "round scoring sends leftover hand values to the winner",
       "setup": {
         "seats": 3,

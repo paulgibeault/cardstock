@@ -602,6 +602,9 @@
           "hand.1": [
             "green-3",
             "blue-9"
+          ],
+          "draw": [
+            "blue-1"
           ]
         },
         "vars": {
@@ -729,6 +732,9 @@
           "hand.1": [
             "green-3",
             "wild"
+          ],
+          "draw": [
+            "blue-1"
           ]
         },
         "vars": {
@@ -826,6 +832,588 @@
           "expect": {
             "zones": {
               "hand.1": 1
+            }
+          }
+        },
+        {
+          "move": {
+            "actor": 1,
+            "type": "announce",
+            "id": "last-card-call"
+          },
+          "legal": true
+        },
+        {
+          "move": {
+            "actor": 0,
+            "type": "challenge",
+            "id": "last-card-call",
+            "target": 1
+          },
+          "legal": true
+        }
+      ]
+    },
+    {
+      "name": "you may draw even while holding a card that fits",
+      "setup": {
+        "seats": 3,
+        "turn": {
+          "seat": 0,
+          "phase": "play"
+        },
+        "zones": {
+          "discard": [
+            "red-7"
+          ],
+          "hand.0": [
+            "red-3",
+            "blue-2"
+          ]
+        },
+        "vars": {
+          "activeColor": "red"
+        }
+      },
+      "assert": [
+        {
+          "move": {
+            "actor": 0,
+            "type": "playCard",
+            "cards": [
+              "red-3"
+            ]
+          },
+          "legal": true
+        },
+        {
+          "move": {
+            "actor": 0,
+            "type": "draw"
+          },
+          "legal": true
+        }
+      ]
+    },
+    {
+      "name": "after a draw only the drawn card is live, and keeping it ends the turn",
+      "setup": {
+        "seats": 3,
+        "turn": {
+          "seat": 0,
+          "phase": "play"
+        },
+        "zones": {
+          "discard": [
+            "red-7"
+          ],
+          "hand.0": [
+            "red-3",
+            "blue-2"
+          ],
+          "draw": [
+            "green-9",
+            "red-5"
+          ]
+        },
+        "vars": {
+          "activeColor": "red"
+        }
+      },
+      "assert": [
+        {
+          "apply": {
+            "actor": 0,
+            "type": "draw"
+          }
+        },
+        {
+          "expect": {
+            "turn": {
+              "seat": 0,
+              "phase": "playDrawn"
+            },
+            "vars": {
+              "drawnCardId": "red-5"
+            },
+            "zones": {
+              "hand.0": 3
+            }
+          }
+        },
+        {
+          "move": {
+            "actor": 0,
+            "type": "playCard",
+            "cards": [
+              "red-5"
+            ]
+          },
+          "legal": true
+        },
+        {
+          "move": {
+            "actor": 0,
+            "type": "playCard",
+            "cards": [
+              "red-3"
+            ]
+          },
+          "legal": false,
+          "rule": "drawn-only"
+        },
+        {
+          "move": {
+            "actor": 0,
+            "type": "draw"
+          },
+          "legal": false,
+          "rule": "one-draw"
+        },
+        {
+          "move": {
+            "actor": 0,
+            "type": "pass"
+          },
+          "legal": true
+        },
+        {
+          "apply": {
+            "actor": 0,
+            "type": "pass"
+          }
+        },
+        {
+          "expect": {
+            "turn": {
+              "seat": 1,
+              "phase": "play"
+            },
+            "vars": {
+              "drawnCardId": null
+            },
+            "zones": {
+              "hand.0": 3
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "the drawn card can be played the moment it lands",
+      "setup": {
+        "seats": 3,
+        "turn": {
+          "seat": 0,
+          "phase": "play"
+        },
+        "zones": {
+          "discard": [
+            "red-7"
+          ],
+          "hand.0": [
+            "red-3",
+            "blue-2"
+          ],
+          "draw": [
+            "green-9",
+            "red-5"
+          ]
+        },
+        "vars": {
+          "activeColor": "red"
+        }
+      },
+      "assert": [
+        {
+          "apply": {
+            "actor": 0,
+            "type": "draw"
+          }
+        },
+        {
+          "apply": {
+            "actor": 0,
+            "type": "playCard",
+            "cards": [
+              "red-5"
+            ]
+          }
+        },
+        {
+          "expect": {
+            "zones": {
+              "discard": [
+                "red-7",
+                "red-5"
+              ],
+              "hand.0": 2
+            },
+            "turn": {
+              "seat": 1,
+              "phase": "play"
+            },
+            "vars": {
+              "drawnCardId": null
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "a drawn card that fits nothing just passes the turn, with no detour",
+      "setup": {
+        "seats": 3,
+        "turn": {
+          "seat": 0,
+          "phase": "play"
+        },
+        "zones": {
+          "discard": [
+            "red-7"
+          ],
+          "hand.0": [
+            "red-3"
+          ],
+          "draw": [
+            "green-9",
+            "blue-2"
+          ]
+        },
+        "vars": {
+          "activeColor": "red"
+        }
+      },
+      "assert": [
+        {
+          "apply": {
+            "actor": 0,
+            "type": "draw"
+          }
+        },
+        {
+          "expect": {
+            "turn": {
+              "seat": 1,
+              "phase": "play"
+            },
+            "vars": {
+              "drawnCardId": null
+            },
+            "zones": {
+              "hand.0": 2
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "there is nothing to keep until you have drawn",
+      "setup": {
+        "seats": 3,
+        "turn": {
+          "seat": 0,
+          "phase": "play"
+        },
+        "zones": {
+          "discard": [
+            "red-7"
+          ],
+          "hand.0": [
+            "red-3",
+            "blue-2"
+          ]
+        },
+        "vars": {
+          "activeColor": "red"
+        }
+      },
+      "assert": [
+        {
+          "move": {
+            "actor": 0,
+            "type": "pass"
+          },
+          "legal": false,
+          "rule": "phase"
+        }
+      ]
+    },
+    {
+      "name": "a drawn wild is playable at once, and still asks for its colour",
+      "setup": {
+        "seats": 2,
+        "turn": {
+          "seat": 0,
+          "phase": "play"
+        },
+        "zones": {
+          "discard": [
+            "red-7"
+          ],
+          "hand.0": [
+            "red-3"
+          ],
+          "hand.1": [
+            "blue-4"
+          ],
+          "draw": [
+            "green-9",
+            "wild"
+          ]
+        },
+        "vars": {
+          "activeColor": "red"
+        }
+      },
+      "assert": [
+        {
+          "apply": {
+            "actor": 0,
+            "type": "draw"
+          }
+        },
+        {
+          "expect": {
+            "turn": {
+              "seat": 0,
+              "phase": "playDrawn"
+            },
+            "vars": {
+              "drawnCardId": "wild"
+            }
+          }
+        },
+        {
+          "move": {
+            "actor": 0,
+            "type": "playCard",
+            "cards": [
+              "wild"
+            ]
+          },
+          "legal": false,
+          "rule": "choice-required"
+        },
+        {
+          "move": {
+            "actor": 0,
+            "type": "playCard",
+            "cards": [
+              "red-3"
+            ]
+          },
+          "legal": false,
+          "rule": "drawn-only"
+        },
+        {
+          "move": {
+            "actor": 0,
+            "type": "playCard",
+            "cards": [
+              "wild"
+            ],
+            "choice": {
+              "color": "blue"
+            }
+          },
+          "legal": true
+        },
+        {
+          "apply": {
+            "actor": 0,
+            "type": "playCard",
+            "cards": [
+              "wild"
+            ],
+            "choice": {
+              "color": "blue"
+            }
+          }
+        },
+        {
+          "expect": {
+            "vars": {
+              "activeColor": "blue",
+              "drawnCardId": null
+            },
+            "turn": {
+              "seat": 1,
+              "phase": "play"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "a penalty draw is never a draw you may play from",
+      "setup": {
+        "seats": 3,
+        "turn": {
+          "seat": 0,
+          "phase": "play"
+        },
+        "zones": {
+          "discard": [
+            "red-5"
+          ],
+          "hand.0": [
+            "red-draw2",
+            "green-3"
+          ],
+          "hand.1": [
+            "blue-1"
+          ],
+          "hand.2": [
+            "yellow-9"
+          ],
+          "draw": [
+            "green-9",
+            "red-6",
+            "red-9"
+          ]
+        },
+        "vars": {
+          "activeColor": "red"
+        }
+      },
+      "assert": [
+        {
+          "apply": {
+            "actor": 0,
+            "type": "playCard",
+            "cards": [
+              "red-draw2"
+            ]
+          }
+        },
+        {
+          "expect": {
+            "zones": {
+              "hand.1": 3
+            },
+            "turn": {
+              "seat": 2,
+              "phase": "play"
+            }
+          }
+        },
+        {
+          "move": {
+            "actor": 1,
+            "type": "playCard",
+            "cards": [
+              "red-9"
+            ]
+          },
+          "legal": false,
+          "rule": "turn"
+        },
+        {
+          "move": {
+            "actor": 2,
+            "type": "pass"
+          },
+          "legal": false,
+          "rule": "phase"
+        }
+      ]
+    },
+    {
+      "name": "drawing back to two and playing the drawn card re-opens the call window",
+      "setup": {
+        "seats": 2,
+        "turn": {
+          "seat": 1,
+          "phase": "play"
+        },
+        "zones": {
+          "discard": [
+            "green-7"
+          ],
+          "hand.0": [
+            "green-2",
+            "green-5",
+            "green-6"
+          ],
+          "hand.1": [
+            "green-3"
+          ],
+          "draw": [
+            "blue-1",
+            "green-9"
+          ]
+        },
+        "vars": {
+          "activeColor": "green"
+        }
+      },
+      "assert": [
+        {
+          "apply": {
+            "actor": 1,
+            "type": "announce",
+            "id": "last-card-call"
+          }
+        },
+        {
+          "expect": {
+            "playerVars": {
+              "1": {
+                "__last-card-callCalled": true
+              }
+            }
+          }
+        },
+        {
+          "apply": {
+            "actor": 1,
+            "type": "draw"
+          }
+        },
+        {
+          "expect": {
+            "playerVars": {
+              "1": {
+                "__last-card-callCalled": false
+              }
+            },
+            "turn": {
+              "seat": 1,
+              "phase": "playDrawn"
+            },
+            "zones": {
+              "hand.1": 2
+            }
+          }
+        },
+        {
+          "move": {
+            "actor": 0,
+            "type": "challenge",
+            "id": "last-card-call",
+            "target": 1
+          },
+          "legal": false,
+          "rule": "not-catchable"
+        },
+        {
+          "apply": {
+            "actor": 1,
+            "type": "playCard",
+            "cards": [
+              "green-9"
+            ]
+          }
+        },
+        {
+          "expect": {
+            "zones": {
+              "hand.1": 1
+            },
+            "turn": {
+              "seat": 0,
+              "phase": "play"
             }
           }
         },

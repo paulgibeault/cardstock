@@ -76,6 +76,40 @@ for (const packId of listPackIds()) {
   });
 }
 
+// A turn that ends by "keeping" a drawn card ends through a logged `pass`
+// move, and that is the entire reason it is a move at all: a turn ended in the
+// UI would be absent from the log, and a resumed match would replay the draw
+// and then sit in a phase nobody ever left. Both ways out of playDrawn have to
+// survive the round trip, so both are driven here.
+test("a draw you may play from replays through either exit", () => {
+  const pack = packFromDisk("wildfire");
+  const state = createState({ pack, seats: 3, seed: "play-after-draw-replay" });
+  pack.template.setup(makeCtx(state));
+
+  let kept = 0;
+  let played = 0;
+  for (let i = 0; i < 400 && !state.gameOver; i++) {
+    const seat = state.turn.seat;
+    // Alternate the two exits, so one log carries both.
+    const move = state.turn.phase === "playDrawn" && kept <= played
+      ? { actor: seat, type: "pass" }
+      : chooseBotMove(state, seat);
+    if (!move) break;
+    if (state.turn.phase === "playDrawn") {
+      if (move.type === "pass") kept++;
+      else played++;
+    }
+    applyMove(state, move);
+  }
+  assert.ok(kept > 0 && played > 0,
+    `the match exercised neither exit (kept ${kept}, played ${played})`);
+  assert.ok(state.log.some((m) => m.type === "pass"), "the keep never reached the log");
+
+  const snapshot = serializeMatch(state, { savedAt: 0 });
+  assert.deepStrictEqual(fingerprint(rehydrateMatch(packFromDisk("wildfire"), snapshot)),
+    fingerprint(state));
+});
+
 test("the snapshot is JSON round-trippable — it crosses a storage bridge and a wire", () => {
   const pack = packFromDisk("crazy-eights");
   const played = playOut(pack, "json-safe", 3, 20);

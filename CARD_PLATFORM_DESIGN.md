@@ -646,6 +646,14 @@ Zones: `hand`, `draw` (shared, face-down), `discard` (shared, top-visible).
 Effects come from the deck file (§7). Crazy Eights is this template with
 `standard-52` and one wild effect on the 8s — the canonical ~40-line pack.
 
+Turn phases: `play`, and — when `playAfterDraw` is on and the drawn card
+matches — `playDrawn`. In `playDrawn` only the card just drawn may be played
+(`vars.drawnCardId`); the rest of the hand is dead until the next turn, and the
+turn ends by playing that card or by the `pass` move ("keep it"). `pass` is a
+logged move rather than a UI state so that a kept card replays (§5, §6).
+`mustPlayIfAble: false` additionally makes drawing legal while holding a
+playable card. A pack that omits `playAfterDraw` gets neither.
+
 ### 13.3 `contract-rummy` (validates with Phase 10)
 
 Zones: `hand`, `draw`, `discard`, `melds` (per player, all-visible).

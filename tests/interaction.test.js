@@ -63,9 +63,18 @@ function untilHumansTurn(state, limit = 200) {
 const PACKS = ["crazy-eights", "wildfire", "hearts", "milestones", "stockpile"];
 
 test("every pack's interaction mode is one the table knows how to render", () => {
-  const known = new Set(["tap", "pass", "rummy-draw", "rummy-meld", "place"]);
+  const known = new Set(["tap", "play-drawn", "pass", "rummy-draw", "rummy-meld", "place"]);
   for (const packId of PACKS) {
     assert.ok(known.has(interactionMode(tableFor(packId))), `${packId} has an unknown mode`);
+    // Every phase a template can reach, not only the one a fresh deal opens on:
+    // a phase with no mode renders as 'tap' by accident, which is how a table
+    // ends up offering the whole hand in a state that allows one card.
+    for (const phase of ["play", "pass", "draw", "meld", "discard", "playDrawn"]) {
+      const state = tableFor(packId, `phases:${packId}`);
+      state.turn.phase = phase;
+      assert.ok(known.has(interactionMode(state)),
+        `${packId} in phase ${phase} has an unknown mode`);
+    }
   }
 });
 
