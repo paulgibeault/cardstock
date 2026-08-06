@@ -10,6 +10,9 @@
   "deck": "deck.json",
   "template": "sequencing",
   "tagline": "Race your stock down before anyone else.",
+  "howToPlay": [
+    "The stock pile in front of you is the only thing that matters — hand and discards exist to help you empty it. A turn spent playing from your hand while your stock's top card sits there is usually a turn wasted."
+  ],
   "accent": "#6b4fa8",
   "heroCards": [
     {

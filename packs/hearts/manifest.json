@@ -6,6 +6,10 @@
   "deck": "standard-52",
   "template": "trick-taking",
   "tagline": "Win no tricks worth winning.",
+  "howToPlay": [
+    "You are trying to LOSE tricks. Hearts cost a point each and the queen of spades costs thirteen, so the skill is in getting rid of dangerous cards while somebody else is winning the trick they land in.",
+    "The exception is worth knowing: take every single penalty card and the score inverts — everyone else takes the points instead of you. Going for it and falling one heart short is the most expensive hand in the game."
+  ],
   "accent": "#b03048",
   "heroCards": [
     { "rank": "Q", "suit": "spades" },

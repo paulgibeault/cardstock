@@ -124,6 +124,36 @@
 
 * { box-sizing: border-box; }
 
+/* ------------------------------------------------------------------ *
+ * Nothing here is text you copy
+ * ------------------------------------------------------------------ *
+ *
+ * A card is an object, not a paragraph. Every string on screen — a rank, a
+ * name plate, a score, a hint — is a label ON something you are meant to
+ * touch, and there is nothing worth pasting anywhere else, so a selection can
+ * only ever be an accident of a gesture that meant something else.
+ *
+ * And the gestures here are the reason this is a global rule rather than a
+ * per-element one. The table is driven by taps and holds: hold a card to
+ * gather its whole meld (smartSelect), hold anything to open the inspector,
+ * drag a card to a pile. On iOS Safari a long press on selectable text starts
+ * the OS text-selection gesture instead — a magnifier and a blue highlight
+ * over the card you are trying to pick up, with the app's own hold losing the
+ * race. -webkit-touch-callout suppresses the share/copy sheet that follows.
+ *
+ * Selection is deliberately NOT re-enabled anywhere: this app has no text
+ * input, no user-authored content, and no long-form prose that reads as a
+ * document. (The rules page is the closest thing, and it is a page you read,
+ * not a source you quote.) None of this touches the accessibility tree —
+ * every one of these strings is still text to a screen reader, and
+ * aria-labels carry the ones the felt shortens.
+ */
+:root {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
 body {
   margin: 0;
   font-family: system-ui, sans-serif;
@@ -326,8 +356,49 @@ body {
   display: flex;
   justify-content: center;
   gap: 1.25rem;
-  flex-wrap: wrap;
+  /* NOT wrap. Seats wrapping to a second row is how the felt loses its height
+     to the players and pushes the piles under the hand — and with the seat
+     picker a table can now be eight-handed. One row, always; when it will not
+     fit, the seats get smaller (below), and the ones that are not acting give
+     up their fan first. */
+  flex-wrap: nowrap;
+  gap: clamp(0.35rem, 1.5vw, 1.25rem);
 }
+
+/* ------------------------------------------------------------------ *
+ * Crowded tables
+ * ------------------------------------------------------------------ *
+ *
+ * Applied by renderSeats once the row holds more seats than it can show at
+ * full size. The ACTIVE seat always keeps everything: whose turn it is, and
+ * what they are holding, is the one thing a player is reading the row for.
+ * Everyone else keeps their face, name and count — which is the information —
+ * and gives up the fan of card backs, which is decoration that happens to be
+ * the widest thing on the plate.
+ */
+.opponent-row--compact .seat {
+  padding: 0.3rem 0.4rem 0.35rem;
+}
+
+/* The fan of backs only. NOT .seat__zones — a seat's melds are live hit
+   targets in Milestones and its piles are real destinations in Stockpile, and
+   a crowded table is not a reason to make a legal move unreachable. */
+.opponent-row--compact .seat:not(.seat--active) .mini-hand {
+  display: none;
+}
+
+.opponent-row--compact .seat__name {
+  max-width: 5.5rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Past a certain crowd even the names have to go; the avatar and the card
+   count are the last things standing, and they are still a player and how
+   close they are to going out. */
+.opponent-row--tight .seat:not(.seat--active) .seat__name { display: none; }
+.opponent-row--tight .seat .mini-hand { --mini-max: 60px; }
 
 /* A seat is a player, so it gets a face and a name plate rather than a line of
    text. The count is a badge on the plate — the number you actually watch. */
@@ -916,9 +987,10 @@ button.pile-stack:focus-visible { outline: 2px solid var(--accent); outline-offs
    scroll on a small screen. */
 .draggable { touch-action: none; }
 
-/* No text selection anywhere while a card is in the air — a drag across a
-   score sheet would otherwise highlight it. */
-body.is-dragging { user-select: none; -webkit-user-select: none; }
+/* Selection during a drag used to be suppressed here, for the drag that
+   crossed a score sheet and highlighted it on the way past. It is suppressed
+   for the whole app now (see :root, near the top), which covers this case and
+   the ones a drag was never involved in. */
 body.is-dragging .card-face { cursor: grabbing; }
 
 .drag-ghost {
@@ -1427,6 +1499,83 @@ body.is-dragging .card-face { cursor: grabbing; }
   80% { transform: translateX(-3px); }
 }
 
+/* The colour a wild left behind.
+ *
+ * The discard's badge already writes the word (zoneBadgeText); this is the
+ * swatch that makes it readable without reading. It appears ONLY when the top
+ * card cannot show the colour itself — see activeMatchTint() — so a dot on the
+ * badge means "a wild chose this", not merely "this is a discard pile". */
+.pile-count--active-match {
+  /* `flex`, never `inline-flex`: the pile stack above is an inline-block
+     button, so an inline-level badge flows ALONGSIDE it instead of sitting
+     under it — the same trap the base .pile-count rule documents. Block-level
+     flex keeps the auto margins that centre it. */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.32rem;
+  border: 1px solid color-mix(in srgb, var(--active-tint, var(--accent)) 65%, transparent);
+}
+
+.pile-count--active-match::before {
+  content: "";
+  width: 0.58rem;
+  height: 0.58rem;
+  flex: none;
+  border-radius: 50%;
+  background: var(--active-tint, var(--accent));
+  box-shadow: 0 0 6px color-mix(in srgb, var(--active-tint, var(--accent)) 60%, transparent);
+}
+
+/* Play has turned round. Absent until it does — see directionBadge(). */
+.direction-badge {
+  position: absolute;
+  top: 0;
+  right: 0.15rem;
+  font-size: 1.05rem;
+  line-height: 1;
+  color: var(--chrome-text);
+  opacity: 0.75;
+  pointer-events: none;
+}
+
+.opponent-row { position: relative; }
+
+/* An action card washing across the felt.
+ *
+ * The pack-level "background effect": a skip, a reverse or a Draw 4 changes
+ * the game more than any ordinary card and used to look exactly like one. It
+ * is a pseudo-element rather than a background transition on #table itself,
+ * because the felt's background is three stacked gradients a pack may replace
+ * and this must not be one of the layers they have to preserve.
+ *
+ * --flash-tint is set per event (a wild washes in the colour that was chosen)
+ * and falls back to the theme accent. A pack that wants a different flourish
+ * restyles .table-flash; one that wants none sets its animation to none. */
+#table { position: relative; }
+
+#table::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  opacity: 0;
+  background: radial-gradient(
+    ellipse at 50% 45%,
+    color-mix(in srgb, var(--flash-tint, var(--accent)) 55%, transparent),
+    transparent 70%
+  );
+}
+
+.table--flash::after { animation: table-flash 0.62s ease-out; }
+
+@keyframes table-flash {
+  0% { opacity: 0; }
+  22% { opacity: 0.55; }
+  100% { opacity: 0; }
+}
+
 /* ------------------------------------------------------------------ *
  * Stepping the whole felt down
  * ------------------------------------------------------------------ */
@@ -1623,6 +1772,7 @@ body.is-dragging .card-face { cursor: grabbing; }
   .event-banner--bad.event-banner--in,
   .zone-celebrate,
   .zone-lament,
+  .table--flash::after,
   .announce-button,
   .seat__catch,
   .game-over--won .game-over-fan__card,
@@ -1630,7 +1780,9 @@ body.is-dragging .card-face { cursor: grabbing; }
   #confirm-modal .panel,
   #round-overlay .panel,
   #scoreboard-overlay .panel,
-  #game-over-overlay .panel {
+  #game-over-overlay .panel,
+  #rules-overlay .panel,
+  #new-game-overlay .panel {
     animation: none !important;
   }
 
@@ -1768,7 +1920,9 @@ body.is-dragging .card-face { cursor: grabbing; }
 #confirm-modal,
 #round-overlay,
 #scoreboard-overlay,
-#game-over-overlay {
+#game-over-overlay,
+#rules-overlay,
+#new-game-overlay {
   position: fixed;
   inset: 0;
   background: var(--scrim);
@@ -1783,13 +1937,17 @@ body.is-dragging .card-face { cursor: grabbing; }
 #confirm-modal[hidden],
 #round-overlay[hidden],
 #scoreboard-overlay[hidden],
-#game-over-overlay[hidden] { display: none; }
+#game-over-overlay[hidden],
+#rules-overlay[hidden],
+#new-game-overlay[hidden] { display: none; }
 
 #choice-modal .panel,
 #confirm-modal .panel,
 #round-overlay .panel,
 #scoreboard-overlay .panel,
-#game-over-overlay .panel {
+#game-over-overlay .panel,
+#rules-overlay .panel,
+#new-game-overlay .panel {
   background: var(--panel-bg);
   color: var(--panel-text);
   border: 1px solid var(--panel-border);
@@ -1868,6 +2026,14 @@ body.is-dragging .card-face { cursor: grabbing; }
   white-space: nowrap;
 }
 .round-scores__total { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* How far this match still has to run. Sits between the sheet and the buttons
+   because it is the fact the two buttons are a choice between. */
+.round-target {
+  margin: -0.75rem 0 1rem;
+  font-size: 0.85rem;
+  opacity: 0.72;
+}
 
 /* Every player's name carries their mark, everywhere it appears — the seat
    plate, the score sheet, the stats. One face per opponent, one place it is
@@ -2253,6 +2419,60 @@ body.is-dragging .card-face { cursor: grabbing; }
 }
 .tile__restart:hover { opacity: 1; background: var(--ghost-hover); }
 
+/* Shares the restart button's footer treatment: both are secondary doors on
+   the tile, and two different-looking small buttons under one card is noise. */
+.tile__rules {
+  display: block;
+  width: 100%;
+  padding: 0.5rem;
+  font: inherit;
+  font-size: 0.72rem;
+  color: inherit;
+  opacity: 0.65;
+  background: none;
+  border: none;
+  border-top: 1px solid var(--tile-border);
+  cursor: pointer;
+}
+.tile__rules:hover { opacity: 1; background: var(--ghost-hover); }
+
+/* ------------------------------------------------------------------ *
+ * How to play
+ * ------------------------------------------------------------------ */
+
+.rules__tagline {
+  margin: -0.5rem 0 1rem;
+  font-size: 0.9rem;
+  opacity: 0.75;
+}
+
+/* Capped and scrollable: a rules page is the one panel whose length is set by
+   the pack rather than by the layout, and Milestones lists ten contracts. */
+.rules__body {
+  max-height: min(60vh, 34rem);
+  overflow-y: auto;
+  text-align: left;
+  margin-bottom: 1rem;
+}
+
+.rules__heading {
+  margin: 1.1rem 0 0.35rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.6;
+}
+.rules__heading:first-child { margin-top: 0; }
+
+.rules__list {
+  margin: 0;
+  padding-left: 1.1rem;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+.rules__list li { margin: 0.2rem 0; }
+
 .tile--broken {
   padding: 2rem 1rem;
   text-align: center;
@@ -2260,3 +2480,67 @@ body.is-dragging .card-face { cursor: grabbing; }
 }
 .tile--broken .tile__name,
 .tile--broken .tile__tagline { display: block; }
+
+/* ------------------------------------------------------------------ *
+ * The new-game sheet
+ * ------------------------------------------------------------------ */
+
+.new-game__body {
+  max-height: min(58vh, 30rem);
+  overflow-y: auto;
+  text-align: left;
+  margin-bottom: 1rem;
+}
+
+.new-game__heading {
+  margin: 1rem 0 0.5rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.6;
+}
+.new-game__heading:first-child { margin-top: 0; }
+
+.new-game__seats { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+
+.new-game__seat {
+  min-width: 2.2rem;
+  padding: 0.35rem 0.5rem;
+  font: inherit;
+  font-weight: 700;
+  color: var(--panel-text);
+  background: var(--chip-bg);
+  border: 1px solid var(--chip-border);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.new-game__seat[aria-pressed="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #10240f;
+}
+
+.new-game__seat-count {
+  display: block;
+  margin-top: 0.45rem;
+  font-size: 0.8rem;
+  opacity: 0.7;
+}
+
+/* A whole row is the hit target, not just the box — a 13px checkbox is not a
+   touch target, and this sheet is used on a phone. */
+.new-game__row {
+  display: flex;
+  gap: 0.6rem;
+  align-items: flex-start;
+  padding: 0.5rem 0.4rem;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.new-game__row:hover { background: var(--ghost-hover); }
+
+.new-game__check { margin-top: 0.2rem; flex: none; width: 1rem; height: 1rem; }
+.new-game__text { display: flex; flex-direction: column; gap: 0.15rem; }
+.new-game__name { font-size: 0.92rem; font-weight: 600; }
+.new-game__desc { font-size: 0.8rem; opacity: 0.72; line-height: 1.4; }

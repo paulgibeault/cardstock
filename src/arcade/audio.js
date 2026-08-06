@@ -111,3 +111,17 @@ export function playTrickTaken({ bad = false } = {}) { sfx('trick', { bad }); }
 export function playAnnouncement({ caught = false } = {}) {
   sfx(caught ? 'invalid' : 'trick', caught ? undefined : { bad: false });
 }
+
+/**
+ * An action card landing on somebody — a skip, a reverse, a Draw 2 or 4.
+ *
+ * Same discipline as playAnnouncement: no new cue, because none has been
+ * designed. `trick` is the pack's punctuation gesture, the sound of the table
+ * turning over, which is what all three of these are; `bad` darkens it, and
+ * whether an action card is bad is entirely a question of who it happened to.
+ * So the parameter is "did this land on ME", and a Draw 4 sounds like a Draw 4
+ * from the other side of the table.
+ */
+export function playActionCard({ against = false } = {}) {
+  sfx('trick', { bad: against });
+}

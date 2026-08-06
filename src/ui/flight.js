@@ -102,9 +102,20 @@ export function flyCard(markup, from, to, { fade = false, duration = 260 } = {})
   node.style.width = `${from.width}px`;
   flightLayer().appendChild(node);
 
-  const dx = (to.left + to.width / 2) - (from.left + from.width / 2);
-  const dy = (to.top + to.height / 2) - (from.top + from.height / 2);
-  const scale = to.width / from.width;
+  // Measured, not assumed. The copy takes its width from `from` but its HEIGHT
+  // from the card's own aspect, so the two only agree when `from` was already
+  // card-shaped. Launch one from a rect that is not — an opponent's mini-hand
+  // is a strip about a third of a card tall — and centring on `from.height`
+  // puts the copy's real centre far below the one the arithmetic used: it
+  // lands low, is removed, and the destination card (already rendered, merely
+  // held invisible) appears to snap up into place.
+  //
+  // Reading the box back costs one forced layout on a single node, which is
+  // cheaper than every call site having to know what shape a card is.
+  const start = node.getBoundingClientRect();
+  const dx = (to.left + to.width / 2) - (start.left + start.width / 2);
+  const dy = (to.top + to.height / 2) - (start.top + start.height / 2);
+  const scale = to.width / start.width;
 
   let settled;
   try {

@@ -6,6 +6,9 @@
   "deck": "standard-52",
   "template": "shedding",
   "tagline": "Empty your hand. Eights are wild.",
+  "howToPlay": [
+    "The eights are the whole game. They can be played on anything and they change the suit, so the question is never whether to play one but when — an eight spent to escape a bad suit is an eight you no longer have when somebody else picks the suit you cannot follow."
+  ],
   "accent": "#2f6fb0",
   "heroCards": [
     { "rank": "8", "suit": "spades", "effect": { "type": "wild", "choose": "suit" } },

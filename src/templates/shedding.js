@@ -97,6 +97,12 @@ function lastCardCallVarName(cfg) {
   return `__${cfg.id}Called`;
 }
 
+// The hand size each seat was last seen holding, so refreshCallFlags can tell a
+// descent (which a declaration survives) from a growth (which ends it).
+function lastCardSeenVarName(cfg) {
+  return `__${cfg.id}Seen`;
+}
+
 function callCountOf(cfg) {
   return cfg.atHandCount ?? 1;
 }
@@ -134,45 +140,86 @@ function isVulnerable(ctx, cfg, seat) {
 }
 
 /**
- * Drop the "already called" flag from every seat whose hand has grown back out
- * of declaring range, after every applied move.
+ * Drop the "already called" flag from every seat whose hand has grown since we
+ * last looked, after every applied move.
  *
  * Swept over all seats rather than threaded through each hand mutation: a hand
  * changes size from a play, a draw, a Draw-2 landing on someone else, a swap, a
  * rotation and a challenge penalty, and a rule that has to be remembered at six
- * call sites is a rule that will be forgotten at the seventh. Without it a
- * player who called at one card, was made to draw two, and then got back down
- * to one would still be wearing the old call and could never be caught.
+ * call sites is a rule that will be forgotten at the seventh.
  *
- * The threshold is `count + 1`, not `count`, for the reason canDeclare()
- * gives: clearing at exactly the count would wipe a legitimate pre-emptive
- * declaration the instant the player acted on it.
+ * A DECLARATION COVERS ONE DESCENT, NOT THE REST OF THE ROUND. It has to
+ * survive the descent through the declaring window — canDeclare() lets you
+ * declare at one card above the count, so a player who says it and then plays
+ * their second-to-last card must not be catchable — but the moment the hand
+ * grows the descent is over and the next one needs saying again.
+ *
+ * Comparing against the LAST SEEN SIZE rather than a fixed threshold is what
+ * makes that work. A threshold of `count + 1` looks equivalent and is not:
+ * Wildfire's `drawWhenStuck: 1` means a player at one card draws back to
+ * exactly two, which is not greater than two, so the stale call survived and
+ * that seat could never be caught again for the rest of the round no matter how
+ * many times they returned to their last card. `count` on its own is worse — it
+ * wipes the pre-emptive declaration the instant it is acted on.
+ *
+ * The old threshold is kept as a floor for one path only: applyAnnouncement()
+ * is a rule-test entry point that reaches applyAnnounce() without validateMove,
+ * so it can set a flag at a hand size canDeclare() would have refused.
  */
 function refreshCallFlags(ctx) {
   const cfg = ctx.rules.lastCardCall;
   if (!cfg) return;
   const varName = lastCardCallVarName(cfg);
+  const seenName = lastCardSeenVarName(cfg);
   const limit = callCountOf(cfg) + 1;
   for (let s = 0; s < ctx.seats; s++) {
-    if (ctx.playerVar(s, varName) && handSizeOf(ctx, s) > limit) {
+    const size = handSizeOf(ctx, s);
+    const seen = ctx.playerVar(s, seenName);
+    if (ctx.playerVar(s, varName) && (size > limit || (seen !== undefined && size > seen))) {
       ctx.setPlayerVar(s, varName, false);
     }
+    ctx.setPlayerVar(s, seenName, size);
   }
 }
 
+/**
+ * An action card's effect, and the derived event that says it happened.
+ *
+ * The event is not decoration. An action card is the most consequential thing
+ * anyone plays and, until these existed, the least visible: the state changed
+ * — a seat lost their turn, the table turned round, somebody was handed four
+ * cards — and the only trace was that the discard looked different and the log
+ * said "Rook played." The engine knows exactly who it happened to, and this is
+ * the channel that already carries a trick resolving to the felt, so the table
+ * can say so without re-deriving any of it from zone diffs.
+ */
 function applyEffect(ctx, card, playerSeat, choice) {
   const effect = effectOf(card);
   const type = typeof effect === 'string' ? effect : effect.type;
   let advance = 1;
 
   if (type === 'skip') {
+    const target = ctx.nextSeat(playerSeat);
+    ctx.emit('skipped', { by: playerSeat, seat: target });
     advance = 2;
   } else if (type === 'reverse') {
     ctx.reverseDirection();
+    // Emitted after the flip, so `direction` is the one now in force.
+    ctx.emit('reversed', { by: playerSeat, direction: ctx.state.direction });
     advance = ctx.seats === 2 ? 2 : 1;
   } else if (type === 'drawN' || type === 'wildDrawN') {
     const target = ctx.nextSeat(playerSeat);
+    const before = ctx.cardIdsIn(ctx.zoneAddr('hand', target)).length;
     drawCards(ctx, target, effect.n);
+    // The count actually dealt, not the one asked for: an exhausted pile that
+    // could not be recycled hands over fewer, and the table should say what
+    // really happened.
+    ctx.emit('penalty', {
+      by: playerSeat,
+      seat: target,
+      drew: ctx.cardIdsIn(ctx.zoneAddr('hand', target)).length - before,
+      asked: effect.n,
+    });
     advance = 2;
   } else if (type === 'swapHands') {
     const other = choice?.player;
@@ -183,6 +230,7 @@ function applyEffect(ctx, card, playerSeat, choice) {
       const bCards = ctx.cardIdsIn(b).slice();
       ctx.moveCards(aCards, a, b);
       ctx.moveCards(bCards, b, a);
+      ctx.emit('handsSwapped', { by: playerSeat, seat: other });
     }
     advance = 1;
   } else if (type === 'rotateHands') {
@@ -193,6 +241,7 @@ function applyEffect(ctx, card, playerSeat, choice) {
       if (dest === s || snapshots[s].length === 0) continue;
       ctx.moveCards(snapshots[s], ctx.zoneAddr('hand', s), ctx.zoneAddr('hand', dest));
     }
+    ctx.emit('handsRotated', { by: playerSeat, direction: ctx.state.direction });
     advance = 1;
   }
 
@@ -209,6 +258,19 @@ function applyPlayCard(ctx, move) {
 
   ctx.moveCards([cardId], ctx.zoneAddr('hand', seat), 'discard');
   updateActiveAfterPlay(ctx, card, move.choice);
+
+  // A wild is the one play whose consequence is invisible on the card itself:
+  // the discard shows a wild, and what the table now has to match is a colour
+  // that exists only in a var. The event carries the chosen values so the felt
+  // can show them without knowing which attribute this pack chooses on.
+  if (isWildEffect(effectOf(card))) {
+    const chosen = {};
+    for (const attr of ctx.rules.matchOn) {
+      const value = getActiveValue(ctx, attr);
+      if (value !== undefined) chosen[attr] = value;
+    }
+    ctx.emit('wildPlayed', { seat, chose: chosen });
+  }
 
   const handLeft = ctx.cardIdsIn(ctx.zoneAddr('hand', seat));
   if (handLeft.length === 0) {
@@ -293,14 +355,39 @@ const shedding = {
         ctx.moveCards([top], 'draw', ctx.zoneAddr('hand', s));
       }
     }
-    // Flip the starting discard card. If it happens to be a wild, its choice is
-    // left unset (activeSuit/activeColor stay undefined) — pack authors are
-    // expected to accept this at friend-scale; a stricter engine would reshuffle.
-    const starter = ctx.zone('draw').cards.slice(-1)[0];
+    // Flip the starting discard card, burying wilds until a natural one turns up.
+    //
+    // A wild starter is not merely untidy, it is unplayable: a wild carries no
+    // colour or suit of its own, so updateActiveAfterPlay leaves every matchOn
+    // attribute unset and cardMatchesActive then rejects EVERY ordinary card in
+    // every hand. The table grinds through draws until somebody happens to turn
+    // up another wild — and under the draw-to-match variant the first player
+    // draws most of the pile doing it. At Wildfire's ratio (8 of 108 cards) that
+    // was one deal in fourteen.
+    //
+    // Buried to the bottom rather than reshuffled: it stays in play, and it
+    // costs no RNG draws, so a seed still deals the same game.
+    let starter;
+    const drawPile = ctx.zone('draw').cards;
+    for (let guard = drawPile.length; guard > 0; guard--) {
+      const top = drawPile[drawPile.length - 1];
+      if (top === undefined) break;
+      if (!isWildEffect(effectOf(ctx.cardById(top)))) {
+        starter = top;
+        break;
+      }
+      ctx.moveCards([top], 'draw', 'draw', { position: 'bottom' });
+    }
     if (starter !== undefined) {
       ctx.moveCards([starter], 'draw', 'discard');
       updateActiveAfterPlay(ctx, ctx.cardById(starter), null);
     }
+    // A fresh deal starts fresh: without this a new round inherited the previous
+    // one's direction (whatever the last reverse left it at) and opened on
+    // whoever had just won, because applyPlayCard returns before advancing the
+    // turn. The deal rotates a seat per round, as it would at a table.
+    ctx.setDirection(1);
+    ctx.setTurnSeat((ctx.state.roundNumber - 1) % ctx.seats);
     ctx.setPhase('play');
   },
 

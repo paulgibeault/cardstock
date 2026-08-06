@@ -13,11 +13,14 @@
 // commission and no third-party asset in the repo.
 
 import { makeCardRenderer } from './cardStyles/index.js';
-import { fetchPackIndex, fetchPackManifest } from './packSource.js';
+import { fetchPackIndex, fetchPackManifest, fetchPack } from './packSource.js';
 import { safeAccent } from './css.js';
 import { listMatchSummaries, readStats, lastPlayedPack, clearMatch, recordResult } from '../arcade/storage.js';
 import { buildSeating } from '../players/roster.js';
 import { confirmAction } from './confirm.js';
+import { showRules } from './panels.js';
+import { packRules } from './rules.js';
+import { askNewGame, hasChoices, closeNewGame } from './newGame.js';
 import { FULLY_PLAYABLE_TEMPLATES } from './table.js';
 
 const el = {
@@ -36,7 +39,7 @@ const GENRE = {
 
 const DEFAULT_ACCENT = '#3d7a5a';
 
-let openTable = () => {};
+let openTable = () => {};   // (packId, setup?) — set by initLobby
 
 /* ------------------------------------------------------------------ *
  * Formatting
@@ -149,8 +152,38 @@ function buildTile(manifest, summary, { featured }) {
   foot.appendChild(line('tile__cta', summary ? 'Resume' : (preview ? 'Take a look' : 'Deal me in')));
   open.appendChild(foot);
 
-  open.addEventListener('click', () => openTable(manifest.id));
+  // A game already in progress is resumed under the rules it was dealt with —
+  // there is nothing to ask, and asking would imply the answer could change
+  // something it cannot. Only a NEW game gets the sheet, and only when the
+  // pack actually offers a choice.
+  open.addEventListener('click', async () => {
+    if (summary || !hasChoices(manifest)) {
+      openTable(manifest.id);
+      return;
+    }
+    const setup = await askNewGame(manifest);
+    if (!setup) return;
+    openTable(manifest.id, setup);
+  });
   tile.appendChild(open);
+
+  // "How to play" before you commit to a game, which is when the question is
+  // actually asked. The pack is loaded on demand — the lobby holds manifests
+  // only, and the rules page needs the deck to say what the action cards do.
+  const how = document.createElement('button');
+  how.className = 'tile__rules';
+  how.type = 'button';
+  how.textContent = 'How to play';
+  how.setAttribute('aria-label', `How to play ${manifest.name}`);
+  how.addEventListener('click', async () => {
+    try {
+      showRules(packRules(await fetchPack(manifest.id)));
+    } catch {
+      // A pack whose deck will not load cannot be played either; the tile's
+      // own error state is the honest place for that, not a half-empty panel.
+    }
+  });
+  tile.appendChild(how);
 
   // A separate hit target rather than a long-press: long-press is
   // undiscoverable, and on iOS Safari it fights the OS text-selection gesture.
@@ -184,7 +217,10 @@ function buildTile(manifest, summary, { featured }) {
         });
       }
       clearMatch(manifest.id);
-      openTable(manifest.id);
+      // Re-dealing is a NEW game, so it gets the same choices a new game gets.
+      const setup = hasChoices(manifest) ? await askNewGame(manifest) : {};
+      if (!setup) { renderLobby(); return; }   // backed out after abandoning
+      openTable(manifest.id, setup);
     });
     tile.appendChild(restart);
   }

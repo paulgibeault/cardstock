@@ -6,6 +6,9 @@
   "deck": "deck.json",
   "template": "shedding",
   "tagline": "Match the colour or the number. Or don't.",
+  "howToPlay": [
+    "Everything turns on the cards that are not numbers. A skip, a reverse or a Draw 4 does not just cost somebody a turn — it changes whose problem the next card is, and in a three-player game a reverse played at the right moment hands the same player two turns in a row."
+  ],
   "accent": "#d2601a",
   "heroCards": [
     { "rank": "7", "color": "red" },
@@ -29,6 +32,7 @@
   "variants": [
     {
       "id": "stacking",
+      "available": false,
       "name": "Stacking draw cards",
       "description": "A Draw 2 may be answered with another Draw 2, passing the accumulated penalty on.",
       "default": false,
@@ -36,6 +40,7 @@
     },
     {
       "id": "jump-in",
+      "available": false,
       "name": "Jump-in",
       "description": "A player holding the identical card may play it out of turn.",
       "default": false,

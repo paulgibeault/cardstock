@@ -17,6 +17,23 @@ function parseItem(item) {
   return { kind: m[1], n: Number(m[2]) };
 }
 
+/**
+ * Cards a meld will not take at all — Milestones' skips, which are an action
+ * you play at somebody, not a card with a place in a run.
+ *
+ * Declared per pack (`rules.meldForbidden`, the same selector vocabulary as
+ * `discardPickupForbidden`) rather than inferred from "has an effect", because
+ * those are different questions and a pack is entitled to a meldable action
+ * card. It is also not a cosmetic gate: a skip's rank is the STRING "skip", and
+ * a set is checked by comparing meld values for equality, so three of them were
+ * a legal set(3) — with a wild pinnable to rank "skip" on top of it.
+ */
+function isMeldable(ctx, card) {
+  const forbidden = ctx.rules.meldForbidden;
+  if (!forbidden?.length) return true;
+  return !forbidden.some((sel) => selectorMatches(card, sel));
+}
+
 /* ------------------------------------------------------------------ *
  * What a wild stands for
  * ------------------------------------------------------------------ *
@@ -259,6 +276,19 @@ function resolveMeld(ctx, item, cardIds, pinned = {}) {
     return { ok: false, rule: 'invalid-meld', reason: 'A meld names a card that is not in this deck.' };
   }
 
+  // Before quota or values: a barred card is not a meld that came out wrong,
+  // it is a card with no business in one. Checked here, in the single function
+  // both lay-downs and hits resolve through, so the bot's search (which reaches
+  // it via findMeldForItem) obeys the same rule as the table.
+  const barred = entries.find((e) => !isMeldable(ctx, e.card));
+  if (barred) {
+    return {
+      ok: false,
+      rule: 'not-meldable',
+      reason: `A ${barred.card.rank} card cannot be part of a meld.`,
+    };
+  }
+
   const quota = checkMeldQuota(ctx, parsed, entries);
   if (!quota.ok) return quota;
 
@@ -370,8 +400,9 @@ function groupBy(items, keyFn) {
 // resolveMeld has frozen a value onto every wild in it, which also means a window
 // that runs off the end of the deck is rejected here rather than laid down.
 function findMeldForItem(ctx, parsed, available) {
-  const wilds = available.filter((c) => isWildCard(ctx, c.card));
-  const naturals = available.filter((c) => !isWildCard(ctx, c.card));
+  const meldable = available.filter((c) => isMeldable(ctx, c.card));
+  const wilds = meldable.filter((c) => isWildCard(ctx, c.card));
+  const naturals = meldable.filter((c) => !isWildCard(ctx, c.card));
   const minNaturals = ctx.rules.wilds?.minNaturals ?? 0;
   const maxWilds = ctx.rules.wilds?.maxPerMeld;
   const item = `${parsed.kind}(${parsed.n})`;

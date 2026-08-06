@@ -16,6 +16,7 @@
 // Pure and DOM-free: these return data, callers render it with textContent.
 
 import { cardValue } from '../engine/scoring.js';
+import { baseId } from '../engine/selectors.js';
 
 const SUIT_GLYPH = { clubs: '♣', diamonds: '♦', hearts: '♥', spades: '♠' };
 
@@ -110,6 +111,23 @@ export function cardAriaLabel(card, pack, { position, of } = {}) {
  * recycles from the discard — the manifest already declares that (design doc
  * §3) and nobody should have to learn it by watching the pile run out.
  */
+/**
+ * True when the top card of `address` carries none of the attributes the given
+ * active-vars stand for — i.e. the active value outlived the card that set it,
+ * which is what a wild does and nothing else does.
+ */
+function topCardLacks(state, address, ...activeVarNames) {
+  const topId = state.zones.top(address);
+  if (!topId) return false;
+  const card = state.pack.cardsById.get(baseId(topId));
+  if (!card) return false;
+  return activeVarNames.every((varName) => {
+    const attr = varName.slice('active'.length);
+    const key = attr[0].toLowerCase() + attr.slice(1);
+    return card[key] === null || card[key] === undefined;
+  });
+}
+
 export function describeZone(state, { def, n, address }) {
   const count = state.zones.count(address);
   const title = `${def.label || titleCase(def.id)}${n != null ? ` ${n}` : ''}`;
@@ -130,6 +148,13 @@ export function describeZone(state, { def, n, address }) {
   if (def.id === 'discard' && def.per !== 'player') {
     const active = state.vars.activeSuit || state.vars.activeColor;
     if (active) lines.push({ label: 'Active', value: titleCase(active) });
+    // A wild leaves the table matching on something its own face does not
+    // show, so that becomes a NOTE rather than only a line — notes are what
+    // reach the pile's accessible name (zoneAriaLabel), and a player who
+    // cannot see the swatch on the badge has no other way to learn it.
+    if (active && topCardLacks(state, address, 'activeSuit', 'activeColor')) {
+      notes.push(`Now matching ${titleCase(active)}.`);
+    }
   }
 
   return { title, lines, notes };

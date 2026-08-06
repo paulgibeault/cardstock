@@ -130,8 +130,14 @@
     <div class="panel">
       <div id="round-title" class="panel__title"></div>
       <div id="round-scores" class="round-scores"></div>
+      <!-- The round summary is the one moment a player is actually deciding
+           whether to keep going, so it is where leaving belongs. Without it,
+           a match that runs to 500 points offers no exit but closing the
+           table, which keeps the game in progress and waiting in the lobby. -->
+      <div id="round-target" class="round-target"></div>
       <div class="panel__actions">
         <button id="round-continue">Deal the next round</button>
+        <button id="round-end-match" class="ghost-button">End match</button>
       </div>
     </div>
   </div>
@@ -164,6 +170,36 @@
       <div id="scoreboard-history" class="round-history"></div>
       <div class="panel__actions">
         <button id="scoreboard-close">Close</button>
+        <button id="scoreboard-rules" class="ghost-button">How to play</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- The new-game sheet: house rules and seat count, chosen before the deal
+       because both are part of the rule set a match is replayed under and
+       neither can change once cards are out (src/ui/newGame.js). -->
+  <div id="new-game-overlay" hidden>
+    <div class="panel">
+      <div id="new-game-title" class="panel__title"></div>
+      <div id="new-game-body" class="new-game__body"></div>
+      <div class="panel__actions">
+        <button id="new-game-deal">Deal</button>
+        <button id="new-game-cancel" class="ghost-button">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- How to play, generated from the pack's own declarations rather than
+       written per game (src/ui/rules.js). Reachable from a lobby tile and
+       from the scoreboard — deliberately NOT from the status bar, which is
+       three items on one line and stays that way. -->
+  <div id="rules-overlay" hidden>
+    <div class="panel panel--wide">
+      <div id="rules-title" class="panel__title"></div>
+      <div id="rules-tagline" class="rules__tagline"></div>
+      <div id="rules-body" class="rules__body"></div>
+      <div class="panel__actions">
+        <button id="rules-close">Close</button>
       </div>
     </div>
   </div>

@@ -53,7 +53,7 @@ import { makeCardRenderer } from './cardStyles/index.js';
 import { fetchPack } from './packSource.js';
 import { flyCard, landOn, motionAllowed, flightLayer } from './flight.js';
 import { safeCssColor } from './css.js';
-import { closeConfirm } from './confirm.js';
+import { closeConfirm, confirmAction } from './confirm.js';
 import { createDragController } from './dragController.js';
 import { attachInspector, hideInspector } from './inspector.js';
 import {
@@ -69,19 +69,32 @@ import {
 } from './handOrder.js';
 import {
   initPanels, showRoundSummary, hideRoundSummary, isRoundSummaryOpen,
-  showScoreboard, showGameOver, hideAllPanels,
+  showScoreboard, showGameOver, hideAllPanels, showRules,
 } from './panels.js';
+import { packRules } from './rules.js';
 import {
   rememberPack, loadSettings, saveMatch, loadMatch, clearMatch, recordResult, readStats,
   loadHandPrefs, saveHandPrefs,
 } from '../arcade/storage.js';
 import {
   playDeal, playCardPlayed, playDraw, playShuffle, playInvalid, playWin, playTrickTaken,
-  playAnnouncement,
+  playAnnouncement, playActionCard,
 } from '../arcade/audio.js';
 
 const HUMAN_SEAT = 0;
+// The table's own default when nothing asks for anything else — a deep link,
+// a resumed match with its own seat count, a pack whose minimum is higher.
+// The new-game sheet (src/ui/newGame.js) is what usually decides this now.
 const SEAT_COUNT = 3;
+
+/** Clamp a requested seat count to what the pack says it can seat. */
+function seatsFor(pack, requested) {
+  const players = pack.manifest.players || {};
+  const min = players.min ?? 2;
+  const max = players.max ?? 8;
+  const want = Number.isFinite(requested) ? requested : SEAT_COUNT;
+  return Math.max(min, Math.min(max, want));
+}
 
 /** How many discards stay visible under the top one. Enough to read as a pile. */
 const DISCARD_DEPTH = 3;
@@ -102,6 +115,7 @@ export const FULLY_PLAYABLE_TEMPLATES = new Set([
 
 const el = {
   screen: document.getElementById('table-screen'),
+  table: document.getElementById('table'),
   status: document.getElementById('status-bar'),
   statusText: document.getElementById('status-text'),
   lobbyButton: document.getElementById('lobby-button'),
@@ -600,10 +614,51 @@ function buildPileNode(state, inst, ui, { mini = false, draggableTop = null } = 
     // The words moved to the accessible name and the inspector; what is left
     // on the felt is the number you actually watch.
     badge.textContent = zoneBadgeText(state, inst);
+    // The badge already carries the WORD for an active colour (zoneBadgeText);
+    // this adds the swatch, and only in the case a card cannot show for itself.
+    // Said aloud by describeZone's note, which reaches the pile's own name.
+    const active = activeMatchTint(state, address);
+    if (active) {
+      badge.classList.add('pile-count--active-match');
+      if (active.tint) badge.style.setProperty('--active-tint', active.tint);
+    }
     badge.setAttribute('aria-hidden', 'true');
     wrap.appendChild(badge);
   }
   return wrap;
+}
+
+/**
+ * The colour the table is matching on when the top card cannot say it itself.
+ *
+ * There is exactly one case and it is the most consequential card in the game:
+ * a wild sits on the discard showing no colour at all, while what every hand
+ * now has to match is a value living in a var. zoneBadgeText already writes
+ * the WORD there (describe.js) — this is what turns that word into something
+ * readable at a glance, which for a colour is a swatch.
+ *
+ * Returns null when the top card carries the attribute itself, so the badge
+ * stays a plain word on an ordinary play and the swatch means "a wild chose
+ * this" rather than merely "this pile is a discard".
+ */
+function activeMatchTint(state, address) {
+  if (address !== 'discard' || !state.zones.has('discard')) return null;
+  const matchOn = state.pack.rules?.matchOn;
+  if (!Array.isArray(matchOn)) return null;
+  const topId = state.zones.top('discard');
+  const card = topId ? cardById(state, topId) : null;
+  if (!card) return null;
+
+  for (const attr of matchOn) {
+    if (card[attr] !== null && card[attr] !== undefined) continue; // the card says it
+    const value = state.vars[`active${attr[0].toUpperCase()}${attr.slice(1)}`];
+    if (value === undefined || value === null) continue;
+    // Through the pack's palette and safeCssColor: pack data reaching a style
+    // property (§7b). A pack with no palette entry for this value still gets
+    // the word, just without the dot.
+    return { attr, value, tint: safeCssColor(cardArt.palette?.[value]) };
+  }
+  return null;
 }
 
 // Per-seat meld groupings mirror the template's playerVar bookkeeping: the
@@ -858,8 +913,41 @@ function seatScoreChip(state, seat) {
   return chip;
 }
 
+/**
+ * Which way play is going, for packs where that can change.
+ *
+ * Only rendered once a reverse has actually happened — `state.direction` is 1
+ * in every game that never turns round, and a permanent arrow saying "play
+ * goes left" on a table that has no other option is chrome that teaches
+ * nothing. It appears the moment a reverse lands and then stays, which is
+ * exactly when a player needs to be able to check.
+ */
+function directionBadge(state) {
+  if (state.direction >= 0) return null;
+  const badge = document.createElement('div');
+  badge.className = 'direction-badge';
+  badge.textContent = '↺';
+  badge.setAttribute('aria-label', 'Play has reversed — it now goes to the right');
+  return badge;
+}
+
+// How many opponent plates fit on one line before they have to give things up.
+// Measured in seats rather than pixels because the plates are all the same
+// width: the mini-hand closes its own fan to a fixed cap (see .mini-hand), so
+// a seat holding seventeen cards is exactly as wide as one holding two.
+const COMPACT_FROM_SEATS = 4;
+const TIGHT_FROM_SEATS = 6;
+
 function renderSeats(state, stagger, acting, ui) {
   el.opponentsTop.replaceChildren();
+  // One row, always — see .opponent-row. Past these counts the seats that are
+  // not acting shed their card fan, then their names, so the row narrows
+  // instead of wrapping and stealing the felt's height.
+  const opponents = state.seats - 1;
+  el.opponentsTop.classList.toggle('opponent-row--compact', opponents >= COMPACT_FROM_SEATS);
+  el.opponentsTop.classList.toggle('opponent-row--tight', opponents >= TIGHT_FROM_SEATS);
+  const reversed = directionBadge(state);
+  if (reversed) el.opponentsTop.appendChild(reversed);
   const scored = showsScores(state);
   // Hoisted out of the seat loop: the answer does not depend on the seat, and
   // enumerating announcements builds a fresh engine context every time. Asking
@@ -1130,9 +1218,13 @@ function renderHand(state, ui, stagger, draggable) {
     // a question the disabled ones are the whole reason for.
     wrapper.setAttribute('role', 'button');
     wrapper.tabIndex = 0;
+    // "Playable" is the wrong word in a gathering mode — a tap there stages
+    // the card, it does not commit it — and off-turn it would be an outright
+    // lie, now that a meld can be arranged while the bots think.
+    const affordance = !selectable ? ''
+      : (ui.handMulti ? ' Tap to gather.' : ' Playable.');
     wrapper.setAttribute('aria-label',
-      `${cardAriaLabel(card, state.pack, { position: i + 1, of: fanned.length })}`
-      + (selectable ? ' Playable.' : ''));
+      `${cardAriaLabel(card, state.pack, { position: i + 1, of: fanned.length })}${affordance}`);
     wrapper.setAttribute('aria-pressed', String(!!selected));
 
     const activate = () => onHandCard(state, cardId, card, wrapper, ui);
@@ -1705,7 +1797,13 @@ function rectOf(node) {
 /** Where a seat's cards live on screen — the source or target of a card in flight. */
 function seatRect(seat) {
   if (seat === HUMAN_SEAT) return rectOf(el.hand);
-  return rectOf(el.opponentsTop.querySelector(`[data-seat="${seat}"] .mini-hand`));
+  const mini = el.opponentsTop.querySelector(`[data-seat="${seat}"] .mini-hand`);
+  if (!mini) return null;
+  // The fan's last child is the one genuinely rendered card; the rest are the
+  // cheap edge boxes renderSeats draws instead of real SVG. Preferring it gives
+  // a card-shaped rect where the row is a squat strip, which is what a card
+  // leaving this seat should be seen to launch from.
+  return rectOf(mini.lastElementChild) || rectOf(mini);
 }
 
 /**
@@ -1838,6 +1936,156 @@ function celebrateTrick(state, ev) {
     void pulseTarget.offsetWidth;
     pulseTarget.classList.add(bad ? 'zone-lament' : 'zone-celebrate');
   }
+}
+
+/* ------------------------------------------------------------------ *
+ * Action cards, made visible
+ * ------------------------------------------------------------------ */
+
+/**
+ * What each action event says on the felt, from the point of view of whoever
+ * is reading it.
+ *
+ * `seat` on these events is always the seat it HAPPENED TO, which is the one
+ * fact the wording turns on: the same Draw 4 is a small triumph when you play
+ * it and an outrage when you eat it, and a table that narrated both the same
+ * way would be describing the cards rather than the game.
+ */
+function actionEventText(ev) {
+  const you = (seat) => seat === HUMAN_SEAT;
+  const name = (seat) => (you(seat) ? 'You' : seatLabel(seat));
+
+  if (ev.type === 'skipped') {
+    return you(ev.seat)
+      ? { text: 'Skipped — your turn is gone', tone: 'bad' }
+      : { text: `${name(ev.seat)} is skipped`, tone: you(ev.by) ? 'good' : 'neutral' };
+  }
+  if (ev.type === 'reversed') {
+    return { text: 'Direction reversed', tone: 'neutral' };
+  }
+  if (ev.type === 'penalty') {
+    if (!ev.drew) return null; // the pile was empty; nothing actually happened
+    const n = ev.drew;
+    return you(ev.seat)
+      ? { text: `You draw ${n} and lose your turn`, tone: 'bad' }
+      : { text: `${name(ev.seat)} draws ${n}`, tone: you(ev.by) ? 'good' : 'neutral' };
+  }
+  if (ev.type === 'wildPlayed') {
+    const chose = Object.values(ev.chose || {})[0];
+    if (!chose) return null;
+    return { text: `${name(ev.seat)} chose ${chose}`, tone: 'neutral' };
+  }
+  if (ev.type === 'handsSwapped') {
+    return { text: `${name(ev.by)} swapped hands with ${name(ev.seat).toLowerCase()}`, tone: 'neutral' };
+  }
+  if (ev.type === 'handsRotated') {
+    return { text: 'Every hand moves round', tone: 'neutral' };
+  }
+  return null;
+}
+
+const ACTION_EVENTS = new Set([
+  'skipped', 'reversed', 'penalty', 'wildPlayed', 'handsSwapped', 'handsRotated',
+]);
+
+/**
+ * Announce an action card: banner, cue, and a pulse on whoever it landed on.
+ *
+ * One event per move at most — an action card does one thing — so this takes
+ * the first rather than queueing, which would stack banners on a variant where
+ * two effects can fire (a seven-zero swap that also reverses).
+ */
+function celebrateAction(state, events) {
+  const ev = events.find((e) => ACTION_EVENTS.has(e.type));
+  if (!ev) return null;
+  const said = actionEventText(ev);
+  if (!said) return null;
+
+  showBanner(said.text, said.tone);
+  playActionCard({ against: ev.seat === HUMAN_SEAT && said.tone === 'bad' });
+
+  // The pulse lands on the seat it happened to, not the seat that played it:
+  // the question a player is asking at this moment is "who did that hit".
+  const victim = ev.seat;
+  if (victim !== undefined && victim !== null) {
+    const target = victim === HUMAN_SEAT
+      ? el.hand
+      : el.opponentsTop.querySelector(`[data-seat="${victim}"]`);
+    if (target) {
+      target.classList.remove('zone-celebrate', 'zone-lament');
+      void target.offsetWidth;
+      target.classList.add(said.tone === 'bad' ? 'zone-lament' : 'zone-celebrate');
+    }
+  }
+  flashFelt(ev);
+  return said;
+}
+
+/**
+ * A wash of colour across the felt — the pack-level "background effect" an
+ * action card earns.
+ *
+ * Driven by a class and a custom property rather than an inline animation so a
+ * pack's own stylesheet can restyle or silence it, and so reduced motion turns
+ * it off with everything else (see the media query in table.css). The tint of a
+ * wild is the colour that was chosen, which makes the flash carry the one piece
+ * of information the discard card itself cannot show.
+ */
+function flashFelt(ev) {
+  if (!el.table || !motionAllowed()) return;
+  const chosen = ev.type === 'wildPlayed' ? Object.values(ev.chose || {})[0] : null;
+  // Through the pack's own palette, so the wash is the colour the player just
+  // picked as that pack draws it — and through safeCssColor, because a palette
+  // is pack-supplied data on its way into a style property.
+  const tint = chosen ? safeCssColor(cardArt.palette?.[chosen]) : null;
+  el.table.style.removeProperty('--flash-tint');
+  if (tint) el.table.style.setProperty('--flash-tint', tint);
+  el.table.classList.remove('table--flash');
+  void el.table.offsetWidth;
+  el.table.classList.add('table--flash');
+}
+
+/**
+ * Stop here, between rounds, without playing the match out.
+ *
+ * The door that was missing. A match runs to its pack's threshold — Wildfire's
+ * is 500 points, which is a long evening — and the only way out was to close
+ * the table, which by design does NOT end anything: the game keeps its place
+ * and sits in the lobby waiting. That is right for "I'll come back to this"
+ * and wrong for "I'm done with this one", and there was no way to say the
+ * second.
+ *
+ * Recorded as a forfeit through the same contract the lobby's Start over uses.
+ * The two doors out of an unfinished match must not disagree about what a loss
+ * is — leaving while behind is not a way to avoid the loss appearing.
+ */
+async function endMatchFromSummary() {
+  if (!liveState) return;
+  const state = liveState;
+  const myEpoch = epoch;
+  const leader = Math.max(...state.scores);
+  const ahead = state.scores[HUMAN_SEAT] >= leader;
+  const ok = await confirmAction(
+    `End this ${state.pack.manifest.name} match after ${state.roundNumber - 1} `
+    + `${state.roundNumber - 1 === 1 ? 'round' : 'rounds'}?`
+    + (ahead ? '' : ' It counts as a forfeit.'),
+    { okLabel: 'End match', cancelLabel: 'Keep playing' },
+  );
+  if (!ok || myEpoch !== epoch || liveState !== state) return;
+
+  cancelBotTurn();
+  cancelAnnouncementBeats();
+  matchDirty = false;
+  clearMatch(state.pack.id);
+  recordResult(state.pack.id, {
+    won: false,
+    forfeit: true,
+    opponents: seating
+      .filter((identity) => identity.isBot)
+      .map((identity) => ({ key: identity.opponentKey, beaten: false })),
+  });
+  hideRoundSummary();
+  exitToLobby();
 }
 
 function dismissRoundSummary() {
@@ -1998,6 +2246,13 @@ function afterMove(state, move, from, message) {
   render(state, message);
   animateMove(state, move, from);
   if (trick) celebrateTrick(state, trick);
+  // After the card has been seen to land, and only when a trick is not already
+  // holding the felt — two celebrations at once is neither.
+  const action = trick ? null : celebrateAction(state, events);
+  // The action is the better sentence: "Rook played." says less than nothing
+  // next to "You draw 4 and lose your turn", and the log is the live region a
+  // screen reader hears.
+  if (action) el.log.textContent = action.text;
   persistMatch();
 
   if (roundOver) {
@@ -2131,7 +2386,11 @@ async function performHumanMove(state, move, sourceNode) {
     return;
   }
   const from = rectOf(sourceNode) || (move.from ? zoneRect(move.from) : null) || seatRect(HUMAN_SEAT);
-  selection = null;
+  // NOT `selection = null`. The render inside afterMove prunes it per card
+  // (pruneSelection), which drops exactly what this move consumed and leaves
+  // the rest staged. Clearing wholesale is what made a Milestones meld
+  // impossible to build across turns: every turn ends in a discard, and the
+  // discard took the tray with it.
   applyStateChange(state, move, { far: false });
   afterMove(state, move, from);
 }
@@ -2396,17 +2655,18 @@ function adoptMatch(pack, state, message) {
   scheduleAnnouncementBeats(state, epoch);
 }
 
-function startGame(pack) {
+function startGame(pack, seats) {
   cancelBotTurn();
   cancelAnnouncementBeats();
+  const seatCount = seatsFor(pack, seats);
   // Date.now() is only the entropy source. The seed itself is persisted with
   // the match from the first write, which is what makes the log replayable
   // (src/engine/replay.js) rather than merely re-runnable — and, since the
   // seating is derived from it, what rotates the opponents per game.
-  const state = createState({ pack, seats: SEAT_COUNT, seed: Date.now() });
+  const state = createState({ pack, seats: seatCount, seed: Date.now() });
   pack.template.setup(makeCtx(state));
   dealAnimation = true;
-  playDeal(SEAT_COUNT);
+  playDeal(seatCount);
   adoptMatch(state.pack, state, `Playing ${pack.manifest.name}.`);
 }
 
@@ -2417,7 +2677,7 @@ function startGame(pack) {
  * Every entry to the table goes through here — a lobby tap, a `?pack=` deep
  * link, and a save import (`onStateReplaced` is a fresh boot by contract, §3).
  */
-export async function openTable(packId) {
+export async function openTable(packId, { variants, seats } = {}) {
   const myToken = ++openToken;
   cancelBotTurn();
   cancelAnnouncementBeats();
@@ -2428,8 +2688,11 @@ export async function openTable(packId) {
 
   // A stored match pins the variant set: the same pack loaded with different
   // variants is a different rule set, and replaying a log against it diverges.
+  // A stored match wins over anything the caller asked for: its log was
+  // recorded under ITS rule set and seating, and replaying it under another is
+  // divergence, not a preference.
   const stored = loadMatch(packId);
-  const pack = await fetchPack(packId, stored ? stored.variants : undefined);
+  const pack = await fetchPack(packId, stored ? stored.variants : variants);
   if (myToken !== openToken) return; // the player left before the pack landed
 
   rememberPack(packId);
@@ -2456,7 +2719,7 @@ export async function openTable(packId) {
     }
     clearMatch(packId);
   }
-  startGame(pack);
+  startGame(pack, seats);
 }
 
 /**
@@ -2519,8 +2782,10 @@ export function initTable({ onExit }) {
 
   initPanels({
     onContinueRound: () => dismissRoundSummary(),
-    onPlayAgain: () => livePack && startGame(livePack),
+    onPlayAgain: () => livePack && startGame(livePack, liveState?.seats),
     onLobby: () => exitToLobby(),
+    onEndMatch: () => endMatchFromSummary(),
+    onRules: () => livePack && showRules(packRules(livePack)),
     onCloseScoreboard: () => {},
   });
 

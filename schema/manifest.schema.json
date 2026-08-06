@@ -2,101 +2,263 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://paulgibeault.github.io/cardstock/schema/manifest.schema.json",
   "title": "Cardstock pack manifest (v0)",
-  "description": "The declarative half of a card-pack. Anything this schema cannot express belongs in the pack's logic.js hooks — see CARD_PLATFORM_DESIGN.md §11. This schema is normative for the manifest format.",
+  "description": "The declarative half of a card-pack. Anything this schema cannot express belongs in the pack's logic.js hooks \u2014 see CARD_PLATFORM_DESIGN.md \u00a711. This schema is normative for the manifest format.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["id", "name", "version", "players", "deck", "template", "rules"],
+  "required": [
+    "id",
+    "name",
+    "version",
+    "players",
+    "deck",
+    "template",
+    "rules"
+  ],
   "properties": {
-    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
-    "name": { "type": "string", "minLength": 1 },
-    "version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]*$"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
     "players": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["min", "max"],
+      "required": [
+        "min",
+        "max"
+      ],
       "properties": {
-        "min": { "type": "integer", "minimum": 1, "maximum": 8 },
-        "max": { "type": "integer", "minimum": 1, "maximum": 8 },
-        "best": { "type": "integer", "minimum": 1, "maximum": 8 }
+        "min": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8
+        },
+        "max": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8
+        },
+        "best": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8
+        }
       }
     },
     "deck": {
       "type": "string",
-      "description": "Built-in deck id (standard-52, standard-54, standard-52x2) or relative path to a deck file, e.g. 'deck.json'. Built-in card ids follow '<suit>-<rank>' (clubs-2 … spades-A); built-in cards carry value:null — point values come from `scoring`."
+      "description": "Built-in deck id (standard-52, standard-54, standard-52x2) or relative path to a deck file, e.g. 'deck.json'. Built-in card ids follow '<suit>-<rank>' (clubs-2 \u2026 spades-A); built-in cards carry value:null \u2014 point values come from `scoring`."
     },
-    "template": { "enum": ["trick-taking", "shedding", "contract-rummy", "sequencing"] },
+    "template": {
+      "enum": [
+        "trick-taking",
+        "shedding",
+        "contract-rummy",
+        "sequencing"
+      ]
+    },
     "tagline": {
       "type": "string",
       "maxLength": 60,
       "description": "One line under the pack name on its lobby tile. Says what playing it feels like, not what the rules are."
     },
+    "howToPlay": {
+      "description": "Optional prose for the rules page (src/ui/rules.js) \u2014 the things that cannot be derived from the declarations below: why the game is fun, or the one sentence that makes an unusual rule click. Everything factual (the deal, turn shape, card effects, what ends the match) is generated from the pack itself and must NOT be repeated here, or the two will drift. A string, or an array of paragraphs.",
+      "oneOf": [
+        {
+          "type": "string",
+          "maxLength": 600
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 600
+          },
+          "maxItems": 6
+        }
+      ]
+    },
     "accent": {
       "type": "string",
       "pattern": "^#[0-9a-fA-F]{6}$",
-      "description": "The pack's colour on its lobby tile. A 6-digit hex literal and nothing else: this value reaches an inline style, and the UI re-validates it against the same pattern before use (§7b)."
+      "description": "The pack's colour on its lobby tile. A 6-digit hex literal and nothing else: this value reaches an inline style, and the UI re-validates it against the same pattern before use (\u00a77b)."
     },
     "heroCards": {
       "type": "array",
       "minItems": 3,
       "maxItems": 3,
-      "description": "The three faces fanned on the lobby tile. DISPLAY ONLY — these are drawn straight by src/ui/renderCard.js and are never looked up in the deck, so the lobby can render every tile from manifests alone without loading a single deck file. Choose faces that make the game recognisable at a glance.",
+      "description": "The three faces fanned on the lobby tile. DISPLAY ONLY \u2014 these are drawn straight by src/ui/renderCard.js and are never looked up in the deck, so the lobby can render every tile from manifests alone without loading a single deck file. Choose faces that make the game recognisable at a glance.",
       "items": {
         "type": "object",
         "additionalProperties": false,
         "properties": {
-          "rank": { "type": "string" },
-          "suit": { "enum": ["clubs", "diamonds", "hearts", "spades"] },
-          "color": { "type": "string" },
-          "effect": { "$ref": "#/$defs/effect" }
+          "rank": {
+            "type": "string"
+          },
+          "suit": {
+            "enum": [
+              "clubs",
+              "diamonds",
+              "hearts",
+              "spades"
+            ]
+          },
+          "color": {
+            "type": "string"
+          },
+          "effect": {
+            "$ref": "#/$defs/effect"
+          }
         }
       }
     },
-    "rules": { "type": "object", "description": "Template parameters; refined per-template by the allOf clauses below." },
+    "rules": {
+      "type": "object",
+      "description": "Template parameters; refined per-template by the allOf clauses below."
+    },
     "cardTags": {
       "type": "object",
-      "description": "Attach extra tags to cards by selector — the way to tag cards in built-in decks (Hearts tags its penalty cards). selector → tags to add.",
-      "additionalProperties": { "type": "array", "items": { "type": "string" } }
+      "description": "Attach extra tags to cards by selector \u2014 the way to tag cards in built-in decks (Hearts tags its penalty cards). selector \u2192 tags to add.",
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      }
     },
     "flow": {
       "type": "object",
-      "description": "Overrides of the template's flow defaults (design doc §4): turn phases, round phases, order. Kept loose in v0; templates validate semantically."
+      "description": "Overrides of the template's flow defaults (design doc \u00a74): turn phases, round phases, order. Kept loose in v0; templates validate semantically."
     },
     "zones": {
       "type": "array",
       "description": "Additions to / overrides of the template's default zones.",
-      "items": { "$ref": "#/$defs/zone" }
+      "items": {
+        "$ref": "#/$defs/zone"
+      }
     },
-    "reactions": { "type": "array", "items": { "$ref": "#/$defs/reaction" } },
-    "scoring": { "$ref": "#/$defs/scoring" },
+    "reactions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/reaction"
+      }
+    },
+    "scoring": {
+      "$ref": "#/$defs/scoring"
+    },
     "announcements": {
       "type": "array",
       "description": "Bespoke out-of-turn actions. Template conveniences (e.g. shedding's lastCardCall) generate their own announcements and do not need to be repeated here.",
-      "items": { "$ref": "#/$defs/announcement" }
+      "items": {
+        "$ref": "#/$defs/announcement"
+      }
     },
-    "variants": { "type": "array", "items": { "$ref": "#/$defs/variant" } },
-    "undo": { "enum": ["none", "own-turn-until-committed"], "default": "none" },
-    "turnTimer": { "type": ["integer", "null"], "description": "Seconds per turn, or null for untimed." },
-    "ui": { "$ref": "#/$defs/ui" },
-    "custom": { "type": "object", "description": "Free-form bag read by logic.js; the engine ignores it." },
-    "credits": { "type": "string" },
-    "license": { "type": "string" }
+    "variants": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/variant"
+      }
+    },
+    "undo": {
+      "enum": [
+        "none",
+        "own-turn-until-committed"
+      ],
+      "default": "none"
+    },
+    "turnTimer": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "description": "Seconds per turn, or null for untimed."
+    },
+    "ui": {
+      "$ref": "#/$defs/ui"
+    },
+    "custom": {
+      "type": "object",
+      "description": "Free-form bag read by logic.js; the engine ignores it."
+    },
+    "credits": {
+      "type": "string"
+    },
+    "license": {
+      "type": "string"
+    }
   },
   "allOf": [
     {
-      "if": { "properties": { "template": { "const": "shedding" } } },
-      "then": { "properties": { "rules": { "$ref": "#/$defs/rules-shedding" } } }
+      "if": {
+        "properties": {
+          "template": {
+            "const": "shedding"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "rules": {
+            "$ref": "#/$defs/rules-shedding"
+          }
+        }
+      }
     },
     {
-      "if": { "properties": { "template": { "const": "trick-taking" } } },
-      "then": { "properties": { "rules": { "$ref": "#/$defs/rules-trick-taking" } } }
+      "if": {
+        "properties": {
+          "template": {
+            "const": "trick-taking"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "rules": {
+            "$ref": "#/$defs/rules-trick-taking"
+          }
+        }
+      }
     },
     {
-      "if": { "properties": { "template": { "const": "contract-rummy" } } },
-      "then": { "properties": { "rules": { "$ref": "#/$defs/rules-contract-rummy" } } }
+      "if": {
+        "properties": {
+          "template": {
+            "const": "contract-rummy"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "rules": {
+            "$ref": "#/$defs/rules-contract-rummy"
+          }
+        }
+      }
     },
     {
-      "if": { "properties": { "template": { "const": "sequencing" } } },
-      "then": { "properties": { "rules": { "$ref": "#/$defs/rules-sequencing" } } }
+      "if": {
+        "properties": {
+          "template": {
+            "const": "sequencing"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "rules": {
+            "$ref": "#/$defs/rules-sequencing"
+          }
+        }
+      }
     }
   ],
   "$defs": {
@@ -106,17 +268,30 @@
     },
     "countOrByPlayers": {
       "oneOf": [
-        { "type": "integer", "minimum": 0 },
+        {
+          "type": "integer",
+          "minimum": 0
+        },
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["default"],
+          "required": [
+            "default"
+          ],
           "properties": {
-            "default": { "type": "integer", "minimum": 0 },
+            "default": {
+              "type": "integer",
+              "minimum": 0
+            },
             "byPlayers": {
               "type": "object",
-              "propertyNames": { "pattern": "^[1-8]$" },
-              "additionalProperties": { "type": "integer", "minimum": 0 }
+              "propertyNames": {
+                "pattern": "^[1-8]$"
+              },
+              "additionalProperties": {
+                "type": "integer",
+                "minimum": 0
+              }
             }
           }
         }
@@ -124,21 +299,44 @@
     },
     "effect": {
       "oneOf": [
-        { "enum": ["skip", "reverse", "rotateHands"] },
+        {
+          "enum": [
+            "skip",
+            "reverse",
+            "rotateHands"
+          ]
+        },
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["type"],
+          "required": [
+            "type"
+          ],
           "properties": {
             "type": {
               "type": "string",
-              "description": "Built-in: skip, reverse, drawN, wild, wildDrawN, skipTarget, swapHands, rotateHands — or a custom effect name exported by logic.js."
+              "description": "Built-in: skip, reverse, drawN, wild, wildDrawN, skipTarget, swapHands, rotateHands \u2014 or a custom effect name exported by logic.js."
             },
-            "n": { "type": "integer", "minimum": 1 },
-            "choose": { "enum": ["suit", "color", "player"] },
-            "challengeable": { "type": "boolean", "default": false },
+            "n": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "choose": {
+              "enum": [
+                "suit",
+                "color",
+                "player"
+              ]
+            },
+            "challengeable": {
+              "type": "boolean",
+              "default": false
+            },
             "on": {
-              "enum": ["play", "discard"],
+              "enum": [
+                "play",
+                "discard"
+              ],
               "default": "play",
               "description": "When the effect triggers. Milestones' Skip triggers on discard."
             }
@@ -153,30 +351,103 @@
     "zone": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id"],
+      "required": [
+        "id"
+      ],
       "properties": {
-        "id": { "type": "string" },
-        "per": { "enum": ["player", "shared"], "default": "shared" },
-        "visibility": { "enum": ["owner", "all", "none", "top"], "default": "all" },
-        "layout": { "enum": ["fan", "stack", "row", "grid", "spread"], "default": "stack" },
-        "order": { "enum": ["stack", "sorted", "free"], "default": "stack" },
-        "facing": { "enum": ["up", "down"], "default": "up" },
-        "capacity": { "type": ["integer", "null"], "default": null },
-        "count": { "type": "integer", "minimum": 1, "description": "Instantiate N numbered instances (build.1 … build.N)." },
-        "label": { "type": "string" }
+        "id": {
+          "type": "string"
+        },
+        "per": {
+          "enum": [
+            "player",
+            "shared"
+          ],
+          "default": "shared"
+        },
+        "visibility": {
+          "enum": [
+            "owner",
+            "all",
+            "none",
+            "top"
+          ],
+          "default": "all"
+        },
+        "layout": {
+          "enum": [
+            "fan",
+            "stack",
+            "row",
+            "grid",
+            "spread"
+          ],
+          "default": "stack"
+        },
+        "order": {
+          "enum": [
+            "stack",
+            "sorted",
+            "free"
+          ],
+          "default": "stack"
+        },
+        "facing": {
+          "enum": [
+            "up",
+            "down"
+          ],
+          "default": "up"
+        },
+        "capacity": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "default": null
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Instantiate N numbered instances (build.1 \u2026 build.N)."
+        },
+        "label": {
+          "type": "string"
+        }
       }
     },
     "reaction": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["when", "do"],
+      "required": [
+        "when",
+        "do"
+      ],
       "properties": {
-        "when": { "type": "string", "description": "'zoneEmpty:<zone>' | 'zoneFull:<zone>'; '*' glob allowed in the zone id." },
-        "do": { "enum": ["recycle", "moveAll"] },
-        "from": { "type": "string" },
-        "to": { "type": "string" },
-        "keepTop": { "type": "boolean", "default": false },
-        "shuffle": { "type": "boolean", "default": false }
+        "when": {
+          "type": "string",
+          "description": "'zoneEmpty:<zone>' | 'zoneFull:<zone>'; '*' glob allowed in the zone id."
+        },
+        "do": {
+          "enum": [
+            "recycle",
+            "moveAll"
+          ]
+        },
+        "from": {
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        },
+        "keepTop": {
+          "type": "boolean",
+          "default": false
+        },
+        "shuffle": {
+          "type": "boolean",
+          "default": false
+        }
       }
     },
     "scoring": {
@@ -186,23 +457,44 @@
       "properties": {
         "cardValues": {
           "type": "object",
-          "description": "selector → points. null removes a value set by a broader selector.",
-          "additionalProperties": { "type": ["number", "null"] }
+          "description": "selector \u2192 points. null removes a value set by a broader selector.",
+          "additionalProperties": {
+            "type": [
+              "number",
+              "null"
+            ]
+          }
         },
         "defaultValue": {
           "oneOf": [
-            { "type": "number" },
-            { "const": "faceValue", "description": "Numeric rank as value; non-numeric ranks fall through to 0." }
+            {
+              "type": "number"
+            },
+            {
+              "const": "faceValue",
+              "description": "Numeric rank as value; non-numeric ranks fall through to 0."
+            }
           ]
         },
-        "roundScore": { "$ref": "#/$defs/strategyOrHook" },
-        "accumulate": { "type": "boolean", "default": true },
+        "roundScore": {
+          "$ref": "#/$defs/strategyOrHook"
+        },
+        "accumulate": {
+          "type": "boolean",
+          "default": true
+        },
         "gameOver": {
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "when": { "type": "string", "description": "'anyScore >= N' | 'rounds == N' | 'template' | 'hook:<fn>'" },
-            "winner": { "type": "string", "description": "'lowestScore' | 'highestScore' | 'template' | 'hook:<fn>'" }
+            "when": {
+              "type": "string",
+              "description": "'anyScore >= N' | 'rounds == N' | 'template' | 'hook:<fn>'"
+            },
+            "winner": {
+              "type": "string",
+              "description": "'lowestScore' | 'highestScore' | 'template' | 'hook:<fn>'"
+            }
           }
         }
       }
@@ -210,35 +502,84 @@
     "announcement": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "who", "window"],
+      "required": [
+        "id",
+        "who",
+        "window"
+      ],
       "properties": {
-        "id": { "type": "string" },
-        "who": { "enum": ["self", "anyone", "others", "victim"] },
-        "window": { "type": "string", "description": "e.g. 'whenHandCount:1', 'afterEffect:wildDrawN'" },
+        "id": {
+          "type": "string"
+        },
+        "who": {
+          "enum": [
+            "self",
+            "anyone",
+            "others",
+            "victim"
+          ]
+        },
+        "window": {
+          "type": "string",
+          "description": "e.g. 'whenHandCount:1', 'afterEffect:wildDrawN'"
+        },
         "missed": {
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "challengeBy": { "enum": ["anyone", "others"] },
-            "penalty": { "type": "object", "properties": { "draw": { "type": "integer" } } }
+            "challengeBy": {
+              "enum": [
+                "anyone",
+                "others"
+              ]
+            },
+            "penalty": {
+              "type": "object",
+              "properties": {
+                "draw": {
+                  "type": "integer"
+                }
+              }
+            }
           }
         },
-        "resolve": { "type": "string", "description": "'hook:<fn>' in logic.js" }
+        "resolve": {
+          "type": "string",
+          "description": "'hook:<fn>' in logic.js"
+        }
       }
     },
     "variant": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "name", "patch"],
+      "required": [
+        "id",
+        "name",
+        "patch"
+      ],
       "properties": {
-        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
-        "name": { "type": "string" },
-        "description": { "type": "string" },
-        "default": { "type": "boolean", "default": false },
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]*$"
+        },
+        "name": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "default": {
+          "type": "boolean",
+          "default": false
+        },
         "patch": {
           "type": "object",
-          "description": "Dotted-path → value applied over the manifest ('rules.drawWhenStuck': 'until-playable'). null deletes the key. Path segments split on '.'; selector keys therefore must not contain dots.",
+          "description": "Dotted-path \u2192 value applied over the manifest ('rules.drawWhenStuck': 'until-playable'). null deletes the key. Path segments split on '.'; selector keys therefore must not contain dots.",
           "minProperties": 1
+        },
+        "available": {
+          "type": "boolean",
+          "description": "False for a variant the pack DECLARES but the template does not implement yet \u2014 kept as a statement of intent, but never offered in the new-game sheet, because a house rule you can switch on that changes nothing is worse than one that is not offered. Defaults to true."
         }
       }
     },
@@ -246,36 +587,87 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "back": { "type": "string", "description": "Asset path for the card back." },
-        "faces": { "type": "string", "description": "Asset path for a face sprite/SVG set; omit for the vanilla renderer." },
-        "felt": { "type": "string", "description": "Table color (CSS)." },
-        "table": { "type": "string", "description": "Asset path for a table texture." },
-        "sounds": { "type": "object", "additionalProperties": { "type": "string" } },
+        "back": {
+          "type": "string",
+          "description": "Asset path for the card back."
+        },
+        "faces": {
+          "type": "string",
+          "description": "Asset path for a face sprite/SVG set; omit for the vanilla renderer."
+        },
+        "felt": {
+          "type": "string",
+          "description": "Table color (CSS)."
+        },
+        "table": {
+          "type": "string",
+          "description": "Asset path for a table texture."
+        },
+        "sounds": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
         "cardStyle": {
-          "enum": ["vanilla", "classic", "shedding", "sequencing", "rankrun"],
-          "description": "Which generated card art this pack uses (src/ui/cardStyles). Omit to let the registry infer: a standard-5x deck gets 'classic', a shedding template with its own deck gets 'shedding', anything else gets 'vanilla'. Declare it when the template does not describe the deck — Milestones is contract-rummy but wants 'sequencing' art, Stockpile is sequencing but wants 'rankrun'."
+          "enum": [
+            "vanilla",
+            "classic",
+            "shedding",
+            "sequencing",
+            "rankrun"
+          ],
+          "description": "Which generated card art this pack uses (src/ui/cardStyles). Omit to let the registry infer: a standard-5x deck gets 'classic', a shedding template with its own deck gets 'shedding', anything else gets 'vanilla'. Declare it when the template does not describe the deck \u2014 Milestones is contract-rummy but wants 'sequencing' art, Stockpile is sequencing but wants 'rankrun'."
         },
         "cardPalette": {
           "type": "object",
-          "description": "Card color name → hex. Keys are the deck's own `color` values (Wildfire: red/yellow/green/blue) or a style's named slots (rankrun: band1/band2/band3). Key ORDER is the order a wild's multi-color mark uses. Declaring this is also what makes a lobby tile match the table, since the lobby never loads a deck.",
-          "additionalProperties": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
-          "propertyNames": { "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,23}$" },
+          "description": "Card color name \u2192 hex. Keys are the deck's own `color` values (Wildfire: red/yellow/green/blue) or a style's named slots (rankrun: band1/band2/band3). Key ORDER is the order a wild's multi-color mark uses. Declaring this is also what makes a lobby tile match the table, since the lobby never loads a deck.",
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^#[0-9a-fA-F]{6}$"
+          },
+          "propertyNames": {
+            "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,23}$"
+          },
           "minProperties": 1
         },
         "zoneOverlap": {
           "type": "object",
           "description": "Zone id \u2192 how its visible cards are laid out: \"horizontal\" or \"vertical\" instead of a single stack, so every card shows its own value. PRESENTATION ONLY \u2014 it changes nothing about the rules, which is why it lives here and not in `zones`, and why a variant can flip it with a one-line patch (\"ui.zoneOverlap.discard\").",
-          "additionalProperties": { "enum": ["horizontal", "vertical"] },
-          "propertyNames": { "pattern": "^[\\w-]+$" }
+          "additionalProperties": {
+            "enum": [
+              "horizontal",
+              "vertical"
+            ]
+          },
+          "propertyNames": {
+            "pattern": "^[\\w-]+$"
+          }
         },
         "cardBack": {
           "type": "object",
-          "description": "The face-down side. Generated, not an asset — see `back` above for the asset form.",
+          "description": "The face-down side. Generated, not an asset \u2014 see `back` above for the asset form.",
           "additionalProperties": false,
           "properties": {
-            "pattern": { "enum": ["lattice", "sunburst", "rings", "pinstripe", "weave"] },
-            "color": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$", "description": "Defaults to the pack's `accent`." },
-            "emblem": { "type": "string", "maxLength": 2, "description": "One or two characters in the center medallion. Omit for a plain pip." }
+            "pattern": {
+              "enum": [
+                "lattice",
+                "sunburst",
+                "rings",
+                "pinstripe",
+                "weave"
+              ]
+            },
+            "color": {
+              "type": "string",
+              "pattern": "^#[0-9a-fA-F]{6}$",
+              "description": "Defaults to the pack's `accent`."
+            },
+            "emblem": {
+              "type": "string",
+              "maxLength": 2,
+              "description": "One or two characters in the center medallion. Omit for a plain pip."
+            }
           }
         }
       }
@@ -283,42 +675,100 @@
     "rules-shedding": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["matchOn", "deal", "winner"],
+      "required": [
+        "matchOn",
+        "deal",
+        "winner"
+      ],
       "properties": {
         "matchOn": {
           "type": "array",
           "minItems": 1,
-          "items": { "enum": ["suit", "rank", "color", "tag"] },
+          "items": {
+            "enum": [
+              "suit",
+              "rank",
+              "color",
+              "tag"
+            ]
+          },
           "description": "OR-matched against the active discard state. Cards with a wild effect are always playable."
         },
-        "deal": { "$ref": "#/$defs/countOrByPlayers" },
+        "deal": {
+          "$ref": "#/$defs/countOrByPlayers"
+        },
         "effects": {
           "type": "object",
-          "description": "selector → effect; merged over (and overriding) effects declared in the deck file. The way to attach effects to built-in decks.",
-          "additionalProperties": { "$ref": "#/$defs/effect" }
+          "description": "selector \u2192 effect; merged over (and overriding) effects declared in the deck file. The way to attach effects to built-in decks.",
+          "additionalProperties": {
+            "$ref": "#/$defs/effect"
+          }
         },
         "drawWhenStuck": {
-          "oneOf": [{ "type": "integer", "minimum": 0 }, { "const": "until-playable" }]
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "const": "until-playable"
+            }
+          ]
         },
-        "playAfterDraw": { "type": "boolean", "default": true },
-        "mustPlayIfAble": { "type": "boolean", "default": false },
+        "playAfterDraw": {
+          "type": "boolean",
+          "default": true
+        },
+        "mustPlayIfAble": {
+          "type": "boolean",
+          "default": false
+        },
         "stacking": {
           "type": "object",
           "additionalProperties": false,
-          "properties": { "drawN": { "type": "boolean", "default": false } }
+          "properties": {
+            "drawN": {
+              "type": "boolean",
+              "default": false
+            }
+          }
         },
-        "jumpIn": { "type": "boolean", "default": false },
-        "winner": { "enum": ["first-empty-hand"] },
+        "jumpIn": {
+          "type": "boolean",
+          "default": false
+        },
+        "winner": {
+          "enum": [
+            "first-empty-hand"
+          ]
+        },
         "lastCardCall": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["id"],
+          "required": [
+            "id"
+          ],
           "description": "Generates a 'declare last card' announcement plus its missed-call challenge.",
           "properties": {
-            "id": { "type": "string" },
-            "label": { "type": "string", "description": "Player-facing announcement text (e.g. \"Last card!\"). Defaults to the id when absent." },
-            "atHandCount": { "type": "integer", "default": 1 },
-            "penalty": { "type": "object", "properties": { "draw": { "type": "integer" } } }
+            "id": {
+              "type": "string"
+            },
+            "label": {
+              "type": "string",
+              "description": "Player-facing announcement text (e.g. \"Last card!\"). Defaults to the id when absent."
+            },
+            "atHandCount": {
+              "type": "integer",
+              "default": 1
+            },
+            "penalty": {
+              "type": "object",
+              "properties": {
+                "draw": {
+                  "type": "integer"
+                }
+              }
+            }
           }
         }
       }
@@ -326,60 +776,138 @@
     "rules-trick-taking": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["followSuit", "trickWinner"],
+      "required": [
+        "followSuit",
+        "trickWinner"
+      ],
       "properties": {
-        "followSuit": { "enum": ["must", "free"] },
+        "followSuit": {
+          "enum": [
+            "must",
+            "free"
+          ]
+        },
         "trump": {
           "type": "string",
           "description": "'none', 'chosen', or a suit id.",
           "default": "none"
         },
-        "trickWinner": { "enum": ["highest-of-led", "highest-trump-else-led"] },
-        "firstLead": { "type": "string", "description": "A card id ('clubs-2'), 'left-of-dealer', or 'winner'." },
-        "leader": { "enum": ["trick-winner", "left-of-dealer"], "default": "trick-winner" },
+        "trickWinner": {
+          "enum": [
+            "highest-of-led",
+            "highest-trump-else-led"
+          ]
+        },
+        "firstLead": {
+          "type": "string",
+          "description": "A card id ('clubs-2'), 'left-of-dealer', or 'winner'."
+        },
+        "leader": {
+          "enum": [
+            "trick-winner",
+            "left-of-dealer"
+          ],
+          "default": "trick-winner"
+        },
         "leadConstraints": {
           "type": "object",
-          "description": "selector → constraint ('untilBroken'). Constraints relax automatically when they would leave a player with zero legal moves.",
-          "additionalProperties": { "type": "string" }
+          "description": "selector \u2192 constraint ('untilBroken'). Constraints relax automatically when they would leave a player with zero legal moves.",
+          "additionalProperties": {
+            "type": "string"
+          }
         },
         "playConstraints": {
           "type": "object",
-          "description": "selector → constraint ('notTrick1'). Same relaxation rule as leadConstraints.",
-          "additionalProperties": { "type": "string" }
+          "description": "selector \u2192 constraint ('notTrick1'). Same relaxation rule as leadConstraints.",
+          "additionalProperties": {
+            "type": "string"
+          }
         },
         "breaking": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["var", "when"],
-          "properties": { "var": { "type": "string" }, "when": { "type": "string" } }
+          "required": [
+            "var",
+            "when"
+          ],
+          "properties": {
+            "var": {
+              "type": "string"
+            },
+            "when": {
+              "type": "string"
+            }
+          }
         },
         "passing": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["count", "schedule"],
+          "required": [
+            "count",
+            "schedule"
+          ],
           "properties": {
-            "count": { "type": "integer", "minimum": 1 },
-            "schedule": { "type": "array", "items": { "enum": ["left", "right", "across", "none"] } }
+            "count": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "schedule": {
+              "type": "array",
+              "items": {
+                "enum": [
+                  "left",
+                  "right",
+                  "across",
+                  "none"
+                ]
+              }
+            }
           }
         },
-        "dealAll": { "type": "boolean", "default": true },
-        "deal": { "$ref": "#/$defs/countOrByPlayers" },
+        "dealAll": {
+          "type": "boolean",
+          "default": true
+        },
+        "deal": {
+          "$ref": "#/$defs/countOrByPlayers"
+        },
         "dealAdjust": {
           "type": "object",
-          "description": "player count → card ids removed from the deck so hands divide evenly.",
-          "propertyNames": { "pattern": "^[1-8]$" },
-          "additionalProperties": { "type": "array", "items": { "type": "string" } }
+          "description": "player count \u2192 card ids removed from the deck so hands divide evenly.",
+          "propertyNames": {
+            "pattern": "^[1-8]$"
+          },
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
         },
         "sweepBonus": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["if", "award"],
+          "required": [
+            "if",
+            "award"
+          ],
           "properties": {
-            "if": { "type": "string", "description": "'tookAll:<selector>'" },
+            "if": {
+              "type": "string",
+              "description": "'tookAll:<selector>'"
+            },
             "award": {
               "oneOf": [
-                { "enum": ["others-gain-sum", "self-lose-sum"] },
-                { "type": "string", "pattern": "^hook:" }
+                {
+                  "enum": [
+                    "others-gain-sum",
+                    "self-lose-sum"
+                  ]
+                },
+                {
+                  "type": "string",
+                  "pattern": "^hook:"
+                }
               ]
             }
           }
@@ -389,9 +917,14 @@
     "rules-contract-rummy": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["contracts", "deal"],
+      "required": [
+        "contracts",
+        "deal"
+      ],
       "properties": {
-        "deal": { "$ref": "#/$defs/countOrByPlayers" },
+        "deal": {
+          "$ref": "#/$defs/countOrByPlayers"
+        },
         "contracts": {
           "type": "array",
           "minItems": 1,
@@ -399,80 +932,181 @@
           "items": {
             "type": "array",
             "minItems": 1,
-            "items": { "type": "string", "pattern": "^(set|run|colorGroup)\\([0-9]+\\)$" }
+            "items": {
+              "type": "string",
+              "pattern": "^(set|run|colorGroup)\\([0-9]+\\)$"
+            }
           }
         },
-        "progression": { "enum": ["advance-on-complete", "all-play-all"], "default": "advance-on-complete" },
+        "progression": {
+          "enum": [
+            "advance-on-complete",
+            "all-play-all"
+          ],
+          "default": "advance-on-complete"
+        },
         "wilds": {
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "tag": { "type": "string" },
-            "minNaturals": { "type": "integer", "default": 1, "description": "Minimum natural (non-wild) cards per meld." },
-            "maxPerMeld": { "type": ["integer", "null"], "default": null }
+            "tag": {
+              "type": "string"
+            },
+            "minNaturals": {
+              "type": "integer",
+              "default": 1,
+              "description": "Minimum natural (non-wild) cards per meld."
+            },
+            "maxPerMeld": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "default": null
+            }
           }
         },
-        "layDown": { "enum": ["once-per-round-when-complete"] },
-        "hitting": { "enum": ["own-and-others-after-laydown", "own-after-laydown", "none"] },
+        "layDown": {
+          "enum": [
+            "once-per-round-when-complete"
+          ]
+        },
+        "hitting": {
+          "enum": [
+            "own-and-others-after-laydown",
+            "own-after-laydown",
+            "none"
+          ]
+        },
         "drawFrom": {
           "type": "array",
-          "items": { "enum": ["draw", "discard"] },
-          "default": ["draw", "discard"]
+          "items": {
+            "enum": [
+              "draw",
+              "discard"
+            ]
+          },
+          "default": [
+            "draw",
+            "discard"
+          ]
         },
         "discardPickupForbidden": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "description": "Selectors that may not be taken from the discard (Milestones' Skip)."
         },
-        "goingOut": { "enum": ["discard-last", "play-or-discard-last"] }
+        "goingOut": {
+          "enum": [
+            "discard-last",
+            "play-or-discard-last"
+          ]
+        }
       }
     },
     "rules-sequencing": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["buildRule", "stockSize", "winner"],
+      "required": [
+        "buildRule",
+        "stockSize",
+        "winner"
+      ],
       "properties": {
         "buildRule": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["type", "from", "to"],
-          "description": "Build-pile capacity is derived: to − from + 1. zoneFull fires when a pile completes.",
+          "required": [
+            "type",
+            "from",
+            "to"
+          ],
+          "description": "Build-pile capacity is derived: to \u2212 from + 1. zoneFull fires when a pile completes.",
           "properties": {
-            "type": { "enum": ["ascending"] },
-            "from": { "type": "integer" },
-            "to": { "type": "integer" },
-            "wrap": { "type": "boolean", "default": false }
+            "type": {
+              "enum": [
+                "ascending"
+              ]
+            },
+            "from": {
+              "type": "integer"
+            },
+            "to": {
+              "type": "integer"
+            },
+            "wrap": {
+              "type": "boolean",
+              "default": false
+            }
           }
         },
-        "buildPiles": { "type": "integer", "default": 4 },
+        "buildPiles": {
+          "type": "integer",
+          "default": 4
+        },
         "buildStart": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "description": "Selectors playable on an empty build pile."
         },
         "wilds": {
           "type": "object",
           "additionalProperties": false,
-          "properties": { "tag": { "type": "string" } }
+          "properties": {
+            "tag": {
+              "type": "string"
+            }
+          }
         },
-        "stockSize": { "$ref": "#/$defs/countOrByPlayers" },
+        "stockSize": {
+          "$ref": "#/$defs/countOrByPlayers"
+        },
         "handRefill": {
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "to": { "type": "integer" },
-            "atTurnStart": { "type": "boolean", "default": true },
-            "onEmptyMidTurn": { "type": "boolean", "default": false }
+            "to": {
+              "type": "integer"
+            },
+            "atTurnStart": {
+              "type": "boolean",
+              "default": true
+            },
+            "onEmptyMidTurn": {
+              "type": "boolean",
+              "default": false
+            }
           }
         },
-        "discardPiles": { "type": "integer", "default": 4 },
+        "discardPiles": {
+          "type": "integer",
+          "default": 4
+        },
         "playableFrom": {
           "type": "array",
-          "items": { "enum": ["stock", "hand", "discard"] },
+          "items": {
+            "enum": [
+              "stock",
+              "hand",
+              "discard"
+            ]
+          },
           "description": "Sources for plays onto build piles; stock and discard mean their top card only."
         },
-        "turnEnd": { "enum": ["discard-to-own-pile"] },
-        "winner": { "enum": ["first-empty-stock"] }
+        "turnEnd": {
+          "enum": [
+            "discard-to-own-pile"
+          ]
+        },
+        "winner": {
+          "enum": [
+            "first-empty-stock"
+          ]
+        }
       }
     }
   }
