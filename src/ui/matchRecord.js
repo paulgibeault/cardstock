@@ -14,7 +14,7 @@
 
 import { serializeMatch } from '../engine/replay.js';
 import { computeMatchStats, placements } from '../stats/matchStats.js';
-import { recordResult, readStats } from '../arcade/storage.js';
+import { recordResult, readStats, clearMatch } from '../arcade/storage.js';
 
 /** Display-only faces from the manifest; see schema `heroCards`. */
 export function heroFaces(manifest) {

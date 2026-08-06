@@ -17,6 +17,7 @@
 
 import { flyCard, motionAllowed, rectOf, cardSizedRect } from './flight.js';
 import { safeCssColor } from './css.js';
+import { handAddress } from './interaction.js';
 import { playTrickTaken, playActionCard } from '../arcade/audio.js';
 
 /**
