@@ -124,6 +124,36 @@
 
 * { box-sizing: border-box; }
 
+/* ------------------------------------------------------------------ *
+ * Nothing here is text you copy
+ * ------------------------------------------------------------------ *
+ *
+ * A card is an object, not a paragraph. Every string on screen — a rank, a
+ * name plate, a score, a hint — is a label ON something you are meant to
+ * touch, and there is nothing worth pasting anywhere else, so a selection can
+ * only ever be an accident of a gesture that meant something else.
+ *
+ * And the gestures here are the reason this is a global rule rather than a
+ * per-element one. The table is driven by taps and holds: hold a card to
+ * gather its whole meld (smartSelect), hold anything to open the inspector,
+ * drag a card to a pile. On iOS Safari a long press on selectable text starts
+ * the OS text-selection gesture instead — a magnifier and a blue highlight
+ * over the card you are trying to pick up, with the app's own hold losing the
+ * race. -webkit-touch-callout suppresses the share/copy sheet that follows.
+ *
+ * Selection is deliberately NOT re-enabled anywhere: this app has no text
+ * input, no user-authored content, and no long-form prose that reads as a
+ * document. (The rules page is the closest thing, and it is a page you read,
+ * not a source you quote.) None of this touches the accessibility tree —
+ * every one of these strings is still text to a screen reader, and
+ * aria-labels carry the ones the felt shortens.
+ */
+:root {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
 body {
   margin: 0;
   font-family: system-ui, sans-serif;
@@ -957,9 +987,10 @@ button.pile-stack:focus-visible { outline: 2px solid var(--accent); outline-offs
    scroll on a small screen. */
 .draggable { touch-action: none; }
 
-/* No text selection anywhere while a card is in the air — a drag across a
-   score sheet would otherwise highlight it. */
-body.is-dragging { user-select: none; -webkit-user-select: none; }
+/* Selection during a drag used to be suppressed here, for the drag that
+   crossed a score sheet and highlighted it on the way past. It is suppressed
+   for the whole app now (see :root, near the top), which covers this case and
+   the ones a drag was never involved in. */
 body.is-dragging .card-face { cursor: grabbing; }
 
 .drag-ghost {
