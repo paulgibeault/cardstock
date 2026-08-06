@@ -1192,9 +1192,13 @@ function renderHand(state, ui, stagger, draggable) {
     // a question the disabled ones are the whole reason for.
     wrapper.setAttribute('role', 'button');
     wrapper.tabIndex = 0;
+    // "Playable" is the wrong word in a gathering mode — a tap there stages
+    // the card, it does not commit it — and off-turn it would be an outright
+    // lie, now that a meld can be arranged while the bots think.
+    const affordance = !selectable ? ''
+      : (ui.handMulti ? ' Tap to gather.' : ' Playable.');
     wrapper.setAttribute('aria-label',
-      `${cardAriaLabel(card, state.pack, { position: i + 1, of: fanned.length })}`
-      + (selectable ? ' Playable.' : ''));
+      `${cardAriaLabel(card, state.pack, { position: i + 1, of: fanned.length })}${affordance}`);
     wrapper.setAttribute('aria-pressed', String(!!selected));
 
     const activate = () => onHandCard(state, cardId, card, wrapper, ui);
@@ -2313,7 +2317,11 @@ async function performHumanMove(state, move, sourceNode) {
     return;
   }
   const from = rectOf(sourceNode) || (move.from ? zoneRect(move.from) : null) || seatRect(HUMAN_SEAT);
-  selection = null;
+  // NOT `selection = null`. The render inside afterMove prunes it per card
+  // (pruneSelection), which drops exactly what this move consumed and leaves
+  // the rest staged. Clearing wholesale is what made a Milestones meld
+  // impossible to build across turns: every turn ends in a discard, and the
+  // discard took the tray with it.
   applyStateChange(state, move, { far: false });
   afterMove(state, move, from);
 }

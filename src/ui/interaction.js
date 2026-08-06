@@ -53,14 +53,40 @@ export function isSelected(selection, from, cardId) {
 }
 
 /**
- * Drop a selection the state has moved out from under (rerender, resume).
- * Returns the selection to keep — `null` when it no longer describes real cards.
+ * Drop the parts of a selection the state has moved out from under it
+ * (rerender, resume, a card played from under a staged meld).
+ *
+ * PER CARD, not all-or-nothing. A staged meld is built over several turns —
+ * you gather what you have, discard, and come back to it — and every turn ends
+ * in a discard, so a rule of "if any card left, forget the whole thing" meant
+ * the tray could never survive one. The cards that left are the ones the move
+ * consumed; the rest are still in your hand and still where you put them.
+ *
+ * Returns null once nothing real is left, so callers can keep treating a
+ * spent selection as absent.
  */
 export function pruneSelection(state, selection) {
   if (!selection) return null;
   if (!state.zones.has(selection.from)) return null;
   const inZone = state.zones.cards(selection.from);
-  return selection.cardIds.every((id) => inZone.includes(id)) ? selection : null;
+  const kept = selection.cardIds.filter((id) => inZone.includes(id));
+  if (!kept.length) return null;
+  return kept.length === selection.cardIds.length ? selection : { ...selection, cardIds: kept };
+}
+
+/**
+ * The hand cards that may enter the staging tray.
+ *
+ * A card the pack bars from melds (a Milestones skip) stays in hand and stays
+ * discardable, but it never stages: the engine would refuse the lay-down
+ * anyway, and the only feedback that gives is a Lay down button that
+ * mysteriously fails to appear.
+ */
+function meldStageable(state, seat, hand) {
+  const forbidden = state.pack.rules.meldForbidden;
+  if (!forbidden?.length) return hand;
+  const ctx = makeCtx(state);
+  return hand.filter((id) => !forbidden.some((sel) => selectorMatches(ctx.cardById(id), sel)));
 }
 
 export function describeContractItem(item) {
@@ -127,10 +153,28 @@ export function buildUiModel(state, { seat, moves = [], acts = false, selection 
     action: null,
     hint: '',
   };
-  if (!acts) return ui;
 
   const hand = state.zones.cards(handAddr);
   const sel = selectedIds(selection);
+
+  // OFF-TURN, ONE AFFORDANCE SURVIVES: arranging a meld you have not laid down.
+  //
+  // Everything else here answers "what may I do with my turn", and off-turn the
+  // answer is nothing. Staging is not one of those things — it commits nothing,
+  // touches no zone, and is the one job a contract-rummy player genuinely wants
+  // to do while the bots think. Withdrawing it between turns also made the tray
+  // flicker: the staged cards fell back into the fan the moment the turn passed
+  // and jumped out again when it came back.
+  //
+  // `action` stays null, so Lay down remains a turn-only button (and is
+  // re-checked against humanActs where it is rendered).
+  if (!acts) {
+    if (mode === 'rummy-meld' && !state.playerVars[seat]?.laidDown) {
+      for (const id of meldStageable(state, seat, hand)) ui.handSelectable.add(id);
+      ui.handMulti = true;
+    }
+    return ui;
+  }
 
   if (mode === 'tap') {
     for (const move of moves) {
@@ -175,15 +219,7 @@ export function buildUiModel(state, { seat, moves = [], acts = false, selection 
   if (mode === 'rummy-meld') {
     const ctx = makeCtx(state);
     const laidDown = state.playerVars[seat]?.laidDown;
-    // A card the pack bars from melds (a skip) stays in hand and stays
-    // discardable, but it never enters the staging tray: the engine would
-    // refuse it anyway, and the only feedback that gives is a Lay down button
-    // that mysteriously fails to appear.
-    const meldForbidden = state.pack.rules.meldForbidden || [];
-    const staged = meldForbidden.length
-      ? hand.filter((id) => !meldForbidden.some((sel) => selectorMatches(ctx.cardById(id), sel)))
-      : hand;
-    for (const id of laidDown ? hand : staged) ui.handSelectable.add(id);
+    for (const id of laidDown ? hand : meldStageable(state, seat, hand)) ui.handSelectable.add(id);
     ui.handMulti = !laidDown;
 
     if (!laidDown) {

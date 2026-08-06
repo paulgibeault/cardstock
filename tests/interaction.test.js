@@ -182,12 +182,57 @@ test("a selection the state has moved out from under is dropped", () => {
   assert.ok(!isSelected(live, "discard", first));
 });
 
+test("pruning keeps the staged cards a move did not consume", () => {
+  // The reason a Milestones meld can be built across turns: every turn ends in
+  // a discard, and dropping the whole selection because ONE card left the hand
+  // meant the tray never survived one.
+  const state = tableFor("milestones", "prune-partial");
+  const handAddr = handAddress(0);
+  const [a, b, c] = state.zones.cards(handAddr);
+
+  const staged = { from: handAddr, cardIds: [a, b, c] };
+  // `c` is discarded out from under the selection; `a` and `b` are still held.
+  state.zones.cards(handAddr).splice(state.zones.cards(handAddr).indexOf(c), 1);
+
+  const kept = pruneSelection(state, staged);
+  assert.deepStrictEqual(kept.cardIds, [a, b], "the unspent cards stay staged");
+  assert.strictEqual(kept.from, handAddr);
+
+  // And a selection with nothing left really is gone, so callers can keep
+  // treating a spent one as absent.
+  assert.strictEqual(pruneSelection(state, { from: handAddr, cardIds: [c] }), null);
+});
+
 test("the UI model offers nothing at all when the human may not act", () => {
   const state = tableFor("hearts", "inert");
   const ui = buildUiModel(state, { seat: 0, moves: [], acts: false, selection: null });
   assert.strictEqual(ui.handSelectable.size, 0);
   assert.strictEqual(ui.readyTargets.size, 0);
   assert.strictEqual(ui.action, null);
+});
+
+test("off-turn, a contract meld can still be arranged — and only that", () => {
+  // The one affordance that survives losing the turn: staging commits nothing
+  // and touches no zone, and it is the job a rummy player actually wants to do
+  // while the bots think. Laying down stays a turn-only move.
+  const state = tableFor("milestones", "off-turn-stage");
+  state.turn.phase = "meld";
+  state.playerVars[0].laidDown = false;
+  const ui = buildUiModel(state, { seat: 0, moves: [], acts: false, selection: null });
+
+  assert.ok(ui.handSelectable.size > 0, "cards can still be gathered");
+  assert.strictEqual(ui.handMulti, true, "the tray stays open");
+  assert.strictEqual(ui.action, null, "but Lay down is not offered off-turn");
+  assert.strictEqual(ui.readyTargets.size, 0, "and no pile is a target");
+});
+
+test("off-turn staging stops once the contract is down", () => {
+  const state = tableFor("milestones", "off-turn-laid");
+  state.turn.phase = "meld";
+  state.playerVars[0].laidDown = true;
+  const ui = buildUiModel(state, { seat: 0, moves: [], acts: false, selection: null });
+  assert.strictEqual(ui.handSelectable.size, 0, "there is no meld left to arrange");
+  assert.strictEqual(ui.handMulti, false);
 });
 
 test("a played card's implicit landing zone is one the pack actually has", () => {
