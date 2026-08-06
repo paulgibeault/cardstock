@@ -1427,6 +1427,83 @@ body.is-dragging .card-face { cursor: grabbing; }
   80% { transform: translateX(-3px); }
 }
 
+/* The colour a wild left behind.
+ *
+ * The discard's badge already writes the word (zoneBadgeText); this is the
+ * swatch that makes it readable without reading. It appears ONLY when the top
+ * card cannot show the colour itself — see activeMatchTint() — so a dot on the
+ * badge means "a wild chose this", not merely "this is a discard pile". */
+.pile-count--active-match {
+  /* `flex`, never `inline-flex`: the pile stack above is an inline-block
+     button, so an inline-level badge flows ALONGSIDE it instead of sitting
+     under it — the same trap the base .pile-count rule documents. Block-level
+     flex keeps the auto margins that centre it. */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.32rem;
+  border: 1px solid color-mix(in srgb, var(--active-tint, var(--accent)) 65%, transparent);
+}
+
+.pile-count--active-match::before {
+  content: "";
+  width: 0.58rem;
+  height: 0.58rem;
+  flex: none;
+  border-radius: 50%;
+  background: var(--active-tint, var(--accent));
+  box-shadow: 0 0 6px color-mix(in srgb, var(--active-tint, var(--accent)) 60%, transparent);
+}
+
+/* Play has turned round. Absent until it does — see directionBadge(). */
+.direction-badge {
+  position: absolute;
+  top: 0;
+  right: 0.15rem;
+  font-size: 1.05rem;
+  line-height: 1;
+  color: var(--chrome-text);
+  opacity: 0.75;
+  pointer-events: none;
+}
+
+.opponent-row { position: relative; }
+
+/* An action card washing across the felt.
+ *
+ * The pack-level "background effect": a skip, a reverse or a Draw 4 changes
+ * the game more than any ordinary card and used to look exactly like one. It
+ * is a pseudo-element rather than a background transition on #table itself,
+ * because the felt's background is three stacked gradients a pack may replace
+ * and this must not be one of the layers they have to preserve.
+ *
+ * --flash-tint is set per event (a wild washes in the colour that was chosen)
+ * and falls back to the theme accent. A pack that wants a different flourish
+ * restyles .table-flash; one that wants none sets its animation to none. */
+#table { position: relative; }
+
+#table::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  opacity: 0;
+  background: radial-gradient(
+    ellipse at 50% 45%,
+    color-mix(in srgb, var(--flash-tint, var(--accent)) 55%, transparent),
+    transparent 70%
+  );
+}
+
+.table--flash::after { animation: table-flash 0.62s ease-out; }
+
+@keyframes table-flash {
+  0% { opacity: 0; }
+  22% { opacity: 0.55; }
+  100% { opacity: 0; }
+}
+
 /* ------------------------------------------------------------------ *
  * Stepping the whole felt down
  * ------------------------------------------------------------------ */
@@ -1623,6 +1700,7 @@ body.is-dragging .card-face { cursor: grabbing; }
   .event-banner--bad.event-banner--in,
   .zone-celebrate,
   .zone-lament,
+  .table--flash::after,
   .announce-button,
   .seat__catch,
   .game-over--won .game-over-fan__card,

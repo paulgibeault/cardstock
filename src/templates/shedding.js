@@ -182,19 +182,44 @@ function refreshCallFlags(ctx) {
   }
 }
 
+/**
+ * An action card's effect, and the derived event that says it happened.
+ *
+ * The event is not decoration. An action card is the most consequential thing
+ * anyone plays and, until these existed, the least visible: the state changed
+ * — a seat lost their turn, the table turned round, somebody was handed four
+ * cards — and the only trace was that the discard looked different and the log
+ * said "Rook played." The engine knows exactly who it happened to, and this is
+ * the channel that already carries a trick resolving to the felt, so the table
+ * can say so without re-deriving any of it from zone diffs.
+ */
 function applyEffect(ctx, card, playerSeat, choice) {
   const effect = effectOf(card);
   const type = typeof effect === 'string' ? effect : effect.type;
   let advance = 1;
 
   if (type === 'skip') {
+    const target = ctx.nextSeat(playerSeat);
+    ctx.emit('skipped', { by: playerSeat, seat: target });
     advance = 2;
   } else if (type === 'reverse') {
     ctx.reverseDirection();
+    // Emitted after the flip, so `direction` is the one now in force.
+    ctx.emit('reversed', { by: playerSeat, direction: ctx.state.direction });
     advance = ctx.seats === 2 ? 2 : 1;
   } else if (type === 'drawN' || type === 'wildDrawN') {
     const target = ctx.nextSeat(playerSeat);
+    const before = ctx.cardIdsIn(ctx.zoneAddr('hand', target)).length;
     drawCards(ctx, target, effect.n);
+    // The count actually dealt, not the one asked for: an exhausted pile that
+    // could not be recycled hands over fewer, and the table should say what
+    // really happened.
+    ctx.emit('penalty', {
+      by: playerSeat,
+      seat: target,
+      drew: ctx.cardIdsIn(ctx.zoneAddr('hand', target)).length - before,
+      asked: effect.n,
+    });
     advance = 2;
   } else if (type === 'swapHands') {
     const other = choice?.player;
@@ -205,6 +230,7 @@ function applyEffect(ctx, card, playerSeat, choice) {
       const bCards = ctx.cardIdsIn(b).slice();
       ctx.moveCards(aCards, a, b);
       ctx.moveCards(bCards, b, a);
+      ctx.emit('handsSwapped', { by: playerSeat, seat: other });
     }
     advance = 1;
   } else if (type === 'rotateHands') {
@@ -215,6 +241,7 @@ function applyEffect(ctx, card, playerSeat, choice) {
       if (dest === s || snapshots[s].length === 0) continue;
       ctx.moveCards(snapshots[s], ctx.zoneAddr('hand', s), ctx.zoneAddr('hand', dest));
     }
+    ctx.emit('handsRotated', { by: playerSeat, direction: ctx.state.direction });
     advance = 1;
   }
 
@@ -231,6 +258,19 @@ function applyPlayCard(ctx, move) {
 
   ctx.moveCards([cardId], ctx.zoneAddr('hand', seat), 'discard');
   updateActiveAfterPlay(ctx, card, move.choice);
+
+  // A wild is the one play whose consequence is invisible on the card itself:
+  // the discard shows a wild, and what the table now has to match is a colour
+  // that exists only in a var. The event carries the chosen values so the felt
+  // can show them without knowing which attribute this pack chooses on.
+  if (isWildEffect(effectOf(card))) {
+    const chosen = {};
+    for (const attr of ctx.rules.matchOn) {
+      const value = getActiveValue(ctx, attr);
+      if (value !== undefined) chosen[attr] = value;
+    }
+    ctx.emit('wildPlayed', { seat, chose: chosen });
+  }
 
   const handLeft = ctx.cardIdsIn(ctx.zoneAddr('hand', seat));
   if (handLeft.length === 0) {
