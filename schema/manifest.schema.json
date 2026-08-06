@@ -399,6 +399,24 @@
         },
         "label": {
           "type": "string"
+        },
+        "interactive": {
+          "type": "boolean",
+          "default": false,
+          "description": "A zone with visibility:none that is still a control the player taps (a draw pile). Without it the table leaves invisible zones off the felt."
+        },
+        "landing": {
+          "enum": [
+            "play",
+            "discard",
+            "both"
+          ],
+          "description": "Where a played and/or discarded card visibly lands when the move names no destination. Shared zones only; the first matching zone in definition order wins."
+        },
+        "showsHeldValue": {
+          "type": "boolean",
+          "default": false,
+          "description": "This pile's contents are worth points, so the felt shows what it has cost so far (Hearts' won pile)."
         }
       }
     },

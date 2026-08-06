@@ -105,6 +105,15 @@ export function createState({ pack, seats, seed }) {
     scores: Array.from({ length: seats }, () => 0),
     roundNumber: 1,
     roundScores: null,
+    // A HAND ENDING AND A MATCH ENDING ARE TWO DIFFERENT FACTS, and until
+    // ctx.endRound existed the templates had only one flag to say either with:
+    // they set `gameOver` to mean "this hand is finished", their isRoundOver
+    // read it straight back, and the pipeline had to reset it to false again
+    // before dealing the next round. `roundEnded` is the hand's own signal;
+    // `gameOver` returns to meaning the match is over. Both are DERIVED — the
+    // log is the match (src/engine/replay.js) — so neither is persisted.
+    roundEnded: false,
+    roundWinner: null,
     gameOver: false,
     winner: null,
     log: [],

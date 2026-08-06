@@ -5,7 +5,7 @@
 
 import { RANKS } from '../engine/cards.js';
 import { selectorMatches } from '../engine/selectors.js';
-import { runRoundScore, evaluateGameOver, cardValue } from '../engine/scoring.js';
+import { cardValue } from '../engine/scoring.js';
 
 function isExactCardFirstLead(ctx) {
   const fl = ctx.rules.firstLead;
@@ -251,11 +251,16 @@ function dealAll(ctx) {
 const trickTaking = {
   id: 'trick-taking',
 
-  defaultZones() {
+  defaultZones(rules, seats) {   // eslint-disable-line no-unused-vars
     return [
       { id: 'hand', per: 'player', visibility: 'owner', layout: 'fan', order: 'sorted', facing: 'up' },
-      { id: 'trick', per: 'shared', visibility: 'all', layout: 'spread', order: 'sequence', facing: 'up', label: 'Trick' },
-      { id: 'won', per: 'player', visibility: 'none', layout: 'stack', order: 'stack', facing: 'down', label: 'Won' },
+      // `landing: 'play'`: where a played card goes when the move names no
+      // destination. The table used to probe zone ids by name.
+      { id: 'trick', per: 'shared', visibility: 'all', layout: 'spread', order: 'sequence', facing: 'up', label: 'Trick', landing: 'play' },
+      // `showsHeldValue`: this pile's contents are worth points, so the felt
+      // shows what it has cost so far. Hearts is why, but the flag is the fact
+      // rather than the game.
+      { id: 'won', per: 'player', visibility: 'none', layout: 'stack', order: 'stack', facing: 'down', label: 'Won', showsHeldValue: true },
     ];
   },
 
@@ -345,12 +350,46 @@ const trickTaking = {
     return Array.from({ length: ctx.seats }, (_, s) => ctx.countIn(ctx.zoneAddr('hand', s))).every((n) => n === 0);
   },
 
-  scoreRound(ctx) {
-    return runRoundScore(ctx);
+
+  /* ---------------------------------------------------------------- *
+   * What the platform asks this template about itself (src/templates/CONTRACT.md)
+   * ---------------------------------------------------------------- */
+
+  interactionMode(ctx) {
+    return ctx.turn.phase === 'pass' ? 'pass' : 'tap';
   },
 
-  isGameOver(ctx) {
-    return evaluateGameOver(ctx)?.over ?? ctx.state.gameOver;
+  /**
+   * The cards this seat has committed to a simultaneous phase but not yet
+   * played — drawn as chosen, and NOT re-choosable.
+   *
+   * The private `__pendingPass` var is this template's bookkeeping; the table
+   * was reading it directly in three places, double underscore and all.
+   */
+  committedSelection(ctx, seat) {
+    return ctx.playerVar(seat, '__pendingPass') ?? null;
+  },
+
+  ruleLines(rules) {
+    const out = ['Everyone plays one card; the highest card of the suit that was led takes the trick.'];
+    if (rules.followSuit === 'must') out.push('Follow the suit that was led if you can.');
+    if (rules.passing) {
+      out.push(`Before play, pass ${rules.passing.count ?? 3} cards to another player.`);
+    }
+    return out;
+  },
+
+  endingLines() {
+    return [];
+  },
+
+  botVerbs: { passCards: 'passed' },
+
+  statLines(seat) {
+    return [
+      { label: 'Tricks won', value: seat.tricksWon, always: true },
+      { label: 'Points taken', value: seat.pointsTaken, always: true },
+    ];
   },
 
   botHeuristic(ctx, move) {

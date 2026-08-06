@@ -61,6 +61,26 @@ export function makeCtx(state) {
       state.direction *= -1;
     },
 
+    /**
+     * THIS HAND IS FINISHED, and `winner` is whoever finished it.
+     *
+     * Whether the MATCH is over is not this template's call: it is the pack's
+     * scoring.gameOver ("anyScore >= 100"), or template.isGameOver where the
+     * pack says the template decides. The pipeline consumes this flag in
+     * maybeFinishRound, scores the round, and then either ends the match or
+     * deals the next one.
+     *
+     * Templates used to say this with setGameOver() and read it back out of
+     * state.gameOver in their own isRoundOver — a wart the pipeline documented
+     * and worked around by resetting the flag. A round ending is not a match
+     * ending, and now it does not have to pretend to be.
+     */
+    endRound: (winner = null) => {
+      state.roundEnded = true;
+      state.roundWinner = winner;
+    },
+
+    /** The MATCH is over. Distinct from endRound above, deliberately. */
     setGameOver: (winner) => {
       state.gameOver = true;
       state.winner = winner;

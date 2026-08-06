@@ -2,7 +2,6 @@
 // Match-and-discard: play a card matching the active state on any matchOn attribute
 // (or a wild), first to empty hand wins.
 
-import { runRoundScore, evaluateGameOver } from '../engine/scoring.js';
 import { initializeDeckInto } from '../engine/state.js';
 import { resolveByPlayers } from '../engine/deal.js';
 
@@ -41,25 +40,32 @@ function chooseAttrOf(effect) {
  * A target is a SEAT NUMBER, not a value off a card — the one choice in this
  * template that is about the table rather than about the deck.
  */
-function choiceOptions(ctx, seat, attr) {
-  if (attr === 'suit') {
-    return ['clubs', 'diamonds', 'hearts', 'spades'].map((suit) => ({ suit }));
-  }
-  if (attr === 'color') {
-    const colors = [...new Set([...ctx.pack.cardsById.values()].map((c) => c.color).filter(Boolean))];
-    return colors.map((color) => ({ color }));
-  }
+function choiceValues(ctx, seat, attr) {
   if (attr === 'player') {
+    // A target is a SEAT NUMBER, not a value off a card — the one choice in
+    // this template that is about the table rather than about the deck. A
+    // one-seat table has nobody to swap with, and returns none.
     const out = [];
-    for (let s = 0; s < ctx.seats; s++) if (s !== seat) out.push({ player: s });
-    // A one-seat table has nobody to swap with. The card is still playable —
-    // it simply does nothing, which is better than being unplayable.
-    return out.length ? out : [null];
+    for (let s = 0; s < ctx.seats; s++) if (s !== seat) out.push(s);
+    return out;
+  }
+  // Every OTHER answer comes out of the deck. The suit list used to be the four
+  // French suits, written out — which is a claim about the deck that only one
+  // of the five packs can make, and the colour branch two lines below was
+  // already deriving its answers properly.
+  if (attr === 'suit' || attr === 'color') {
+    return [...new Set([...ctx.pack.cardsById.values()].map((c) => c[attr]).filter(Boolean))];
   }
   // An attribute this template has no answers for. The card still plays; the
   // effect that wanted the choice will find none and skip, which is what an
   // unrecognised `choose` should do rather than making the card dead.
-  return [null];
+  return [];
+}
+
+function choiceOptions(ctx, seat, attr) {
+  if (!attr) return [null];
+  const values = choiceValues(ctx, seat, attr);
+  return values.length ? values.map((value) => ({ [attr]: value })) : [null];
 }
 
 function activeVarName(attr) {
@@ -336,7 +342,9 @@ function applyPlayCard(ctx, move) {
 
   const handLeft = ctx.cardIdsIn(ctx.zoneAddr('hand', seat));
   if (handLeft.length === 0) {
-    ctx.setGameOver(seat);
+    // The ROUND is over; whether the MATCH is over is the pipeline's call from
+    // the pack's scoring.gameOver. See ctx.endRound in src/engine/context.js.
+    ctx.endRound(seat);
     return;
   }
 
@@ -454,11 +462,17 @@ function applyChallenge(ctx, move) {
 const shedding = {
   id: 'shedding',
 
-  defaultZones() {
+  defaultZones(rules, seats) {   // eslint-disable-line no-unused-vars
     return [
       { id: 'hand', per: 'player', visibility: 'owner', layout: 'fan', order: 'sorted', facing: 'up' },
-      { id: 'draw', per: 'shared', visibility: 'none', layout: 'stack', order: 'stack', facing: 'down', label: 'Draw' },
-      { id: 'discard', per: 'shared', visibility: 'top', layout: 'stack', order: 'stack', facing: 'up', label: 'Discard' },
+      // `interactive`: a hidden pile the human can still tap (it is the draw
+      // control). Without it the table would filter it off the felt with the
+      // other invisible zones.
+      { id: 'draw', per: 'shared', visibility: 'none', layout: 'stack', order: 'stack', facing: 'down', label: 'Draw', interactive: true },
+      // `landing: 'both'`: where a played AND a discarded card lands when the
+      // move names no destination. The table used to probe for 'discard' and
+      // then 'trick' by name.
+      { id: 'discard', per: 'shared', visibility: 'top', layout: 'stack', order: 'stack', facing: 'up', label: 'Discard', landing: 'both' },
     ];
   },
 
@@ -708,15 +722,124 @@ const shedding = {
   },
 
   isRoundOver(ctx) {
-    return ctx.state.gameOver;
+    return ctx.state.roundEnded;
   },
 
-  scoreRound(ctx) {
-    return runRoundScore(ctx);
+
+  /* ---------------------------------------------------------------- *
+   * What the platform asks this template about itself (src/templates/CONTRACT.md)
+   * ---------------------------------------------------------------- */
+
+  interactionMode(ctx) {
+    return ctx.turn.phase === 'playDrawn' ? 'play-drawn' : 'tap';
   },
 
-  isGameOver(ctx) {
-    return evaluateGameOver(ctx)?.over ?? ctx.state.gameOver;
+  /**
+   * The value the whole table is playing to, and whether the card on the
+   * discard can say it for itself.
+   *
+   * ONE FUNCTION FOR A CONVENTION THAT WAS SPREAD ACROSS THREE FILES. The table
+   * built the var name from the attribute (`active${Attr}`), describe.js did the
+   * derivation in reverse to get back from the var name to the attribute, and
+   * two more places simply wrote `activeSuit || activeColor` and hoped. The
+   * convention is this template's, so it is answered here.
+   *
+   * `onCard: false` is the whole reason the platform asks: a wild sits on the
+   * discard showing no colour at all while every hand has to match one, and
+   * that is the case the badge draws a swatch for and the screen reader is told
+   * about.
+   */
+  activeMatch(ctx) {
+    if (!ctx.hasZone('discard')) return null;
+    const topId = ctx.topOf('discard');
+    const card = topId !== undefined ? ctx.cardById(topId) : null;
+    for (const attr of ctx.rules.matchOn || []) {
+      const value = getActiveValue(ctx, attr);
+      if (value === undefined || value === null) continue;
+      return { address: 'discard', attr, value, onCard: !!card && card[attr] !== null && card[attr] !== undefined };
+    }
+    return null;
+  },
+
+  /**
+   * The question this move still owes before it can be applied.
+   *
+   * Asked in a loop by the platform until it answers null — see
+   * performHumanMove in src/ui/table.js. The template names the question and
+   * says where the answer goes (`apply`); the platform renders the chooser and
+   * knows nothing about effect schemas. That inversion is what makes a
+   * pack-defined effect get a chooser for free.
+   */
+  pendingChoice(ctx, move) {
+    if (move?.type !== 'playCard' || !move.cards?.length) return null;
+    const card = ctx.cardById(move.cards[0]);
+    const attr = chooseAttrOf(effectOf(card));
+    if (!attr || move.choice?.[attr] !== undefined) return null;
+    const values = choiceValues(ctx, move.actor, attr);
+    if (!values.length) return null;
+    return {
+      attr,
+      // "Choose a player to swap hands with" — being asked for a target is not
+      // the same sentence in every game that asks for one.
+      prompt: attr === 'player' ? 'player to swap hands with' : attr,
+      kind: attr === 'player' ? 'seat' : 'value',
+      cardId: move.cards[0],
+      options: values.map((value) => ({ value })),
+      apply: (m, value) => ({ ...m, choice: { ...(m.choice || {}), [attr]: value } }),
+    };
+  },
+
+  /** The shape of a turn, for the generated rules page (src/ui/rules.js). */
+  ruleLines(rules) {
+    // "or", emphatically: matching on colour AND rank would be a different and
+    // much worse game, and this is the sentence a new player reads first.
+    const on = (rules.matchOn || []).map((a) => `the same ${a}`);
+    const list = on.length <= 1 ? on.join('')
+      : on.length === 2 ? `${on[0]} or ${on[1]}`
+        : `${on.slice(0, -1).join(', ')} or ${on.at(-1)}`;
+    const out = [`On your turn, play one card matching ${list || 'the top card'}.`];
+    // "If you cannot play, draw" and "you may draw whenever you like" are
+    // different games, and the pack already says which one this is. Reading
+    // `mustPlayIfAble` here is what stops the help page from teaching a rule
+    // the table no longer enforces — validateMove reads the same flag.
+    const optional = rules.mustPlayIfAble !== true;
+    if (rules.drawWhenStuck === 'until-playable') {
+      out.push(optional
+        ? 'You may draw instead of playing, and you keep drawing until something fits.'
+        : 'If you cannot play, draw until you can.');
+    } else if (rules.drawWhenStuck) {
+      const n = rules.drawWhenStuck;
+      const cards = n === 1 ? 'a card' : `${n} cards`;
+      out.push(optional
+        ? `You may draw ${cards} instead of playing — even holding something that fits, which is how you hang on to a card you would rather not spend yet.`
+        : `If you cannot play, draw ${cards} and your turn ends.`);
+    }
+    if (rules.playAfterDraw && rules.drawWhenStuck) {
+      out.push('A card you draw can be played straight away if it fits, or kept — either ends your turn, '
+        + 'and the rest of your hand is out of play until your next one.');
+    }
+    return out;
+  },
+
+  endingLines(pack) {
+    return pack.rules?.winner === 'first-empty-hand'
+      ? ['A round ends the moment one player is out of cards.']
+      : [];
+  },
+
+  /** What a bot's move is CALLED in the log line, beyond the platform's defaults. */
+  botVerbs: { pass: 'kept the card they drew' },
+
+  /** The end-of-match numbers this genre's players care about, in reading order. */
+  statLines(seat) {
+    return [
+      { label: 'Cards played', value: seat.cardsPlayed, always: true },
+      { label: 'Cards drawn', value: seat.draws, always: true },
+      { label: 'Action cards', value: seat.effectsPlayed },
+      { label: 'Declared', value: seat.declared },
+      { label: 'Caught someone', value: seat.caughtOthers },
+      { label: 'Caught out', value: seat.wasCaught },
+    ];
   },
 
   botHeuristic(ctx, move) {

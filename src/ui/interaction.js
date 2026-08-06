@@ -25,8 +25,17 @@ export function handAddress(seat) {
 }
 
 /**
- * How the human's taps are interpreted for the open pack — derived from the
- * template and the current phase, never stored:
+ * THE MODE VOCABULARY IS THE PLATFORM'S; WHICH PHASE MEANS WHICH MODE IS THE
+ * TEMPLATE'S.
+ *
+ * Every gesture surface downstream keys off these strings — the per-mode
+ * branches in buildUiModel, stagingPhase, dropCandidates, draggableSources,
+ * and the table's own smart-select arming. That is fine, and deliberate: they
+ * are a closed set of INPUT SHAPES a table knows how to render. What was not
+ * fine was the map from template id to mode living here, because it made
+ * `interactionMode` the root of the whole coupling — a fifth template had to be
+ * added to this file before any of the six downstream surfaces could see it.
+ *
  *   'tap'        one tap plays the card; the destination is implicit
  *                (shedding's discard, a trick).
  *   'play-drawn' the same tap, but only the card just drawn answers to it;
@@ -38,13 +47,22 @@ export function handAddress(seat) {
  *   'place'      select one card from hand/stock/discard top, then tap a
  *                build pile (play) or an own discard pile (end of turn).
  */
+export const INTERACTION_MODES = Object.freeze([
+  'tap', 'play-drawn', 'pass', 'rummy-draw', 'rummy-meld', 'place',
+]);
+
+/**
+ * How the human's taps are interpreted right now — asked of the template,
+ * never stored.
+ *
+ * A template that names a mode this build has never heard of gets 'tap', which
+ * is the one shape every table can render: one card, one implicit destination.
+ * Failing soft rather than throwing is right here because the alternative is a
+ * blank table.
+ */
 export function interactionMode(state) {
-  const id = state.pack.template.id;
-  if (id === 'trick-taking') return state.turn.phase === 'pass' ? 'pass' : 'tap';
-  if (id === 'contract-rummy') return state.turn.phase === 'draw' ? 'rummy-draw' : 'rummy-meld';
-  if (id === 'sequencing') return 'place';
-  if (id === 'shedding' && state.turn.phase === 'playDrawn') return 'play-drawn';
-  return 'tap';
+  const mode = state.pack.template.interactionMode?.(makeCtx(state));
+  return INTERACTION_MODES.includes(mode) ? mode : 'tap';
 }
 
 /**
@@ -107,13 +125,31 @@ function meldStageable(state, seat, hand) {
   return hand.filter((id) => !forbidden.some((sel) => selectorMatches(ctx.cardById(id), sel)));
 }
 
+/**
+ * THE ONE PLACE A CONTRACT ITEM IS NAMED.
+ *
+ * `letter` is what fits on a ladder rung, `long` is the sentence the inspector
+ * gives, and `key` is the word in the ladder's legend. They used to be three
+ * separate literals in two files — the letters here, the legend string spelled
+ * out in src/ui/table.js — which is one edit away from a ladder whose key does
+ * not match its rungs.
+ */
+export const CONTRACT_ITEM_KINDS = Object.freeze({
+  set: { letter: 'S', key: 'set', long: (n) => `set of ${n}` },
+  run: { letter: 'R', key: 'run', long: (n) => `run of ${n}` },
+  colorGroup: { letter: 'C', key: 'colour', long: (n) => `${n} of one color` },
+});
+
+/** "S set · R run · C colour" — derived, so it can never disagree with the rungs. */
+export const CONTRACT_LADDER_KEY = Object.values(CONTRACT_ITEM_KINDS)
+  .map((k) => `${k.letter} ${k.key}`)
+  .join(' · ');
+
 export function describeContractItem(item) {
   const m = /^(\w+)\((\d+)\)$/.exec(item || '');
   if (!m) return item;
-  if (m[1] === 'set') return `set of ${m[2]}`;
-  if (m[1] === 'run') return `run of ${m[2]}`;
-  if (m[1] === 'colorGroup') return `${m[2]} of one color`;
-  return item;
+  const kind = CONTRACT_ITEM_KINDS[m[1]];
+  return kind ? kind.long(m[2]) : item;
 }
 
 /**
@@ -128,8 +164,8 @@ export function describeContractItem(item) {
 export function shortContractItem(item) {
   const m = /^(\w+)\((\d+)\)$/.exec(item || '');
   if (!m) return String(item || '');
-  const letter = { set: 'S', run: 'R', colorGroup: 'C' }[m[1]];
-  return letter ? `${letter}${m[2]}` : String(item);
+  const kind = CONTRACT_ITEM_KINDS[m[1]];
+  return kind ? `${kind.letter}${m[2]}` : String(item);
 }
 
 /** A whole contract, short: "S3+R4". */
@@ -497,12 +533,23 @@ export function smartSelection(state, seat, cardId, selection) {
  * The zone a played/discarded card visibly lands in when the move does not
  * name one — shedding's discard, a trick. This is the implicit destination
  * that makes one-tap play work, and the same one a dragged card falls onto.
+ *
+ * READ OFF THE ZONE DEFINITIONS, not probed by name. This used to try
+ * 'discard', then 'trick', then 'discard' again, which is a template's layout
+ * written out in platform code — and quietly wrong for any pack whose landing
+ * pile is called something else. A zone declares `landing: 'play' | 'discard' |
+ * 'both'` beside the rest of its definition (see each template's
+ * defaultZones); zone-definition order breaks a tie, which is the order the
+ * template listed them in.
  */
 export function implicitLandingZone(state, move) {
   if (move.to) return move.to;
-  if (move.type === 'discard' && state.zones.has('discard')) return 'discard';
-  if (state.zones.has('trick')) return 'trick';
-  if (state.zones.has('discard')) return 'discard';
+  const wanted = move.type === 'discard' ? 'discard' : 'play';
+  for (const def of state.zones.defs.values()) {
+    if (def.per === 'player') continue;
+    if (def.landing !== wanted && def.landing !== 'both') continue;
+    if (state.zones.has(def.id)) return def.id;
+  }
   return null;
 }
 

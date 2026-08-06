@@ -5,7 +5,7 @@
 
 import { makeCtx } from './context.js';
 import { emitEvent, clearAllZones } from './state.js';
-import { evaluateGameOver } from './scoring.js';
+import { evaluateGameOver, runRoundScore } from './scoring.js';
 
 export function validateMove(state, move) {
   if (state.gameOver) return { legal: false, rule: 'game-over', reason: 'The game is over.' };
@@ -37,29 +37,34 @@ export function applyMove(state, move) {
  * seeded RNG (the redeal): replaying the log must cross the boundary at exactly
  * the same move or every card after it diverges.
  *
- * Templates keep their existing signals: shedding/contract-rummy/sequencing set
- * state.gameOver when a hand or stock empties (their isRoundOver reads it back);
- * trick-taking's isRoundOver is "all hands empty". Whether that signal means
- * "round over" or "match over" is decided HERE, from scoring.gameOver /
- * template.isGameOver — a Crazy Eights hand ending at 40 points now deals the
- * next round instead of ending the match, which is what its manifest
- * (`accumulate: true`, `anyScore >= 100`) always declared.
+ * Templates say "this hand is finished" with ctx.endRound(winner)
+ * (src/engine/context.js); trick-taking's isRoundOver is "all hands empty"
+ * instead, and names no winner. Whether that signal means "match over" is
+ * decided HERE, from scoring.gameOver / template.isGameOver — a Crazy Eights
+ * hand ending at 40 points deals the next round instead of ending the match,
+ * which is what its manifest (`accumulate: true`, `anyScore >= 100`) always
+ * declared.
  */
 function maybeFinishRound(state) {
   const template = state.pack.template;
   let ctx = makeCtx(state);
   if (!template.isRoundOver(ctx)) return;
 
-  const roundScores = template.scoreRound(ctx) || {};
+  const roundScores = (template.scoreRound ? template.scoreRound(ctx) : runRoundScore(ctx)) || {};
   for (const [seat, delta] of Object.entries(roundScores)) {
     state.scores[Number(seat)] += delta;
   }
   state.roundScores = roundScores;
 
+  // The seat that finished the hand, published BEFORE the game-over question is
+  // asked: contract-rummy's isGameOver is "did the seat that went out complete
+  // the final contract", which is a question about this seat.
+  if (state.roundEnded) state.winner = state.roundWinner;
+
   // scoring.gameOver ("anyScore >= N") when the pack declares it; otherwise the
   // template owns the call (Milestones: final contract; Stockpile: empty stock).
   const evaluated = evaluateGameOver(ctx);
-  const over = evaluated ? evaluated.over : template.isGameOver(ctx);
+  const over = evaluated ? evaluated.over : (template.isGameOver ? template.isGameOver(ctx) : false);
   const winner = evaluated?.over ? evaluated.winner : state.winner;
 
   emitEvent(state, 'roundOver', {
@@ -68,6 +73,9 @@ function maybeFinishRound(state) {
     totals: state.scores.slice(),
     over,
   });
+
+  state.roundEnded = false;
+  state.roundWinner = null;
 
   if (over) {
     state.gameOver = true;
@@ -117,7 +125,7 @@ export function enumerateLegalMoves(state, seat) {
 
 export function runScoreRound(state) {
   const ctx = makeCtx(state);
-  return state.pack.template.scoreRound(ctx);
+  return state.pack.template.scoreRound ? state.pack.template.scoreRound(ctx) : runRoundScore(ctx);
 }
 
 export function isRoundOver(state) {

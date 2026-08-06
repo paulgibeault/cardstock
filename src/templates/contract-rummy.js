@@ -2,7 +2,6 @@
 // Each round every player pursues a personal contract (ctx.playerVar 'phase', 1-indexed
 // into ctx.rules.contracts). Turn: draw -> meld (lay down once, then hit freely) -> discard.
 
-import { runRoundScore } from '../engine/scoring.js';
 import { initializeDeckInto } from '../engine/state.js';
 import { selectorMatches } from '../engine/selectors.js';
 import { resolveByPlayers } from '../engine/deal.js';
@@ -121,7 +120,7 @@ function meldValue(ctx, entry, kind, wilds) {
  *                        deck forces.
  *
  * A player who wants the other window says so and this leaves it alone; see
- * `wildChoice`, which is the question the table asks before the card lands.
+ * `pendingChoice`, which is the question the table asks before the card lands.
  * Deriving is not guessing what the player meant so much as making sure SOME
  * value is on the card by the time it is on the felt.
  *
@@ -547,11 +546,14 @@ function dealRound(ctx) {
 const contractRummy = {
   id: 'contract-rummy',
 
-  defaultZones() {
+  defaultZones(rules, seats) {   // eslint-disable-line no-unused-vars
     return [
       { id: 'hand', per: 'player', visibility: 'owner', layout: 'fan', order: 'sorted', facing: 'up' },
-      { id: 'draw', per: 'shared', visibility: 'none', layout: 'stack', order: 'stack', facing: 'down', label: 'Draw' },
-      { id: 'discard', per: 'shared', visibility: 'top', layout: 'stack', order: 'stack', facing: 'up', label: 'Discard' },
+      // `interactive`: hidden, but it is the draw control, so it stays on the felt.
+      { id: 'draw', per: 'shared', visibility: 'none', layout: 'stack', order: 'stack', facing: 'down', label: 'Draw', interactive: true },
+      // `landing: 'discard'`: a play here goes to a meld, never to a pile, so
+      // only the discard has an implicit destination.
+      { id: 'discard', per: 'shared', visibility: 'top', layout: 'stack', order: 'stack', facing: 'up', label: 'Discard', landing: 'discard' },
       { id: 'melds', per: 'player', visibility: 'all', layout: 'grid', order: 'free', facing: 'up', label: 'Melds' },
     ];
   },
@@ -706,7 +708,7 @@ const contractRummy = {
       const completed = ctx.playerVar(seat, 'phase');
       ctx.setPlayerVar(seat, 'phase', completed + 1);
       ctx.emit('laidDown', { seat, contract: completed, melds: groups.length });
-      if (ctx.cardIdsIn(ctx.zoneAddr('hand', seat)).length === 0) ctx.setGameOver(seat);
+      if (ctx.cardIdsIn(ctx.zoneAddr('hand', seat)).length === 0) ctx.endRound(seat);
       return;
     }
 
@@ -724,7 +726,7 @@ const contractRummy = {
       group.wilds = resolved.wilds || group.wilds || {};
       ctx.setPlayerVar(targetSeat, 'melds', groups);
       ctx.emit('hit', { seat, targetSeat, meld: meldIndex });
-      if (ctx.cardIdsIn(ctx.zoneAddr('hand', seat)).length === 0) ctx.setGameOver(seat);
+      if (ctx.cardIdsIn(ctx.zoneAddr('hand', seat)).length === 0) ctx.endRound(seat);
       return;
     }
 
@@ -734,7 +736,7 @@ const contractRummy = {
       ctx.moveCards([cardId], ctx.zoneAddr('hand', seat), 'discard');
 
       if (ctx.cardIdsIn(ctx.zoneAddr('hand', seat)).length === 0) {
-        ctx.setGameOver(seat);
+        ctx.endRound(seat);
         return;
       }
 
@@ -856,35 +858,134 @@ const contractRummy = {
     return null;
   },
 
+  /* ---------------------------------------------------------------- *
+   * What the platform asks this template about itself (src/templates/CONTRACT.md)
+   * ---------------------------------------------------------------- */
+
+  interactionMode(ctx) {
+    return ctx.turn.phase === 'draw' ? 'rummy-draw' : 'rummy-meld';
+  },
+
   /**
-   * The question a hit still owes before it can be applied: which card a wild
-   * is being played as.
+   * The question a move still owes before it can be applied — asked in a loop
+   * by the platform until it answers null.
    *
-   * Only asked where the answer is genuinely the player's — a run has two
-   * open ends and the choice between them is a real one (the low end blocks a
-   * different card than the high end does). A set or a colour group has
-   * exactly one value on offer, and a prompt there would be theatre; the same
-   * goes for a natural card, which is already the card it is.
+   * Two questions live here, and they used to live in two different places in
+   * src/ui/table.js: WHICH CARD A WILD IS BEING PLAYED AS on its way into a
+   * meld, and WHO a discarded skip is aimed at. The second was a hardcoded
+   * `effect.type === 'skipTarget' && effect.on === 'discard'` in the platform's
+   * move gate — one effect schema's behaviour, known to the UI.
    *
-   * Returns null when there is nothing to ask, which is the caller's cue to
-   * send the move as it stands and let resolveMeld freeze the one value that
-   * fits.
-   *
-   * @returns { cardId, attr: 'rank' | 'color', values: [string, ...] } | null
+   * The wild question is only asked where the answer is genuinely the player's:
+   * a run has two open ends and choosing between them is a real decision (the
+   * low end blocks a different card than the high end does). A set or a colour
+   * group has exactly one value on offer and a prompt there would be theatre;
+   * the same goes for a natural card, which is already the card it is. Answering
+   * null is the platform's cue to send the move as it stands and let resolveMeld
+   * freeze the one value that fits.
    */
-  wildChoice(ctx, move) {
-    if (move?.type !== 'hit' || move.choice?.wilds) return null;
-    const cardId = move.cards?.[0];
-    const card = cardId && ctx.cardById(cardId);
-    if (!card || !isWildCard(ctx, card)) return null;
-    const { seat: targetSeat, meld: meldIndex } = move.choice || {};
-    if (targetSeat === undefined || meldIndex === undefined) return null;
-    const group = getMeldGroups(ctx, targetSeat)[meldIndex];
-    if (!group) return null;
-    const kind = meldKindOf(ctx, group);
-    if (!kind) return null;
-    const values = wildHitValues(ctx, group, kind, cardId);
-    return values.length > 1 ? { cardId, attr: pinnedAttr(kind), values } : null;
+  pendingChoice(ctx, move) {
+    if (move?.type === 'hit' && !move.choice?.wilds) {
+      const cardId = move.cards?.[0];
+      const card = cardId && ctx.cardById(cardId);
+      if (!card || !isWildCard(ctx, card)) return null;
+      const { seat: targetSeat, meld: meldIndex } = move.choice || {};
+      if (targetSeat === undefined || meldIndex === undefined) return null;
+      const group = getMeldGroups(ctx, targetSeat)[meldIndex];
+      if (!group) return null;
+      const kind = meldKindOf(ctx, group);
+      if (!kind) return null;
+      const values = wildHitValues(ctx, group, kind, cardId);
+      if (values.length <= 1) return null;
+      const attr = pinnedAttr(kind);
+      return {
+        attr,
+        prompt: attr,
+        kind: 'value',
+        cardId,
+        options: values.map((value) => ({ value })),
+        apply: (m, value) => ({
+          ...m,
+          choice: { ...(m.choice || {}), wilds: { [cardId]: { [attr]: value } } },
+        }),
+      };
+    }
+
+    if (move?.type === 'discard' && move.choice?.target === undefined) {
+      const card = move.cards?.length ? ctx.cardById(move.cards[0]) : null;
+      const effect = card?.effect;
+      if (effect?.type !== 'skipTarget' || effect.on !== 'discard') return null;
+      const options = [];
+      for (let s = 0; s < ctx.seats; s++) if (s !== move.actor) options.push({ value: s });
+      if (!options.length) return null;
+      return {
+        attr: 'player',
+        prompt: 'player to skip',
+        kind: 'seat',
+        cardId: move.cards[0],
+        options,
+        apply: (m, value) => ({ ...m, choice: { ...(m.choice || {}), target: value } }),
+      };
+    }
+
+    return null;
+  },
+
+  /**
+   * A seat's laid-down melds, as the groups a hit can target.
+   *
+   * Exposed because the table re-implemented this fallback — stored groupings,
+   * else the whole zone as one group — in a copy whose own comment admitted it
+   * was a copy.
+   */
+  getMeldGroups(ctx, seat) {
+    return getMeldGroups(ctx, seat);
+  },
+
+  /**
+   * What this seat is RACING, for the felt's score chips.
+   *
+   * The contract you have reached is the score that matters in this genre and
+   * the points are the tiebreak, which is why the platform's plain-score default
+   * is wrong here — and why the platform used to read `playerVars[seat].phase`
+   * directly in five places.
+   */
+  scoreChip(ctx, seat) {
+    const phase = ctx.playerVar(seat, 'phase');
+    const score = ctx.score(seat);
+    if (typeof phase !== 'number') return null;
+    return {
+      short: `Ph ${phase}`,
+      long: `Ph ${phase} · ${score}`,
+      aria: `on contract ${phase}, ${score} points`,
+    };
+  },
+
+  ruleLines() {
+    return [
+      'A turn is draw, then meld, then discard.',
+      'Draw from the deck or take the top of the discard pile.',
+      'Once your contract is complete you can lay it down; after that you may add cards to anyone\'s melds.',
+      'End your turn by discarding one card.',
+    ];
+  },
+
+  endingLines(pack) {
+    const contracts = pack.rules?.contracts;
+    return Array.isArray(contracts) && contracts.length
+      ? [`There are ${contracts.length} contracts; the match ends when the last one is played.`]
+      : [];
+  },
+
+  botVerbs: { layDown: 'laid down their contract', hit: 'hit a meld' },
+
+  statLines(seat) {
+    return [
+      { label: 'Contract reached', value: seat.phaseReached, always: true },
+      { label: 'Melds laid', value: seat.meldsLaid, always: true },
+      { label: 'Hits', value: seat.hits },
+      { label: 'Cards drawn', value: seat.draws },
+    ];
   },
 
   enumerateLegalMoves(ctx, seat) {
@@ -924,18 +1025,16 @@ const contractRummy = {
   },
 
   isRoundOver(ctx) {
-    return ctx.state.gameOver;
+    return ctx.state.roundEnded;
   },
 
-  scoreRound(ctx) {
-    return runRoundScore(ctx);
-  },
 
   // Not exercised end-to-end by the rule tests: the whole-game winner is whoever goes
-  // out (state.winner, set by applyMove on emptying their hand) having already completed
+  // out (the seat handed to ctx.endRound, which the pipeline has already put in
+  // state.winner provisionally by the time this is asked) having already completed
   // the final contract in ctx.rules.contracts (their 'phase' playerVar advanced past it).
   isGameOver(ctx) {
-    if (!ctx.state.gameOver || ctx.state.winner == null) return false;
+    if (ctx.state.winner == null) return false;
     const phase = ctx.playerVar(ctx.state.winner, 'phase');
     return phase != null && phase > ctx.rules.contracts.length;
   },

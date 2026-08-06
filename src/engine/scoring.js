@@ -101,8 +101,18 @@ export const ROUND_SCORE_STRATEGIES = {
   'penalty-cards-taken': roundScorePenaltyCardsTaken,
 };
 
+/**
+ * The round's per-seat deltas, from the pack's declared strategy.
+ *
+ * A pack that declares no scoring at all scores NOTHING — it does not throw.
+ * Stockpile is that pack: a race to empty a stock has no points, and the only
+ * reason its template carried a `scoreRound() { return {}; }` was to stop this
+ * function throwing on the way past. A named strategy that does not exist is
+ * still an error, because that is a typo rather than a decision.
+ */
 export function runRoundScore(ctx) {
-  const strategy = ctx.pack.scoring.roundScore;
+  const strategy = ctx.pack.scoring?.roundScore;
+  if (strategy === undefined || strategy === null) return {};
   if (typeof strategy === 'string' && ROUND_SCORE_STRATEGIES[strategy]) {
     return ROUND_SCORE_STRATEGIES[strategy](ctx);
   }

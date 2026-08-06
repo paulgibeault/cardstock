@@ -19,6 +19,7 @@
 //     and stringify a whole function into a fill attribute.
 
 import { safeAccent } from '../css.js';
+import { templateInfo } from '../../templates/registry.js';
 import { BACK_PATTERNS, backPanelColor, renderBack } from './backs.js';
 import { chooserTile, chooserTint } from './chooser.js';
 import * as vanilla from './vanilla.js';
@@ -46,19 +47,25 @@ const MAX_COLORS = 8;
  *  - a standard deck gets the standard treatment, checked BEFORE the template,
  *    because Crazy Eights is a shedding game played with a 52-card deck and
  *    wants pips rather than Wildfire's paint; and
- *  - a shedding pack with a deck of its own is the Wildfire shape.
+ *  - the template's own declared default, which for shedding is the Wildfire
+ *    shape.
  *
  * Nothing else is inferred. The template alone does not say what a deck looks
  * like — Milestones is `contract-rummy` and Stockpile is `sequencing`, which is
  * the opposite of what their card art wants — so those packs name their style
  * outright instead of the registry guessing from a field that does not know.
+ *
+ * The template default is READ, not branched on: this used to be
+ * `if (manifest.template === 'shedding')`, one of the six places a fifth
+ * template had to be added to. src/templates/registry.js is a table that
+ * imports nothing, so the lobby still resolves art without loading a template.
  */
 export function resolveStyleId(manifest) {
   const declared = manifest.ui && manifest.ui.cardStyle;
   if (typeof declared === 'string' && Object.hasOwn(STYLES, declared)) return declared;
   if (typeof manifest.deck === 'string' && /^standard-5[24]/.test(manifest.deck)) return 'classic';
-  if (manifest.template === 'shedding') return 'shedding';
-  return 'vanilla';
+  const fromTemplate = templateInfo(manifest.template).defaultCardStyle;
+  return Object.hasOwn(STYLES, fromTemplate) ? fromTemplate : 'vanilla';
 }
 
 /** The deck's own colours, in deck order. Null when the deck has none (or is absent). */

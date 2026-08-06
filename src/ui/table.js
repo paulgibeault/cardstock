@@ -62,7 +62,7 @@ import {
 import {
   interactionMode, stagingPhase, buildUiModel, dropCandidates, draggableSources, pruneSelection,
   isSelected, handAddress, implicitLandingZone, smartSelection, ladderRungs,
-  describeContractItem, describeContract, shortContract,
+  describeContractItem, describeContract, shortContract, CONTRACT_LADDER_KEY,
 } from './interaction.js';
 import {
   orderHand, reorder, nextMode, isSortMode, fanStep, classifyHandGesture, SORT_LABELS,
@@ -101,17 +101,6 @@ const DISCARD_DEPTH = 3;
 
 /** §7b: this value reaches a class name, so it is an allow-list, not a passthrough. */
 const OVERLAP_MODES = new Set(['horizontal', 'vertical']);
-
-/**
- * Templates this table renders COMPLETELY, and can therefore be played through
- * from deal to game over. All four, since the table learned zone-driven piles,
- * pass/lay-down selection, and the round loop — the lobby reads this to decide
- * which tiles still carry a Preview badge (none, today; the set stays because
- * a fifth template would start life outside it).
- */
-export const FULLY_PLAYABLE_TEMPLATES = new Set([
-  'shedding', 'trick-taking', 'contract-rummy', 'sequencing',
-]);
 
 const el = {
   screen: document.getElementById('table-screen'),
@@ -289,6 +278,19 @@ function cardById(state, cardId) {
   return state.pack.cardsById.get(baseId(cardId));
 }
 
+/**
+ * Cards this seat has already committed to a simultaneous phase — drawn as
+ * chosen, and no longer choosable.
+ *
+ * Trick-taking keeps them in a double-underscore-PRIVATE player var, which this
+ * file read directly in three places. Asking the template is the difference
+ * between the platform knowing that Hearts has a passing phase and the platform
+ * knowing that some genres commit a selection before playing it.
+ */
+function committedSelectionOf(state, seat) {
+  return state.pack.template.committedSelection?.(makeCtx(state), seat) ?? null;
+}
+
 /** What a seat may SAY right now, out of turn (§E2). Never enumerated as a play. */
 function announcementsFor(state, seat) {
   const template = state.pack.template;
@@ -411,9 +413,11 @@ function sharedZoneInstances(state) {
   const out = [];
   for (const def of state.zones.defs.values()) {
     if (def.per === 'player') continue;
-    // Hidden shared zones (Stockpile's `recycled`) stay off the table; the
-    // draw pile is the one hidden zone that is also a control, so it shows.
-    if (def.visibility === 'none' && def.id !== 'draw') continue;
+    // Hidden shared zones (Stockpile's `recycled`) stay off the table; a
+    // hidden zone that is ALSO a control says so with `interactive` in its
+    // definition, which is how the draw pile keeps its place without this line
+    // knowing that a draw pile is called "draw".
+    if (def.visibility === 'none' && !def.interactive) continue;
     out.push(...instancesOf(def, null));
   }
   // The deck reads best on the left, whatever order the template declared.
@@ -507,7 +511,7 @@ function buildPileNode(state, inst, ui, { mini = false, draggableTop = null } = 
 
   const target = ui.readyTargets.get(address) || null;
   const sourceTop = !target && ui.sourceTops.has(address) ? ui.sourceTops.get(address) : null;
-  const isSpread = def.layout === 'spread' || def.id === 'trick';
+  const isSpread = def.layout === 'spread';
   const faceDown = def.facing === 'down' || def.visibility === 'none';
   // A pile whose contract is "only the top card is public" must not leak the
   // ones under it. It used to draw DISCARD_DEPTH real faces for depth, which
@@ -657,39 +661,27 @@ function buildPileNode(state, inst, ui, { mini = false, draggableTop = null } = 
  * this" rather than merely "this pile is a discard".
  */
 function activeMatchTint(state, address) {
-  if (address !== 'discard' || !state.zones.has('discard')) return null;
-  const matchOn = state.pack.rules?.matchOn;
-  if (!Array.isArray(matchOn)) return null;
-  const topId = state.zones.top('discard');
-  const card = topId ? cardById(state, topId) : null;
-  if (!card) return null;
-
-  for (const attr of matchOn) {
-    if (card[attr] !== null && card[attr] !== undefined) continue; // the card says it
-    const value = state.vars[`active${attr[0].toUpperCase()}${attr.slice(1)}`];
-    if (value === undefined || value === null) continue;
-    // Through the pack's palette and safeCssColor: pack data reaching a style
-    // property (§7b). A pack with no palette entry for this value still gets
-    // the word, just without the dot.
-    //
-    // `cardArt.theme.palette`, not `cardArt.palette` — the renderer exposes its
-    // resolved theme, and the shorter spelling was undefined, so this swatch
-    // never once appeared. Same typo, same silent nothing, in flashFelt.
-    return { attr, value, tint: safeCssColor(cardArt.theme.palette?.[value]) };
-  }
-  return null;
+  // The template answers what the table is matching on and whether the top card
+  // can show it for itself (`onCard`) — this file used to rebuild the
+  // `active${Attr}` var name and probe the discard by name.
+  const match = state.pack.template.activeMatch?.(makeCtx(state));
+  if (!match || match.address !== address || match.onCard) return null;
+  // Through the pack's palette and safeCssColor: pack data reaching a style
+  // property (§7b). A pack with no palette entry for this value still gets
+  // the word, just without the dot.
+  //
+  // `cardArt.theme.palette`, not `cardArt.palette` — the renderer exposes its
+  // resolved theme, and the shorter spelling was undefined, so this swatch
+  // never once appeared. Same typo, same silent nothing, in flashFelt.
+  return { attr: match.attr, value: match.value, tint: safeCssColor(cardArt.theme.palette?.[match.value]) };
 }
 
-// Per-seat meld groupings mirror the template's playerVar bookkeeping: the
-// stored [{item, cards}] when a lay-down recorded one, else the whole zone as
-// one group (the same fallback contract-rummy's getMeldGroups applies).
+// The template's own grouping, asked for rather than re-derived: this used to
+// be a copy of contract-rummy's getMeldGroups fallback whose comment admitted
+// it was a copy, which is exactly how two answers to "what are this seat's
+// melds" start to disagree.
 function meldGroupsOf(state, seat) {
-  const stored = state.playerVars[seat]?.melds;
-  if (stored) return stored;
-  const addr = `melds.${seat}`;
-  if (!state.zones.has(addr)) return [];
-  const cards = state.zones.cards(addr);
-  return cards.length ? [{ item: null, cards: cards.slice() }] : [];
+  return state.pack.template.getMeldGroups?.(makeCtx(state), seat) || [];
 }
 
 /**
@@ -899,15 +891,21 @@ function renderContractLadder(state) {
     el.contractLadder.appendChild(rung);
   }
 
-  el.contractLadder.appendChild(line('ladder__key', 'S set · R run · C colour'));
+  el.contractLadder.appendChild(line('ladder__key', CONTRACT_LADDER_KEY));
   el.contractLadder.hidden = false;
 }
 
-/** Hearts' point total taken so far — worth a chip on the won pile. */
-function wonPointsText(state, seat) {
-  const addr = `won.${seat}`;
-  if (!state.zones.has(addr) || !state.pack.scoring?.cardValues) return null;
-  const cards = state.zones.cards(addr).map((id) => cardById(state, id)).filter(Boolean);
+/**
+ * What a pile has cost so far, for a pile whose contents are worth points.
+ *
+ * `def.showsHeldValue` rather than `def.id === 'won'`: a hidden pile holding
+ * scoring cards is a fact about the zone, so it is declared beside the zone
+ * (trick-taking's defaultZones). Hearts is the game that made it worth showing;
+ * it is not the rule.
+ */
+function heldValueText(state, def, address) {
+  if (!def.showsHeldValue || !state.zones.has(address) || !state.pack.scoring?.cardValues) return null;
+  const cards = state.zones.cards(address).map((id) => cardById(state, id)).filter(Boolean);
   const pts = handValue(cards, state.pack.scoring);
   return pts > 0 ? `${pts} pts` : null;
 }
@@ -918,17 +916,31 @@ function showsScores(state) {
     || state.scores.some((n) => n !== 0);
 }
 
+/**
+ * What a seat's score chip says — the template's answer, or the plain total.
+ *
+ * Contract rummy's "score" that matters is the contract you have reached and
+ * the points are the tiebreak, which is why a plain total is the wrong default
+ * for it and right for everything else. That used to be
+ * `typeof playerVars[seat].phase === 'number'`, written out twice in this file,
+ * beside three more direct reads of the same private var.
+ *
+ * @returns { short, long, aria } — `short` fits an opponent's plate, `long` is
+ *          the human's own chip, which has room for both numbers.
+ */
+function scoreChipFor(state, seat) {
+  const declared = state.pack.template.scoreChip?.(makeCtx(state), seat);
+  if (declared) return declared;
+  const score = String(state.scores[seat]);
+  return { short: score, long: score, aria: `${score} points` };
+}
+
 function seatScoreChip(state, seat) {
   const chip = document.createElement('span');
   chip.className = 'seat__score';
-  const phase = state.playerVars[seat]?.phase;
-  // Contract rummy's "score" that matters is the contract you have reached;
-  // the points are the tiebreak. Show what the player is actually racing.
-  const text = typeof phase === 'number' ? `Ph ${phase}` : `${state.scores[seat]}`;
-  chip.textContent = text;
-  chip.setAttribute('aria-label', typeof phase === 'number'
-    ? `on contract ${phase}, ${state.scores[seat]} points`
-    : `${state.scores[seat]} points`);
+  const { short, aria } = scoreChipFor(state, seat);
+  chip.textContent = short;
+  chip.setAttribute('aria-label', aria);
   return chip;
 }
 
@@ -1082,7 +1094,7 @@ function renderSeats(state, stagger, acting, ui) {
         if (inst.def.id === 'melds') {
           strip.appendChild(buildMeldStrip(state, seat, ui, { mini: true }));
         } else if (inst.def.visibility === 'none') {
-          const pts = inst.def.id === 'won' ? wonPointsText(state, seat) : null;
+          const pts = heldValueText(state, inst.def, inst.address);
           const chip = line('seat__pilechip', `${inst.def.label || inst.def.id} ${state.zones.count(inst.address)}${pts ? ` · ${pts}` : ''}`);
           chip.dataset.zone = inst.address;
           strip.appendChild(chip);
@@ -1127,7 +1139,7 @@ function renderPlayerZones(state, ui, draggable) {
     } else if (inst.def.visibility === 'none') {
       // The human's own hidden pile (a Hearts won pile): a face-down pile with
       // its count — and its cost, when the pack scores what it holds.
-      const pts = inst.def.id === 'won' ? wonPointsText(state, HUMAN_SEAT) : null;
+      const pts = heldValueText(state, inst.def, inst.address);
       const pile = buildPileNode(state, inst, ui);
       if (pts) pile.querySelector('.pile-count').textContent = pts;
       el.playerPiles.appendChild(pile);
@@ -1213,7 +1225,7 @@ function renderHand(state, ui, stagger, draggable) {
   // The engine's order is dealing order and stays that way; what the player
   // sees is their own arrangement (src/ui/handOrder.js).
   displayedHand = orderHand(engineHand, (id) => cardById(state, id), handPrefs.mode, handPrefs.order);
-  const committedPass = state.playerVars[HUMAN_SEAT]?.__pendingPass;
+  const committedPass = committedSelectionOf(state, HUMAN_SEAT);
 
   // Gathered cards are drawn in the tray instead, so the fan holds only what
   // is still to be chosen from. handPrefs.order is NOT touched — a card put
@@ -1606,7 +1618,7 @@ function renderAnnounceBar(state) {
 function renderActionBar(state, ui, humanActs) {
   const waitingOnPass = interactionMode(state) === 'pass'
     && !humanActs && !state.gameOver
-    && state.playerVars[HUMAN_SEAT]?.__pendingPass !== undefined;
+    && committedSelectionOf(state, HUMAN_SEAT) !== null;
   const hint = humanActs ? ui.hint : (waitingOnPass ? 'Waiting for the other players to pass…' : '');
   // NOT `hidden`. This bar sits in the felt's flex column, and a bar that
   // leaves the column takes its height with it — which meant the turn cue
@@ -1647,10 +1659,7 @@ function renderStatusBar(state, acting) {
   const scored = showsScores(state);
   el.scoreChip.hidden = !scored;
   if (scored) {
-    const phase = state.playerVars[HUMAN_SEAT]?.phase;
-    el.scoreChipValue.textContent = typeof phase === 'number'
-      ? `Ph ${phase} · ${state.scores[HUMAN_SEAT]}`
-      : String(state.scores[HUMAN_SEAT]);
+    el.scoreChipValue.textContent = scoreChipFor(state, HUMAN_SEAT).long;
     el.scoreChip.setAttribute('aria-label', `Your score: ${state.scores[HUMAN_SEAT]}. Open the scoreboard.`);
   }
 }
@@ -1695,7 +1704,7 @@ function renderSelection(state) {
   currentUi = ui;
 
   const handAddr = handAddress(HUMAN_SEAT);
-  const committedPass = state.playerVars[HUMAN_SEAT]?.__pendingPass || [];
+  const committedPass = committedSelectionOf(state, HUMAN_SEAT) || [];
   for (const wrapper of el.hand.children) {
     const cardId = wrapper.dataset.cardId;
     const selected = isSelected(selection, handAddr, cardId) || committedPass.includes(cardId);
@@ -2075,7 +2084,7 @@ function celebrateTrick(state, ev) {
  * it and an outrage when you eat it, and a table that narrated both the same
  * way would be describing the cards rather than the game.
  */
-function actionEventText(ev) {
+function defaultEventText(ev) {
   const you = (seat) => seat === HUMAN_SEAT;
   const name = (seat) => (you(seat) ? 'You' : seatLabel(seat));
 
@@ -2112,9 +2121,29 @@ function actionEventText(ev) {
   return null;
 }
 
-const ACTION_EVENTS = new Set([
-  'skipped', 'reversed', 'penalty', 'wildPlayed', 'handsSwapped', 'handsRotated',
-]);
+/**
+ * What an emitted event SAYS, or null for the many that say nothing on the felt.
+ *
+ * AN OPEN VOCABULARY, IN THREE LAYERS, because a closed one meant a pack-defined
+ * effect could change the game and leave the banner blank:
+ *
+ *   1. the event's own `say: { text, tone }`, for an effect that already knows
+ *      its own sentence when it emits;
+ *   2. the template's `describeEvent(ev)`, for a genre that narrates its own;
+ *   3. the built-ins above, which are the engine effects library's own events
+ *      (src/engine/effects.js) and therefore genuinely platform-level.
+ *
+ * The candidate set is "every event that yields a sentence" rather than a
+ * hardcoded list of six names — an event nobody describes simply returns null
+ * and the next one is tried, which is what every non-action event does.
+ */
+function eventText(state, ev) {
+  if (ev.say && typeof ev.say.text === 'string') {
+    return { text: ev.say.text, tone: ev.say.tone || 'neutral' };
+  }
+  return state.pack.template.describeEvent?.(ev, { seatLabel, humanSeat: HUMAN_SEAT })
+    ?? defaultEventText(ev);
+}
 
 /**
  * Announce an action card: banner, cue, and a pulse on whoever it landed on.
@@ -2124,9 +2153,15 @@ const ACTION_EVENTS = new Set([
  * two effects can fire (a seven-zero swap that also reverses).
  */
 function celebrateAction(state, events) {
-  const ev = events.find((e) => ACTION_EVENTS.has(e.type));
-  if (!ev) return null;
-  const said = actionEventText(ev);
+  let ev = null;
+  let said = null;
+  for (const candidate of events) {
+    const text = eventText(state, candidate);
+    if (!text) continue;
+    ev = candidate;
+    said = text;
+    break;
+  }
   if (!said) return null;
 
   showBanner(said.text, said.tone);
@@ -2476,12 +2511,6 @@ function afterMove(state, move, from, message) {
  * Input
  * ------------------------------------------------------------------ */
 
-function needsChoice(card) {
-  const effect = card.effect;
-  if (!effect || typeof effect === 'string') return null;
-  return effect.choose || null;
-}
-
 /**
  * One option of a card's question, as a button.
  *
@@ -2496,21 +2525,22 @@ function needsChoice(card) {
  * and gets the mark that seat wears everywhere else instead; and a bare word
  * for anything a template invents that is neither.
  *
- * `value` is pack data on two paths and is handled as such on both: textContent
+ * `label` is pack data on two paths and is handled as such on both: textContent
  * for the caption, and a lookup key for the art, which is generated inside
- * src/ui/cardStyles/chooser.js with everything escaped.
+ * src/ui/cardStyles/chooser.js with everything escaped. `value` is what the
+ * template gets back, and is NOT necessarily a string — a seat is a number.
  */
-function buildChoiceOption(attr, { value, icon = null }) {
+function buildChoiceOption(attr, { label, icon = null }) {
   const btn = document.createElement('button');
   btn.type = 'button';
-  const art = cardArt.chooser(attr, value);
+  const art = cardArt.chooser(attr, label);
   btn.className = `choice-option ${art ? 'choice-option--card'
     : icon ? 'choice-option--seat' : 'choice-option--word'}`;
   // Named outright rather than left to name-from-content. The caption below is
   // the name either way, but the picture beside it is a whole card's worth of
   // markup for the computation to walk past, and the one thing this button
   // must never be is unlabelled.
-  btn.setAttribute('aria-label', value);
+  btn.setAttribute('aria-label', label);
   if (art) {
     btn.appendChild(svgNode(art, 'choice-option__art'));
   } else if (icon) {
@@ -2525,7 +2555,7 @@ function buildChoiceOption(attr, { value, icon = null }) {
   }
   const caption = document.createElement('span');
   caption.className = 'choice-option__name';
-  caption.textContent = value;
+  caption.textContent = label;
   btn.appendChild(caption);
   return btn;
 }
@@ -2539,9 +2569,11 @@ function buildChoiceOption(attr, { value, icon = null }) {
  * the awaiting handler holding a promise that could still resolve into a match
  * that was no longer on screen.
  *
- * `options` are plain strings, or `{ value, icon }` when an option has a mark
- * of its own — which today means a player, whose face belongs to a seat rather
- * than to the deck. The promise always resolves with the `value`.
+ * `options` are `{ value, label, icon }`. The promise resolves with the raw
+ * `value`, which is whatever the template put there — a colour name, a rank, or
+ * a SEAT NUMBER — while `label` is what is drawn and read out. Keeping those
+ * two apart is what let the seat prompt stop round-tripping a player's name
+ * back into a seat index by searching the option list for it.
  *
  * `card` is the card that asked — shown at the top of the panel, because "what
  * does this become" is a question about a specific object and the answer reads
@@ -2549,7 +2581,7 @@ function buildChoiceOption(attr, { value, icon = null }) {
  * single card to show.
  */
 async function promptChoice(attr, options, { card = null } = {}) {
-  const choices = options.map((o) => (typeof o === 'string' ? { value: o, icon: null } : o));
+  const choices = options.map((o) => ({ icon: null, ...o, label: o.label ?? String(o.value) }));
   el.choicePrompt.textContent = `Choose a ${attr}`;
   el.choicePanel.replaceChildren();
   el.choiceCard.replaceChildren();
@@ -2597,7 +2629,7 @@ async function promptChoice(attr, options, { card = null } = {}) {
       // answer is visible before it is committed — and the felt then washes in
       // that same colour when it is (flashFelt). §7b: through safeCssColor,
       // because a pack value is reaching a style property.
-      const tint = safeCssColor(cardArt.chooserTint(attr, opt.value));
+      const tint = safeCssColor(cardArt.chooserTint(attr, opt.label));
       const light = () => {
         if (tint) el.choiceDialog.style.setProperty('--choice-tint', tint);
         else el.choiceDialog.style.removeProperty('--choice-tint');
@@ -2620,31 +2652,60 @@ function closeChoiceModal() {
 }
 
 /**
- * "Which of them?" — the seat number, or null if the player backs out.
- *
- * A QUESTION WITH ONE ANSWER IS NOT A QUESTION. At a two-hander there is
- * exactly one other player, and a dialog asking you to confirm the only living
- * opponent is a tax on every seven you play. The same judgement the meld's
- * wildChoice makes ("a set has one answer and is never asked"), applied to the
- * one choice that is about the table rather than the deck.
- *
- * `label` completes the sentence "Choose a …", so each caller says what the
- * target is FOR — being skipped is not the same as having your hand taken.
+ * How many questions one move may owe. A ceiling, not a budget: the loop below
+ * is driven by the template answering null, and this only stops a hook that
+ * never stops asking from hanging the table.
  */
-async function pickOpponent(state, card, label = 'player to swap hands with') {
-  const others = [];
-  for (let s = 0; s < state.seats; s++) if (s !== HUMAN_SEAT) others.push(s);
-  if (others.length === 0) return null;
-  if (others.length === 1) return others[0];
-  // Each seat carries the mark it wears everywhere else, so the answer is a
-  // face rather than a name to read (src/players/roster.js).
-  const options = others.map((s) => {
-    const identity = identityOf(s);
-    return { value: identity.name, icon: identity.icon || null };
-  });
-  const picked = await promptChoice(label, options, { card });
-  if (picked === null) return null;
-  return others[options.findIndex((o) => o.value === picked)];
+const MAX_PENDING_CHOICES = 6;
+
+/**
+ * Fill in everything `move` still owes, asking the player where the answer is
+ * genuinely theirs.
+ *
+ * ONE HOOK, ASKED IN A LOOP, INSTEAD OF THREE HARDCODED EFFECT SCHEMAS. This
+ * used to be: a `choose: 'player'` branch, a colour/suit branch with the four
+ * French suits written out (wrong for any nonstandard deck), a call to the
+ * contract-rummy-specific `wildChoice`, and a
+ * `effect.type === 'skipTarget' && effect.on === 'discard'` special case — four
+ * pieces of effect-schema knowledge in the platform's move gate. The template
+ * now names the question and says where the answer goes; this renders it.
+ *
+ * A QUESTION WITH ONE ANSWER IS NOT A QUESTION. At a two-hander there is exactly
+ * one other player, and a dialog confirming the only living opponent is a tax on
+ * every seven you play — so a single option is applied without asking, which is
+ * the same judgement contract-rummy makes about a set (one possible value, never
+ * asked).
+ *
+ * @returns the completed move, or null if the player backed out.
+ */
+async function fillPendingChoices(state, move, myEpoch) {
+  const template = state.pack.template;
+  if (!template.pendingChoice) return move;
+  for (let asked = 0; asked < MAX_PENDING_CHOICES; asked++) {
+    const ask = template.pendingChoice(makeCtx(state), move);
+    if (!ask || !ask.options?.length) return move;
+
+    // A seat is a number the template cannot dress: its name and mark belong to
+    // the roster (src/players/roster.js), which is the platform's business.
+    const options = ask.options.map((o) => {
+      if (ask.kind !== 'seat') return { value: o.value, label: o.label ?? String(o.value) };
+      const identity = identityOf(o.value);
+      return { value: o.value, label: o.label ?? identity.name, icon: identity.icon || null };
+    });
+
+    let picked;
+    if (options.length === 1) {
+      picked = options[0].value;
+    } else {
+      picked = await promptChoice(ask.prompt || ask.attr, options,
+        { card: ask.cardId ? cardById(state, ask.cardId) : null });
+      // Backed out, or the table closed while the prompt was open — either way
+      // this move belongs to a match that is no longer the one on screen.
+      if (picked === null || myEpoch !== epoch) return null;
+    }
+    move = ask.apply(move, picked);
+  }
+  return move;
 }
 
 /**
@@ -2661,55 +2722,9 @@ async function pickOpponent(state, card, label = 'player to swap hands with') {
 async function performHumanMove(state, move, sourceNode) {
   const myEpoch = epoch;
 
-  if (move.type === 'playCard' && move.cards && !move.choice) {
-    const card = cardById(state, move.cards[0]);
-    const attr = card ? needsChoice(card) : null;
-    // A TARGET IS A SEAT, NOT A VALUE OFF A CARD, and that is the whole reason
-    // this is a branch rather than one more entry in the list below. Wildfire's
-    // seven-zero seven says `choose: 'player'`, and the colour branch answered
-    // it with the deck's colours — so the card that reads "Swap hands with a
-    // player of your choosing" offered you red, yellow, green and blue, and the
-    // engine then looked for a seat called "red" and swapped nothing.
-    if (attr === 'player') {
-      const picked = await pickOpponent(state, card);
-      if (picked === null || myEpoch !== epoch) return;
-      move = { ...move, choice: { player: picked } };
-    } else if (attr) {
-      const options = attr === 'suit'
-        ? ['clubs', 'diamonds', 'hearts', 'spades']
-        : [...new Set([...state.pack.cardsById.values()].map((c) => c.color).filter(Boolean))];
-      const picked = await promptChoice(attr, options, { card });
-      // Backed out, or the table closed while the prompt was open — either way
-      // this move belongs to a match that is no longer the one on screen.
-      if (picked === null || myEpoch !== epoch) return;
-      move = { ...move, choice: { [attr]: picked } };
-    }
-  }
-
-  // A wild joining a meld has to become a specific card before it lands, and
-  // for a run there are two honest answers (either end). The template says
-  // when the question is real; a set has one answer and is never asked.
-  if (move.type === 'hit' && move.cards && state.pack.template.wildChoice) {
-    const ask = state.pack.template.wildChoice(makeCtx(state), move);
-    if (ask) {
-      const picked = await promptChoice(ask.attr, ask.values, { card: cardById(state, ask.cardId) });
-      if (picked === null || myEpoch !== epoch) return;
-      move = {
-        ...move,
-        choice: { ...(move.choice || {}), wilds: { [ask.cardId]: { [ask.attr]: picked } } },
-      };
-    }
-  }
-
-  if (move.type === 'discard' && move.cards) {
-    const card = cardById(state, move.cards[0]);
-    const effect = card?.effect;
-    if (effect?.type === 'skipTarget' && effect.on === 'discard' && move.choice?.target === undefined) {
-      const picked = await pickOpponent(state, card, 'player to skip');
-      if (picked === null || myEpoch !== epoch) return;
-      move = { ...move, choice: { ...(move.choice || {}), target: picked } };
-    }
-  }
+  const completed = await fillPendingChoices(state, move, myEpoch);
+  if (completed === null || myEpoch !== epoch) return;
+  move = completed;
 
   const check = validateMove(state, move);
   if (!check.legal) {
@@ -2935,19 +2950,28 @@ function scheduleNextTurn(state, myEpoch) {
       ? (zoneRect(move.from ?? 'draw') || seatRect(actingNow))
       : seatRect(actingNow);
     applyStateChange(state, move, { far: true });
-    afterMove(state, move, from, `${identityOf(actingNow).name} ${BOT_VERBS[move.type] || 'played'}.`);
+    afterMove(state, move, from, `${identityOf(actingNow).name} ${botVerb(state, move.type)}.`);
   }, thinkTimeMs(identity, settings.botDelayMs));
 }
 
+/**
+ * What a bot did, in the log line.
+ *
+ * The four every genre has live here; anything a template invents it names
+ * itself (`template.botVerbs`), which is what stops a fifth template's move
+ * types from all reading "played". Falling back to 'played' rather than to the
+ * raw move type is deliberate: a log line is prose, and `layDown` is not a word.
+ */
 const BOT_VERBS = {
   draw: 'drew',
   playCard: 'played',
   discard: 'discarded',
-  passCards: 'passed',
-  layDown: 'laid down their contract',
-  hit: 'hit a meld',
   pass: 'passed the turn',
 };
+
+function botVerb(state, moveType) {
+  return state.pack.template.botVerbs?.[moveType] || BOT_VERBS[moveType] || 'played';
+}
 
 function cancelBotTurn() {
   if (botTimer) botTimer.cancel();
