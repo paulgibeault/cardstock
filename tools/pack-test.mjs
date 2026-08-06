@@ -33,8 +33,14 @@ async function readJson(p) {
   return JSON.parse(await readFile(p, 'utf8'));
 }
 
-/** Exported so a test can render a real deck without a second copy of this. */
-export async function loadPackFromDisk(packId) {
+/**
+ * Exported so a test can render a real deck without a second copy of this.
+ *
+ * `variants` is the id list to switch on, or undefined for the pack's own
+ * defaults — the same contract src/ui/packSource.js hands the browser, so a
+ * rule test and a real table are loading the pack the same way.
+ */
+export async function loadPackFromDisk(packId, variants) {
   const dir = path.join(PACKS_DIR, packId);
   const manifest = await readJson(path.join(dir, 'manifest.json'));
   let deckJson;
@@ -43,7 +49,10 @@ export async function loadPackFromDisk(packId) {
   } catch {
     deckJson = undefined;
   }
-  return loadPack(manifest, { deckJson });
+  // Cloned, because loadPack patches the manifest it is given and this one is
+  // re-read per variant set — a patch leaking into the next load would make a
+  // variant test contaminate the plain one after it.
+  return loadPack(structuredClone(manifest), { deckJson, variants });
 }
 
 function buildStateFromSetup(pack, setup) {
@@ -199,12 +208,28 @@ function runAssertion(state, assertion) {
 // the CLI and the CI gate exercise the same code rather than two copies.
 export async function runPackTests(packId, { log = console.log } = {}) {
   const say = log || (() => {});
-  const pack = await loadPackFromDisk(packId);
   const testFile = await readJson(path.join(PACKS_DIR, packId, 'tests', 'rules.test.json'));
+
+  // VARIANTS ARE PART OF THE RULE SET, so a test names the one it is about.
+  // The schema has documented `variants` at both levels since it was written
+  // and nothing here read it — every test ran against the pack's defaults, so
+  // a variant test silently asserted the base game's behaviour and passed for
+  // the wrong reason. That is how Wildfire's seven-zero swap could be dead in
+  // the engine with a green suite.
+  //
+  // Packs are loaded once per DISTINCT variant set rather than per test: a load
+  // expands the whole deck, and most files name no variants at all.
+  const packs = new Map();
+  const packFor = async (variants) => {
+    const key = variants ? [...variants].sort().join(',') : '';
+    if (!packs.has(key)) packs.set(key, await loadPackFromDisk(packId, variants));
+    return packs.get(key);
+  };
 
   let passed = 0;
   const failures = [];
   for (const test of testFile.tests) {
+    const pack = await packFor(test.variants ?? testFile.variants);
     const state = buildStateFromSetup(pack, test.setup);
     const problems = [];
     for (let i = 0; i < test.assert.length; i++) {

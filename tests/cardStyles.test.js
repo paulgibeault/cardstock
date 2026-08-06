@@ -546,3 +546,50 @@ test("the shipped manifests still declare the identity the stubs describe", asyn
       `${packId}'s card back drifted from what the stub records`);
   }
 });
+
+/* ------------------------------------------------------------------ *
+ * A wild's question, drawn (src/ui/cardStyles/chooser.js)
+ * ------------------------------------------------------------------ */
+
+test("a colour choice is drawn in the pack's own palette", async () => {
+  const pack = await loadPackFromDisk("wildfire");
+  const renderer = makeCardRenderer(pack.manifest, pack.cardsById);
+  for (const color of renderer.theme.order) {
+    const svg = renderer.chooser("color", color);
+    assert.ok(svg, `${color} got no tile`);
+    assert.ok(svg.includes(renderer.theme.palette[color]),
+      `the ${color} tile is not painted in the theme's ${color}`);
+    assert.strictEqual(renderer.chooserTint("color", color), renderer.theme.palette[color]);
+  }
+});
+
+test("a suit choice is drawn as the pip you will have to follow", async () => {
+  const pack = await loadPackFromDisk("crazy-eights");
+  const renderer = makeCardRenderer(pack.manifest, pack.cardsById);
+  for (const [suit, glyph] of [["clubs", "♣"], ["diamonds", "♦"],
+                               ["hearts", "♥"], ["spades", "♠"]]) {
+    const svg = renderer.chooser("suit", suit);
+    assert.ok(svg && svg.includes(glyph), `${suit} did not draw its glyph`);
+  }
+  // Red and black have to be told apart, or two of the four tiles are a lie.
+  assert.notStrictEqual(
+    /fill="(#[0-9a-f]{6})"[^>]*>♥/.exec(renderer.chooser("suit", "hearts"))?.[1],
+    /fill="(#[0-9a-f]{6})"[^>]*>♠/.exec(renderer.chooser("suit", "spades"))?.[1]);
+  // A suit has no colour of its own to light the panel with — see chooserTint.
+  assert.strictEqual(renderer.chooserTint("suit", "hearts"), null);
+});
+
+test("a value with no picture gets no picture, not a wrong one", () => {
+  const renderer = makeCardRenderer({ ui: { cardStyle: "shedding" } });
+  // A player's name is not a card, and neither is a colour this pack has never
+  // heard of. Both fall back to the word, which the caller draws instead.
+  assert.strictEqual(renderer.chooser("player to skip", "Bruno"), null);
+  assert.strictEqual(renderer.chooser("color", "chartreuse"), null);
+  assert.strictEqual(renderer.chooser("suit", "wands"), null);
+  // The prototype walk: a bare lookup would hand back Object.prototype's own
+  // members and stringify one into the markup.
+  for (const hostile of ["constructor", "toString", "__proto__", "hasOwnProperty"]) {
+    assert.strictEqual(renderer.chooser("suit", hostile), null, `suit ${hostile}`);
+    assert.strictEqual(renderer.chooser("color", hostile), null, `color ${hostile}`);
+  }
+});

@@ -17,20 +17,12 @@
 
 import {
   actionIcon, blend, cardAriaLabel, cardBase, cardKind, colorDots, diamondRosette,
-  drawCount, dullInk, dullPaper, mirrored, num, openSvg, shade, text,
+  drawCount, dullInk, dullPaper, mirrored, openSvg, roundedDiamond as diamond, shade, text,
 } from './shared.js';
 
 /** A wild belongs to no colour, so it gets the one colour no suit can claim. */
 const WILD_BODY = '#26262b';
 const PANEL = '#fdfdfa';
-
-/** The rounded diamond, centred and stood on its corner. */
-function diamond(cx, cy, half, fill) {
-  const side = num(half * Math.SQRT2);
-  return `<rect x="${num(cx - (half * Math.SQRT2) / 2)}" y="${num(cy - (half * Math.SQRT2) / 2)}"`
-    + ` width="${side}" height="${side}" rx="${num(half * 0.3)}"`
-    + ` transform="rotate(45 ${num(cx)} ${num(cy)})" fill="${fill}" />`;
-}
 
 function cornerMark(kind, card, body) {
   if (kind === 'number') {

@@ -69,7 +69,7 @@ import {
 } from './handOrder.js';
 import {
   initPanels, showRoundSummary, hideRoundSummary, isRoundSummaryOpen,
-  showScoreboard, showGameOver, hideAllPanels, showRules,
+  showScoreboard, showGameOver, hideAllPanels, showRules, awaitFinalLook,
 } from './panels.js';
 import { packRules } from './rules.js';
 import {
@@ -137,6 +137,8 @@ const el = {
   log: document.getElementById('log'),
   eventBanner: document.getElementById('event-banner'),
   choiceModal: document.getElementById('choice-modal'),
+  choiceDialog: document.getElementById('choice-dialog'),
+  choiceCard: document.getElementById('choice-card'),
   choicePrompt: document.getElementById('choice-prompt'),
   choicePanel: document.getElementById('choice-options'),
   choiceCancel: document.getElementById('choice-cancel'),
@@ -669,7 +671,11 @@ function activeMatchTint(state, address) {
     // Through the pack's palette and safeCssColor: pack data reaching a style
     // property (§7b). A pack with no palette entry for this value still gets
     // the word, just without the dot.
-    return { attr, value, tint: safeCssColor(cardArt.palette?.[value]) };
+    //
+    // `cardArt.theme.palette`, not `cardArt.palette` — the renderer exposes its
+    // resolved theme, and the shorter spelling was undefined, so this swatch
+    // never once appeared. Same typo, same silent nothing, in flashFelt.
+    return { attr, value, tint: safeCssColor(cardArt.theme.palette?.[value]) };
   }
   return null;
 }
@@ -1932,6 +1938,57 @@ function animateMove(state, move, from) {
   landOn(topNode, flyCard(cardArt.face(card), from, rectOf(topNode) || zoneRect(address)));
 }
 
+/**
+ * How many penalty cards are worth watching arrive.
+ *
+ * A Draw 4 is four. `effect.n` and `lastCardCall.penalty.draw` are pack values
+ * though, and a pack that says forty would otherwise buy forty timers and forty
+ * SVG copies for a moment that is over in a second. The banner says the real
+ * number; this is only how many of them fly.
+ */
+const PENALTY_FLIGHT_MAX = 6;
+
+/**
+ * A handful of cards, seen to leave the deck.
+ *
+ * A DRAW YOU DID NOT ASK FOR WAS THE ONE DRAW THE TABLE NEVER SHOWED. A Draw 4
+ * is the most violent thing anybody plays and it happened as a number changing
+ * on a seat plate: the banner said "You draw 4", the hand was suddenly four
+ * cards wider, and nothing connected the two. animateMove covers the draw a
+ * player MAKES, because that flight starts under the finger that asked for it.
+ * This covers the ones handed to you — a Draw 2, a Draw 4, and the cards a
+ * missed "Last card!" costs, which is the same event wearing another name.
+ *
+ * The cards that actually arrived are the last `count` of the hand: every draw
+ * appends (src/templates/shedding.js), and the display order the fan is in is a
+ * VIEW that never reaches the zone. Face-up for the human, who is about to sort
+ * them anyway; a bot's penalty flies backs, because the table does not know
+ * what a bot was dealt any more than you do.
+ */
+function animatePenaltyDraw(state, seat, count, delay) {
+  if (!count || count < 1 || !motionAllowed()) return;
+  const from = zoneRect('draw');
+  if (!from) return;
+  const to = cardSizedRect(seatRect(seat), from.width);
+  if (!to) return;
+
+  const ids = seat === HUMAN_SEAT
+    ? state.zones.cards(handAddress(seat)).slice(-count)
+    : [];
+  const myEpoch = epoch;
+  for (let i = 0; i < Math.min(count, PENALTY_FLIGHT_MAX); i++) {
+    const card = ids.length ? cardById(state, ids[i]) : null;
+    // Dealt one after another rather than as a fan, because that is what makes
+    // four read as FOUR — a single flight of four overlapping copies is one
+    // event, and the count is the whole insult.
+    Arcade.session.setTimeout(() => {
+      if (myEpoch !== epoch) return;
+      flyCard(card ? cardArt.face(card) : cardArt.back(), from, to,
+        { fade: true, duration: 300 });
+    }, delay + i * 110);
+  }
+}
+
 /* ------------------------------------------------------------------ *
  * Table moments: banners, trick gathers, round summaries
  * ------------------------------------------------------------------ */
@@ -2043,7 +2100,11 @@ function actionEventText(ev) {
     return { text: `${name(ev.seat)} chose ${chose}`, tone: 'neutral' };
   }
   if (ev.type === 'handsSwapped') {
-    return { text: `${name(ev.by)} swapped hands with ${name(ev.seat).toLowerCase()}`, tone: 'neutral' };
+    // Only "You" has a lower-case form; a name is a proper noun. This used to
+    // lower-case whatever landed in the object position, which nobody had seen
+    // because the swap itself never fired — "You swapped hands with delphine".
+    const object = you(ev.seat) ? 'you' : name(ev.seat);
+    return { text: `${name(ev.by)} swapped hands with ${object}`, tone: 'neutral' };
   }
   if (ev.type === 'handsRotated') {
     return { text: 'Every hand moves round', tone: 'neutral' };
@@ -2070,6 +2131,11 @@ function celebrateAction(state, events) {
 
   showBanner(said.text, said.tone);
   playActionCard({ against: ev.seat === HUMAN_SEAT && said.tone === 'bad' });
+
+  // After the card that caused it has landed on the discard (animateMove's 260ms
+  // flight, launched a beat before this): the play and the punishment are two
+  // events in that order, and overlapping them makes one blur.
+  if (ev.type === 'penalty') animatePenaltyDraw(state, ev.seat, ev.drew, 300);
 
   // The pulse lands on the seat it happened to, not the seat that played it:
   // the question a player is asking at this moment is "who did that hit".
@@ -2104,7 +2170,7 @@ function flashFelt(ev) {
   // Through the pack's own palette, so the wash is the colour the player just
   // picked as that pack draws it — and through safeCssColor, because a palette
   // is pack-supplied data on its way into a style property.
-  const tint = chosen ? safeCssColor(cardArt.palette?.[chosen]) : null;
+  const tint = chosen ? safeCssColor(cardArt.theme.palette?.[chosen]) : null;
   el.table.style.removeProperty('--flash-tint');
   if (tint) el.table.style.setProperty('--flash-tint', tint);
   el.table.classList.remove('table--flash');
@@ -2229,13 +2295,19 @@ function recordSentence(state) {
 }
 
 /**
- * End the match in the books: record it, stop it resuming, and show the panel.
+ * End the match in the books: record it and stop it resuming.
  *
  * This is the ENGINE deciding. The other ending — the player walking away —
  * is the lobby's, recorded through the same `recordResult` contract with
  * `forfeit: true` (src/ui/lobby.js). The two doors must never disagree about
  * what a loss is, which is why the storage payload still carries the field
  * even though the only value written here is `false`.
+ *
+ * BOOKKEEPING ONLY — it no longer opens the panel. The record has to be written
+ * before the panel is built (the panel shows it), but the panel itself now
+ * waits for the player (awaitFinalLook), and those are two different moments.
+ * Returns everything showGameOver will need, so the wait does not have to hold
+ * on to a live state to recompute it.
  */
 function concludeMatch(state) {
   cancelBotTurn();
@@ -2249,13 +2321,68 @@ function concludeMatch(state) {
     forfeit: false,
     opponents: opponentOutcomes(state, stats),
   });
-  showGameOver(state, {
+  return {
     seating,
     stats,
     recordText: recordSentence(state),
     heroFaces: heroFaces(state.pack),
     renderFace: (face) => cardArt.face(face),
-  });
+  };
+}
+
+/** Who won, in the sentence the felt says it in. */
+function winnerSentence(state) {
+  const winner = state.winner;
+  if (winner === HUMAN_SEAT) return 'You win!';
+  const name = seating[winner] ? seating[winner].name : seatLabel(winner);
+  return `${name} wins.`;
+}
+
+/**
+ * The move that ended it, named.
+ *
+ * The winner and the last card are NOT always the same person's business — a
+ * pack that plays to a points threshold can be won by somebody who did not make
+ * the final play — so this is a second line rather than a clause in the first.
+ * Empty when the ending was not a card (a match that ends on a pass, or a round
+ * that tipped the totals), because a caption with nothing to caption is noise.
+ */
+function finalPlaySentence(state, move) {
+  if (!move || (move.type !== 'playCard' && move.type !== 'discard')) return '';
+  const card = cardById(state, move.cards && move.cards[0]);
+  if (!card) return '';
+  const who = move.actor === HUMAN_SEAT
+    ? 'you'
+    : (seating[move.actor] ? seating[move.actor].name : seatLabel(move.actor));
+  return `Last card: ${cardName(card)}, played by ${who}.`;
+}
+
+/**
+ * Leave the ending on the felt until the player has had their look at it.
+ *
+ * Delayed by a beat so the final card has landed on the discard before anything
+ * asks to be read — the bar arriving mid-flight would be the same interruption
+ * the panel used to be, only smaller. The winner's seat pulses underneath, so
+ * the answer to "who?" is on the table and not only in the sentence.
+ */
+function offerFinalLook(state, move, ending) {
+  const myEpoch = epoch;
+  const winnerNode = state.winner === HUMAN_SEAT
+    ? el.hand
+    : el.opponentsTop.querySelector(`[data-seat="${state.winner}"]`);
+  if (winnerNode) {
+    winnerNode.classList.remove('zone-celebrate', 'zone-lament');
+    void winnerNode.offsetWidth;
+    winnerNode.classList.add('zone-celebrate');
+  }
+  Arcade.session.setTimeout(async () => {
+    if (myEpoch !== epoch) return;
+    const acknowledged = await awaitFinalLook(winnerSentence(state), finalPlaySentence(state, move));
+    // Closed under it, or a new game started while it was up — either way these
+    // results belong to a match that is no longer the one on screen.
+    if (!acknowledged || myEpoch !== epoch) return;
+    showGameOver(state, ending);
+  }, 700);
 }
 
 /** Display-only faces from the manifest; see schema `heroCards`. */
@@ -2301,14 +2428,17 @@ function afterMove(state, move, from, message) {
   const roundOver = events.find((e) => e.type === 'roundOver' && !e.over);
 
   if (state.gameOver) {
-    // Before the render, so the overlay can show the updated record — this
-    // game's counters are ours to display (§4: `stats` is the surface whose
-    // formatting the game owns).
-    concludeMatch(state);
+    // Recorded before the render, so the panel that is eventually built can
+    // show the updated record — this game's counters are ours to display (§4:
+    // `stats` is the surface whose formatting the game owns). The PANEL itself
+    // waits: the last card is the thing worth watching, and it is still in the
+    // air on this frame.
+    const ending = concludeMatch(state);
     render(state, message);
     animateMove(state, move, from);
     if (trick) celebrateTrick(state, trick);
     playWin();
+    offerFinalLook(state, move, ending);
     return;
   }
 
@@ -2353,6 +2483,54 @@ function needsChoice(card) {
 }
 
 /**
+ * One option of a card's question, as a button.
+ *
+ * THE PICTURE IS THE TARGET AND THE WORD IS THE CAPTION, and both are always
+ * there. The art is what makes the choice quick — you aim at the red one, not
+ * at the four-letter word that starts with r — and the word is what makes it
+ * possible at all for a player who cannot separate the colours, which in a
+ * game whose entire rule IS colour is not a minor audience.
+ *
+ * Three kinds of option, in the order they are tried: a card the pack's own
+ * renderer can draw (a colour, a suit, a rank); a PLAYER, which is not a card
+ * and gets the mark that seat wears everywhere else instead; and a bare word
+ * for anything a template invents that is neither.
+ *
+ * `value` is pack data on two paths and is handled as such on both: textContent
+ * for the caption, and a lookup key for the art, which is generated inside
+ * src/ui/cardStyles/chooser.js with everything escaped.
+ */
+function buildChoiceOption(attr, { value, icon = null }) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  const art = cardArt.chooser(attr, value);
+  btn.className = `choice-option ${art ? 'choice-option--card'
+    : icon ? 'choice-option--seat' : 'choice-option--word'}`;
+  // Named outright rather than left to name-from-content. The caption below is
+  // the name either way, but the picture beside it is a whole card's worth of
+  // markup for the computation to walk past, and the one thing this button
+  // must never be is unlabelled.
+  btn.setAttribute('aria-label', value);
+  if (art) {
+    btn.appendChild(svgNode(art, 'choice-option__art'));
+  } else if (icon) {
+    // The seat's own mark, the same one on its plate and in the score sheet
+    // (src/players/roster.js) — one vocabulary for "this is a player",
+    // wherever they turn up. Decorative: the name below carries the meaning.
+    const mark = document.createElement('span');
+    mark.className = 'choice-option__icon';
+    mark.setAttribute('aria-hidden', 'true');
+    mark.textContent = icon;
+    btn.appendChild(mark);
+  }
+  const caption = document.createElement('span');
+  caption.className = 'choice-option__name';
+  caption.textContent = value;
+  btn.appendChild(caption);
+  return btn;
+}
+
+/**
  * Ask for a suit or colour (or a player, for targeted effects), or null if
  * the player backs out.
  *
@@ -2360,36 +2538,113 @@ function needsChoice(card) {
  * to a modal with no way out, and closing the table under an open prompt left
  * the awaiting handler holding a promise that could still resolve into a match
  * that was no longer on screen.
+ *
+ * `options` are plain strings, or `{ value, icon }` when an option has a mark
+ * of its own — which today means a player, whose face belongs to a seat rather
+ * than to the deck. The promise always resolves with the `value`.
+ *
+ * `card` is the card that asked — shown at the top of the panel, because "what
+ * does this become" is a question about a specific object and the answer reads
+ * better next to it. Optional: a wild already lying in somebody's meld has no
+ * single card to show.
  */
-async function promptChoice(attr, options) {
+async function promptChoice(attr, options, { card = null } = {}) {
+  const choices = options.map((o) => (typeof o === 'string' ? { value: o, icon: null } : o));
   el.choicePrompt.textContent = `Choose a ${attr}`;
   el.choicePanel.replaceChildren();
+  el.choiceCard.replaceChildren();
+  if (card) el.choiceCard.appendChild(svgNode(cardArt.face(card), 'choice-dialog__face'));
+  el.choiceCard.hidden = !card;
+  // Four options are the rosette on the wild itself, so they are laid out as
+  // one — two by two — rather than as a row that wraps differently per width.
+  el.choicePanel.className = `choice-grid ${choices.length === 4 ? 'choice-grid--quad' : ''}`;
   el.choiceModal.hidden = false;
+
   return new Promise((resolve) => {
+    const buttons = [];
     const close = (value) => {
       cancelPendingChoice = null;
+      el.choiceModal.removeEventListener('keydown', onKey);
       el.choiceModal.hidden = true;
+      el.choiceDialog.style.removeProperty('--choice-tint');
       resolve(value);
     };
+
+    // Roving focus, because the four colours are a GRID and Tab through a grid
+    // is the wrong gesture: on a 2x2 the arrow key you press is the direction
+    // you meant. Escape backs out, same as Cancel — this dialog is one of the
+    // few in the app where changing your mind is a legitimate move.
+    const move = (step) => {
+      const at = buttons.indexOf(document.activeElement);
+      const next = buttons[((at === -1 ? 0 : at) + step + buttons.length) % buttons.length];
+      if (next) next.focus({ preventScroll: true });
+    };
+    const onKey = (ev) => {
+      if (ev.key === 'Escape') { ev.preventDefault(); close(null); return; }
+      const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[ev.key];
+      if (step === undefined) return;
+      ev.preventDefault();
+      move(step);
+    };
+    el.choiceModal.addEventListener('keydown', onKey);
+
     cancelPendingChoice = () => close(null);
     el.choiceCancel.onclick = () => close(null);
-    for (const opt of options) {
-      const btn = document.createElement('button');
-      btn.textContent = opt;
-      // §7b: this value reaches an inline style. A colour keyword or hex
-      // literal is all a pack has any reason to supply.
-      const asColour = (attr === 'color' || attr === 'suit') && safeCssColor(opt);
-      btn.className = `choice-option ${asColour ? 'choice-option--swatch' : ''}`;
-      if (asColour) btn.style.background = asColour;
-      btn.addEventListener('click', () => close(opt));
+
+    for (const opt of choices) {
+      const btn = buildChoiceOption(attr, opt);
+      // The panel takes the colour of whatever is under the finger, so the
+      // answer is visible before it is committed — and the felt then washes in
+      // that same colour when it is (flashFelt). §7b: through safeCssColor,
+      // because a pack value is reaching a style property.
+      const tint = safeCssColor(cardArt.chooserTint(attr, opt.value));
+      const light = () => {
+        if (tint) el.choiceDialog.style.setProperty('--choice-tint', tint);
+        else el.choiceDialog.style.removeProperty('--choice-tint');
+      };
+      btn.addEventListener('focus', light);
+      btn.addEventListener('pointerenter', light);
+      btn.addEventListener('click', () => close(opt.value));
+      buttons.push(btn);
       el.choicePanel.appendChild(btn);
     }
+    // preventScroll: the dialog is fixed, but focusing into it still scrolls
+    // the felt behind it — the same trap the rules panel documents.
+    if (buttons[0]) buttons[0].focus({ preventScroll: true });
   });
 }
 
 function closeChoiceModal() {
   if (cancelPendingChoice) cancelPendingChoice();
   el.choiceModal.hidden = true;
+}
+
+/**
+ * "Which of them?" — the seat number, or null if the player backs out.
+ *
+ * A QUESTION WITH ONE ANSWER IS NOT A QUESTION. At a two-hander there is
+ * exactly one other player, and a dialog asking you to confirm the only living
+ * opponent is a tax on every seven you play. The same judgement the meld's
+ * wildChoice makes ("a set has one answer and is never asked"), applied to the
+ * one choice that is about the table rather than the deck.
+ *
+ * `label` completes the sentence "Choose a …", so each caller says what the
+ * target is FOR — being skipped is not the same as having your hand taken.
+ */
+async function pickOpponent(state, card, label = 'player to swap hands with') {
+  const others = [];
+  for (let s = 0; s < state.seats; s++) if (s !== HUMAN_SEAT) others.push(s);
+  if (others.length === 0) return null;
+  if (others.length === 1) return others[0];
+  // Each seat carries the mark it wears everywhere else, so the answer is a
+  // face rather than a name to read (src/players/roster.js).
+  const options = others.map((s) => {
+    const identity = identityOf(s);
+    return { value: identity.name, icon: identity.icon || null };
+  });
+  const picked = await promptChoice(label, options, { card });
+  if (picked === null) return null;
+  return others[options.findIndex((o) => o.value === picked)];
 }
 
 /**
@@ -2409,11 +2664,21 @@ async function performHumanMove(state, move, sourceNode) {
   if (move.type === 'playCard' && move.cards && !move.choice) {
     const card = cardById(state, move.cards[0]);
     const attr = card ? needsChoice(card) : null;
-    if (attr) {
+    // A TARGET IS A SEAT, NOT A VALUE OFF A CARD, and that is the whole reason
+    // this is a branch rather than one more entry in the list below. Wildfire's
+    // seven-zero seven says `choose: 'player'`, and the colour branch answered
+    // it with the deck's colours — so the card that reads "Swap hands with a
+    // player of your choosing" offered you red, yellow, green and blue, and the
+    // engine then looked for a seat called "red" and swapped nothing.
+    if (attr === 'player') {
+      const picked = await pickOpponent(state, card);
+      if (picked === null || myEpoch !== epoch) return;
+      move = { ...move, choice: { player: picked } };
+    } else if (attr) {
       const options = attr === 'suit'
         ? ['clubs', 'diamonds', 'hearts', 'spades']
         : [...new Set([...state.pack.cardsById.values()].map((c) => c.color).filter(Boolean))];
-      const picked = await promptChoice(attr, options);
+      const picked = await promptChoice(attr, options, { card });
       // Backed out, or the table closed while the prompt was open — either way
       // this move belongs to a match that is no longer the one on screen.
       if (picked === null || myEpoch !== epoch) return;
@@ -2427,7 +2692,7 @@ async function performHumanMove(state, move, sourceNode) {
   if (move.type === 'hit' && move.cards && state.pack.template.wildChoice) {
     const ask = state.pack.template.wildChoice(makeCtx(state), move);
     if (ask) {
-      const picked = await promptChoice(ask.attr, ask.values);
+      const picked = await promptChoice(ask.attr, ask.values, { card: cardById(state, ask.cardId) });
       if (picked === null || myEpoch !== epoch) return;
       move = {
         ...move,
@@ -2440,12 +2705,9 @@ async function performHumanMove(state, move, sourceNode) {
     const card = cardById(state, move.cards[0]);
     const effect = card?.effect;
     if (effect?.type === 'skipTarget' && effect.on === 'discard' && move.choice?.target === undefined) {
-      const others = [];
-      for (let s = 0; s < state.seats; s++) if (s !== HUMAN_SEAT) others.push(s);
-      const labels = others.map((s) => identityOf(s).name);
-      const picked = await promptChoice('player to skip', labels);
+      const picked = await pickOpponent(state, card, 'player to skip');
       if (picked === null || myEpoch !== epoch) return;
-      move = { ...move, choice: { ...(move.choice || {}), target: others[labels.indexOf(picked)] } };
+      move = { ...move, choice: { ...(move.choice || {}), target: picked } };
     }
   }
 
@@ -2556,6 +2818,11 @@ function performAnnouncement(state, move, myEpoch = epoch) {
   }
 
   render(state, message);
+  // After the render, so the hand the cards are flying INTO is the one on
+  // screen. A catch costs cards exactly the way a Draw 2 does, and it is the
+  // same flight for the same reason — the number in the banner is the whole
+  // point of the rule, and a number is not a thing you watch happen.
+  if (caught) animatePenaltyDraw(state, caught.target, caught.drew, 120);
   persistMatch();
   scheduleAnnouncementBeats(state, epoch);
 }

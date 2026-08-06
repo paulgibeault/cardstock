@@ -20,6 +20,52 @@ function effectOf(card) {
   return card.effect || null;
 }
 
+/** What this card makes you decide before it lands, or undefined for most cards. */
+function chooseAttrOf(effect) {
+  return typeof effect === 'object' && effect ? effect.choose : undefined;
+}
+
+/**
+ * EVERY ANSWER A CARD'S `choose` HAS, as the choice object each enumerated move
+ * carries — `[null]` when the card asks nothing.
+ *
+ * This exists because "the card asks a question" and "the moves say what the
+ * answers are" had drifted apart, and the seven-zero variant fell down the gap.
+ * A wild enumerated one move per colour; a `swapHands` seven declared
+ * `choose: 'player'` and enumerated ONE move with no choice on it at all. So
+ * `applyEffect` read `choice.player` off a move that never had one, found
+ * undefined, and quietly did nothing — for bots and for the human alike. The
+ * card said "Swap hands with a player of your choosing" and no hand ever moved.
+ *
+ * Enumerating the targets is what makes the variant real, and it makes it real
+ * in the one place the whole engine agrees on: the bot chooser picks from this
+ * list, the table's tap targets are derived from it, and validateMove holds
+ * anything that arrives by another road to the same shape.
+ *
+ * A target is a SEAT NUMBER, not a value off a card — the one choice in this
+ * template that is about the table rather than about the deck.
+ */
+function choiceOptions(ctx, seat, attr) {
+  if (attr === 'suit') {
+    return ['clubs', 'diamonds', 'hearts', 'spades'].map((suit) => ({ suit }));
+  }
+  if (attr === 'color') {
+    const colors = [...new Set([...ctx.pack.cardsById.values()].map((c) => c.color).filter(Boolean))];
+    return colors.map((color) => ({ color }));
+  }
+  if (attr === 'player') {
+    const out = [];
+    for (let s = 0; s < ctx.seats; s++) if (s !== seat) out.push({ player: s });
+    // A one-seat table has nobody to swap with. The card is still playable —
+    // it simply does nothing, which is better than being unplayable.
+    return out.length ? out : [null];
+  }
+  // An attribute this template has no answers for. The card still plays; the
+  // effect that wanted the choice will find none and skip, which is what an
+  // unrecognised `choose` should do rather than making the card dead.
+  return [null];
+}
+
 function activeVarName(attr) {
   return 'active' + attr[0].toUpperCase() + attr.slice(1);
 }
@@ -515,16 +561,40 @@ const shedding = {
       if (!hand.includes(cardId)) return ctx.fail('not-in-hand', 'That card is not in your hand.');
       const card = ctx.cardById(cardId);
 
-      if (isWildEffect(effectOf(card))) {
-        const effect = effectOf(card);
-        const chooseAttr = typeof effect === 'object' ? effect.choose : undefined;
-        if (chooseAttr && (!move.choice || move.choice[chooseAttr] === undefined)) {
-          return ctx.fail('choice-required', `Choose a ${chooseAttr} to continue with.`);
-        }
-        return ctx.ok();
-      }
-      if (!cardMatchesActive(ctx, card)) {
+      const effect = effectOf(card);
+      if (!isWildEffect(effect) && !cardMatchesActive(ctx, card)) {
         return ctx.fail('match', 'That card does not match the current suit/rank/color.');
+      }
+
+      // The choice is demanded of EVERY card that asks for one, not only of a
+      // wild. It used to be checked inside the wild branch, so a seven-zero
+      // seven — an ordinary card with `choose: 'player'` — sailed through with
+      // no target and swapped nothing (see choiceOptions above).
+      const chooseAttr = chooseAttrOf(effect);
+      if (chooseAttr) {
+        const picked = move.choice ? move.choice[chooseAttr] : undefined;
+        // Absent is only a failure when there was something to pick: a
+        // two-hander has one opponent and a solitaire table has none, and
+        // choiceOptions is the single place that decides which.
+        const offered = choiceOptions(ctx, move.actor, chooseAttr);
+        const asked = offered.length > 1 || offered[0] !== null;
+        if (picked === undefined) {
+          // Only ever seen if a move reaches the engine without having been
+          // asked — the table asks first. Worded per attribute anyway: "choose
+          // a player to continue with" is not a sentence about a target.
+          if (asked) {
+            return ctx.fail('choice-required', chooseAttr === 'player'
+              ? 'Choose the player this card acts on.'
+              : `Choose a ${chooseAttr} to continue with.`);
+          }
+        } else if (chooseAttr === 'player') {
+          // A seat, and one that exists — this is the only choice in the
+          // template that indexes the table rather than naming a card value,
+          // so a stray string here would address a zone that is not there.
+          if (!Number.isInteger(picked) || picked < 0 || picked >= ctx.seats || picked === move.actor) {
+            return ctx.fail('no-target', 'No such player.');
+          }
+        }
       }
       return ctx.ok();
     }
@@ -601,22 +671,16 @@ const shedding = {
     for (const cardId of hand) {
       const card = ctx.cardById(cardId);
       const effect = effectOf(card);
-      if (isWildEffect(effect)) {
-        const chooseAttr = typeof effect === 'object' ? effect.choose : undefined;
-        if (chooseAttr === 'suit') {
-          for (const suit of ['clubs', 'diamonds', 'hearts', 'spades']) {
-            moves.push({ actor: seat, type: 'playCard', cards: [cardId], choice: { suit } });
-          }
-        } else if (chooseAttr === 'color') {
-          const colors = [...new Set([...ctx.pack.cardsById.values()].map((c) => c.color).filter(Boolean))];
-          for (const color of colors) {
-            moves.push({ actor: seat, type: 'playCard', cards: [cardId], choice: { color } });
-          }
-        } else {
-          moves.push({ actor: seat, type: 'playCard', cards: [cardId] });
-        }
-      } else if (cardMatchesActive(ctx, card)) {
-        moves.push({ actor: seat, type: 'playCard', cards: [cardId] });
+      // A wild plays on anything; everything else has to match. That test is
+      // about whether the card may be PLAYED — what it then asks you to decide
+      // is a separate question, and one an ordinary action card is allowed to
+      // ask too (the seven-zero swap is a plain seven that happens to have a
+      // target).
+      if (!isWildEffect(effect) && !cardMatchesActive(ctx, card)) continue;
+      for (const choice of choiceOptions(ctx, seat, chooseAttrOf(effect))) {
+        moves.push(choice
+          ? { actor: seat, type: 'playCard', cards: [cardId], choice }
+          : { actor: seat, type: 'playCard', cards: [cardId] });
       }
     }
     // Exactly two ways out of playDrawn — play it, or keep it — so the table

@@ -34,6 +34,11 @@ const el = {
   rulesBody: document.getElementById('rules-body'),
   rulesClose: document.getElementById('rules-close'),
 
+  finalLook: document.getElementById('final-look'),
+  finalLookResult: document.getElementById('final-look-result'),
+  finalLookPlay: document.getElementById('final-look-play'),
+  finalLookContinue: document.getElementById('final-look-continue'),
+
   gameOverOverlay: document.getElementById('game-over-overlay'),
   gameOverFan: document.getElementById('game-over-fan'),
   gameOverMessage: document.getElementById('game-over-message'),
@@ -183,6 +188,61 @@ export function hideScoreboard() {
 }
 
 /* ------------------------------------------------------------------ *
+ * The last card, before the results
+ * ------------------------------------------------------------------ */
+
+let dismissFinalLook = null;
+
+/**
+ * Hold the results back until the player has actually looked at the ending.
+ *
+ * THIS IS A PAUSE, NOT A PANEL, and the difference is the whole design. A match
+ * ends on a card — somebody's last one — and showGameOver used to open on the
+ * same frame that card was still flying to the discard, so the one moment the
+ * whole game had been building to was covered by a score sheet before anybody
+ * saw who played what. The complaint was exactly that: more time to see the
+ * final card and who played it.
+ *
+ * So there is no scrim and nothing over the felt. The bar is pinned low, the
+ * table underneath stays live — a card can still be held and inspected — and
+ * the only thing that opens the results is the player asking for them. Nothing
+ * times out: "I want longer to look" is not a thing to answer with a timer.
+ *
+ * @param result the sentence that says who won
+ * @param play   what the last card was and who played it, or '' when the ending
+ *               was not a play (a match that ran out of rounds)
+ * @returns a promise that resolves true when acknowledged, false when the table
+ *          closed under it — so a caller can decline to open a panel over a
+ *          match that is no longer on screen.
+ */
+export function awaitFinalLook(result, play) {
+  el.finalLookResult.textContent = result;
+  el.finalLookPlay.textContent = play || '';
+  el.finalLookPlay.hidden = !play;
+  el.finalLook.hidden = false;
+  return new Promise((resolve) => {
+    const close = (acknowledged) => {
+      dismissFinalLook = null;
+      el.finalLookContinue.onclick = null;
+      el.finalLook.hidden = true;
+      resolve(acknowledged);
+    };
+    dismissFinalLook = () => close(false);
+    el.finalLookContinue.onclick = () => close(true);
+    // preventScroll for the same reason the rules panel uses it: the bar is
+    // fixed, but focusing into it still scrolls the felt behind it — and the
+    // felt is the thing this exists to let people look at.
+    el.finalLookContinue.focus({ preventScroll: true });
+  });
+}
+
+/** Take the bar down without answering it — a screen change under it. */
+export function hideFinalLook() {
+  if (dismissFinalLook) dismissFinalLook();
+  el.finalLook.hidden = true;
+}
+
+/* ------------------------------------------------------------------ *
  * Game over
  * ------------------------------------------------------------------ */
 
@@ -260,6 +320,7 @@ export function hideGameOver() {
 
 export function hideAllPanels() {
   hideGameOver();
+  hideFinalLook();
   hideRoundSummary();
   hideScoreboard();
   hideRules();

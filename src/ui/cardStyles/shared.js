@@ -237,6 +237,22 @@ export function wedgeDisc(cx, cy, r, colors) {
   }).join('');
 }
 
+/**
+ * A square stood on its corner with its own corners rounded off.
+ *
+ * The shedding style's centre mark, and the shape a colour choice is offered
+ * as (chooser.js) — the two have to be the same object drawn at two sizes, or
+ * the card you picked and the card you get stop looking like each other.
+ *
+ * `half` is the half-diagonal: the distance from the centre to a point.
+ */
+export function roundedDiamond(cx, cy, half, fill) {
+  const side = num(half * Math.SQRT2);
+  return `<rect x="${num(cx - (half * Math.SQRT2) / 2)}" y="${num(cy - (half * Math.SQRT2) / 2)}"`
+    + ` width="${side}" height="${side}" rx="${num(half * 0.3)}"`
+    + ` transform="rotate(45 ${num(cx)} ${num(cy)})" fill="${fill}" />`;
+}
+
 /** The same idea as a diamond: four triangles filling a square stood on a corner. */
 export function diamondRosette(cx, cy, h, colors) {
   const pts = [[cx, cy - h], [cx + h, cy], [cx, cy + h], [cx - h, cy]];

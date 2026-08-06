@@ -165,3 +165,43 @@ test("pack ids are charset-validated before reaching a fetch path", () => {
     assert.ok(!isValidPackId(bad), `${JSON.stringify(bad)} should be rejected`);
   }
 });
+
+// A wild's options are drawn now, not spelled (src/ui/cardStyles/chooser.js),
+// which put a second markup generator on the pack-data path. Everything the
+// face renderers are held to holds here for the same reason.
+test("a hostile choice value cannot open a tag in a chooser tile", () => {
+  for (const [id, renderer] of RENDERERS) {
+    for (const attr of ["color", "suit", "rank", "player to skip"]) {
+      const svg = renderer.chooser(attr, PAYLOAD);
+      if (svg === null) continue; // no picture for this one, which is a fine answer
+      assert.strictEqual(foreignTags(svg), 0, `${id}/${attr}: the payload opened a tag:\n` + svg);
+      assert.ok(!svg.includes(PAYLOAD), `${id}/${attr}: the payload survived verbatim`);
+    }
+  }
+});
+
+test("no chooser tile can be talked into a colour the repo did not generate", () => {
+  const hostile = {
+    accent: "url(https://evil.example/x)",
+    ui: { cardPalette: { red: "javascript:alert(1)", blue: "#2f6fb0; background: url(x)" } },
+  };
+  for (const styleId of STYLE_IDS) {
+    const renderer = makeCardRenderer({ ...hostile, ui: { ...hostile.ui, cardStyle: styleId } });
+    for (const attr of ["color", "suit", "rank"]) {
+      for (const value of ["red", "blue", "hearts", "spades", "7", PAYLOAD]) {
+        const svg = renderer.chooser(attr, value);
+        if (svg === null) continue;
+        for (const [, paint] of svg.matchAll(/(?:fill|stroke)="([^"]*)"/g)) {
+          assert.ok(/^(?:#[0-9a-fA-F]{6}|none)$/.test(paint),
+            `${styleId}/${attr}/${value}: "${paint}" is not a colour this repo generated`);
+        }
+      }
+    }
+    // The panel glow is an inline style, so it is gated a second time at the
+    // call site — but it must never hand out anything but a hex to begin with.
+    for (const value of ["red", "blue", PAYLOAD]) {
+      const tint = renderer.chooserTint("color", value);
+      if (tint !== null) assert.match(tint, /^#[0-9a-fA-F]{6}$/);
+    }
+  }
+});
