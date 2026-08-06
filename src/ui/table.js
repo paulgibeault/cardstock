@@ -69,8 +69,9 @@ import {
 } from './handOrder.js';
 import {
   initPanels, showRoundSummary, hideRoundSummary, isRoundSummaryOpen,
-  showScoreboard, showGameOver, hideAllPanels,
+  showScoreboard, showGameOver, hideAllPanels, showRules,
 } from './panels.js';
+import { packRules } from './rules.js';
 import {
   rememberPack, loadSettings, saveMatch, loadMatch, clearMatch, recordResult, readStats,
   loadHandPrefs, saveHandPrefs,
@@ -2755,6 +2756,7 @@ export function initTable({ onExit }) {
     onPlayAgain: () => livePack && startGame(livePack),
     onLobby: () => exitToLobby(),
     onEndMatch: () => endMatchFromSummary(),
+    onRules: () => livePack && showRules(packRules(livePack)),
     onCloseScoreboard: () => {},
   });
 

@@ -6,6 +6,10 @@
   "deck": "deck.json",
   "template": "contract-rummy",
   "tagline": "Ten contracts, each harder than the last.",
+  "howToPlay": [
+    "Ten contracts, played in order, and you cannot skip one. Until you have laid your contract down you can do nothing but draw and discard, so the hand is a race between gathering what you need and the player who has already gone out.",
+    "Wilds are worth 25 against you if you are still holding them at the end, which is what stops the answer from always being to keep them."
+  ],
   "accent": "#1f7a63",
   "heroCards": [
     { "rank": "7", "color": "green" },

@@ -1708,7 +1708,8 @@ body.is-dragging .card-face { cursor: grabbing; }
   #confirm-modal .panel,
   #round-overlay .panel,
   #scoreboard-overlay .panel,
-  #game-over-overlay .panel {
+  #game-over-overlay .panel,
+  #rules-overlay .panel {
     animation: none !important;
   }
 
@@ -1846,7 +1847,8 @@ body.is-dragging .card-face { cursor: grabbing; }
 #confirm-modal,
 #round-overlay,
 #scoreboard-overlay,
-#game-over-overlay {
+#game-over-overlay,
+#rules-overlay {
   position: fixed;
   inset: 0;
   background: var(--scrim);
@@ -1861,13 +1863,15 @@ body.is-dragging .card-face { cursor: grabbing; }
 #confirm-modal[hidden],
 #round-overlay[hidden],
 #scoreboard-overlay[hidden],
-#game-over-overlay[hidden] { display: none; }
+#game-over-overlay[hidden],
+#rules-overlay[hidden] { display: none; }
 
 #choice-modal .panel,
 #confirm-modal .panel,
 #round-overlay .panel,
 #scoreboard-overlay .panel,
-#game-over-overlay .panel {
+#game-over-overlay .panel,
+#rules-overlay .panel {
   background: var(--panel-bg);
   color: var(--panel-text);
   border: 1px solid var(--panel-border);
@@ -2338,6 +2342,60 @@ body.is-dragging .card-face { cursor: grabbing; }
   cursor: pointer;
 }
 .tile__restart:hover { opacity: 1; background: var(--ghost-hover); }
+
+/* Shares the restart button's footer treatment: both are secondary doors on
+   the tile, and two different-looking small buttons under one card is noise. */
+.tile__rules {
+  display: block;
+  width: 100%;
+  padding: 0.5rem;
+  font: inherit;
+  font-size: 0.72rem;
+  color: inherit;
+  opacity: 0.65;
+  background: none;
+  border: none;
+  border-top: 1px solid var(--tile-border);
+  cursor: pointer;
+}
+.tile__rules:hover { opacity: 1; background: var(--ghost-hover); }
+
+/* ------------------------------------------------------------------ *
+ * How to play
+ * ------------------------------------------------------------------ */
+
+.rules__tagline {
+  margin: -0.5rem 0 1rem;
+  font-size: 0.9rem;
+  opacity: 0.75;
+}
+
+/* Capped and scrollable: a rules page is the one panel whose length is set by
+   the pack rather than by the layout, and Milestones lists ten contracts. */
+.rules__body {
+  max-height: min(60vh, 34rem);
+  overflow-y: auto;
+  text-align: left;
+  margin-bottom: 1rem;
+}
+
+.rules__heading {
+  margin: 1.1rem 0 0.35rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.6;
+}
+.rules__heading:first-child { margin-top: 0; }
+
+.rules__list {
+  margin: 0;
+  padding-left: 1.1rem;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+.rules__list li { margin: 0.2rem 0; }
 
 .tile--broken {
   padding: 2rem 1rem;

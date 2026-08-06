@@ -26,6 +26,13 @@ const el = {
   scoreTotals: document.getElementById('scoreboard-totals'),
   scoreHistory: document.getElementById('scoreboard-history'),
   scoreClose: document.getElementById('scoreboard-close'),
+  scoreRules: document.getElementById('scoreboard-rules'),
+
+  rulesOverlay: document.getElementById('rules-overlay'),
+  rulesTitle: document.getElementById('rules-title'),
+  rulesTagline: document.getElementById('rules-tagline'),
+  rulesBody: document.getElementById('rules-body'),
+  rulesClose: document.getElementById('rules-close'),
 
   gameOverOverlay: document.getElementById('game-over-overlay'),
   gameOverFan: document.getElementById('game-over-fan'),
@@ -255,13 +262,58 @@ export function hideAllPanels() {
   hideGameOver();
   hideRoundSummary();
   hideScoreboard();
+  hideRules();
+}
+
+/* ------------------------------------------------------------------ *
+ * How to play
+ * ------------------------------------------------------------------ */
+
+/**
+ * Show the rules for a pack. Takes the generated data (src/ui/rules.js), not
+ * the pack — the panel's job is to put text on screen, and keeping the
+ * derivation out of it is what lets the lobby show a pack's rules without a
+ * match existing.
+ */
+export function showRules(rules) {
+  el.rulesTitle.textContent = rules.title;
+  el.rulesTagline.textContent = rules.tagline;
+  el.rulesTagline.hidden = !rules.tagline;
+  el.rulesBody.replaceChildren();
+  for (const section of rules.sections) {
+    const heading = document.createElement('h3');
+    heading.className = 'rules__heading';
+    heading.textContent = section.heading;
+    el.rulesBody.appendChild(heading);
+    const ul = document.createElement('ul');
+    ul.className = 'rules__list';
+    for (const text of section.lines) {
+      const li = document.createElement('li');
+      // textContent throughout: a pack's prose is pack-supplied data, and this
+      // panel is the one place a whole paragraph of it reaches the screen.
+      li.textContent = text;
+      ul.appendChild(li);
+    }
+    el.rulesBody.appendChild(ul);
+  }
+  el.rulesOverlay.hidden = false;
+  // preventScroll: the overlay is fixed, but focusing into it still scrolls
+  // the LOBBY behind it, so closing the panel left the player somewhere they
+  // never navigated to.
+  el.rulesClose.focus({ preventScroll: true });
+}
+
+export function hideRules() {
+  el.rulesOverlay.hidden = true;
 }
 
 /**
  * Wire the panels' buttons once. Every callback belongs to the table, which
  * owns the match — these overlays only ask.
  */
-export function initPanels({ onContinueRound, onPlayAgain, onLobby, onCloseScoreboard, onEndMatch }) {
+export function initPanels({ onContinueRound, onPlayAgain, onLobby, onCloseScoreboard, onEndMatch, onRules }) {
+  el.rulesClose.addEventListener('click', () => hideRules());
+  el.scoreRules.addEventListener('click', () => onRules?.());
   el.roundContinue.addEventListener('click', () => onContinueRound());
   el.roundEndMatch.addEventListener('click', () => onEndMatch());
   el.playAgainButton.addEventListener('click', () => onPlayAgain());
