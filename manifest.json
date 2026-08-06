@@ -3,7 +3,7 @@
   "short_name": "Cardstock",
   "description": "One engine, many card games — each one a pack.",
   "scope": "/cardstock/",
-  "start_url": "./index.html?v=0.1.12",
+  "start_url": "./index.html?v=0.1.13",
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#1b5e3a",
