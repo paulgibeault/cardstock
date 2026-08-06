@@ -107,7 +107,7 @@
       "required": ["actor", "type"],
       "properties": {
         "actor": { "type": "integer" },
-        "type": { "type": "string", "description": "Template move types, e.g. playCard, draw, discard, layDown, hit, passCards." },
+        "type": { "type": "string", "description": "Template move types, e.g. playCard, draw, pass, discard, layDown, hit, passCards." },
         "cards": { "type": "array", "items": { "type": "string" } },
         "from": { "type": "string" },
         "to": { "type": "string" },

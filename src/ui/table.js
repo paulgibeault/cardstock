@@ -2228,8 +2228,11 @@ function openScoreboard() {
 // during a move IS the shuffle, whoever's move surfaced it.
 function applyStateChange(state, move, { far }) {
   applyMove(state, move);
+  // Keeping a drawn card moves nothing, so it makes no sound. A card-on-felt
+  // slap for a turn where no card was played is the table lying about what
+  // happened — and the drawn card's own sound already played a beat ago.
   if (move.type === 'draw') playDraw();
-  else playCardPlayed({ far });
+  else if (move.type !== 'pass') playCardPlayed({ far });
   if (state.events.some((e) => e.type === 'recycled')) playShuffle();
 }
 
@@ -2412,9 +2415,11 @@ async function performHumanMove(state, move, sourceNode) {
 function onHandCard(state, cardId, card, sourceNode, ui) {
   const handAddr = handAddress(HUMAN_SEAT);
 
-  if (ui.mode === 'tap') {
+  if (ui.mode === 'tap' || ui.mode === 'play-drawn') {
     // One tap plays it — the destination is implicit, and the wild's question
-    // is asked by performHumanMove, the same place a drop asks it.
+    // is asked by performHumanMove, the same place a drop asks it. In
+    // 'play-drawn' only the drawn card is in ui.handSelectable, and this is
+    // reached only through a selectable card.
     performHumanMove(state, { actor: HUMAN_SEAT, type: 'playCard', cards: [cardId] }, sourceNode);
     return;
   }

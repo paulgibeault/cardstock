@@ -256,6 +256,12 @@ function applyPlayCard(ctx, move) {
   const cardId = move.cards[0];
   const card = ctx.cardById(cardId);
 
+  // Cleared here rather than in applyEffect, which sets the phase and the turn
+  // itself and returns down several paths — and a stale `drawnCardId` outliving
+  // the turn that owned it would lock the NEXT player's hand to somebody else's
+  // card the moment anything set the phase back to playDrawn.
+  ctx.setVar('drawnCardId', null);
+
   ctx.moveCards([cardId], ctx.zoneAddr('hand', seat), 'discard');
   updateActiveAfterPlay(ctx, card, move.choice);
 
@@ -286,22 +292,81 @@ function applyPlayCard(ctx, move) {
   }
 }
 
+/* ------------------------------------------------------------------ *
+ * Drawing, and the turn that does not end with it — `playAfterDraw`
+ * ------------------------------------------------------------------ *
+ *
+ * The canonical draw rule is six things at once, and only two of them were
+ * ever implemented: you may draw even holding a playable card (saving a wild
+ * is a real move); a drawn card that fits may be played at once; you are not
+ * obliged to play it; the hand you held BEFORE the draw goes dead for the rest
+ * of the turn; one draw a turn; and a penalty draw is never any of this.
+ *
+ * The manifests declared it — `playAfterDraw` / `mustPlayIfAble` have been
+ * sitting in packs/wildfire and packs/crazy-eights since they were written —
+ * and nothing read them. Everything below is gated on those flags, so a pack
+ * that says `playAfterDraw: false` (or says nothing) plays exactly as before.
+ *
+ * THE TURN ENDS WITH A MOVE, `pass`, FOR THE SAME REASON AN ANNOUNCEMENT IS A
+ * MOVE (see the block comment above). "The player looked at the drawn card and
+ * decided to keep it" is a state change — it is what hands the turn on — and a
+ * turn ended implicitly in UI code would be absent from the log, so a resumed
+ * match would replay the draw and then sit forever in a phase nobody ever left.
+ * Routed through propose → validate → apply → log it replays, resumes, and
+ * drives the bots with no extra machinery: `pass` scores like `draw`, and the
+ * bot chooser already treats both as holding moves (src/engine/bot.js).
+ *
+ * The live card is a turn-scoped var rather than "the last card in the hand",
+ * because a hand is re-sorted for display and the rule has to survive that.
+ */
+
+/** The one card that may be played this turn, or null when the hand is free. */
+function drawnCardIdOf(ctx) {
+  if (ctx.turn.phase !== 'playDrawn') return null;
+  return ctx.var('drawnCardId') ?? null;
+}
+
 function applyDraw(ctx, move) {
   const seat = move.actor;
+  const handAddr = ctx.zoneAddr('hand', seat);
+  const held = ctx.cardIdsIn(handAddr).length;
   const mode = ctx.rules.drawWhenStuck;
   if (mode === 'until-playable') {
     for (let i = 0; i < 200; i++) {
       const before = ctx.countIn('draw');
       drawCards(ctx, seat, 1);
       if (ctx.countIn('draw') === before && before === 0) break; // deck truly exhausted
-      const newest = ctx.cardIdsIn(ctx.zoneAddr('hand', seat)).slice(-1)[0];
+      const newest = ctx.cardIdsIn(handAddr).slice(-1)[0];
       if (!newest) break;
       if (cardMatchesActive(ctx, ctx.cardById(newest))) break;
     }
   } else {
     drawCards(ctx, seat, mode ?? 1);
   }
+
+  // What actually arrived, not what was asked for: `drawWhenStuck: 0` and an
+  // exhausted pile that could not be recycled both deal nothing, and the card
+  // already at the end of the hand is one the player has been holding.
+  const after = ctx.cardIdsIn(handAddr);
+  const drawn = after.length > held ? after[after.length - 1] : null;
+  // Under `until-playable` the loop above already stopped ON a playable card;
+  // that final card enters this state like any other.
+  if (drawn && ctx.rules.playAfterDraw && cardMatchesActive(ctx, ctx.cardById(drawn))) {
+    ctx.setVar('drawnCardId', drawn);
+    ctx.setPhase('playDrawn');
+    // Deliberately says only WHO — the card is in one player's hand and the
+    // event stream is read by every seat's view.
+    ctx.emit('drewPlayable', { seat });
+    return;
+  }
+  ctx.setVar('drawnCardId', null);
   ctx.setTurnSeat(ctx.nextSeat(seat));
+  ctx.setPhase('play');
+}
+
+function applyPass(ctx, move) {
+  ctx.setVar('drawnCardId', null);
+  ctx.setTurnSeat(ctx.nextSeat(move.actor));
   ctx.setPhase('play');
 }
 
@@ -422,6 +487,27 @@ const shedding = {
 
     if (move.actor !== ctx.turn.seat) return ctx.fail('turn', "It's not your turn.");
 
+    // The drawn card is the only live one, and saying so HERE rather than only
+    // in enumerateLegalMoves is what makes the rule real: the enumeration is a
+    // prompt, the validator is the rule, and every move — a bot's, a replayed
+    // one, a dragged one — comes back through this door.
+    const drawnCardId = drawnCardIdOf(ctx);
+    if (drawnCardId && move.type === 'playCard' && move.cards?.[0] !== drawnCardId) {
+      return ctx.fail('drawn-only',
+        'Only the card you just drew can be played — the rest of your hand waits for your next turn.');
+    }
+
+    if (move.type === 'pass') {
+      // Illegal in the ordinary play phase, and that is not an oversight:
+      // `mustPlayIfAble: false` says you may DRAW instead of playing, not that
+      // you may sit a turn out for free. The only way to reach a pass is to
+      // have drawn first, which is what makes it "keep it" rather than "skip".
+      if (ctx.turn.phase !== 'playDrawn') {
+        return ctx.fail('phase', 'There is nothing to keep — draw or play a card.');
+      }
+      return ctx.ok();
+    }
+
     if (move.type === 'playCard') {
       const cardId = move.cards?.[0];
       if (!cardId) return ctx.fail('no-card', 'No card specified.');
@@ -444,6 +530,9 @@ const shedding = {
     }
 
     if (move.type === 'draw') {
+      // One draw a turn. Nothing enumerates a second one, but a stored log or a
+      // peer's move arrives here without having asked.
+      if (drawnCardId) return ctx.fail('one-draw', 'You have already drawn this turn.');
       return ctx.ok();
     }
 
@@ -453,6 +542,7 @@ const shedding = {
   applyMove(ctx, move) {
     if (move.type === 'playCard') applyPlayCard(ctx, move);
     else if (move.type === 'draw') applyDraw(ctx, move);
+    else if (move.type === 'pass') applyPass(ctx, move);
     else if (move.type === 'announce') applyAnnounce(ctx, move);
     else if (move.type === 'challenge') applyChallenge(ctx, move);
     refreshCallFlags(ctx);
@@ -499,7 +589,15 @@ const shedding = {
 
   enumerateLegalMoves(ctx, seat) {
     const moves = [];
-    const hand = ctx.cardIdsIn(ctx.zoneAddr('hand', seat));
+    // After a draw the hand is one card long as far as this turn is concerned.
+    // Narrowing the ENUMERATION, and not only the validator, is what makes the
+    // dead-hand rule hold for bots and for humans out of the same code: the bot
+    // chooser picks from this list, and every tap target the table lights up is
+    // derived from it (src/ui/interaction.js).
+    const drawnCardId = seat === ctx.turn.seat ? drawnCardIdOf(ctx) : null;
+    const hand = drawnCardId
+      ? ctx.cardIdsIn(ctx.zoneAddr('hand', seat)).filter((id) => id === drawnCardId)
+      : ctx.cardIdsIn(ctx.zoneAddr('hand', seat));
     for (const cardId of hand) {
       const card = ctx.cardById(cardId);
       const effect = effectOf(card);
@@ -521,7 +619,9 @@ const shedding = {
         moves.push({ actor: seat, type: 'playCard', cards: [cardId] });
       }
     }
-    moves.push({ actor: seat, type: 'draw' });
+    // Exactly two ways out of playDrawn — play it, or keep it — so the table
+    // can never render a dead end, and a bot can never be stranded in it.
+    moves.push(drawnCardId ? { actor: seat, type: 'pass' } : { actor: seat, type: 'draw' });
     return moves;
   },
 
@@ -538,7 +638,12 @@ const shedding = {
   },
 
   botHeuristic(ctx, move) {
-    if (move.type === 'draw') return -1;
+    // Keeping a drawn card costs the same as drawing one: both decline to
+    // commit a card, and both are what a bot does when nothing better is on
+    // offer. A persona's `patience` already reads them as one family
+    // (HOLDING_MOVES, src/engine/bot.js), so a cautious bot hangs on to a
+    // drawn wild for the same reason it hangs on to a held one.
+    if (move.type === 'draw' || move.type === 'pass') return -1;
     const card = ctx.cardById(move.cards[0]);
     // Prefer dumping high-value / action cards first — simple, deliberately dumb.
     return 1 + (card.value ?? 0) * 0.01 + (effectOf(card) ? 0.5 : 0);
