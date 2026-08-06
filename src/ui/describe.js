@@ -20,7 +20,13 @@ import { makeCtx } from '../engine/context.js';
 
 const SUIT_GLYPH = { clubs: '♣', diamonds: '♦', hearts: '♥', spades: '♠' };
 
-function titleCase(word) {
+/**
+ * "hearts" → "Hearts". Exported because src/ui/rules.js had a second copy, and
+ * it lives HERE rather than in a DOM helper module because this file is
+ * deliberately DOM-free (see the header) and the rules page is its only other
+ * reader.
+ */
+export function titleCase(word) {
   const s = String(word || '');
   return s ? s[0].toUpperCase() + s.slice(1) : s;
 }

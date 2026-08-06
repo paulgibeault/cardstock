@@ -17,6 +17,41 @@
 //     for CSS animations but cannot enforce for a JS-driven one; and
 //   - the OS preference, which is the only signal a standalone visit has.
 
+/* ------------------------------------------------------------------ *
+ * Geometry — where a card is, and where it is going
+ * ------------------------------------------------------------------ *
+ *
+ * flight.js already owns the flying, so it owns the arithmetic too. These lived
+ * in src/ui/table.js, where `rectOf` was a verbatim copy of the one in
+ * src/ui/dragController.js — the same eight lines in three modules, all doing
+ * the same thing for the same reason.
+ */
+
+/** A node's rect, or null when it has no size (unlaid-out, hidden, suspended). */
+export function rectOf(node) {
+  if (!node) return null;
+  const r = node.getBoundingClientRect();
+  return r.width ? r : null;
+}
+
+/**
+ * A card-sized rectangle centred on `rect`.
+ *
+ * flyCard scales its copy to the destination's width, which is right when the
+ * destination IS a card and comically wrong when it is a whole fanned hand,
+ * where the copy would balloon to the hand's full width mid-flight.
+ */
+export function cardSizedRect(rect, width) {
+  if (!rect) return null;
+  const height = width * 1.4;
+  return {
+    left: rect.left + rect.width / 2 - width / 2,
+    top: rect.top + rect.height / 2 - height / 2,
+    width,
+    height,
+  };
+}
+
 /** Both reduced-motion signals, either of which disables travel. */
 export function motionAllowed() {
   try {

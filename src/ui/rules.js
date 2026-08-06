@@ -15,12 +15,8 @@
 // Output is data — { title, tagline, sections: [{ heading, lines }] } — so the
 // panel renders text nodes and nothing here can put markup on screen.
 
-import { effectText } from './describe.js';
+import { effectText, titleCase } from './describe.js';
 import { describeContract } from './interaction.js';
-
-function titleCase(s) {
-  return String(s).charAt(0).toUpperCase() + String(s).slice(1);
-}
 
 function list(items, conjunction = 'and') {
   const kept = items.filter(Boolean);

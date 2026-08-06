@@ -15,13 +15,14 @@
 import { makeCardRenderer } from './cardStyles/index.js';
 import { fetchPackIndex, fetchPackManifest, fetchPack } from './packSource.js';
 import { safeAccent } from './css.js';
-import { listMatchSummaries, readStats, lastPlayedPack, clearMatch, recordResult } from '../arcade/storage.js';
+import { listMatchSummaries, readStats, lastPlayedPack, clearMatch, recordForfeit } from '../arcade/storage.js';
 import { buildSeating } from '../players/roster.js';
 import { confirmAction, closeConfirm } from './confirm.js';
 import { showRules } from './panels.js';
 import { packRules } from './rules.js';
 import { askNewGame, hasChoices, closeNewGame } from './newGame.js';
 import { templateInfo } from '../templates/registry.js';
+import { line } from './dom.js';
 
 const el = {
   screen: document.getElementById('lobby'),
@@ -96,13 +97,6 @@ function heroFan(manifest) {
     fan.appendChild(card);
   });
   return fan;
-}
-
-function line(className, text) {
-  const node = document.createElement('span');
-  node.className = className;
-  node.textContent = text;
-  return node;
 }
 
 function buildTile(manifest, summary, { featured }) {
@@ -202,14 +196,7 @@ function buildTile(manifest, summary, { featured }) {
       // two doors out of a match must not disagree about what a loss is. A
       // dealt-but-untouched hand had no stakes, so it costs nothing.
       if (played) {
-        const seating = buildSeating(summary.seed, summary.seats, { humanSeat: 0 });
-        recordResult(manifest.id, {
-          won: false,
-          forfeit: true,
-          opponents: seating
-            .filter((identity) => identity.isBot)
-            .map((identity) => ({ key: identity.opponentKey, beaten: false })),
-        });
+        recordForfeit(manifest.id, buildSeating(summary.seed, summary.seats, { humanSeat: 0 }));
       }
       clearMatch(manifest.id);
       // Re-dealing is a NEW game, so it gets the same choices a new game gets.

@@ -22,20 +22,21 @@
 //
 // One pointer at a time, by construction: a second press while a drag is live
 // is ignored rather than starting a rival drag with its own ghost.
+//
+// The one timer this module needs came in as an injected `schedule` parameter,
+// so the module could stay SDK-free. It takes it from ./clock.js now — which is
+// the same defensive wrapper, in one place, with the same fallback — and the
+// gesture ritual it was for (swallowNextClick) lives there too, because the
+// hand's own scrub needed a verbatim copy of it.
 
-import { motionAllowed, animationSettled } from './flight.js';
+import { motionAllowed, animationSettled, rectOf } from './flight.js';
+import { swallowNextClick } from './clock.js';
 
 /** How far a pointer must travel before a press becomes a drag, in px. */
 const SLOP = 6;
 
 /** How long the snap-back takes when a drop is refused. */
 const RETURN_MS = 240;
-
-function rectOf(node) {
-  if (!node) return null;
-  const r = node.getBoundingClientRect();
-  return r.width ? r : null;
-}
 
 /** Overlap area of two rects, 0 when they do not intersect. */
 function overlapArea(a, b) {
@@ -72,22 +73,12 @@ export function pickTarget(ghostRect, targets) {
   return best;
 }
 
-/** setTimeout dressed as the launcher's cancellable-timer shape. */
-function plainSchedule(fn, ms) {
-  const id = setTimeout(fn, ms);
-  return { cancel: () => clearTimeout(id) };
-}
-
 /**
  * @param layer       () => the fixed-position element the ghost lives in
  * @param onLift      (handle) => { markup, targets: [{ node, onDrop }] } | null
  *                    Returning null refuses the drag before anything moves.
  * @param onSettle    () => void, after every drag ends (dropped or not) — the
  *                    caller's cue to re-render and clear its own selection.
- * @param schedule    (fn, ms) => { cancel() }. Injected rather than imported:
- *                    this module stays SDK-free (see the header), but the app
- *                    wants its one timer on the launcher's session clock so it
- *                    freezes with a suspended frame like every other timer.
  * @param classifyGesture ({dx, dy, handle, event}) => 'drag' | 'scrub', asked
  *                    once, when a press first travels past the slop threshold.
  *                    'scrub' abandons the press so the caller's own listener
@@ -97,7 +88,6 @@ export function createDragController({
   layer,
   onLift,
   onSettle = () => {},
-  schedule = plainSchedule,
   classifyGesture = () => 'drag',
 }) {
   // Everything about the CURRENT drag. Null between drags; the presence of
@@ -313,29 +303,6 @@ export function createDragController({
     }
     pending = null;
     if (!begin(handle, node, event, { x: startX, y: startY })) detach();
-  }
-
-  /**
-   * Eat the `click` that follows a real drag.
-   *
-   * A pointerup still fires a click on whatever the press began on, and every
-   * draggable thing here is ALSO a tap target — a hand card that plays itself,
-   * a pile that picks its top card up. Without this, dropping a card would
-   * apply the drop and then immediately apply the tap, playing twice or
-   * re-selecting the card that just left. The listener is capturing so it
-   * beats the element's own handler, and self-clears if no click arrives
-   * (a drop onto a non-interactive area).
-   */
-  function swallowNextClick() {
-    let timer = null;
-    const eat = (event) => {
-      event.stopPropagation();
-      event.preventDefault();
-      window.removeEventListener('click', eat, true);
-      if (timer) timer.cancel();
-    };
-    window.addEventListener('click', eat, true);
-    timer = schedule(() => window.removeEventListener('click', eat, true), 400);
   }
 
   function onPointerUp(event) {

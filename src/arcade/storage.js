@@ -303,6 +303,26 @@ export function recordResult(packId, { won, forfeit = false, opponents = [] }) {
   });
 }
 
+/**
+ * WALKING AWAY FROM A MATCH WITH MOVES IN IT IS A FORFEIT, and there are two
+ * doors out: the table's own "End match" and the lobby's "Start over". Both
+ * wrote this block by hand, and both carried a comment insisting "the two doors
+ * must not disagree about what a loss is" — which is a comment doing a
+ * function's job. Now it is a function.
+ *
+ * @param seating the match's seating (src/players/roster.js); every bot in it
+ *                records a loss against the human.
+ */
+export function recordForfeit(packId, seating) {
+  recordResult(packId, {
+    won: false,
+    forfeit: true,
+    opponents: (seating || [])
+      .filter((identity) => identity.isBot)
+      .map((identity) => ({ key: identity.opponentKey, beaten: false })),
+  });
+}
+
 export function readStats(packId) {
   return normalizeStats(Arcade.stats.getOrInit(packId, STATS_DEFAULTS));
 }
