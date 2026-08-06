@@ -114,7 +114,7 @@ test("stat lines are non-empty and template-appropriate for every pack", () => {
   for (const packId of PACKS) {
     const { pack, state } = playOut(packId);
     const computed = computeMatchStats(pack, serializeMatch(state));
-    const lines = statLinesFor(pack.template.id, computed.perSeat[0]);
+    const lines = statLinesFor(pack.template, computed.perSeat[0]);
     assert.ok(lines.length > 0, `${packId}: no stat lines at all`);
     for (const l of lines) {
       assert.ok(typeof l.label === "string" && l.label, `${packId}: unlabelled stat`);

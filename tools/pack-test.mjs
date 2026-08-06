@@ -6,13 +6,15 @@ import { readFile } from 'node:fs/promises';
 import fsSync from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadPack } from '../src/engine/packLoader.js';
+import { loadPack, applyPatch } from '../src/engine/packLoader.js';
 import { createState } from '../src/engine/state.js';
-import { validateMove, applyMove, applyAnnouncement, runScoreRound } from '../src/engine/movePipeline.js';
+import { validateMove, applyMove, applyAnnouncementUnlogged, runScoreRound } from '../src/engine/movePipeline.js';
+import { validate } from './schema-check.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..');
 export const PACKS_DIR = path.join(REPO_ROOT, 'packs');
+export const SCHEMA_DIR = path.join(REPO_ROOT, 'schema');
 
 /**
  * Every pack id on disk. One source of truth for the CLI and tests/packs.test.js.
@@ -53,6 +55,67 @@ export async function loadPackFromDisk(packId, variants) {
   // re-read per variant set — a patch leaking into the next load would make a
   // variant test contaminate the plain one after it.
   return loadPack(structuredClone(manifest), { deckJson, variants });
+}
+
+/* ------------------------------------------------------------------ *
+ * The schema gate (design doc §11: "also validates the manifest against the
+ * schema and checks asset references")
+ * ------------------------------------------------------------------ *
+ *
+ * The schemas call themselves normative and nothing read them, which is how
+ * `meldForbidden` came to be declared, read by two modules, and absent from a
+ * closed schema — and how a dozen `rules.*` knobs stayed on the page after the
+ * code that would have honoured them was never written.
+ *
+ * Every AVAILABLE variant is patched in and re-validated too. A variant patch is
+ * a dotted path into the manifest applied with no type information at all
+ * (packLoader.applyPatch happily vivifies `{}` on a typo), so the only thing
+ * that can catch "rules.drawWhenStucks" is the manifest schema seeing an
+ * unknown property once the patch has landed. Variants marked `available:
+ * false` are skipped on purpose: those are statements of intent for rules no
+ * template implements, so their patch paths point at keys the schema has no
+ * business knowing yet.
+ */
+let schemaCache = null;
+async function schemas() {
+  if (!schemaCache) {
+    schemaCache = {
+      manifest: await readJson(path.join(SCHEMA_DIR, 'manifest.schema.json')),
+      deck: await readJson(path.join(SCHEMA_DIR, 'deck.schema.json')),
+      rulesTest: await readJson(path.join(SCHEMA_DIR, 'rules-test.schema.json')),
+    };
+  }
+  return schemaCache;
+}
+
+/** @returns string[] — one message per schema violation across the pack's files. */
+export async function validatePackFiles(packId) {
+  const dir = path.join(PACKS_DIR, packId);
+  const s = await schemas();
+  const problems = [];
+  const note = (file, errors) => problems.push(...errors.map((e) => `${packId}/${file}: ${e}`));
+
+  const manifest = await readJson(path.join(dir, 'manifest.json'));
+  note('manifest.json', validate(manifest, s.manifest));
+
+  for (const variant of manifest.variants || []) {
+    if (variant.available === false) continue;
+    const patched = structuredClone(manifest);
+    for (const [dotted, value] of Object.entries(variant.patch || {})) applyPatch(patched, dotted, value);
+    note(`manifest.json (variant "${variant.id}")`, validate(patched, s.manifest));
+  }
+
+  if (fsSync.existsSync(path.join(dir, 'deck.json'))) {
+    note('deck.json', validate(await readJson(path.join(dir, 'deck.json')), s.deck));
+  } else if (!/^standard-5\d(x\d+)?$/.test(manifest.deck)) {
+    problems.push(`${packId}/manifest.json: deck "${manifest.deck}" is neither a built-in nor a deck.json on disk`);
+  }
+
+  const testPath = path.join(dir, 'tests', 'rules.test.json');
+  if (fsSync.existsSync(testPath)) {
+    note('tests/rules.test.json', validate(await readJson(testPath), s.rulesTest));
+  }
+  return problems;
 }
 
 function buildStateFromSetup(pack, setup) {
@@ -182,7 +245,7 @@ function runAssertion(state, assertion) {
   }
   if (assertion.announce) {
     try {
-      applyAnnouncement(state, assertion.announce);
+      applyAnnouncementUnlogged(state, assertion.announce);
       return [];
     } catch (e) {
       return [`announce threw: ${e.message}`];
@@ -210,6 +273,20 @@ export async function runPackTests(packId, { log = console.log } = {}) {
   const say = log || (() => {});
   const testFile = await readJson(path.join(PACKS_DIR, packId, 'tests', 'rules.test.json'));
 
+  // Schema first, and as a test rather than a throw: a pack author gets the
+  // same gate CI runs, in the same output, without a separate command.
+  const schemaProblems = await validatePackFiles(packId);
+  const failures = [];
+  let passed = 0;
+  if (schemaProblems.length) {
+    failures.push({ name: 'files match schema/', problems: schemaProblems.map((p) => `  ${p}`) });
+    say('  \x1b[31m✗\x1b[0m files match schema/');
+    for (const p of schemaProblems) say(`    \x1b[31m${p}\x1b[0m`);
+  } else {
+    passed++;
+    say('  \x1b[32m✓\x1b[0m files match schema/');
+  }
+
   // VARIANTS ARE PART OF THE RULE SET, so a test names the one it is about.
   // The schema has documented `variants` at both levels since it was written
   // and nothing here read it — every test ran against the pack's defaults, so
@@ -226,8 +303,6 @@ export async function runPackTests(packId, { log = console.log } = {}) {
     return packs.get(key);
   };
 
-  let passed = 0;
-  const failures = [];
   for (const test of testFile.tests) {
     const pack = await packFor(test.variants ?? testFile.variants);
     const state = buildStateFromSetup(pack, test.setup);

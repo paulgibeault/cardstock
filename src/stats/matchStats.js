@@ -140,45 +140,27 @@ export function computeMatchStats(pack, snapshot) {
 /**
  * The lines a template's players actually care about, in reading order.
  *
- * Kept here beside the counting rather than in the panel: what a Hearts stat
- * line SAYS is a fact about the trick-taking template, and the panel's job is
- * only to lay rows out. A zero-valued line is dropped so a game that never
- * used a mechanic does not report on it.
+ * WHAT a Hearts stat line says is a fact about the trick-taking template, so the
+ * template says it (`statLines(seat)`) and this function does the presentation
+ * rule both halves share: a zero-valued line is dropped, so a game that never
+ * used a mechanic does not report on it. A template with no opinion gets the
+ * two numbers every game has.
  *
+ * @param template the loaded template object (pack.template), not its id — this
+ *                 was a four-way switch on the id until src/templates/CONTRACT.md
+ *                 existed to hang the hook off.
  * @returns Array<{ label, value }>
  */
-export function statLinesFor(templateId, seat) {
-  const lines = [];
-  const push = (label, value, { always = false } = {}) => {
-    if (always || (value !== null && value !== undefined && value !== 0)) {
-      lines.push({ label, value: String(value) });
-    }
-  };
+const DEFAULT_STAT_LINES = (seat) => [
+  { label: 'Moves', value: seat.moves, always: true },
+  { label: 'Cards played', value: seat.cardsPlayed, always: true },
+];
 
-  if (templateId === 'trick-taking') {
-    push('Tricks won', seat.tricksWon, { always: true });
-    push('Points taken', seat.pointsTaken, { always: true });
-  } else if (templateId === 'shedding') {
-    push('Cards played', seat.cardsPlayed, { always: true });
-    push('Cards drawn', seat.draws, { always: true });
-    push('Action cards', seat.effectsPlayed);
-    push('Declared', seat.declared);
-    push('Caught someone', seat.caughtOthers);
-    push('Caught out', seat.wasCaught);
-  } else if (templateId === 'contract-rummy') {
-    push('Contract reached', seat.phaseReached, { always: true });
-    push('Melds laid', seat.meldsLaid, { always: true });
-    push('Hits', seat.hits);
-    push('Cards drawn', seat.draws);
-  } else if (templateId === 'sequencing') {
-    push('Stock left', seat.stockLeft, { always: true });
-    push('Build plays', seat.buildPlays, { always: true });
-    push('Discards', seat.discards);
-  } else {
-    push('Moves', seat.moves, { always: true });
-    push('Cards played', seat.cardsPlayed, { always: true });
-  }
-  return lines;
+export function statLinesFor(template, seat) {
+  const declared = template?.statLines?.(seat) || DEFAULT_STAT_LINES(seat);
+  return declared
+    .filter((l) => l.always || (l.value !== null && l.value !== undefined && l.value !== 0))
+    .map((l) => ({ label: l.label, value: String(l.value) }));
 }
 
 /**

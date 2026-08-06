@@ -3,14 +3,10 @@
 // races to empty their stock pile through hand/stock/discard plays, ending their turn
 // by discarding one card to an own numbered discard pile.
 
-import { selectorMatches, selectorMatchesAny } from '../engine/selectors.js';
+import { selectorMatchesAny } from '../engine/selectors.js';
 import { initializeDeckInto } from '../engine/state.js';
-import { evaluateGameOver } from '../engine/scoring.js';
-
-function resolveCount(spec, seats) {
-  if (typeof spec === 'number') return spec;
-  return spec.byPlayers?.[String(seats)] ?? spec.default;
-}
+import { resolveByPlayers } from '../engine/deal.js';
+import { isWild } from '../engine/cards.js';
 
 // Zone addresses this template cares about are always `<kind>[.n].<seat>` for
 // per-player zones (hand/stock/discard) — the seat is always the last segment.
@@ -20,7 +16,7 @@ function zoneKindAndSeat(address) {
 }
 
 function isWildCard(ctx, card) {
-  return selectorMatches(card, `tag:${ctx.rules.wilds.tag}`);
+  return isWild(card, ctx.rules.wilds);
 }
 
 // The rank a build pile needs next is just its current length offset from buildRule.from
@@ -38,11 +34,8 @@ function cardPlayableOn(ctx, card, buildAddr) {
 function topUpHand(ctx, seat) {
   const to = ctx.rules.handRefill?.to ?? 5;
   const handAddr = ctx.zoneAddr('hand', seat);
-  while (ctx.countIn(handAddr) < to) {
-    const top = ctx.topOf('draw');
-    if (top === undefined) break; // draw and recycled both exhausted
-    ctx.moveCards([top], 'draw', handAddr);
-  }
+  // ctx.deal stops on its own when draw AND its recycled backlog are exhausted.
+  ctx.deal(handAddr, Math.max(0, to - ctx.countIn(handAddr)));
 }
 
 function applyPlayCard(ctx, move) {
@@ -53,7 +46,9 @@ function applyPlayCard(ctx, move) {
 
   const { kind } = zoneKindAndSeat(from);
   if (kind === 'stock' && ctx.countIn(from) === 0) {
-    ctx.setGameOver(seat);
+    // An emptied stock ends the round — and, for this template, the match:
+    // see isGameOver below.
+    ctx.endRound(seat);
     return;
   }
   if (kind === 'hand' && ctx.countIn(from) === 0 && ctx.rules.handRefill?.onEmptyMidTurn) {
@@ -72,7 +67,7 @@ function applyDiscard(ctx, move) {
 const sequencing = {
   id: 'sequencing',
 
-  defaultZones(rules) {
+  defaultZones(rules, seats) {   // eslint-disable-line no-unused-vars
     const buildCapacity = rules.buildRule.to - rules.buildRule.from + 1;
     return [
       { id: 'hand', per: 'player', visibility: 'owner', layout: 'fan', order: 'free', facing: 'up' },
@@ -92,7 +87,8 @@ const sequencing = {
       { id: 'discard', per: 'player', count: rules.discardPiles, visibility: 'all', layout: 'stack', order: 'stack', facing: 'up', label: 'Discard' },
       { id: 'build', per: 'shared', count: rules.buildPiles, visibility: 'top', layout: 'stack', order: 'stack', facing: 'up', capacity: buildCapacity, label: 'Build' },
       { id: 'recycled', per: 'shared', visibility: 'none', layout: 'stack', order: 'stack', facing: 'down' },
-      { id: 'draw', per: 'shared', visibility: 'none', layout: 'stack', order: 'stack', facing: 'down', label: 'Draw' },
+      // `interactive`: hidden, but it is the draw control, so it stays on the felt.
+      { id: 'draw', per: 'shared', visibility: 'none', layout: 'stack', order: 'stack', facing: 'down', label: 'Draw', interactive: true },
     ];
   },
 
@@ -105,14 +101,7 @@ const sequencing = {
 
   setup(ctx) {
     initializeDeckInto(ctx.state, 'draw');
-    const stockSize = resolveCount(ctx.rules.stockSize, ctx.seats);
-    for (let s = 0; s < ctx.seats; s++) {
-      for (let i = 0; i < stockSize; i++) {
-        const top = ctx.topOf('draw');
-        if (top === undefined) break;
-        ctx.moveCards([top], 'draw', ctx.zoneAddr('stock', s));
-      }
-    }
+    ctx.dealEach(resolveByPlayers(ctx.rules.stockSize, ctx.seats), { to: 'stock' });
     for (let s = 0; s < ctx.seats; s++) topUpHand(ctx, s);
     ctx.setPhase('play');
   },
@@ -218,15 +207,47 @@ const sequencing = {
   },
 
   isRoundOver(ctx) {
-    return ctx.state.gameOver;
+    return ctx.state.roundEnded;
   },
 
-  scoreRound() {
-    return {};
+  // ONE ROUND, AND IT IS THE MATCH. Stockpile's own declaration is
+  // `winner: "first-empty-stock"` and its manifest names no scoring at all, so
+  // the pipeline asks the template — and the honest answer is that a race to
+  // empty a stock has nothing to play a second round FOR.
+  isGameOver() {
+    return true;
   },
 
-  isGameOver(ctx) {
-    return evaluateGameOver(ctx)?.over ?? ctx.state.gameOver;
+  /* ---------------------------------------------------------------- *
+   * What the platform asks this template about itself (src/templates/CONTRACT.md)
+   * ---------------------------------------------------------------- */
+
+  interactionMode() {
+    return 'place';
+  },
+
+  ruleLines() {
+    return [
+      'Play cards up the build piles in the middle, one rank at a time.',
+      'Cards come from your stock pile, your hand, or your own discard piles.',
+      'End your turn by discarding to one of your own piles.',
+    ];
+  },
+
+  endingLines(pack) {
+    return pack.rules?.winner === 'first-empty-stock'
+      ? ['The first player to empty their stock pile wins immediately.']
+      : [];
+  },
+
+  botVerbs: {},
+
+  statLines(seat) {
+    return [
+      { label: 'Stock left', value: seat.stockLeft, always: true },
+      { label: 'Build plays', value: seat.buildPlays, always: true },
+      { label: 'Discards', value: seat.discards },
+    ];
   },
 
   botHeuristic(ctx, move) {

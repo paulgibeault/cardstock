@@ -15,26 +15,19 @@
 import { makeCardRenderer } from './cardStyles/index.js';
 import { fetchPackIndex, fetchPackManifest, fetchPack } from './packSource.js';
 import { safeAccent } from './css.js';
-import { listMatchSummaries, readStats, lastPlayedPack, clearMatch, recordResult } from '../arcade/storage.js';
+import { listMatchSummaries, readStats, lastPlayedPack, clearMatch, recordForfeit } from '../arcade/storage.js';
 import { buildSeating } from '../players/roster.js';
-import { confirmAction } from './confirm.js';
+import { confirmAction, closeConfirm } from './confirm.js';
 import { showRules } from './panels.js';
 import { packRules } from './rules.js';
 import { askNewGame, hasChoices, closeNewGame } from './newGame.js';
-import { FULLY_PLAYABLE_TEMPLATES } from './table.js';
+import { templateInfo } from '../templates/registry.js';
+import { line } from './dom.js';
 
 const el = {
   screen: document.getElementById('lobby'),
   grid: document.getElementById('lobby-grid'),
   note: document.getElementById('lobby-note'),
-  confirmModal: document.getElementById('confirm-modal'),
-};
-
-const GENRE = {
-  shedding: 'Shedding',
-  'trick-taking': 'Trick-taking',
-  'contract-rummy': 'Rummy',
-  sequencing: 'Sequencing',
 };
 
 const DEFAULT_ACCENT = '#3d7a5a';
@@ -106,15 +99,11 @@ function heroFan(manifest) {
   return fan;
 }
 
-function line(className, text) {
-  const node = document.createElement('span');
-  node.className = className;
-  node.textContent = text;
-  return node;
-}
-
 function buildTile(manifest, summary, { featured }) {
-  const preview = !FULLY_PLAYABLE_TEMPLATES.has(manifest.template);
+  // Manifest string in, presentation facts out — src/templates/registry.js
+  // imports nothing, so the lobby still loads no template and no engine.
+  const genre = templateInfo(manifest.template);
+  const preview = !genre.playable;
   const tile = document.createElement('div');
   tile.className = `tile ${summary ? 'tile--in-progress' : ''} ${featured ? 'tile--featured' : ''} ${preview ? 'tile--preview' : ''}`;
   // §7b: a manifest value reaching an inline style. safeAccent takes a
@@ -135,14 +124,14 @@ function buildTile(manifest, summary, { featured }) {
   open.appendChild(heroFan(manifest));
   open.appendChild(line('tile__name', manifest.name));
 
-  const genre = document.createElement('span');
-  genre.className = 'tile__genre';
-  genre.appendChild(line('', GENRE[manifest.template] || 'Card game'));
+  const genreNode = document.createElement('span');
+  genreNode.className = 'tile__genre';
+  genreNode.appendChild(line('', genre.genreLabel));
   // Said here rather than left for the player to discover at the table. A
   // preview pack deals and displays but has no controls for its genre's own
-  // moves yet — see FULLY_PLAYABLE_TEMPLATES in src/ui/table.js.
-  if (preview) genre.appendChild(line('tile__badge', 'Preview'));
-  open.appendChild(genre);
+  // moves yet — see `playable` in src/templates/registry.js.
+  if (preview) genreNode.appendChild(line('tile__badge', 'Preview'));
+  open.appendChild(genreNode);
 
   open.appendChild(line('tile__tagline', manifest.tagline || ''));
 
@@ -207,14 +196,7 @@ function buildTile(manifest, summary, { featured }) {
       // two doors out of a match must not disagree about what a loss is. A
       // dealt-but-untouched hand had no stakes, so it costs nothing.
       if (played) {
-        const seating = buildSeating(summary.seed, summary.seats, { humanSeat: 0 });
-        recordResult(manifest.id, {
-          won: false,
-          forfeit: true,
-          opponents: seating
-            .filter((identity) => identity.isBot)
-            .map((identity) => ({ key: identity.opponentKey, beaten: false })),
-        });
+        recordForfeit(manifest.id, buildSeating(summary.seed, summary.seats, { humanSeat: 0 }));
       }
       clearMatch(manifest.id);
       // Re-dealing is a NEW game, so it gets the same choices a new game gets.
@@ -284,9 +266,19 @@ export function showLobby() {
   el.screen.hidden = false;
 }
 
+/**
+ * Leave the lobby, taking anything it opened with it.
+ *
+ * Both sheets are closed through their OWN modules rather than by poking their
+ * elements from here: confirm.js and newGame.js each own a hidden flag and a
+ * pending promise, and a screen change that hid the element without telling
+ * them left an unresolved `askNewGame` behind — the next answer resolved a
+ * dialog for a game the player had already left.
+ */
 export function hideLobby() {
   el.screen.hidden = true;
-  el.confirmModal.hidden = true;
+  closeConfirm();
+  closeNewGame();
 }
 
 export function reportLobbyError(message) {

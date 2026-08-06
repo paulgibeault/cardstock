@@ -10,7 +10,7 @@ import { execSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { ROOT } from "../tools/stage.mjs";
-import { listPackIds } from "../tools/pack-test.mjs";
+import { listPackIds, validatePackFiles } from "../tools/pack-test.mjs";
 
 const tracked = execSync("git ls-files -z", { cwd: ROOT, encoding: "utf8" })
   .split("\0").filter(Boolean);
@@ -72,6 +72,71 @@ test("every pack manifest carries its lobby presentation", () => {
     assert.ok(Array.isArray(m.heroCards) && m.heroCards.length === 3,
       `${packId}: heroCards must be the three faces the tile fans`);
   }
+});
+
+// THE SCHEMAS ARE NORMATIVE (design doc §11) — which was an aspiration until
+// this gate existed, because no code in the repo read schema/*.json at all. The
+// first run of it found `meldForbidden` declared by a manifest, read by two
+// modules, and absent from a closed schema; and the rule-test move shape missing
+// the `id`/`target` that announcements have carried since they shipped.
+//
+// The check itself lives in tools/pack-test.mjs so a pack author running
+// `npm run pack-test` gets the identical gate locally, per §11's promise.
+test("every pack validates against schema/", async () => {
+  const problems = [];
+  for (const packId of listPackIds()) problems.push(...(await validatePackFiles(packId)));
+  assert.deepStrictEqual(problems, []);
+});
+
+/**
+ * A DECLARED PARAMETER NOBODY READS IS A LIE THE SCHEMA TELLS.
+ *
+ * This is the gate that would have caught `playAfterDraw` / `mustPlayIfAble`
+ * sitting unread in two manifests through a whole playtest cycle (feedback #14
+ * and #15), and the dozen others the architecture review found behind them:
+ * `trickWinner`, `dealAll`, `leader`, `progression`, `layDown`, `hitting`,
+ * `goingOut`, `turnEnd`, `undo`, `turnTimer`, `ui.felt`. Every one of them
+ * described behaviour that was hardcoded somewhere in src/, so a pack author
+ * could change the declaration and watch nothing happen.
+ *
+ * Deliberately a grep and not something cleverer: the question is "does any
+ * line of the platform mention this key", and the cheapest honest answer is the
+ * right one. A false pass needs someone to write `rules.foo` in a comment,
+ * which is a much smaller failure than the one it prevents.
+ *
+ * Variants marked `available: false` are excluded — those are declarations of
+ * intent for rules no template implements yet, which the schema gate above
+ * skips for the same reason.
+ */
+test("every rules.* key a manifest declares is read somewhere in src/", () => {
+  const source = tracked
+    .filter((f) => f.startsWith("src/") && f.endsWith(".js"))
+    .map((f) => fs.readFileSync(path.join(ROOT, f), "utf8"))
+    .join("\n");
+
+  const declared = new Map(); // key -> packs that declare it
+  for (const packId of listPackIds()) {
+    const m = JSON.parse(fs.readFileSync(
+      path.join(ROOT, "packs", packId, "manifest.json"), "utf8"));
+    const note = (key) => {
+      if (!declared.has(key)) declared.set(key, []);
+      declared.get(key).push(packId);
+    };
+    for (const key of Object.keys(m.rules || {})) note(key);
+    for (const variant of m.variants || []) {
+      if (variant.available === false) continue;
+      for (const dotted of Object.keys(variant.patch || {})) {
+        const [head, key] = dotted.split(".");
+        if (head === "rules" && key) note(key);
+      }
+    }
+  }
+
+  const unread = [...declared.entries()]
+    .filter(([key]) => !new RegExp(String.raw`rules\??\.${key}\b`).test(source))
+    .map(([key, packs]) => `rules.${key} (declared by ${packs.join(", ")})`);
+  assert.deepStrictEqual(unread, [],
+    "declared but read by no line of src/ — implement it or delete it, per the §13 extension policy");
 });
 
 // §10: CI rewrites this line with sed on every deploy. If the shape drifts the

@@ -27,12 +27,17 @@
 //        custom node would have to go to Arcade.audio.bus() to obey them.
 //   A4 — cue names are lowercase and event-shaped.
 
-const CUE_NAMES = ['deal', 'play', 'play-far', 'draw', 'shuffle', 'trick', 'invalid', 'win'];
-
-// The gestures the pack is actually built from. A cached older library may
-// have graph() and el() but not these, and a missing element throws from
-// inside a cue at play time — a cue that half-plays is worse than silence, so
-// registration is gated on the pack's real dependencies rather than a version.
+// The cue names are NOT listed here. They were, and the list had already
+// drifted behind the pack — a cue added to js/soundpack.js played nothing until
+// somebody remembered to name it in a second place, with no error to say so.
+// The pack's own CUES object is the list, so registration walks that.
+//
+// The gestures the pack is built FROM are a different question and stay
+// hand-written: this is a capability probe, not a mirror. A cached older
+// library may have graph() and el() but not these, and a missing element throws
+// from inside a cue at play time — a cue that half-plays is worse than silence,
+// so registration is gated on the pack's real dependencies rather than a
+// version number.
 const NEEDED_ELEMENTS = ['flex', 'strike', 'thump', 'pluck', 'cents', 'between'];
 
 function audio() {
@@ -62,8 +67,8 @@ let graphMode = false;
   if (!graphable) return;
 
   a.room(pack.ROOM);
-  for (const name of CUE_NAMES) {
-    if (pack.CUES[name]) a.graph(name, pack.CUES[name], { send: pack.SENDS[name] });
+  for (const [name, cue] of Object.entries(pack.CUES || {})) {
+    if (typeof cue === 'function') a.graph(name, cue, { send: pack.SENDS[name] });
   }
   graphMode = true;
 })();

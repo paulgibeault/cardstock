@@ -42,43 +42,48 @@
 
 import { createState } from '../engine/state.js';
 import { makeCtx } from '../engine/context.js';
-import { validateMove, applyMove, enumerateLegalMoves } from '../engine/movePipeline.js';
-import { rehydrateMatch, serializeMatch } from '../engine/replay.js';
-import { chooseBotMove } from '../engine/bot.js';
+import { validateMove, applyMove, legalMovesFor } from '../engine/movePipeline.js';
+import { rehydrateMatch, packVersionChanged } from '../engine/replay.js';
 import { baseId } from '../engine/selectors.js';
 import { handValue } from '../engine/scoring.js';
-import { buildSeating, thinkTimeMs } from '../players/roster.js';
-import { computeMatchStats, placements } from '../stats/matchStats.js';
+import { buildSeating } from '../players/roster.js';
 import { makeCardRenderer } from './cardStyles/index.js';
 import { fetchPack } from './packSource.js';
-import { flyCard, landOn, motionAllowed, flightLayer } from './flight.js';
-import { safeCssColor } from './css.js';
+import { flyCard, landOn, motionAllowed, flightLayer, rectOf, cardSizedRect } from './flight.js';
+import { createSession, stopSession } from './session.js';
+import { createBotDriver, botVerb } from './botDriver.js';
+import { schedule } from './clock.js';
+import { line, svgNode, clearSvgCache } from './dom.js';
+import { promptChoice, closeChoiceDialog } from './choiceDialog.js';
+import { createCelebrations } from './celebrations.js';
+import { createContractLadder } from './contractLadder.js';
+import { createMatchRecord } from './matchRecord.js';
+import { watchHandGestures } from './handGestures.js';
+import { createZoneRenderer } from './zoneRenderer.js';
 import { closeConfirm, confirmAction } from './confirm.js';
 import { createDragController } from './dragController.js';
 import { attachInspector, hideInspector } from './inspector.js';
 import {
-  describeCard, describeZone, cardAriaLabel, zoneAriaLabel, zoneBadge, cardName,
+  describeCard, cardAriaLabel, cardName,
 } from './describe.js';
 import {
   interactionMode, stagingPhase, buildUiModel, dropCandidates, draggableSources, pruneSelection,
-  isSelected, handAddress, implicitLandingZone, smartSelection, ladderRungs,
-  describeContractItem, describeContract, shortContract,
+  isSelected, handAddress, implicitLandingZone,
 } from './interaction.js';
 import {
   orderHand, reorder, nextMode, isSortMode, fanStep, classifyHandGesture, SORT_LABELS,
 } from './handOrder.js';
 import {
-  initPanels, showRoundSummary, hideRoundSummary, isRoundSummaryOpen,
+  initPanels, showRoundSummary, hideRoundSummary,
   showScoreboard, showGameOver, hideAllPanels, showRules, awaitFinalLook,
 } from './panels.js';
 import { packRules } from './rules.js';
 import {
-  rememberPack, loadSettings, saveMatch, loadMatch, clearMatch, recordResult, readStats,
+  rememberPack, loadSettings, saveMatch, loadMatch, clearMatch, recordForfeit,
   loadHandPrefs, saveHandPrefs,
 } from '../arcade/storage.js';
 import {
-  playDeal, playCardPlayed, playDraw, playShuffle, playInvalid, playWin, playTrickTaken,
-  playAnnouncement, playActionCard,
+  playDeal, playCardPlayed, playDraw, playShuffle, playInvalid, playWin, playAnnouncement,
 } from '../arcade/audio.js';
 
 const HUMAN_SEAT = 0;
@@ -95,23 +100,6 @@ function seatsFor(pack, requested) {
   const want = Number.isFinite(requested) ? requested : SEAT_COUNT;
   return Math.max(min, Math.min(max, want));
 }
-
-/** How many discards stay visible under the top one. Enough to read as a pile. */
-const DISCARD_DEPTH = 3;
-
-/** §7b: this value reaches a class name, so it is an allow-list, not a passthrough. */
-const OVERLAP_MODES = new Set(['horizontal', 'vertical']);
-
-/**
- * Templates this table renders COMPLETELY, and can therefore be played through
- * from deal to game over. All four, since the table learned zone-driven piles,
- * pass/lay-down selection, and the round loop — the lobby reads this to decide
- * which tiles still carry a Preview badge (none, today; the set stays because
- * a fifth template would start life outside it).
- */
-export const FULLY_PLAYABLE_TEMPLATES = new Set([
-  'shedding', 'trick-taking', 'contract-rummy', 'sequencing',
-]);
 
 const el = {
   screen: document.getElementById('table-screen'),
@@ -136,112 +124,35 @@ const el = {
   handSort: document.getElementById('hand-sort'),
   log: document.getElementById('log'),
   eventBanner: document.getElementById('event-banner'),
-  choiceModal: document.getElementById('choice-modal'),
-  choiceDialog: document.getElementById('choice-dialog'),
-  choiceCard: document.getElementById('choice-card'),
-  choicePrompt: document.getElementById('choice-prompt'),
-  choicePanel: document.getElementById('choice-options'),
-  choiceCancel: document.getElementById('choice-cancel'),
 };
 
-// `liveState`/`epoch` exist so "Play again" can start a fresh game without a bot-turn
-// timer left over from the PREVIOUS game corrupting it — scheduleNextTurn's callback
-// checks its own epoch is still current before touching anything. A save import
-// (onStateReplaced) and leaving for the lobby bump the epoch for the same reason.
-let livePack = null;
-let liveState = null;
+// ONE OPEN MATCH, ONE OBJECT (src/ui/session.js). Everything a match owns —
+// its state, its seating, its card art, the selection, the timers, the bot
+// decision caches — lives on `session`, created by adoptMatch and nulled by
+// closeTable. It replaced twenty-five module-level mutables that two different
+// functions hand-reset in overlapping subsets.
+//
+// `epoch` stays a module counter because its whole job is to OUTLIVE a session:
+// scheduleNextTurn's callback checks its own epoch is still current before
+// touching anything, so "Play again", a save import (onStateReplaced) and
+// leaving for the lobby all bump it to drop a turn already in flight.
+let session = null;
 let epoch = 0;
 
-// The open table's card art, built once from its pack (src/ui/cardStyles).
-// Rebuilt in adoptMatch rather than per render: resolving a theme walks the
-// whole deck for its colours, which is not something to do sixty times a
-// second, and the memoised card back would be thrown away with it.
-let cardArt = makeCardRenderer({});
-let dealAnimation = false;
-let botTimer = null;
-let bannerTimer = null;
+// The screen's own furniture, not the match's.
 let settings = null;
 let exitToLobby = () => {};
-
-// Who is in each seat, for this match (src/players/roster.js). Derived from the
-// match SEED, so it survives a resume without being serialized and rotates on
-// every fresh deal.
-let seating = [];
-
-// The human's tapped-but-not-yet-committed cards: { from: zoneAddress,
-// cardIds: [id, ...] }. Multi-card only where a move takes several cards
-// (passing, a lay-down); everywhere else it holds exactly one. Cleared on
-// every applied move and pruned against the live state on every render, so a
-// stale id can never reach a move.
-let selection = null;
-
-// How this pack's hand is arranged, and the order actually on screen. Both are
-// PRESENTATION (src/ui/handOrder.js): neither ever reaches the engine, so a
-// player rearranging their fan cannot change what a move enumerates.
-let handPrefs = { mode: 'auto', order: [] };
-let displayedHand = [];
-
-// The UI model the CURRENT render was built from. Pile and meld handlers read
-// it at click time rather than closing over a move, which is what lets a
-// selection change re-arm them without rebuilding the table (renderSelection).
-let currentUi = null;
-
 // Pointer choreography for lifting a card (src/ui/dragController.js), created
-// once at init. A render that landed mid-drag would replace the very node the
-// pointer is holding, so renders are DEFERRED while one is live and replayed
-// when it settles.
+// once at init and reused by every match.
 let drag = null;
-let pendingRender = null;
-
-/**
- * The launcher's session clock, in the cancellable-timer shape, with a plain
- * fallback so a module can be exercised without the SDK on the page.
- *
- * Exists so modules that must not import the SDK — dragController.js is
- * game-agnostic by design — can still have their timers freeze with a
- * suspended frame (§6c) rather than burning battery in a hidden iframe.
- */
-function sessionSchedule(fn, ms) {
-  const session = typeof window !== 'undefined' && window.Arcade && window.Arcade.session;
-  if (session && typeof session.setTimeout === 'function') return session.setTimeout(fn, ms);
-  const id = setTimeout(fn, ms);
-  return { cancel: () => clearTimeout(id) };
-}
-
-// Announcement beats (§E2) — a bot remembering to declare, or noticing that
-// you did not. Timers, so they are cancelled on every path that closes or
-// replaces the table, exactly like the bot-turn timer.
-let announceTimers = [];
-// One roll per vulnerability window, not one per re-render: without this a bot
-// gets a fresh chance to remember every time anybody moves, and
-// `callReliability` silently becomes 1.
-const botCallDecision = new Map();
-const botCatchDecision = new Map();
+// A renderer with no pack behind it, for the moment before the first match.
+const EMPTY_ART = makeCardRenderer({});
 
 // openTable() awaits a fetch, and the player can be back in the lobby before it
 // lands. `epoch` cannot cover that gap — it is bumped when the match is ADOPTED,
 // which is the thing we are trying not to do. So opening carries its own token:
 // whoever bumps it last owns the screen, and a superseded open returns quietly.
 let openToken = 0;
-
-// Resolves a pending suit/colour prompt with null when the table closes under
-// it, so the awaiting move handler unwinds instead of applying a move to a
-// match nobody is looking at.
-let cancelPendingChoice = null;
-
-// The match is written SYNCHRONOUSLY after every applied move.
-//
-// An earlier version coalesced these behind a zero-delay Arcade.session timer
-// to avoid re-serializing the log per bot turn. That was wrong in a way worth
-// recording: session timers freeze while the frame is suspended, which is
-// precisely the moment a pending save has to have already landed — a game
-// backgrounded before the timer fired kept its pending write frozen with it.
-// Persistence must never ride a gameplay-paced clock. Moves are ≥600 ms apart
-// and a match log is a few KB, so the coalescing bought nothing real.
-//
-// `matchDirty` survives only as onSuspend's belt-and-braces: state that
-// changed outside a move (the opening deal) is flushed there too.
-let matchDirty = false;
 
 /* ------------------------------------------------------------------ *
  * State questions
@@ -262,7 +173,7 @@ function humanName() {
 }
 
 function identityOf(seat) {
-  return seating[seat] || { seat, name: `Seat ${seat}`, icon: '', color: '#6b7280', isBot: seat !== HUMAN_SEAT };
+  return session?.seating[seat] || { seat, name: `Seat ${seat}`, icon: '', color: '#6b7280', isBot: seat !== HUMAN_SEAT };
 }
 
 /** The name to put in a sentence about a seat. */
@@ -289,6 +200,19 @@ function cardById(state, cardId) {
   return state.pack.cardsById.get(baseId(cardId));
 }
 
+/**
+ * Cards this seat has already committed to a simultaneous phase — drawn as
+ * chosen, and no longer choosable.
+ *
+ * Trick-taking keeps them in a double-underscore-PRIVATE player var, which this
+ * file read directly in three places. Asking the template is the difference
+ * between the platform knowing that Hearts has a passing phase and the platform
+ * knowing that some genres commit a selection before playing it.
+ */
+function committedSelectionOf(state, seat) {
+  return state.pack.template.committedSelection?.(makeCtx(state), seat) ?? null;
+}
+
 /** What a seat may SAY right now, out of turn (§E2). Never enumerated as a play. */
 function announcementsFor(state, seat) {
   const template = state.pack.template;
@@ -296,51 +220,27 @@ function announcementsFor(state, seat) {
   return template.enumerateAnnouncements(makeCtx(state), seat) || [];
 }
 
-/**
- * How a zone's visible cards are laid out, from the pack's `ui.zoneOverlap`.
- *
- * PRESENTATION, so it lives in `ui` rather than in the engine's zone def: how
- * far a discard pile fans says nothing about the rules, and putting it in `ui`
- * means a variant can change it with a one-line manifest patch
- * (`"ui.zoneOverlap.discard": "vertical"`) instead of restating a whole zone
- * definition. Allow-listed on the way out — the value reaches a class name.
- */
-function overlapFor(state, def) {
-  const declared = state.pack.manifest.ui?.zoneOverlap?.[def.id];
-  return OVERLAP_MODES.has(declared) ? declared : null;
-}
 
 /* ------------------------------------------------------------------ *
  * Rendering
  * ------------------------------------------------------------------ */
 
-// Card SVG is markup this repo authors, with every card-derived value escaped
-// inside src/ui/cardStyles — so innerHTML on a fresh node is safe here in a way
-// it is NOT for anything carrying a name or a label. Those use textContent.
-//
-// PARSED ONCE PER DISTINCT CARD, NOT ONCE PER APPEARANCE. cardArt memoizes the
-// markup STRING, but innerHTML still ran the HTML parser every time — and a
-// render rebuilds every card on the table, so a four-handed rummy table paid
-// for 60-100 parses on every tap. A <template> holds the parsed result and
-// cloneNode copies it, which is the same work the browser does for a repeated
-// element and a great deal less than re-reading the text.
-//
-// Keyed by the markup itself, so two cards that look identical (every card
-// back in the deck) share one entry and a change of card style simply misses
-// the old keys — adoptMatch clears it anyway when the renderer is rebuilt.
-const svgTemplates = new Map();
+/** The open match's card art, or an empty renderer before there is one. */
+function art() {
+  return session ? session.cardArt : EMPTY_ART;
+}
 
-function svgNode(markup, className) {
-  const span = document.createElement('span');
-  if (className) span.className = className;
-  let template = svgTemplates.get(markup);
-  if (!template) {
-    template = document.createElement('template');
-    template.innerHTML = markup;
-    svgTemplates.set(markup, template);
-  }
-  span.appendChild(template.content.cloneNode(true));
-  return span;
+/**
+ * The open match, or null. Functions rather than fields because "is a table
+ * open" is asked all over this file as a truthiness check, and a session that
+ * has been nulled has to answer it honestly from every one of them.
+ */
+function liveState() {
+  return session ? session.state : null;
+}
+
+function livePack() {
+  return session ? session.pack : null;
 }
 
 /**
@@ -359,27 +259,36 @@ function svgNode(markup, className) {
  * back is `back:2:7`, and the same card in a different pile has genuinely
  * arrived somewhere and should say so.
  */
-let shownCardKeys = new Set();
-let enteringKeys = null;
-
 /** Note `key` as present, and mark `node` as fresh if it was not before. */
 function markEntry(node, key) {
-  if (!enteringKeys) return node;
-  enteringKeys.add(key);
-  if (shownCardKeys.has(key)) return node;
+  if (!session || !session.enteringKeys) return node;
+  session.enteringKeys.add(key);
+  if (session.shownCardKeys.has(key)) return node;
   const face = node.querySelector('.card-face') || node.firstElementChild;
   if (face) face.classList.add('card-face--fresh');
   return node;
 }
 
-// A stable pseudo-random tilt per card. Seeded from the id rather than
-// Math.random() so a re-render — a resize, a settings change, a resumed match —
-// puts every card back exactly where it was. A discard pile that reshuffles
-// its own scatter on every repaint looks broken.
-function tiltFor(cardId, spread) {
-  let h = 0;
-  for (let i = 0; i < cardId.length; i++) h = (h * 31 + cardId.charCodeAt(i)) | 0;
-  return ((h % 1000) / 1000) * spread * 2 - spread;
+
+/**
+ * Flash a seat — good or bad — as the thing that just happened to it.
+ *
+ * The three-line ritual (remove both classes, force a reflow so the animation
+ * restarts, add one back) was written out verbatim three times: a trick landing,
+ * an action card landing, and the winner at game over. Forgetting the reflow is
+ * a pulse that silently does not play the second time.
+ *
+ * A seat is `el.hand` when it is yours and a plate otherwise, which is the other
+ * half of what all three copies had in common.
+ */
+function pulseSeat(seat, tone = 'good') {
+  const node = seat === HUMAN_SEAT
+    ? el.hand
+    : el.opponentsTop.querySelector(`[data-seat="${seat}"]`);
+  if (!node) return;
+  node.classList.remove('zone-celebrate', 'zone-lament');
+  void node.offsetWidth;
+  node.classList.add(tone === 'bad' ? 'zone-lament' : 'zone-celebrate');
 }
 
 /** The consistent "it is this player's turn" token, worn by seats and the action bar. */
@@ -388,13 +297,6 @@ function turnToken() {
   token.className = 'turn-token';
   token.setAttribute('aria-hidden', 'true');
   return token;
-}
-
-function line(className, text) {
-  const node = document.createElement('span');
-  node.className = className;
-  node.textContent = text;
-  return node;
 }
 
 /** Zone instances of a definition: 'build' with count 4 -> build.1..build.4. */
@@ -411,9 +313,11 @@ function sharedZoneInstances(state) {
   const out = [];
   for (const def of state.zones.defs.values()) {
     if (def.per === 'player') continue;
-    // Hidden shared zones (Stockpile's `recycled`) stay off the table; the
-    // draw pile is the one hidden zone that is also a control, so it shows.
-    if (def.visibility === 'none' && def.id !== 'draw') continue;
+    // Hidden shared zones (Stockpile's `recycled`) stay off the table; a
+    // hidden zone that is ALSO a control says so with `interactive` in its
+    // definition, which is how the draw pile keeps its place without this line
+    // knowing that a draw pile is called "draw".
+    if (def.visibility === 'none' && !def.interactive) continue;
     out.push(...instancesOf(def, null));
   }
   // The deck reads best on the left, whatever order the template declared.
@@ -437,477 +341,18 @@ function meldChipNode(meldKey) {
   return el.screen.querySelector(`[data-meld="${CSS.escape(meldKey)}"]`);
 }
 
-/**
- * Paint what a pile currently OFFERS: a place to put the selected card, a top
- * card to pick up, or nothing.
- *
- * Split out of buildPileNode because this is the only part of a pile that a
- * selection changes. Everything else about it — the cards, the depth cue, the
- * badge — is the same before and after, so re-running it in place is what lets
- * a tap on a hand card stop rebuilding the table (renderSelection).
- *
- * Reads the label off the node rather than the state: the accessible name's
- * subject is fixed by the zone, and only the verb in front of it moves.
- */
-function paintPileState(stack, ui) {
-  const address = stack.dataset.zone;
-  const ariaLabel = stack.dataset.zoneLabel || '';
-  const target = ui.readyTargets.get(address) || null;
-  const sourceTop = !target && ui.sourceTops.has(address) ? ui.sourceTops.get(address) : null;
-
-  stack.classList.toggle('pile-stack--ready', !!target);
-  stack.classList.toggle('pile-stack--source', !!sourceTop);
-  stack.classList.toggle('pile-stack--picked', !!sourceTop && isSelected(selection, address, sourceTop));
-
-  if (target) {
-    const verb = target.type === 'draw' ? 'Draw a card from'
-      : target.type === 'discard' ? 'Discard to'
-        : 'Play your selected card onto';
-    stack.disabled = false;
-    stack.setAttribute('aria-label', `${verb} ${ariaLabel}`);
-  } else if (sourceTop) {
-    stack.disabled = false;
-    stack.setAttribute('aria-label', `${ariaLabel} Pick up the top card to play it.`);
-  } else {
-    stack.disabled = true;
-    stack.setAttribute('aria-label', ariaLabel);
-  }
-}
-
-/** The same, for a meld chip: whether the selected card extends this meld. */
-function paintMeldState(chip, ui) {
-  const move = ui.readyMelds.get(chip.dataset.meld) || null;
-  const label = chip.dataset.meldLabel || '';
-  chip.classList.toggle('meld-chip--ready', !!move);
-  chip.disabled = !move;
-  chip.setAttribute('aria-label', move ? `${label} Add your selected card.` : label);
-}
 
 /**
- * One pile on the felt, for any zone. Always a <button>: whether it does
- * anything this render is decided by the UI model (a ready target applies its
- * move, a source top picks itself up), and a pile that does neither is simply
- * disabled — same element, same geometry, no relayout when a pile wakes up.
+ * What a pile has cost so far, for a pile whose contents are worth points.
  *
- * The pile's WORDS live in its accessible name and its inspector panel; what
- * is printed on the felt is a count badge (src/ui/describe.js explains why the
- * split is that way round and not the other).
+ * `def.showsHeldValue` rather than `def.id === 'won'`: a hidden pile holding
+ * scoring cards is a fact about the zone, so it is declared beside the zone
+ * (trick-taking's defaultZones). Hearts is the game that made it worth showing;
+ * it is not the rule.
  */
-function buildPileNode(state, inst, ui, { mini = false, draggableTop = null } = {}) {
-  const { def, address } = inst;
-  const cards = state.zones.cards(address);
-  const count = cards.length;
-  const wrap = document.createElement('div');
-  wrap.className = `pile ${mini ? 'pile--mini' : ''}`;
-
-  const stack = document.createElement('button');
-  stack.type = 'button';
-  stack.className = 'pile-stack';
-  stack.dataset.zone = address;
-
-  const target = ui.readyTargets.get(address) || null;
-  const sourceTop = !target && ui.sourceTops.has(address) ? ui.sourceTops.get(address) : null;
-  const isSpread = def.layout === 'spread' || def.id === 'trick';
-  const faceDown = def.facing === 'down' || def.visibility === 'none';
-  // A pile whose contract is "only the top card is public" must not leak the
-  // ones under it. It used to draw DISCARD_DEPTH real faces for depth, which
-  // showed Stockpile players the next three cards of everybody's discards.
-  const secretUnder = def.visibility === 'top';
-  const overlap = mini ? null : overlapFor(state, def);
-
-  stack.classList.toggle('pile-stack--deep', count > 2);
-  stack.classList.toggle('pile-stack--spread', isSpread && !mini);
-  if (overlap) {
-    stack.classList.add(`pile-stack--overlap-${overlap === 'vertical' ? 'v' : 'h'}`);
-    // How many card-widths the slot RESERVES — a constant, not the count on
-    // hand. See .pile-stack--overlap-v in table.css: a pile that resized as it
-    // filled re-centred every other pile in its row on every discard.
-    stack.style.setProperty('--overlap-slots', String(DISCARD_DEPTH - 1));
-  }
-
-  /** Place one card in the stack, carrying its index for the overlap offsets. */
-  const placeCard = (markup, i, visibleCount, cardId, isTop) => {
-    const node = svgNode(markup, `pile-stack__card ${isTop ? 'pile-stack__top' : ''}`);
-    // Keyed by zone as well as card: the same card arriving in a DIFFERENT
-    // pile has entered that pile, which is the moment worth animating.
-    markEntry(node, `${address}:${cardId}`);
-    node.style.setProperty('--stack-index', String(i - (visibleCount - 1) / 2));
-    node.style.setProperty('--overlap-index', String(i));
-    if (cardId) node.style.setProperty('--stack-tilt', `${tiltFor(cardId, isTop ? 2 : 5).toFixed(2)}deg`);
-    stack.appendChild(node);
-    return node;
-  };
-
-  let topNode = null;
-  if (faceDown) {
-    topNode = svgNode(count > 0
-      ? cardArt.back()
-      : '<div class="card-face card-face--empty"></div>', 'pile-stack__top');
-    // A face-down pile is one node whatever its depth, so the thing that
-    // "enters" is the pile going from empty to not.
-    markEntry(topNode, `${address}:down:${count > 0}`);
-    stack.appendChild(topNode);
-  } else if (isSpread && !mini) {
-    // A trick is not a pile: every card in it is live information about who
-    // played what, so it spreads and shows the whole trick.
-    const visible = cards.slice(-state.seats);
-    visible.forEach((cardId, i) => {
-      const card = cardById(state, cardId);
-      if (!card) return;
-      const isTop = i === visible.length - 1;
-      const node = placeCard(cardArt.face(card), i, visible.length, cardId, isTop);
-      node.style.setProperty('--stack-tilt', `${tiltFor(cardId, 7).toFixed(2)}deg`);
-      if (isTop) topNode = node;
-    });
-    if (!visible.length) stack.appendChild(svgNode('<div class="card-face card-face--empty"></div>', 'pile-stack__top'));
-  } else {
-    // A face-up pile keeps a few cards of HISTORY under the top one, stacked —
-    // a pile that only ever shows one card reads as a slide viewer. On a
-    // top-visible pile that history is drawn as BACKS: the depth is public,
-    // the cards are not.
-    const depth = mini ? 1 : DISCARD_DEPTH;
-    const visible = cards.slice(-depth);
-    visible.forEach((cardId, i) => {
-      const isTop = i === visible.length - 1;
-      const card = cardById(state, cardId);
-      if (!card) return;
-      const markup = (!isTop && secretUnder) ? cardArt.back() : cardArt.face(card);
-      const node = placeCard(markup, i, visible.length, cardId, isTop);
-      if (isTop) topNode = node;
-    });
-    if (!visible.length) stack.appendChild(svgNode('<div class="card-face card-face--empty"></div>', 'pile-stack__top'));
-  }
-
-  stack.dataset.zoneLabel = zoneAriaLabel(state, inst);
-
-  // LATE-BOUND, and bound unconditionally. The handler asks the current UI
-  // model what this pile does at the moment it is clicked instead of closing
-  // over the move that happened to be ready when it was built — which is what
-  // lets a selection change re-arm every pile in place (paintPileState) rather
-  // than rebuilding the whole table to change which ones glow.
-  stack.addEventListener('click', () => {
-    if (!liveState || !currentUi) return;
-    const move = currentUi.readyTargets.get(address);
-    if (move) {
-      performHumanMove(liveState, move, stack);
-      return;
-    }
-    const top = currentUi.sourceTops.get(address);
-    if (top === undefined) return;
-    selection = isSelected(selection, address, top) ? null : { from: address, cardIds: [top] };
-    renderSelection(liveState);
-  });
-  paintPileState(stack, ui);
-
-  // Any face-up top card the human owns lifts, whether or not it has anywhere
-  // to go — a refused drop simply snaps home. That is the "cards on felt"
-  // feel, and it is also how a player LEARNS what is legal.
-  if (draggableTop && topNode && drag) {
-    drag.attach(topNode, { kind: 'pile', from: address, cardId: draggableTop });
-  }
-
-  attachInspector(stack, () => (liveState ? describeZone(liveState, inst) : null),
-    { isBusy: () => !!drag && drag.isDragging() });
-
-  wrap.appendChild(stack);
-  if (!mini) {
-    const badge = document.createElement('div');
-    badge.className = 'pile-count';
-    // The words moved to the accessible name and the inspector; what is left
-    // on the felt is the number you actually watch.
-    const { text: badgeText, kind, suit } = zoneBadge(state, inst);
-    badge.textContent = badgeText;
-    if (kind === 'match') {
-      // THE SUIT IN FORCE IS NOT A PILE LABEL, so it does not get a pile
-      // label's voice. It is the rule every hand at the table is playing to,
-      // and after an eight it is the ONLY place that rule is written — the
-      // card underneath shows the suit it was, not the suit it chose. Big
-      // glyph, suit-inked, no pill. See .pile-count--match.
-      badge.classList.add('pile-count--match');
-      // dataset, and only for a suit describe.js recognised: a pack's own var
-      // never reaches an attribute the stylesheet then matches on (§7b).
-      if (suit) badge.dataset.suit = suit;
-    }
-    // The badge already carries the suit or the word for an active colour
-    // (zoneBadge); this adds the swatch, and only in the case a card cannot
-    // show for itself. Said aloud by describeZone's note, which reaches the
-    // pile's own name.
-    const active = activeMatchTint(state, address);
-    if (active) {
-      badge.classList.add('pile-count--active-match');
-      if (active.tint) badge.style.setProperty('--active-tint', active.tint);
-    }
-    badge.setAttribute('aria-hidden', 'true');
-    wrap.appendChild(badge);
-  }
-  return wrap;
-}
-
-/**
- * The colour the table is matching on when the top card cannot say it itself.
- *
- * There is exactly one case and it is the most consequential card in the game:
- * a wild sits on the discard showing no colour at all, while what every hand
- * now has to match is a value living in a var. zoneBadge already writes
- * the WORD there (describe.js) — this is what turns that word into something
- * readable at a glance, which for a colour is a swatch.
- *
- * Returns null when the top card carries the attribute itself, so the badge
- * stays a plain word on an ordinary play and the swatch means "a wild chose
- * this" rather than merely "this pile is a discard".
- */
-function activeMatchTint(state, address) {
-  if (address !== 'discard' || !state.zones.has('discard')) return null;
-  const matchOn = state.pack.rules?.matchOn;
-  if (!Array.isArray(matchOn)) return null;
-  const topId = state.zones.top('discard');
-  const card = topId ? cardById(state, topId) : null;
-  if (!card) return null;
-
-  for (const attr of matchOn) {
-    if (card[attr] !== null && card[attr] !== undefined) continue; // the card says it
-    const value = state.vars[`active${attr[0].toUpperCase()}${attr.slice(1)}`];
-    if (value === undefined || value === null) continue;
-    // Through the pack's palette and safeCssColor: pack data reaching a style
-    // property (§7b). A pack with no palette entry for this value still gets
-    // the word, just without the dot.
-    //
-    // `cardArt.theme.palette`, not `cardArt.palette` — the renderer exposes its
-    // resolved theme, and the shorter spelling was undefined, so this swatch
-    // never once appeared. Same typo, same silent nothing, in flashFelt.
-    return { attr, value, tint: safeCssColor(cardArt.theme.palette?.[value]) };
-  }
-  return null;
-}
-
-// Per-seat meld groupings mirror the template's playerVar bookkeeping: the
-// stored [{item, cards}] when a lay-down recorded one, else the whole zone as
-// one group (the same fallback contract-rummy's getMeldGroups applies).
-function meldGroupsOf(state, seat) {
-  const stored = state.playerVars[seat]?.melds;
-  if (stored) return stored;
-  const addr = `melds.${seat}`;
-  if (!state.zones.has(addr)) return [];
-  const cards = state.zones.cards(addr);
-  return cards.length ? [{ item: null, cards: cards.slice() }] : [];
-}
-
-/**
- * How a card in a laid-down meld reads.
- *
- * A wild on the felt is not a wild any more — it is the card it was played
- * as, and the meld records which (`group.wilds`). Saying so is the difference
- * between a run a player can read and one they have to reconstruct, and it is
- * the only place the frozen value is visible: the card art still shows a wild,
- * because that is the card that will go back in the box.
- */
-function meldCardName(group, cardId, card) {
-  const pinned = group.wilds?.[cardId];
-  const value = pinned?.rank ?? pinned?.color;
-  return value === undefined ? cardName(card) : `${cardName(card)} — played as ${value}`;
-}
-
-/**
- * A seat's laid-down melds as chips — the hit targets, and the single most
- * useful piece of public information on the table.
- *
- * Each chip carries the cards AND a caption naming the requirement they
- * satisfied. The cards alone cannot say that: three 7s and three 7s are two
- * different rungs of the ladder depending on the contract that asked for them,
- * and an opponent's laid-down phase is exactly what you plan your own turn
- * around.
- */
-function buildMeldStrip(state, seat, ui, { mini = false } = {}) {
-  const strip = document.createElement('div');
-  strip.className = `meld-strip ${mini ? 'meld-strip--mini' : ''}`;
-  strip.dataset.zone = `melds.${seat}`;
-  const groups = meldGroupsOf(state, seat);
-  const owner = seat === HUMAN_SEAT ? 'Your' : `${identityOf(seat).name}'s`;
-
-  groups.forEach((group, i) => {
-    const meldKey = `${seat}:${i}`;
-    const move = ui.readyMelds.get(meldKey) || null;
-    const what = group.item ? describeContractItem(group.item) : 'meld';
-
-    const chip = document.createElement('button');
-    chip.type = 'button';
-    chip.className = 'meld-chip';
-    chip.dataset.meld = meldKey;
-
-    const cards = document.createElement('span');
-    cards.className = 'meld-chip__cards';
-    for (const cardId of group.cards) {
-      const card = cardById(state, cardId);
-      if (card) cards.appendChild(svgNode(cardArt.face(card), 'meld-chip__card'));
-    }
-    chip.appendChild(cards);
-    chip.appendChild(line('meld-chip__label', what));
-
-    chip.dataset.meldLabel = `${owner} ${what}, ${group.cards.length} cards.`;
-    // Late-bound for the same reason the piles are — see paintPileState.
-    chip.addEventListener('click', () => {
-      const ready = currentUi && currentUi.readyMelds.get(meldKey);
-      if (ready && liveState) performHumanMove(liveState, ready, chip);
-    });
-    paintMeldState(chip, ui);
-
-    // Reading a meld card by card is the thing a squeezed strip made
-    // impossible, so the inspector spells the whole thing out.
-    attachInspector(chip, () => ({
-      title: `${owner} ${what}`,
-      lines: group.cards
-        .map((cardId) => ({ cardId, card: cardById(state, cardId) }))
-        .filter((entry) => entry.card)
-        .map((entry, n) => ({
-          label: `Card ${n + 1}`,
-          value: meldCardName(group, entry.cardId, entry.card),
-        })),
-      notes: move ? ['Your selected card extends this meld — tap to play it.'] : [],
-    }), { isBusy: () => !!drag && drag.isDragging() });
-
-    strip.appendChild(chip);
-  });
-  return strip;
-}
-
-/**
- * The contract ladder: every rung of the race, and who is standing on it.
- *
- * Contract-rummy's per-player progression is the whole game (design doc
- * §13.3) and it used to be a two-character chip on a name plate — you could
- * see that Nell was on "Ph 3" but not what phase 3 asks for, how many rungs
- * are left, or how far ahead of you she is. Data-driven, so it appears for any
- * pack declaring `rules.contracts` and stays hidden for everything else.
- *
- * Rungs carry the SHORT form (`S3+R4`) with a one-line key, and hovering gives
- * the sentence — the same words-versus-badge split the pile labels use.
- */
-/**
- * How many ladder rungs the row can hold at this width.
- *
- * Read from the same breakpoints table.css sizes the rungs at, rather than
- * measured: a measurement here would be a forced layout on every render, and
- * the widths that matter are exactly the ones the stylesheet already names.
- * A desktop row fits the whole course, so it gets it — truncation is a
- * response to a narrow screen, not the ladder's preference.
- */
-function ladderBudget() {
-  if (typeof window.matchMedia !== 'function') return 5;
-  if (window.matchMedia('(max-width: 420px)').matches) return 5;
-  if (window.matchMedia('(max-width: 720px)').matches) return 7;
-  return Infinity;
-}
-
-function renderContractLadder(state) {
-  const contracts = state.pack.rules.contracts;
-  if (!Array.isArray(contracts) || !contracts.length) {
-    el.contractLadder.hidden = true;
-    el.contractLadder.replaceChildren();
-    return;
-  }
-
-  const minePhase = state.playerVars[HUMAN_SEAT]?.phase ?? null;
-  el.contractLadder.replaceChildren();
-
-  // Which rungs survive the squeeze, and where the collapsed runs go — see
-  // ladderRungs in src/ui/interaction.js for what may be dropped and why.
-  const occupied = [];
-  for (let seat = 0; seat < state.seats; seat++) {
-    const phase = state.playerVars[seat]?.phase ?? null;
-    if (phase) occupied.push(phase);
-  }
-
-  for (const entry of ladderRungs(contracts.length, { minePhase, occupied, maxRungs: ladderBudget() })) {
-    if (entry.kind === 'gap') {
-      const span = entry.to - entry.from + 1;
-      const where = span === 1 ? `Contract ${entry.from}` : `Contracts ${entry.from}–${entry.to}`;
-      const gap = document.createElement('div');
-      gap.className = 'ladder__gap';
-      gap.appendChild(line('ladder__gap-mark', '⋯'));
-
-      // ANYONE THE SQUEEZE HID IS DRAWN HERE. Collapsing a rung is only safe
-      // because the players standing on it come with it — "who is behind me"
-      // survives at coarser resolution rather than vanishing.
-      const inside = [];
-      for (let seat = 0; seat < state.seats; seat++) {
-        const phase = state.playerVars[seat]?.phase ?? null;
-        if (phase === null || phase < entry.from || phase > entry.to) continue;
-        const identity = identityOf(seat);
-        inside.push(identity);
-        const pip = document.createElement('span');
-        pip.className = 'ladder__pip ladder__pip--tucked';
-        pip.style.background = identity.color;
-        pip.textContent = identity.icon || identity.initials;
-        pip.setAttribute('aria-hidden', 'true');
-        gap.appendChild(pip);
-      }
-
-      const names = inside.map((i) => (i.seat === HUMAN_SEAT ? 'you' : i.name));
-      gap.setAttribute('aria-label', `${where}.`
-        + (names.length ? ` On them: ${names.join(', ')}.` : ' Nobody is on them.'));
-      attachInspector(gap, () => ({
-        title: where,
-        lines: contracts.slice(entry.from - 1, entry.to).map((items, n) => ({
-          label: String(entry.from + n), value: describeContract(items),
-        })),
-        notes: names.length ? [`Currently on these: ${names.join(', ')}.`] : ['Nobody is on these yet.'],
-      }), { isBusy: () => !!drag && drag.isDragging() });
-      el.contractLadder.appendChild(gap);
-      continue;
-    }
-
-    const phase = entry.phase;
-    const items = contracts[phase - 1];
-    const rung = document.createElement('div');
-    const mine = phase === minePhase;
-    rung.className = `ladder__rung ${mine ? 'ladder__rung--mine' : ''} `
-      + `${minePhase && phase < minePhase ? 'ladder__rung--past' : ''}`;
-
-    rung.appendChild(line('ladder__no', String(phase)));
-    rung.appendChild(line('ladder__req', shortContract(items)));
-
-    const who = document.createElement('div');
-    who.className = 'ladder__who';
-    const here = [];
-    for (let seat = 0; seat < state.seats; seat++) {
-      if ((state.playerVars[seat]?.phase ?? null) !== phase) continue;
-      const identity = identityOf(seat);
-      here.push(identity);
-      const pip = document.createElement('span');
-      pip.className = 'ladder__pip';
-      // Roster colour — an own value, never a manifest one (§7b).
-      pip.style.background = identity.color;
-      pip.textContent = identity.icon || identity.initials;
-      pip.setAttribute('aria-hidden', 'true');
-      who.appendChild(pip);
-    }
-    rung.appendChild(who);
-
-    const names = here.map((i) => (i.seat === HUMAN_SEAT ? 'you' : i.name));
-    rung.setAttribute('aria-label',
-      `Contract ${phase} of ${contracts.length}: ${describeContract(items)}.`
-      + (names.length ? ` On it: ${names.join(', ')}.` : ' Nobody is on it.'));
-
-    attachInspector(rung, () => ({
-      title: `Contract ${phase}`,
-      lines: items.map((item, n) => ({ label: `Part ${n + 1}`, value: describeContractItem(item) })),
-      notes: names.length
-        ? [`Currently on it: ${names.join(', ')}.`]
-        : ['Nobody is on this contract.'],
-    }), { isBusy: () => !!drag && drag.isDragging() });
-
-    el.contractLadder.appendChild(rung);
-  }
-
-  el.contractLadder.appendChild(line('ladder__key', 'S set · R run · C colour'));
-  el.contractLadder.hidden = false;
-}
-
-/** Hearts' point total taken so far — worth a chip on the won pile. */
-function wonPointsText(state, seat) {
-  const addr = `won.${seat}`;
-  if (!state.zones.has(addr) || !state.pack.scoring?.cardValues) return null;
-  const cards = state.zones.cards(addr).map((id) => cardById(state, id)).filter(Boolean);
+function heldValueText(state, def, address) {
+  if (!def.showsHeldValue || !state.zones.has(address) || !state.pack.scoring?.cardValues) return null;
+  const cards = state.zones.cards(address).map((id) => cardById(state, id)).filter(Boolean);
   const pts = handValue(cards, state.pack.scoring);
   return pts > 0 ? `${pts} pts` : null;
 }
@@ -918,17 +363,31 @@ function showsScores(state) {
     || state.scores.some((n) => n !== 0);
 }
 
+/**
+ * What a seat's score chip says — the template's answer, or the plain total.
+ *
+ * Contract rummy's "score" that matters is the contract you have reached and
+ * the points are the tiebreak, which is why a plain total is the wrong default
+ * for it and right for everything else. That used to be
+ * `typeof playerVars[seat].phase === 'number'`, written out twice in this file,
+ * beside three more direct reads of the same private var.
+ *
+ * @returns { short, long, aria } — `short` fits an opponent's plate, `long` is
+ *          the human's own chip, which has room for both numbers.
+ */
+function scoreChipFor(state, seat) {
+  const declared = state.pack.template.scoreChip?.(makeCtx(state), seat);
+  if (declared) return declared;
+  const score = String(state.scores[seat]);
+  return { short: score, long: score, aria: `${score} points` };
+}
+
 function seatScoreChip(state, seat) {
   const chip = document.createElement('span');
   chip.className = 'seat__score';
-  const phase = state.playerVars[seat]?.phase;
-  // Contract rummy's "score" that matters is the contract you have reached;
-  // the points are the tiebreak. Show what the player is actually racing.
-  const text = typeof phase === 'number' ? `Ph ${phase}` : `${state.scores[seat]}`;
-  chip.textContent = text;
-  chip.setAttribute('aria-label', typeof phase === 'number'
-    ? `on contract ${phase}, ${state.scores[seat]} points`
-    : `${state.scores[seat]} points`);
+  const { short, aria } = scoreChipFor(state, seat);
+  chip.textContent = short;
+  chip.setAttribute('aria-label', aria);
   return chip;
 }
 
@@ -1049,11 +508,11 @@ function renderSeats(state, stagger, acting, ui) {
     // breakpoint-driven custom property, so the arithmetic belongs where that
     // property is defined rather than in a second copy that can drift from it.
     mini.style.setProperty('--mini-count', String(count));
-    mini.style.setProperty('--back-panel', cardArt.backPanel);
+    mini.style.setProperty('--back-panel', art().backPanel);
     for (let i = 0; i < count; i++) {
       const last = i === count - 1;
       const node = last
-        ? svgNode(cardArt.back(), stagger ? 'card-deal' : '')
+        ? svgNode(art().back(), stagger ? 'card-deal' : '')
         : document.createElement('span');
       if (!last) {
         if (stagger) node.className = 'card-deal';
@@ -1074,20 +533,20 @@ function renderSeats(state, stagger, acting, ui) {
 
     // The seat's own piles, compact: a Stockpile stock and discards, laid-down
     // melds (live hit targets), a Hearts won pile with the points it holds.
-    const zones = perPlayerZoneInstances(state, seat);
-    if (zones.length) {
+    const seatZones = perPlayerZoneInstances(state, seat);
+    if (seatZones.length) {
       const strip = document.createElement('div');
       strip.className = 'seat__zones';
-      for (const inst of zones) {
+      for (const inst of seatZones) {
         if (inst.def.id === 'melds') {
-          strip.appendChild(buildMeldStrip(state, seat, ui, { mini: true }));
+          strip.appendChild(zones.buildMeldStrip(state, seat, ui, { mini: true }));
         } else if (inst.def.visibility === 'none') {
-          const pts = inst.def.id === 'won' ? wonPointsText(state, seat) : null;
+          const pts = heldValueText(state, inst.def, inst.address);
           const chip = line('seat__pilechip', `${inst.def.label || inst.def.id} ${state.zones.count(inst.address)}${pts ? ` · ${pts}` : ''}`);
           chip.dataset.zone = inst.address;
           strip.appendChild(chip);
         } else {
-          strip.appendChild(buildPileNode(state, inst, ui, { mini: true }));
+          strip.appendChild(zones.buildPileNode(state, inst, ui, { mini: true }));
         }
       }
       wrap.appendChild(strip);
@@ -1102,7 +561,7 @@ function renderSeats(state, stagger, acting, ui) {
       button.className = 'seat__catch';
       button.textContent = 'Catch!';
       button.setAttribute('aria-label', `Catch ${identity.name} — they never declared their last card.`);
-      button.addEventListener('click', () => liveState && performAnnouncement(liveState, catchMove));
+      button.addEventListener('click', () => liveState() && performAnnouncement(liveState(), catchMove));
       wrap.appendChild(button);
     }
 
@@ -1113,7 +572,7 @@ function renderSeats(state, stagger, acting, ui) {
 function renderCenterZones(state, ui, draggable) {
   el.centerPiles.replaceChildren();
   for (const inst of sharedZoneInstances(state)) {
-    el.centerPiles.appendChild(buildPileNode(state, inst, ui, {
+    el.centerPiles.appendChild(zones.buildPileNode(state, inst, ui, {
       draggableTop: draggable.piles.get(inst.address) || null,
     }));
   }
@@ -1123,16 +582,16 @@ function renderPlayerZones(state, ui, draggable) {
   el.playerPiles.replaceChildren();
   for (const inst of perPlayerZoneInstances(state, HUMAN_SEAT)) {
     if (inst.def.id === 'melds') {
-      el.playerPiles.appendChild(buildMeldStrip(state, HUMAN_SEAT, ui));
+      el.playerPiles.appendChild(zones.buildMeldStrip(state, HUMAN_SEAT, ui));
     } else if (inst.def.visibility === 'none') {
       // The human's own hidden pile (a Hearts won pile): a face-down pile with
       // its count — and its cost, when the pack scores what it holds.
-      const pts = inst.def.id === 'won' ? wonPointsText(state, HUMAN_SEAT) : null;
-      const pile = buildPileNode(state, inst, ui);
+      const pts = heldValueText(state, inst.def, inst.address);
+      const pile = zones.buildPileNode(state, inst, ui);
       if (pts) pile.querySelector('.pile-count').textContent = pts;
       el.playerPiles.appendChild(pile);
     } else {
-      el.playerPiles.appendChild(buildPileNode(state, inst, ui, {
+      el.playerPiles.appendChild(zones.buildPileNode(state, inst, ui, {
         draggableTop: draggable.piles.get(inst.address) || null,
       }));
     }
@@ -1149,8 +608,8 @@ function renderPlayerZones(state, ui, draggable) {
  */
 function stagedIds(state, ui) {
   if (!ui.handMulti) return [];
-  if (!selection || selection.from !== handAddress(HUMAN_SEAT)) return [];
-  return selection.cardIds;
+  if (!session.selection || session.selection.from !== handAddress(HUMAN_SEAT)) return [];
+  return session.selection.cardIds;
 }
 
 /**
@@ -1188,7 +647,7 @@ function renderStageTray(state, ui) {
   for (const cardId of staged) {
     const card = cardById(state, cardId);
     if (!card) continue;
-    const node = svgNode(cardArt.face(card), 'stage-card');
+    const node = svgNode(art().face(card), 'stage-card');
     node.dataset.cardId = cardId;
     node.setAttribute('role', 'button');
     node.tabIndex = 0;
@@ -1212,26 +671,26 @@ function renderHand(state, ui, stagger, draggable) {
   const engineHand = state.zones.cards(handAddr);
   // The engine's order is dealing order and stays that way; what the player
   // sees is their own arrangement (src/ui/handOrder.js).
-  displayedHand = orderHand(engineHand, (id) => cardById(state, id), handPrefs.mode, handPrefs.order);
-  const committedPass = state.playerVars[HUMAN_SEAT]?.__pendingPass;
+  session.displayedHand = orderHand(engineHand, (id) => cardById(state, id), session.handPrefs.mode, session.handPrefs.order);
+  const committedPass = committedSelectionOf(state, HUMAN_SEAT);
 
   // Gathered cards are drawn in the tray instead, so the fan holds only what
   // is still to be chosen from. handPrefs.order is NOT touched — a card put
   // back returns to the exact slot it left, because it never left the order.
   const staged = new Set(stagedIds(state, ui));
-  const fanned = staged.size ? displayedHand.filter((id) => !staged.has(id)) : displayedHand;
+  const fanned = staged.size ? session.displayedHand.filter((id) => !staged.has(id)) : session.displayedHand;
 
   fanned.forEach((cardId, i) => {
     const card = cardById(state, cardId);
     const selectable = ui.handSelectable.has(cardId);
-    const selected = isSelected(selection, handAddr, cardId) || (committedPass || []).includes(cardId);
+    const selected = isSelected(session.selection, handAddr, cardId) || (committedPass || []).includes(cardId);
     // A card you cannot play is DRAWN as one — grey stock, deeper ink, baked
     // into the art (src/ui/cardStyles/shared.js). It used to be the live card
     // under `opacity: 0.78`, which cost a composited layer per unplayable card
     // per frame and faded the rank you are reading to find out why it is
     // unplayable. Only the hand does this: a pile or an opponent's card is not
     // yours to play, so there is nothing for it to say there.
-    const wrapper = svgNode(cardArt.face(card, !selectable),
+    const wrapper = svgNode(art().face(card, !selectable),
       `card-face-wrap ${selectable ? '' : 'card-face--disabled'} ${stagger ? 'card-deal' : ''} ${selected ? 'card-face-wrap--selected' : ''}`);
     markEntry(wrapper, `hand:${cardId}`);
     wrapper.dataset.cardId = cardId;
@@ -1272,13 +731,13 @@ function renderHand(state, ui, stagger, draggable) {
     // The card's description is still on its accessible name, and everywhere
     // outside a rummy lay-down the long press means "what is this?" as before.
     attachInspector(wrapper, () => describeCard(card, state.pack),
-      { isBusy: () => (!!drag && drag.isDragging()) || smartSelectArmed() });
+      { isBusy: () => (!!drag && drag.isDragging()) || !!gestures?.smartSelectArmed() });
 
     el.hand.appendChild(wrapper);
   });
 
-  el.handSort.textContent = SORT_LABELS[handPrefs.mode] || SORT_LABELS.auto;
-  el.handSort.setAttribute('aria-label', `Hand order: ${SORT_LABELS[handPrefs.mode]}. Change it.`);
+  el.handSort.textContent = SORT_LABELS[session.handPrefs.mode] || SORT_LABELS.auto;
+  el.handSort.setAttribute('aria-label', `Hand order: ${SORT_LABELS[session.handPrefs.mode]}. Change it.`);
   el.handSort.hidden = engineHand.length < 2;
   renderStageTray(state, ui);
   layoutHand();
@@ -1340,210 +799,12 @@ function layoutHand() {
  */
 function watchHandWidth() {
   if (typeof ResizeObserver !== 'function') {
-    window.addEventListener('resize', () => { if (liveState) layoutHand(); });
+    window.addEventListener('resize', () => { if (liveState()) layoutHand(); });
     return;
   }
   // Observing the ROW, not the hand: the hand's own width is what layoutHand
   // changes, so watching it would be a feedback loop.
-  new ResizeObserver(() => { if (liveState) layoutHand(); }).observe(el.handRow);
-}
-
-/**
- * Re-draw the ladder when the window crosses a width where it holds a
- * different number of rungs. Only the ladder: everything else on the felt
- * resizes through CSS variables and needs no help.
- */
-function watchLadderWidth() {
-  if (typeof window.matchMedia !== 'function') return;
-  let budget = ladderBudget();
-  const recheck = () => {
-    const next = ladderBudget();
-    if (next === budget) return;
-    budget = next;
-    if (liveState) renderContractLadder(liveState);
-  };
-  for (const query of ['(max-width: 420px)', '(max-width: 720px)']) {
-    const mq = window.matchMedia(query);
-    if (mq.addEventListener) mq.addEventListener('change', recheck);
-    else if (mq.addListener) mq.addListener(recheck);
-  }
-}
-
-/* ------------------------------------------------------------------ *
- * Reading the fan with a finger
- * ------------------------------------------------------------------ */
-
-/**
- * PEEK: the card under the finger rises out of the fan, before the finger is
- * lifted, and follows the finger along the row.
- *
- * A fan overlaps, so all you can see of most cards is a strip down the left
- * edge — on a phone, thinner than the finger covering it. `:hover` solves this
- * for a mouse and does nothing for a touch, which left the player tapping a
- * sliver and finding out afterwards what they had chosen. Raising on
- * pointerDOWN turns a tap into look-then-commit: what you are on is legible
- * while you are still on it, and sliding to a neighbour costs nothing.
- *
- * Hit-testing is by cached rect, not by event target: touch capture sends
- * every move to the element the press began on, so the target is always the
- * first card. The rects are measured once per press for the same reason the
- * drag controller measures its targets once (issue #6) — the fan does not
- * move while a finger is on it.
- *
- * The visible strip of card i runs from its own left edge to the NEXT card's,
- * because later siblings paint over earlier ones; the last card owns its full
- * width. That is exactly the region the player can see, which is what makes
- * this feel like pointing at the card rather than at a hitbox.
- */
-let peek = null;
-
-function paintPeek(wrapper) {
-  if (peek && peek.node === wrapper) return;
-  if (peek && peek.node) peek.node.classList.remove('card-face-wrap--peek');
-  if (peek) peek.node = wrapper;
-  if (wrapper) wrapper.classList.add('card-face-wrap--peek');
-}
-
-function clearPeek() {
-  disarmSmartSelect();
-  if (peek && peek.node) peek.node.classList.remove('card-face-wrap--peek');
-  peek = null;
-}
-
-/* ------------------------------------------------------------------ *
- * Gathering a meld by holding one card
- * ------------------------------------------------------------------ */
-
-/** How long a hold has to last to mean "and the rest of this meld". */
-const SMART_SELECT_MS = 500;
-
-/**
- * HOLD A CARD TO GATHER ITS MELD.
- *
- * The last of the three answers to "assembling a meld on a phone is too
- * cramped", and the one that skips the problem rather than easing it: the pack
- * already knows that the two other sevens go with this seven, so picking them
- * out of the fan by hand is work the rules could have done. Hold the seven and
- * the group arrives in the tray.
- *
- * Only where the question means something — a rummy hand still choosing what
- * to lay down. Everywhere else a long press keeps meaning "what is this card?"
- * (src/ui/inspector.js), which the inspector's own veto is told about below.
- *
- * The gathered cards go through the ORDINARY selection, so this can no more
- * construct an illegal lay-down than tapping the same cards could.
- */
-function smartSelectArmed() {
-  return !!currentUi && currentUi.mode === 'rummy-meld' && currentUi.handMulti;
-}
-
-function disarmSmartSelect() {
-  if (peek && peek.hold) {
-    peek.hold.cancel();
-    peek.hold = null;
-  }
-}
-
-function armSmartSelect(wrapper) {
-  if (!smartSelectArmed() || !peek) return;
-  peek.hold = sessionSchedule(() => {
-    if (!peek) return;
-    peek.hold = null;
-    const cardId = wrapper.dataset.cardId;
-    const next = smartSelection(liveState, HUMAN_SEAT, cardId, selection);
-    if (!next) {
-      // Nothing in hand goes with it. Say so on the card rather than in words:
-      // a group that does not exist is not an error, just an answer.
-      wrapper.classList.add('card-face-wrap--nomatch');
-      sessionSchedule(() => wrapper.classList.remove('card-face-wrap--nomatch'), 400);
-      return;
-    }
-    const gathered = next.cardIds.length - (selection ? selection.cardIds.length : 0);
-    selection = next;
-    clearPeek();
-    // A full render: the gathered cards leave the fan for the tray.
-    render(liveState, `Gathered ${gathered} cards.`);
-  }, SMART_SELECT_MS);
-}
-
-/** The fan card whose VISIBLE strip contains `clientX`. */
-function cardStripAt(clientX) {
-  if (!peek || !peek.strips.length) return null;
-  const strips = peek.strips;
-  if (clientX < strips[0].left) return strips[0].node;
-  for (let i = 0; i < strips.length; i++) {
-    const right = i + 1 < strips.length ? strips[i + 1].left : strips[i].right;
-    if (clientX < right) return strips[i].node;
-  }
-  return strips[strips.length - 1].node;
-}
-
-function watchHandPeek() {
-  el.hand.addEventListener('pointerdown', (event) => {
-    if (event.button !== 0) return;
-    // Whatever the last press left behind. A pointerup can go missing — the
-    // finger leaves the window, a drag takes the gesture over — and a card
-    // left raised is a card claiming to be under a finger that is not there.
-    clearPeek();
-    const wrapper = event.target.closest?.('.card-face-wrap');
-    if (!wrapper || !el.hand.contains(wrapper)) return;
-    const strips = [...el.hand.children].map((node) => {
-      const r = node.getBoundingClientRect();
-      return { node, left: r.left, right: r.right };
-    });
-    peek = { node: null, strips, pointerId: event.pointerId, scrubbed: false, hold: null };
-    paintPeek(wrapper);
-    armSmartSelect(wrapper);
-  });
-
-  el.hand.addEventListener('pointermove', (event) => {
-    if (!peek || event.pointerId !== peek.pointerId) return;
-    const under = cardStripAt(event.clientX);
-    if (under && under !== peek.node) {
-      peek.scrubbed = true;
-      // The press has become a slide, so it is no longer a hold.
-      disarmSmartSelect();
-    }
-    if (under) paintPeek(under);
-  });
-
-  // A scrub that ended on a card other than the one pressed has to activate
-  // THAT card: the browser's click will name the press target, which is the
-  // whole thing the player was scrubbing away from.
-  const finish = (event) => {
-    if (!peek || event.pointerId !== peek.pointerId) return;
-    const landed = peek.node;
-    const scrubbed = peek.scrubbed;
-    clearPeek();
-    if (!scrubbed || !landed || !liveState || !currentUi) return;
-    const cardId = landed.dataset.cardId;
-    // Only what a tap could already have done — the same model, the same
-    // guard. A scrub is a nicer way to reach a card, never a second rules path.
-    if (!currentUi.handSelectable.has(cardId)) return;
-    const card = cardById(liveState, cardId);
-    if (!card) return;
-    swallowClick();
-    onHandCard(liveState, cardId, card, landed, currentUi);
-  };
-  el.hand.addEventListener('pointerup', finish);
-  el.hand.addEventListener('pointercancel', () => clearPeek());
-}
-
-/**
- * Eat the click that a pointerup is about to fire on the PRESS target.
- * Capturing, so it beats the card's own handler. Same shape and the same
- * reason as the drag controller's — a scrub has already acted, and letting the
- * click through would act again on the wrong card.
- */
-function swallowClick() {
-  const eat = (event) => {
-    event.stopPropagation();
-    event.preventDefault();
-    window.removeEventListener('click', eat, true);
-    timer.cancel();
-  };
-  window.addEventListener('click', eat, true);
-  const timer = sessionSchedule(() => window.removeEventListener('click', eat, true), 400);
+  new ResizeObserver(() => { if (liveState()) layoutHand(); }).observe(el.handRow);
 }
 
 /**
@@ -1598,7 +859,7 @@ function renderAnnounceBar(state) {
     // The keyphrase is PACK DATA — a pirate-themed pack says "Avast!" and
     // this code never learns the word.
     button.textContent = option.label || 'Last card!';
-    button.addEventListener('click', () => liveState && performAnnouncement(liveState, option));
+    button.addEventListener('click', () => liveState() && performAnnouncement(liveState(), option));
     el.announceBar.appendChild(button);
   }
 }
@@ -1606,7 +867,7 @@ function renderAnnounceBar(state) {
 function renderActionBar(state, ui, humanActs) {
   const waitingOnPass = interactionMode(state) === 'pass'
     && !humanActs && !state.gameOver
-    && state.playerVars[HUMAN_SEAT]?.__pendingPass !== undefined;
+    && committedSelectionOf(state, HUMAN_SEAT) !== null;
   const hint = humanActs ? ui.hint : (waitingOnPass ? 'Waiting for the other players to pass…' : '');
   // NOT `hidden`. This bar sits in the felt's flex column, and a bar that
   // leaves the column takes its height with it — which meant the turn cue
@@ -1629,8 +890,8 @@ function renderActionBar(state, ui, humanActs) {
     el.actionButton.hidden = false;
     el.actionButton.textContent = ui.action.label;
     el.actionButton.onclick = () => {
-      if (!liveState) return;
-      performHumanMove(liveState, ui.action.makeMove(), el.actionButton);
+      if (!liveState()) return;
+      performHumanMove(liveState(), ui.action.makeMove(), el.actionButton);
     };
   } else {
     el.actionButton.hidden = true;
@@ -1647,16 +908,13 @@ function renderStatusBar(state, acting) {
   const scored = showsScores(state);
   el.scoreChip.hidden = !scored;
   if (scored) {
-    const phase = state.playerVars[HUMAN_SEAT]?.phase;
-    el.scoreChipValue.textContent = typeof phase === 'number'
-      ? `Ph ${phase} · ${state.scores[HUMAN_SEAT]}`
-      : String(state.scores[HUMAN_SEAT]);
+    el.scoreChipValue.textContent = scoreChipFor(state, HUMAN_SEAT).long;
     el.scoreChip.setAttribute('aria-label', `Your score: ${state.scores[HUMAN_SEAT]}. Open the scoreboard.`);
   }
 }
 
 function statusTextFor(state, acting) {
-  if (state.gameOver) return `Game over — ${seatLabel(state.winner)} ${state.winner === HUMAN_SEAT ? 'win' : 'wins'}!`;
+  if (state.gameOver) return `Game over — ${winnerSentence(state)}`;
   if (state.turn.phase === 'pass') {
     return acting.includes(HUMAN_SEAT) ? 'Passing — your pick' : 'Waiting for passes…';
   }
@@ -1684,26 +942,26 @@ function statusTextFor(state, acting) {
  */
 function renderSelection(state) {
   if (drag && drag.isDragging()) {
-    pendingRender = { state };
+    session.pendingRender = { state };
     return;
   }
-  selection = pruneSelection(state, selection);
+  session.selection = pruneSelection(state, session.selection);
   const acting = actingSeatsOf(state);
   const humanActs = acting.includes(HUMAN_SEAT);
-  const humanMoves = humanActs ? enumerateLegalMoves(state, HUMAN_SEAT) : [];
-  const ui = buildUiModel(state, { seat: HUMAN_SEAT, moves: humanMoves, acts: humanActs, selection });
-  currentUi = ui;
+  const humanMoves = humanActs ? legalMovesFor(state, HUMAN_SEAT) : [];
+  const ui = buildUiModel(state, { seat: HUMAN_SEAT, moves: humanMoves, acts: humanActs, selection: session.selection });
+  session.ui = ui;
 
   const handAddr = handAddress(HUMAN_SEAT);
-  const committedPass = state.playerVars[HUMAN_SEAT]?.__pendingPass || [];
+  const committedPass = committedSelectionOf(state, HUMAN_SEAT) || [];
   for (const wrapper of el.hand.children) {
     const cardId = wrapper.dataset.cardId;
-    const selected = isSelected(selection, handAddr, cardId) || committedPass.includes(cardId);
+    const selected = isSelected(session.selection, handAddr, cardId) || committedPass.includes(cardId);
     wrapper.classList.toggle('card-face-wrap--selected', selected);
     wrapper.setAttribute('aria-pressed', String(selected));
   }
-  for (const stack of el.screen.querySelectorAll('.pile-stack[data-zone]')) paintPileState(stack, ui);
-  for (const chip of el.screen.querySelectorAll('.meld-chip[data-meld]')) paintMeldState(chip, ui);
+  for (const stack of el.screen.querySelectorAll('.pile-stack[data-zone]')) zones.paintPileState(stack, ui);
+  for (const chip of el.screen.querySelectorAll('.meld-chip[data-meld]')) zones.paintMeldState(chip, ui);
   renderActionBar(state, ui, humanActs);
 }
 
@@ -1711,25 +969,25 @@ function render(state, message) {
   // A render mid-drag would replace the very node the pointer is holding.
   // Deferred, then replayed by the controller's settle callback.
   if (drag && drag.isDragging()) {
-    pendingRender = { state, message };
+    session.pendingRender = { state, message };
     return;
   }
   // Collected as the sub-renderers run; swapped in at the end so the NEXT
   // render knows what was already on the felt (see markEntry above).
-  enteringKeys = new Set();
-  selection = pruneSelection(state, selection);
+  session.enteringKeys = new Set();
+  session.selection = pruneSelection(state, session.selection);
   const acting = actingSeatsOf(state);
   const humanActs = acting.includes(HUMAN_SEAT);
-  const humanMoves = humanActs ? enumerateLegalMoves(state, HUMAN_SEAT) : [];
-  const ui = buildUiModel(state, { seat: HUMAN_SEAT, moves: humanMoves, acts: humanActs, selection });
+  const humanMoves = humanActs ? legalMovesFor(state, HUMAN_SEAT) : [];
+  const ui = buildUiModel(state, { seat: HUMAN_SEAT, moves: humanMoves, acts: humanActs, selection: session.selection });
   const draggable = draggableSources(state, { seat: HUMAN_SEAT, acts: humanActs });
-  const stagger = dealAnimation && motionAllowed();
+  const stagger = session.dealAnimation && motionAllowed();
 
-  currentUi = ui;
+  session.ui = ui;
 
   renderStatusBar(state, acting);
   renderSeats(state, stagger, acting, ui);
-  renderContractLadder(state);
+  if (ladder) ladder.render(state);
   renderCenterZones(state, ui, draggable);
   renderPlayerZones(state, ui, draggable);
   // The two bars go BEFORE the hand, and the order is load-bearing: renderHand
@@ -1745,15 +1003,15 @@ function render(state, message) {
   renderAnnounceBar(state);
   renderActionBar(state, ui, humanActs);
   renderHand(state, ui, stagger, draggable);
-  dealAnimation = false;
-  shownCardKeys = enteringKeys;
-  enteringKeys = null;
+  session.dealAnimation = false;
+  session.shownCardKeys = session.enteringKeys;
+  session.enteringKeys = null;
 
   // A game-ending move can arrive with no message (the human's own winning play) or a
   // stale one from the mover ("Bot 2 played" right before Bot 2's own hand emptied) —
   // gameOver always wins the log line over whatever was passed in.
   if (state.gameOver) {
-    el.log.textContent = `${seatLabel(state.winner)} ${state.winner === HUMAN_SEAT ? 'win' : 'wins'}!`;
+    el.log.textContent = winnerSentence(state);
   } else if (message) {
     el.log.textContent = message;
   }
@@ -1761,10 +1019,10 @@ function render(state, message) {
 
 /** Re-render after a drag settles, replaying whatever was deferred. */
 function onDragSettled() {
-  const deferred = pendingRender;
-  pendingRender = null;
-  if (!liveState) return;
-  render(deferred ? deferred.state : liveState, deferred ? deferred.message : undefined);
+  const deferred = session.pendingRender;
+  session.pendingRender = null;
+  if (!liveState()) return;
+  render(deferred ? deferred.state : liveState(), deferred ? deferred.message : undefined);
 }
 
 /* ------------------------------------------------------------------ *
@@ -1780,21 +1038,21 @@ function onDragSettled() {
  * nothing to do) is a perfectly ordinary answer that ends in a snap-back.
  */
 function onDragLift(handle) {
-  const state = liveState;
+  const state = liveState();
   if (!state) return null;
   const card = cardById(state, handle.cardId);
   if (!card) return null;
   hideInspector();
   // The drag owns the gesture from here; the peek raise would fight the ghost
   // for the same card, and the hand's own pointerup may never arrive.
-  clearPeek();
+  if (gestures) gestures.clearPeek();
 
   const acting = actingSeatsOf(state);
   const humanActs = acting.includes(HUMAN_SEAT);
   const targets = [];
 
   if (humanActs) {
-    const moves = enumerateLegalMoves(state, HUMAN_SEAT);
+    const moves = legalMovesFor(state, HUMAN_SEAT);
     for (const candidate of dropCandidates(state, {
       seat: HUMAN_SEAT,
       moves,
@@ -1817,7 +1075,7 @@ function onDragLift(handle) {
     });
   }
 
-  return { markup: cardArt.face(card), targets };
+  return { markup: art().face(card), targets };
 }
 
 /**
@@ -1837,35 +1095,31 @@ function reorderHandAt(cardId, clientX) {
       break;
     }
   }
-  if (!livePack || !liveState) return;
-  handPrefs = { mode: 'manual', order: reorder(displayedHand, cardId, index) };
-  saveHandPrefs(livePack.id, handPrefs);
-  render(liveState);
+  if (!livePack() || !liveState()) return;
+  session.handPrefs = { mode: 'manual', order: reorder(session.displayedHand, cardId, index) };
+  saveHandPrefs(livePack().id, session.handPrefs);
+  render(liveState());
 }
 
 function cycleHandSort() {
-  if (!liveState || !livePack) return;
-  const mode = nextMode(handPrefs.mode);
-  handPrefs = {
+  if (!liveState() || !livePack()) return;
+  const mode = nextMode(session.handPrefs.mode);
+  session.handPrefs = {
     // Switching AWAY from manual keeps the permutation: the player gets their
     // arrangement back when they cycle round to it, instead of being punished
     // for glancing at a sorted view.
     mode: isSortMode(mode) ? mode : 'auto',
-    order: handPrefs.mode === 'manual' ? displayedHand.slice() : handPrefs.order,
+    order: session.handPrefs.mode === 'manual' ? session.displayedHand.slice() : session.handPrefs.order,
   };
-  saveHandPrefs(livePack.id, handPrefs);
-  render(liveState);
+  saveHandPrefs(livePack().id, session.handPrefs);
+  render(liveState());
 }
 
 /* ------------------------------------------------------------------ *
- * Geometry for card travel
+ * Geometry for card travel — the parts that need the table's own elements.
+ * `rectOf` and `cardSizedRect` moved to src/ui/flight.js, which already owns
+ * the flying and where dragController's verbatim copy of rectOf now points too.
  * ------------------------------------------------------------------ */
-
-function rectOf(node) {
-  if (!node) return null;
-  const r = node.getBoundingClientRect();
-  return r.width ? r : null;
-}
 
 /** Where a seat's cards live on screen — the source or target of a card in flight. */
 function seatRect(seat) {
@@ -1877,23 +1131,6 @@ function seatRect(seat) {
   // a card-shaped rect where the row is a squat strip, which is what a card
   // leaving this seat should be seen to launch from.
   return rectOf(mini.lastElementChild) || rectOf(mini);
-}
-
-/**
- * A card-sized rectangle centred on `rect`. flyCard scales its copy to the
- * destination's width, which is right when the destination IS a card — and
- * comically wrong when it is a whole fanned hand, where the copy would balloon
- * to the hand's full width mid-flight.
- */
-function cardSizedRect(rect, width) {
-  if (!rect) return null;
-  const height = width * 1.4;
-  return {
-    left: rect.left + rect.width / 2 - width / 2,
-    top: rect.top + rect.height / 2 - height / 2,
-    width,
-    height,
-  };
 }
 
 function zoneRect(address) {
@@ -1919,13 +1156,13 @@ function animateMove(state, move, from) {
     const card = move.actor === HUMAN_SEAT
       ? cardById(state, state.zones.cards(handAddress(HUMAN_SEAT)).at(-1) || '')
       : null;
-    flyCard(card ? cardArt.face(card) : cardArt.back(), from, to, { fade: true });
+    flyCard(card ? art().face(card) : art().back(), from, to, { fade: true });
     return;
   }
   if (move.type === 'hit') {
     const card = cardById(state, move.cards?.[0]);
     const to = cardSizedRect(zoneRect(`melds.${move.choice?.seat}`), from.width);
-    if (card && to) flyCard(cardArt.face(card), from, to, { fade: true });
+    if (card && to) flyCard(art().face(card), from, to, { fade: true });
     return;
   }
   if (move.type !== 'playCard' && move.type !== 'discard') return;
@@ -1935,248 +1172,26 @@ function animateMove(state, move, from) {
   if (!address) return;
   const node = zoneStackNode(address);
   const topNode = node ? node.querySelector('.pile-stack__top') : null;
-  landOn(topNode, flyCard(cardArt.face(card), from, rectOf(topNode) || zoneRect(address)));
-}
-
-/**
- * How many penalty cards are worth watching arrive.
- *
- * A Draw 4 is four. `effect.n` and `lastCardCall.penalty.draw` are pack values
- * though, and a pack that says forty would otherwise buy forty timers and forty
- * SVG copies for a moment that is over in a second. The banner says the real
- * number; this is only how many of them fly.
- */
-const PENALTY_FLIGHT_MAX = 6;
-
-/**
- * A handful of cards, seen to leave the deck.
- *
- * A DRAW YOU DID NOT ASK FOR WAS THE ONE DRAW THE TABLE NEVER SHOWED. A Draw 4
- * is the most violent thing anybody plays and it happened as a number changing
- * on a seat plate: the banner said "You draw 4", the hand was suddenly four
- * cards wider, and nothing connected the two. animateMove covers the draw a
- * player MAKES, because that flight starts under the finger that asked for it.
- * This covers the ones handed to you — a Draw 2, a Draw 4, and the cards a
- * missed "Last card!" costs, which is the same event wearing another name.
- *
- * The cards that actually arrived are the last `count` of the hand: every draw
- * appends (src/templates/shedding.js), and the display order the fan is in is a
- * VIEW that never reaches the zone. Face-up for the human, who is about to sort
- * them anyway; a bot's penalty flies backs, because the table does not know
- * what a bot was dealt any more than you do.
- */
-function animatePenaltyDraw(state, seat, count, delay) {
-  if (!count || count < 1 || !motionAllowed()) return;
-  const from = zoneRect('draw');
-  if (!from) return;
-  const to = cardSizedRect(seatRect(seat), from.width);
-  if (!to) return;
-
-  const ids = seat === HUMAN_SEAT
-    ? state.zones.cards(handAddress(seat)).slice(-count)
-    : [];
-  const myEpoch = epoch;
-  for (let i = 0; i < Math.min(count, PENALTY_FLIGHT_MAX); i++) {
-    const card = ids.length ? cardById(state, ids[i]) : null;
-    // Dealt one after another rather than as a fan, because that is what makes
-    // four read as FOUR — a single flight of four overlapping copies is one
-    // event, and the count is the whole insult.
-    Arcade.session.setTimeout(() => {
-      if (myEpoch !== epoch) return;
-      flyCard(card ? cardArt.face(card) : cardArt.back(), from, to,
-        { fade: true, duration: 300 });
-    }, delay + i * 110);
-  }
+  landOn(topNode, flyCard(art().face(card), from, rectOf(topNode) || zoneRect(address)));
 }
 
 /* ------------------------------------------------------------------ *
- * Table moments: banners, trick gathers, round summaries
+ * Table moments — src/ui/celebrations.js owns the banners, the trick
+ * gather, the action-card narration and the penalty flight. These are the
+ * thin wrappers that hand it the open session.
  * ------------------------------------------------------------------ */
 
-function hideBanner() {
-  if (bannerTimer) bannerTimer.cancel();
-  bannerTimer = null;
-  el.eventBanner.hidden = true;
-}
+let moments = null;
+let ladder = null;
+let gestures = null;
+let zones = null;
+let record = null;
 
-/**
- * The celebration layer. Decorative by construction — #log (a live region)
- * carries the same sentence — so it is aria-hidden and free to be theatrical.
- * `tone` is 'good' | 'bad' | 'neutral': winning a clean trick sparkles, eating
- * the queen of spades stings, a bot's trick just gets noted.
- */
-function showBanner(text, tone) {
-  if (bannerTimer) bannerTimer.cancel();
-  el.eventBanner.textContent = text;
-  el.eventBanner.className = `event-banner event-banner--${tone}`;
-  el.eventBanner.hidden = false;
-  // Restart the entrance animation when banners come back-to-back.
-  void el.eventBanner.offsetWidth;
-  el.eventBanner.classList.add('event-banner--in');
-  const myEpoch = epoch;
-  bannerTimer = Arcade.session.setTimeout(() => {
-    bannerTimer = null;
-    if (myEpoch !== epoch) return;
-    el.eventBanner.hidden = true;
-  }, 2200);
-}
-
-/**
- * A trick resolving: gather its cards to the winner's seat, say what it cost,
- * and celebrate — or wince. The engine already moved the cards (they left the
- * trick zone before this render), so the gather flies COPIES from where the
- * trick was to where it went, the same clone-and-animate deal every card
- * flight uses.
- */
-function celebrateTrick(state, ev) {
-  const mine = ev.seat === HUMAN_SEAT;
-  const bad = mine && ev.points > 0;
-
-  const from = zoneRect('trick');
-  const to = from ? cardSizedRect(seatRect(ev.seat), from.width * 0.6) : null;
-  if (from && to && motionAllowed()) {
-    const myEpoch = epoch;
-    ev.cards.forEach((cardId, i) => {
-      const card = cardById(state, cardId);
-      if (!card) return;
-      Arcade.session.setTimeout(() => {
-        if (myEpoch !== epoch) return;
-        flyCard(cardArt.face(card), from, to, { fade: true, duration: 320 });
-      }, 140 + i * 70);
-    });
-  }
-
-  const text = mine
-    ? (ev.points > 0 ? `You take the trick — ${ev.points} point${ev.points === 1 ? '' : 's'} against you` : 'Trick is yours — no points')
-    : `${seatLabel(ev.seat)} takes the trick${ev.points > 0 ? ` (+${ev.points})` : ''}`;
-  showBanner(text, mine ? (bad ? 'bad' : 'good') : 'neutral');
-  el.log.textContent = text;
-  playTrickTaken({ bad });
-
-  const seatNode = el.opponentsTop.querySelector(`[data-seat="${ev.seat}"]`);
-  const pulseTarget = mine ? el.hand : seatNode;
-  if (pulseTarget) {
-    pulseTarget.classList.remove('zone-celebrate', 'zone-lament');
-    void pulseTarget.offsetWidth;
-    pulseTarget.classList.add(bad ? 'zone-lament' : 'zone-celebrate');
-  }
-}
-
-/* ------------------------------------------------------------------ *
- * Action cards, made visible
- * ------------------------------------------------------------------ */
-
-/**
- * What each action event says on the felt, from the point of view of whoever
- * is reading it.
- *
- * `seat` on these events is always the seat it HAPPENED TO, which is the one
- * fact the wording turns on: the same Draw 4 is a small triumph when you play
- * it and an outrage when you eat it, and a table that narrated both the same
- * way would be describing the cards rather than the game.
- */
-function actionEventText(ev) {
-  const you = (seat) => seat === HUMAN_SEAT;
-  const name = (seat) => (you(seat) ? 'You' : seatLabel(seat));
-
-  if (ev.type === 'skipped') {
-    return you(ev.seat)
-      ? { text: 'Skipped — your turn is gone', tone: 'bad' }
-      : { text: `${name(ev.seat)} is skipped`, tone: you(ev.by) ? 'good' : 'neutral' };
-  }
-  if (ev.type === 'reversed') {
-    return { text: 'Direction reversed', tone: 'neutral' };
-  }
-  if (ev.type === 'penalty') {
-    if (!ev.drew) return null; // the pile was empty; nothing actually happened
-    const n = ev.drew;
-    return you(ev.seat)
-      ? { text: `You draw ${n} and lose your turn`, tone: 'bad' }
-      : { text: `${name(ev.seat)} draws ${n}`, tone: you(ev.by) ? 'good' : 'neutral' };
-  }
-  if (ev.type === 'wildPlayed') {
-    const chose = Object.values(ev.chose || {})[0];
-    if (!chose) return null;
-    return { text: `${name(ev.seat)} chose ${chose}`, tone: 'neutral' };
-  }
-  if (ev.type === 'handsSwapped') {
-    // Only "You" has a lower-case form; a name is a proper noun. This used to
-    // lower-case whatever landed in the object position, which nobody had seen
-    // because the swap itself never fired — "You swapped hands with delphine".
-    const object = you(ev.seat) ? 'you' : name(ev.seat);
-    return { text: `${name(ev.by)} swapped hands with ${object}`, tone: 'neutral' };
-  }
-  if (ev.type === 'handsRotated') {
-    return { text: 'Every hand moves round', tone: 'neutral' };
-  }
-  return null;
-}
-
-const ACTION_EVENTS = new Set([
-  'skipped', 'reversed', 'penalty', 'wildPlayed', 'handsSwapped', 'handsRotated',
-]);
-
-/**
- * Announce an action card: banner, cue, and a pulse on whoever it landed on.
- *
- * One event per move at most — an action card does one thing — so this takes
- * the first rather than queueing, which would stack banners on a variant where
- * two effects can fire (a seven-zero swap that also reverses).
- */
-function celebrateAction(state, events) {
-  const ev = events.find((e) => ACTION_EVENTS.has(e.type));
-  if (!ev) return null;
-  const said = actionEventText(ev);
-  if (!said) return null;
-
-  showBanner(said.text, said.tone);
-  playActionCard({ against: ev.seat === HUMAN_SEAT && said.tone === 'bad' });
-
-  // After the card that caused it has landed on the discard (animateMove's 260ms
-  // flight, launched a beat before this): the play and the punishment are two
-  // events in that order, and overlapping them makes one blur.
-  if (ev.type === 'penalty') animatePenaltyDraw(state, ev.seat, ev.drew, 300);
-
-  // The pulse lands on the seat it happened to, not the seat that played it:
-  // the question a player is asking at this moment is "who did that hit".
-  const victim = ev.seat;
-  if (victim !== undefined && victim !== null) {
-    const target = victim === HUMAN_SEAT
-      ? el.hand
-      : el.opponentsTop.querySelector(`[data-seat="${victim}"]`);
-    if (target) {
-      target.classList.remove('zone-celebrate', 'zone-lament');
-      void target.offsetWidth;
-      target.classList.add(said.tone === 'bad' ? 'zone-lament' : 'zone-celebrate');
-    }
-  }
-  flashFelt(ev);
-  return said;
-}
-
-/**
- * A wash of colour across the felt — the pack-level "background effect" an
- * action card earns.
- *
- * Driven by a class and a custom property rather than an inline animation so a
- * pack's own stylesheet can restyle or silence it, and so reduced motion turns
- * it off with everything else (see the media query in table.css). The tint of a
- * wild is the colour that was chosen, which makes the flash carry the one piece
- * of information the discard card itself cannot show.
- */
-function flashFelt(ev) {
-  if (!el.table || !motionAllowed()) return;
-  const chosen = ev.type === 'wildPlayed' ? Object.values(ev.chose || {})[0] : null;
-  // Through the pack's own palette, so the wash is the colour the player just
-  // picked as that pack draws it — and through safeCssColor, because a palette
-  // is pack-supplied data on its way into a style property.
-  const tint = chosen ? safeCssColor(cardArt.theme.palette?.[chosen]) : null;
-  el.table.style.removeProperty('--flash-tint');
-  if (tint) el.table.style.setProperty('--flash-tint', tint);
-  el.table.classList.remove('table--flash');
-  void el.table.offsetWidth;
-  el.table.classList.add('table--flash');
-}
+function hideBanner() { if (moments) moments.hideBanner(session); }
+function showBanner(text, tone) { if (moments) moments.showBanner(session, text, tone); }
+function celebrateTrick(state, ev) { if (moments) moments.celebrateTrick(session, state, ev); }
+function celebrateAction(state, events) { return moments ? moments.celebrateAction(session, state, events) : null; }
+function animatePenaltyDraw(state, seat, count, delay) { if (moments) moments.animatePenaltyDraw(state, seat, count, delay); }
 
 /**
  * Stop here, between rounds, without playing the match out.
@@ -2193,8 +1208,8 @@ function flashFelt(ev) {
  * is — leaving while behind is not a way to avoid the loss appearing.
  */
 async function endMatchFromSummary() {
-  if (!liveState) return;
-  const state = liveState;
+  if (!liveState()) return;
+  const state = liveState();
   const myEpoch = epoch;
   const leader = Math.max(...state.scores);
   const ahead = state.scores[HUMAN_SEAT] >= leader;
@@ -2204,45 +1219,69 @@ async function endMatchFromSummary() {
     + (ahead ? '' : ' It counts as a forfeit.'),
     { okLabel: 'End match', cancelLabel: 'Keep playing' },
   );
-  if (!ok || myEpoch !== epoch || liveState !== state) return;
+  if (!ok || myEpoch !== epoch || liveState() !== state) return;
 
   cancelBotTurn();
   cancelAnnouncementBeats();
-  matchDirty = false;
   clearMatch(state.pack.id);
-  recordResult(state.pack.id, {
-    won: false,
-    forfeit: true,
-    opponents: seating
-      .filter((identity) => identity.isBot)
-      .map((identity) => ({ key: identity.opponentKey, beaten: false })),
-  });
+  recordForfeit(state.pack.id, session.seating);
+  session.roundSummaryOpen = false;
   hideRoundSummary();
   exitToLobby();
 }
 
 function dismissRoundSummary() {
-  if (!isRoundSummaryOpen() || !liveState) return;
+  // The SESSION says whether we are between rounds; the panel merely shows it.
+  // This used to branch on `!el.roundOverlay.hidden` (panels.isRoundSummaryOpen),
+  // which made a DOM attribute the only record of a game-state fact — and one
+  // that any other code path hiding the overlay would silently erase.
+  if (!session || !session.roundSummaryOpen || !liveState()) return;
+  session.roundSummaryOpen = false;
   hideRoundSummary();
-  dealAnimation = true;
-  playDeal(liveState.seats);
-  render(liveState, `Round ${liveState.roundNumber}.`);
-  scheduleNextTurn(liveState, epoch);
+  session.dealAnimation = true;
+  playDeal(liveState().seats);
+  render(liveState(), `Round ${liveState().roundNumber}.`);
+  scheduleNextTurn();
 }
 
 /* ------------------------------------------------------------------ *
  * Persistence
  * ------------------------------------------------------------------ */
 
+/**
+ * Write the match. §17.3 says a match-critical write must CHECK its result, and
+ * this one did not: a quota-full or otherwise refused save returned false and
+ * the table carried on as if the game were safe, so the loss only surfaced when
+ * the player came back to a lobby tile that had forgotten their game.
+ *
+ * Said once per session, not once per move: a storage backend that has started
+ * refusing writes will refuse the next forty too, and forty identical banners
+ * is not information.
+ */
+let saveFailureReported = false;
+
 function persistMatch() {
-  if (!liveState) return;
-  matchDirty = false;
-  saveMatch(liveState);
+  const state = liveState();
+  if (!state) return;
+  const ok = saveMatch(state);
+  if (ok !== false || saveFailureReported) return;
+  saveFailureReported = true;
+  reportTableError('This game could not be saved — it may not be here when you come back.');
 }
 
-/** Synchronous by construction — onSuspend calls this directly (§6b). */
+/**
+ * Synchronous by construction — onSuspend calls this directly (§6b).
+ *
+ * This used to be `if (matchDirty) persistMatch()`, and `matchDirty` was never
+ * once set true: every assignment in the file wrote `false`. So the flush wired
+ * to Arcade.onSuspend was a provable no-op, and the comment claiming the
+ * opening deal reached storage through it was wrong. It reached storage because
+ * every mutation path calls persistMatch() synchronously — which is also why
+ * deleting the flag costs nothing. persistMatch is idempotent and a match log
+ * is a few KB, so the honest flush is simply to write.
+ */
 export function flushTable() {
-  if (matchDirty) persistMatch();
+  persistMatch();
 }
 
 /* ------------------------------------------------------------------ *
@@ -2250,92 +1289,16 @@ export function flushTable() {
  * ------------------------------------------------------------------ */
 
 /**
- * This match's numbers, replayed out of its own log (src/stats/matchStats.js).
+ * Who won, in the sentence the felt says it in.
  *
- * Never throws to the caller: a log the current rules can no longer replay is
- * a reason to show no stats, never a reason to lose the game-over panel — and
- * it is the same failure openTable() already handles by starting fresh.
+ * One phrasing, three former callers: the status bar said "Game over — You
+ * win!", the log line said the same thing built a different way, and this said
+ * a third. `seatLabel` already falls back to a plate name, so the extra
+ * `session.seating[winner] ? … : …` here was a fourth spelling of the same
+ * lookup.
  */
-function safeStats(state) {
-  try {
-    return computeMatchStats(state.pack, serializeMatch(state));
-  } catch (err) {
-    console.warn('[cardstock] could not compute match stats', err);
-    return null;
-  }
-}
-
-/** The per-opponent outcomes this match contributes to the head-to-head record. */
-function opponentOutcomes(state, stats) {
-  const rank = stats
-    ? placements(state.pack, { totals: stats.totals, winner: state.winner, seats: state.seats })
-    : null;
-  return seating
-    .filter((identity) => identity.isBot && identity.opponentKey)
-    .map((identity) => ({
-      key: identity.opponentKey,
-      beaten: !!rank && rank[HUMAN_SEAT] < rank[identity.seat],
-    }));
-}
-
-function recordSentence(state) {
-  const record = readStats(state.pack.id);
-  const overall = record.played
-    ? `${record.won} of ${record.played} in ${state.pack.manifest.name}`
-    : '';
-  const head = seating
-    .filter((identity) => identity.isBot && record.opponents[identity.opponentKey])
-    .map((identity) => {
-      const r = record.opponents[identity.opponentKey];
-      return `${r.won}–${r.played - r.won} vs ${identity.name}`;
-    })
-    .join(' · ');
-  const streak = record.streak > 1 ? `${record.streak} in a row` : '';
-  return [overall, streak, head].filter(Boolean).join(' — ');
-}
-
-/**
- * End the match in the books: record it and stop it resuming.
- *
- * This is the ENGINE deciding. The other ending — the player walking away —
- * is the lobby's, recorded through the same `recordResult` contract with
- * `forfeit: true` (src/ui/lobby.js). The two doors must never disagree about
- * what a loss is, which is why the storage payload still carries the field
- * even though the only value written here is `false`.
- *
- * BOOKKEEPING ONLY — it no longer opens the panel. The record has to be written
- * before the panel is built (the panel shows it), but the panel itself now
- * waits for the player (awaitFinalLook), and those are two different moments.
- * Returns everything showGameOver will need, so the wait does not have to hold
- * on to a live state to recompute it.
- */
-function concludeMatch(state) {
-  cancelBotTurn();
-  cancelAnnouncementBeats();
-  matchDirty = false;
-  // A finished match is not something to resume into.
-  clearMatch(state.pack.id);
-  const stats = safeStats(state);
-  recordResult(state.pack.id, {
-    won: state.winner === HUMAN_SEAT,
-    forfeit: false,
-    opponents: opponentOutcomes(state, stats),
-  });
-  return {
-    seating,
-    stats,
-    recordText: recordSentence(state),
-    heroFaces: heroFaces(state.pack),
-    renderFace: (face) => cardArt.face(face),
-  };
-}
-
-/** Who won, in the sentence the felt says it in. */
 function winnerSentence(state) {
-  const winner = state.winner;
-  if (winner === HUMAN_SEAT) return 'You win!';
-  const name = seating[winner] ? seating[winner].name : seatLabel(winner);
-  return `${name} wins.`;
+  return state.winner === HUMAN_SEAT ? 'You win!' : `${seatLabel(state.winner)} wins.`;
 }
 
 /**
@@ -2351,9 +1314,7 @@ function finalPlaySentence(state, move) {
   if (!move || (move.type !== 'playCard' && move.type !== 'discard')) return '';
   const card = cardById(state, move.cards && move.cards[0]);
   if (!card) return '';
-  const who = move.actor === HUMAN_SEAT
-    ? 'you'
-    : (seating[move.actor] ? seating[move.actor].name : seatLabel(move.actor));
+  const who = move.actor === HUMAN_SEAT ? 'you' : seatLabel(move.actor);
   return `Last card: ${cardName(card)}, played by ${who}.`;
 }
 
@@ -2367,14 +1328,7 @@ function finalPlaySentence(state, move) {
  */
 function offerFinalLook(state, move, ending) {
   const myEpoch = epoch;
-  const winnerNode = state.winner === HUMAN_SEAT
-    ? el.hand
-    : el.opponentsTop.querySelector(`[data-seat="${state.winner}"]`);
-  if (winnerNode) {
-    winnerNode.classList.remove('zone-celebrate', 'zone-lament');
-    void winnerNode.offsetWidth;
-    winnerNode.classList.add('zone-celebrate');
-  }
+  pulseSeat(state.winner, 'good');
   Arcade.session.setTimeout(async () => {
     if (myEpoch !== epoch) return;
     const acknowledged = await awaitFinalLook(winnerSentence(state), finalPlaySentence(state, move));
@@ -2385,15 +1339,9 @@ function offerFinalLook(state, move, ending) {
   }, 700);
 }
 
-/** Display-only faces from the manifest; see schema `heroCards`. */
-function heroFaces(pack) {
-  const faces = pack.manifest.heroCards;
-  return Array.isArray(faces) ? faces.slice(0, 3) : [];
-}
-
 function openScoreboard() {
-  if (!liveState) return;
-  showScoreboard(liveState, seating, safeStats(liveState));
+  if (!liveState()) return;
+  showScoreboard(liveState(), session.seating, record.safeStats(liveState()));
 }
 
 /* ------------------------------------------------------------------ *
@@ -2414,6 +1362,19 @@ function applyStateChange(state, move, { far }) {
   // happened — and the drawn card's own sound already played a beat ago.
   if (move.type === 'draw') playDraw();
   else if (move.type !== 'pass') playCardPlayed({ far });
+  soundReactions(state);
+}
+
+/**
+ * The sounds a move's REACTIONS make, whatever kind of move surfaced them.
+ *
+ * A reshuffle is not inferred from pile counts: the engine's reactions announce
+ * themselves on state.events (src/engine/state.js), and 'recycled' during a move
+ * IS the shuffle. Split out of applyStateChange because an ANNOUNCEMENT can
+ * surface one too — a challenge penalty-draw that empties the pile recycles it —
+ * and the announcement path skipped this entirely, so that shuffle was silent.
+ */
+function soundReactions(state) {
   if (state.events.some((e) => e.type === 'recycled')) playShuffle();
 }
 
@@ -2433,7 +1394,7 @@ function afterMove(state, move, from, message) {
     // `stats` is the surface whose formatting the game owns). The PANEL itself
     // waits: the last card is the thing worth watching, and it is still in the
     // air on this frame.
-    const ending = concludeMatch(state);
+    const ending = record.concludeMatch(state);
     render(state, message);
     animateMove(state, move, from);
     if (trick) celebrateTrick(state, trick);
@@ -2463,188 +1424,75 @@ function afterMove(state, move, from, message) {
     const myEpoch = epoch;
     Arcade.session.setTimeout(() => {
       if (myEpoch !== epoch) return;
-      showRoundSummary(state, roundOver, seating);
+      session.roundSummaryOpen = true;
+      showRoundSummary(state, roundOver, session.seating);
     }, trick ? 900 : 250);
     return;
   }
 
-  scheduleNextTurn(state, epoch);
-  scheduleAnnouncementBeats(state, epoch);
+  scheduleNextTurn();
+  scheduleAnnouncementBeats();
 }
 
 /* ------------------------------------------------------------------ *
  * Input
  * ------------------------------------------------------------------ */
 
-function needsChoice(card) {
-  const effect = card.effect;
-  if (!effect || typeof effect === 'string') return null;
-  return effect.choose || null;
-}
+/**
+ * How many questions one move may owe. A ceiling, not a budget: the loop below
+ * is driven by the template answering null, and this only stops a hook that
+ * never stops asking from hanging the table.
+ */
+const MAX_PENDING_CHOICES = 6;
 
 /**
- * One option of a card's question, as a button.
+ * Fill in everything `move` still owes, asking the player where the answer is
+ * genuinely theirs.
  *
- * THE PICTURE IS THE TARGET AND THE WORD IS THE CAPTION, and both are always
- * there. The art is what makes the choice quick — you aim at the red one, not
- * at the four-letter word that starts with r — and the word is what makes it
- * possible at all for a player who cannot separate the colours, which in a
- * game whose entire rule IS colour is not a minor audience.
+ * ONE HOOK, ASKED IN A LOOP, INSTEAD OF THREE HARDCODED EFFECT SCHEMAS. This
+ * used to be: a `choose: 'player'` branch, a colour/suit branch with the four
+ * French suits written out (wrong for any nonstandard deck), a call to the
+ * contract-rummy-specific `wildChoice`, and a
+ * `effect.type === 'skipTarget' && effect.on === 'discard'` special case — four
+ * pieces of effect-schema knowledge in the platform's move gate. The template
+ * now names the question and says where the answer goes; this renders it.
  *
- * Three kinds of option, in the order they are tried: a card the pack's own
- * renderer can draw (a colour, a suit, a rank); a PLAYER, which is not a card
- * and gets the mark that seat wears everywhere else instead; and a bare word
- * for anything a template invents that is neither.
+ * A QUESTION WITH ONE ANSWER IS NOT A QUESTION. At a two-hander there is exactly
+ * one other player, and a dialog confirming the only living opponent is a tax on
+ * every seven you play — so a single option is applied without asking, which is
+ * the same judgement contract-rummy makes about a set (one possible value, never
+ * asked).
  *
- * `value` is pack data on two paths and is handled as such on both: textContent
- * for the caption, and a lookup key for the art, which is generated inside
- * src/ui/cardStyles/chooser.js with everything escaped.
+ * @returns the completed move, or null if the player backed out.
  */
-function buildChoiceOption(attr, { value, icon = null }) {
-  const btn = document.createElement('button');
-  btn.type = 'button';
-  const art = cardArt.chooser(attr, value);
-  btn.className = `choice-option ${art ? 'choice-option--card'
-    : icon ? 'choice-option--seat' : 'choice-option--word'}`;
-  // Named outright rather than left to name-from-content. The caption below is
-  // the name either way, but the picture beside it is a whole card's worth of
-  // markup for the computation to walk past, and the one thing this button
-  // must never be is unlabelled.
-  btn.setAttribute('aria-label', value);
-  if (art) {
-    btn.appendChild(svgNode(art, 'choice-option__art'));
-  } else if (icon) {
-    // The seat's own mark, the same one on its plate and in the score sheet
-    // (src/players/roster.js) — one vocabulary for "this is a player",
-    // wherever they turn up. Decorative: the name below carries the meaning.
-    const mark = document.createElement('span');
-    mark.className = 'choice-option__icon';
-    mark.setAttribute('aria-hidden', 'true');
-    mark.textContent = icon;
-    btn.appendChild(mark);
-  }
-  const caption = document.createElement('span');
-  caption.className = 'choice-option__name';
-  caption.textContent = value;
-  btn.appendChild(caption);
-  return btn;
-}
+async function fillPendingChoices(state, move, myEpoch) {
+  const template = state.pack.template;
+  if (!template.pendingChoice) return move;
+  for (let asked = 0; asked < MAX_PENDING_CHOICES; asked++) {
+    const ask = template.pendingChoice(makeCtx(state), move);
+    if (!ask || !ask.options?.length) return move;
 
-/**
- * Ask for a suit or colour (or a player, for targeted effects), or null if
- * the player backs out.
- *
- * Cancellable on purpose. Tapping a wild used to be an irreversible commitment
- * to a modal with no way out, and closing the table under an open prompt left
- * the awaiting handler holding a promise that could still resolve into a match
- * that was no longer on screen.
- *
- * `options` are plain strings, or `{ value, icon }` when an option has a mark
- * of its own — which today means a player, whose face belongs to a seat rather
- * than to the deck. The promise always resolves with the `value`.
- *
- * `card` is the card that asked — shown at the top of the panel, because "what
- * does this become" is a question about a specific object and the answer reads
- * better next to it. Optional: a wild already lying in somebody's meld has no
- * single card to show.
- */
-async function promptChoice(attr, options, { card = null } = {}) {
-  const choices = options.map((o) => (typeof o === 'string' ? { value: o, icon: null } : o));
-  el.choicePrompt.textContent = `Choose a ${attr}`;
-  el.choicePanel.replaceChildren();
-  el.choiceCard.replaceChildren();
-  if (card) el.choiceCard.appendChild(svgNode(cardArt.face(card), 'choice-dialog__face'));
-  el.choiceCard.hidden = !card;
-  // Four options are the rosette on the wild itself, so they are laid out as
-  // one — two by two — rather than as a row that wraps differently per width.
-  el.choicePanel.className = `choice-grid ${choices.length === 4 ? 'choice-grid--quad' : ''}`;
-  el.choiceModal.hidden = false;
+    // A seat is a number the template cannot dress: its name and mark belong to
+    // the roster (src/players/roster.js), which is the platform's business.
+    const options = ask.options.map((o) => {
+      if (ask.kind !== 'seat') return { value: o.value, label: o.label ?? String(o.value) };
+      const identity = identityOf(o.value);
+      return { value: o.value, label: o.label ?? identity.name, icon: identity.icon || null };
+    });
 
-  return new Promise((resolve) => {
-    const buttons = [];
-    const close = (value) => {
-      cancelPendingChoice = null;
-      el.choiceModal.removeEventListener('keydown', onKey);
-      el.choiceModal.hidden = true;
-      el.choiceDialog.style.removeProperty('--choice-tint');
-      resolve(value);
-    };
-
-    // Roving focus, because the four colours are a GRID and Tab through a grid
-    // is the wrong gesture: on a 2x2 the arrow key you press is the direction
-    // you meant. Escape backs out, same as Cancel — this dialog is one of the
-    // few in the app where changing your mind is a legitimate move.
-    const move = (step) => {
-      const at = buttons.indexOf(document.activeElement);
-      const next = buttons[((at === -1 ? 0 : at) + step + buttons.length) % buttons.length];
-      if (next) next.focus({ preventScroll: true });
-    };
-    const onKey = (ev) => {
-      if (ev.key === 'Escape') { ev.preventDefault(); close(null); return; }
-      const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[ev.key];
-      if (step === undefined) return;
-      ev.preventDefault();
-      move(step);
-    };
-    el.choiceModal.addEventListener('keydown', onKey);
-
-    cancelPendingChoice = () => close(null);
-    el.choiceCancel.onclick = () => close(null);
-
-    for (const opt of choices) {
-      const btn = buildChoiceOption(attr, opt);
-      // The panel takes the colour of whatever is under the finger, so the
-      // answer is visible before it is committed — and the felt then washes in
-      // that same colour when it is (flashFelt). §7b: through safeCssColor,
-      // because a pack value is reaching a style property.
-      const tint = safeCssColor(cardArt.chooserTint(attr, opt.value));
-      const light = () => {
-        if (tint) el.choiceDialog.style.setProperty('--choice-tint', tint);
-        else el.choiceDialog.style.removeProperty('--choice-tint');
-      };
-      btn.addEventListener('focus', light);
-      btn.addEventListener('pointerenter', light);
-      btn.addEventListener('click', () => close(opt.value));
-      buttons.push(btn);
-      el.choicePanel.appendChild(btn);
+    let picked;
+    if (options.length === 1) {
+      picked = options[0].value;
+    } else {
+      picked = await promptChoice(art(), ask.prompt || ask.attr, options,
+        { card: ask.cardId ? cardById(state, ask.cardId) : null });
+      // Backed out, or the table closed while the prompt was open — either way
+      // this move belongs to a match that is no longer the one on screen.
+      if (picked === null || myEpoch !== epoch) return null;
     }
-    // preventScroll: the dialog is fixed, but focusing into it still scrolls
-    // the felt behind it — the same trap the rules panel documents.
-    if (buttons[0]) buttons[0].focus({ preventScroll: true });
-  });
-}
-
-function closeChoiceModal() {
-  if (cancelPendingChoice) cancelPendingChoice();
-  el.choiceModal.hidden = true;
-}
-
-/**
- * "Which of them?" — the seat number, or null if the player backs out.
- *
- * A QUESTION WITH ONE ANSWER IS NOT A QUESTION. At a two-hander there is
- * exactly one other player, and a dialog asking you to confirm the only living
- * opponent is a tax on every seven you play. The same judgement the meld's
- * wildChoice makes ("a set has one answer and is never asked"), applied to the
- * one choice that is about the table rather than the deck.
- *
- * `label` completes the sentence "Choose a …", so each caller says what the
- * target is FOR — being skipped is not the same as having your hand taken.
- */
-async function pickOpponent(state, card, label = 'player to swap hands with') {
-  const others = [];
-  for (let s = 0; s < state.seats; s++) if (s !== HUMAN_SEAT) others.push(s);
-  if (others.length === 0) return null;
-  if (others.length === 1) return others[0];
-  // Each seat carries the mark it wears everywhere else, so the answer is a
-  // face rather than a name to read (src/players/roster.js).
-  const options = others.map((s) => {
-    const identity = identityOf(s);
-    return { value: identity.name, icon: identity.icon || null };
-  });
-  const picked = await promptChoice(label, options, { card });
-  if (picked === null) return null;
-  return others[options.findIndex((o) => o.value === picked)];
+    move = ask.apply(move, picked);
+  }
+  return move;
 }
 
 /**
@@ -2661,55 +1509,9 @@ async function pickOpponent(state, card, label = 'player to swap hands with') {
 async function performHumanMove(state, move, sourceNode) {
   const myEpoch = epoch;
 
-  if (move.type === 'playCard' && move.cards && !move.choice) {
-    const card = cardById(state, move.cards[0]);
-    const attr = card ? needsChoice(card) : null;
-    // A TARGET IS A SEAT, NOT A VALUE OFF A CARD, and that is the whole reason
-    // this is a branch rather than one more entry in the list below. Wildfire's
-    // seven-zero seven says `choose: 'player'`, and the colour branch answered
-    // it with the deck's colours — so the card that reads "Swap hands with a
-    // player of your choosing" offered you red, yellow, green and blue, and the
-    // engine then looked for a seat called "red" and swapped nothing.
-    if (attr === 'player') {
-      const picked = await pickOpponent(state, card);
-      if (picked === null || myEpoch !== epoch) return;
-      move = { ...move, choice: { player: picked } };
-    } else if (attr) {
-      const options = attr === 'suit'
-        ? ['clubs', 'diamonds', 'hearts', 'spades']
-        : [...new Set([...state.pack.cardsById.values()].map((c) => c.color).filter(Boolean))];
-      const picked = await promptChoice(attr, options, { card });
-      // Backed out, or the table closed while the prompt was open — either way
-      // this move belongs to a match that is no longer the one on screen.
-      if (picked === null || myEpoch !== epoch) return;
-      move = { ...move, choice: { [attr]: picked } };
-    }
-  }
-
-  // A wild joining a meld has to become a specific card before it lands, and
-  // for a run there are two honest answers (either end). The template says
-  // when the question is real; a set has one answer and is never asked.
-  if (move.type === 'hit' && move.cards && state.pack.template.wildChoice) {
-    const ask = state.pack.template.wildChoice(makeCtx(state), move);
-    if (ask) {
-      const picked = await promptChoice(ask.attr, ask.values, { card: cardById(state, ask.cardId) });
-      if (picked === null || myEpoch !== epoch) return;
-      move = {
-        ...move,
-        choice: { ...(move.choice || {}), wilds: { [ask.cardId]: { [ask.attr]: picked } } },
-      };
-    }
-  }
-
-  if (move.type === 'discard' && move.cards) {
-    const card = cardById(state, move.cards[0]);
-    const effect = card?.effect;
-    if (effect?.type === 'skipTarget' && effect.on === 'discard' && move.choice?.target === undefined) {
-      const picked = await pickOpponent(state, card, 'player to skip');
-      if (picked === null || myEpoch !== epoch) return;
-      move = { ...move, choice: { ...(move.choice || {}), target: picked } };
-    }
-  }
+  const completed = await fillPendingChoices(state, move, myEpoch);
+  if (completed === null || myEpoch !== epoch) return;
+  move = completed;
 
   const check = validateMove(state, move);
   if (!check.legal) {
@@ -2741,13 +1543,13 @@ function onHandCard(state, cardId, card, sourceNode, ui) {
   }
 
   // Selection modes: toggle membership (multi) or replace (single).
-  if (selection && selection.from !== handAddr) selection = null;
+  if (session.selection && session.selection.from !== handAddr) session.selection = null;
   if (ui.handMulti) {
-    const ids = selection ? selection.cardIds.slice() : [];
+    const ids = session.selection ? session.selection.cardIds.slice() : [];
     const at = ids.indexOf(cardId);
     if (at !== -1) ids.splice(at, 1);
     else ids.push(cardId);
-    selection = ids.length ? { from: handAddr, cardIds: ids } : null;
+    session.selection = ids.length ? { from: handAddr, cardIds: ids } : null;
     // The card moves between the fan and the tray, so the fan's child count
     // changes and it has to be rebuilt and re-measured — the fast path below
     // deliberately does neither. The flight covers the rebuild.
@@ -2756,7 +1558,7 @@ function onHandCard(state, cardId, card, sourceNode, ui) {
     flyToStage(state, cardId, from);
     return;
   }
-  selection = isSelected(selection, handAddr, cardId) ? null : { from: handAddr, cardIds: [cardId] };
+  session.selection = isSelected(session.selection, handAddr, cardId) ? null : { from: handAddr, cardIds: [cardId] };
   // Nothing moved — repaint what is lit rather than rebuilding the table.
   renderSelection(state);
 }
@@ -2778,7 +1580,7 @@ function flyToStage(state, cardId, from) {
   // clone-and-animate deal a played card gets. flyCard always resolves, so the
   // card cannot be left permanently hidden.
   landed.style.visibility = 'hidden';
-  flyCard(cardArt.face(card), from, to, { duration: 180 })
+  flyCard(art().face(card), from, to, { duration: 180 })
     .then(() => { landed.style.visibility = ''; });
 }
 
@@ -2794,13 +1596,14 @@ function flyToStage(state, cardId, from) {
  * a bot's think time every time somebody spoke.
  */
 function performAnnouncement(state, move, myEpoch = epoch) {
-  if (myEpoch !== epoch || !liveState) return;
+  if (myEpoch !== epoch || !liveState()) return;
   const check = validateMove(state, move);
   // The window closed while the timer ran — somebody else got there first, or
   // the target played. That is an ordinary outcome, not an error.
   if (!check.legal) return;
 
   applyMove(state, move);
+  soundReactions(state);
   const caught = state.events.find((e) => e.type === 'caught');
   const announced = state.events.find((e) => e.type === 'announced');
   playAnnouncement({ caught: !!caught });
@@ -2824,174 +1627,78 @@ function performAnnouncement(state, move, myEpoch = epoch) {
   // point of the rule, and a number is not a thing you watch happen.
   if (caught) animatePenaltyDraw(state, caught.target, caught.drew, 120);
   persistMatch();
-  scheduleAnnouncementBeats(state, epoch);
-}
-
-function cancelAnnouncementBeats() {
-  for (const timer of announceTimers) timer.cancel();
-  announceTimers = [];
-}
-
-/**
- * Decide, once per window, whether each bot remembers to declare and whether
- * each notices somebody who did not — then schedule what they decided.
- *
- * THIS IS WHERE THE MECHANIC BECOMES A GAME. A bot that always declares makes
- * the catch button decorative; one that always catches makes forgetting an
- * instant loss. Persona weights (`callReliability`, `catchAttention`) and a
- * deliberate delay before a catch are what leave room for a player to declare
- * late and get away with it — which is exactly the tension the rule has at a
- * real table.
- *
- * The decision is CACHED per vulnerability window. Re-rolling on every render
- * would hand a forgetful bot a fresh chance every time anybody moved, and
- * `callReliability: 0.5` would behave like 1.
- */
-function scheduleAnnouncementBeats(state, myEpoch) {
-  cancelAnnouncementBeats();
-  if (state.gameOver) return;
-  if (!state.pack.template.enumerateAnnouncements) return;
-
-  const schedule = (fn, ms) => {
-    announceTimers.push(Arcade.session.setTimeout(() => {
-      if (myEpoch !== epoch) return;
-      fn();
-    }, ms));
-  };
-
-  for (let seat = 0; seat < state.seats; seat++) {
-    if (seat === HUMAN_SEAT) continue;
-    const identity = identityOf(seat);
-    const persona = identity.persona;
-    if (!persona) continue;
-    const options = announcementsFor(state, seat);
-
-    const own = options.find((a) => a.type === 'announce');
-    if (!own) {
-      botCallDecision.delete(seat);
-    } else {
-      if (!botCallDecision.has(seat)) {
-        botCallDecision.set(seat, Math.random() < persona.callReliability);
-      }
-      if (botCallDecision.get(seat)) {
-        // They say it as they put the card down, near enough.
-        schedule(() => performAnnouncement(state, own, myEpoch),
-          Math.round(thinkTimeMs(identity, settings.botDelayMs) * 0.4));
-      }
-    }
-
-    for (const option of options) {
-      if (option.type !== 'challenge') continue;
-      const key = `${seat}>${option.target}`;
-      if (!botCatchDecision.has(key)) {
-        botCatchDecision.set(key, Math.random() < persona.catchAttention);
-      }
-      if (!botCatchDecision.get(key)) continue;
-      // The grace is the whole fairness of it: a sharp bot pounces in under a
-      // second, a dreamy one takes three, and either way you had a moment to
-      // say it yourself.
-      const grace = 700 + (1 - persona.catchAttention) * 2600 + Math.random() * 500;
-      schedule(() => performAnnouncement(state, option, myEpoch), Math.round(grace));
-    }
+  // An announcement can end a round — a challenge penalty that empties the
+  // draw pile, a declaration that is the last thing before somebody goes out —
+  // and the summary is `afterMove`'s job, which this path deliberately does not
+  // re-enter (re-scheduling the turn would restart a bot's think time every
+  // time anybody spoke). So the ONE thing it has to notice for itself is that.
+  const roundOver = state.events.find((e) => e.type === 'roundOver' && !e.over);
+  if (roundOver) {
+    cancelAnnouncementBeats();
+    const beatEpoch = epoch;
+    Arcade.session.setTimeout(() => {
+      if (beatEpoch !== epoch) return;
+      session.roundSummaryOpen = true;
+      showRoundSummary(state, roundOver, session.seating);
+    }, 250);
+    return;
   }
-
-  // Windows that have closed leave no stale decision behind to be reused by
-  // the next one.
-  for (const key of [...botCatchDecision.keys()]) {
-    const target = Number(key.split('>')[1]);
-    const stillOpen = announcementsFor(state, Number(key.split('>')[0]))
-      .some((a) => a.type === 'challenge' && a.target === target);
-    if (!stillOpen) botCatchDecision.delete(key);
-  }
+  scheduleAnnouncementBeats();
 }
 
 /* ------------------------------------------------------------------ *
- * The bot driver
+ * The bot driver — src/ui/botDriver.js owns the timers and the persona rolls.
+ * These are its four seams back into the felt.
  * ------------------------------------------------------------------ */
 
-function scheduleNextTurn(state, myEpoch) {
-  // Cancel first: an announcement or a re-entry could otherwise leave two
-  // timers racing to move the same bot.
-  cancelBotTurn();
-  if (state.gameOver) return;
-  const acting = actingSeatsOf(state);
-  const seat = acting.find((s) => s !== HUMAN_SEAT);
-  if (seat === undefined) return;
+let bots = null;
 
-  const identity = identityOf(seat);
-  // Arcade.session.setTimeout, not setTimeout: it freezes while the frame is
-  // suspended (§6c — forgotten timers are the #1 battery drain in a hidden
-  // iframe) and cancels itself when a save import replaces state. The epoch
-  // guard is still needed for "Play again" and for leaving to the lobby, which
-  // the SDK knows nothing about.
-  botTimer = Arcade.session.setTimeout(() => {
-    botTimer = null;
-    if (myEpoch !== epoch) return; // superseded — drop the stale turn
-    const actingNow = actingSeatsOf(state).find((s) => s !== HUMAN_SEAT);
-    if (actingNow === undefined) return; // the human became the only one who may act
-    const move = chooseBotMove(state, actingNow, { persona: identityOf(actingNow).persona });
-    if (!move) return;
-    const from = move.type === 'draw'
-      ? (zoneRect(move.from ?? 'draw') || seatRect(actingNow))
-      : seatRect(actingNow);
-    applyStateChange(state, move, { far: true });
-    afterMove(state, move, from, `${identityOf(actingNow).name} ${BOT_VERBS[move.type] || 'played'}.`);
-  }, thinkTimeMs(identity, settings.botDelayMs));
-}
-
-const BOT_VERBS = {
-  draw: 'drew',
-  playCard: 'played',
-  discard: 'discarded',
-  passCards: 'passed',
-  layDown: 'laid down their contract',
-  hit: 'hit a meld',
-  pass: 'passed the turn',
-};
-
-function cancelBotTurn() {
-  if (botTimer) botTimer.cancel();
-  botTimer = null;
-}
+function cancelBotTurn() { if (bots) bots.cancelTurn(session); }
+function cancelAnnouncementBeats() { if (bots) bots.cancelBeats(session); }
+function scheduleNextTurn() { if (bots) bots.scheduleNextTurn(session, epoch); }
+function scheduleAnnouncementBeats() { if (bots) bots.scheduleAnnouncementBeats(session, epoch); }
 
 /* ------------------------------------------------------------------ *
  * Match lifecycle
  * ------------------------------------------------------------------ */
 
-function adoptMatch(pack, state, message) {
+/**
+ * Take over the screen for `state`. THE ONLY PLACE A SESSION IS BORN.
+ *
+ * A fresh object rather than a field-by-field reset, which is what this used to
+ * be — and the two bot-decision caches are exactly the ones the other half of
+ * the ritual (closeTable) forgot, so a persona's "did they remember to declare?"
+ * roll could survive into a match that had not been dealt when it was made.
+ */
+function adoptMatch(pack, state, message, { dealing = false } = {}) {
   epoch += 1;
-  livePack = pack;
-  liveState = state;
-  selection = null;
-  pendingRender = null;
-  botCallDecision.clear();
-  botCatchDecision.clear();
+  stopSession(session);
   if (drag) drag.cancel();
-  // Before the first render, and from the PACK rather than the manifest alone:
-  // the deck is what tells a style which colours it actually has to draw.
-  cardArt = makeCardRenderer(pack.manifest, pack.cardsById);
-  // The parsed-SVG cache is keyed by markup the old renderer produced, so it
-  // is dead weight from here on — and left alone it would accumulate one
-  // entry per card per pack for as long as the tab is open.
-  svgTemplates.clear();
-  // Same reason, same moment: the keys name cards of the pack being replaced,
-  // so the new table gets a clean deal-in instead of inheriting this one's
-  // idea of what was already on the felt.
-  shownCardKeys = new Set();
-  enteringKeys = null;
-  // Who is at this table — derived from the match SEED, so a resumed game
-  // re-seats the same opponents and a fresh deal brings new ones.
-  seating = buildSeating(state.seed, state.seats, {
-    humanSeat: HUMAN_SEAT,
-    humanName: humanName(),
+  session = createSession({
+    pack,
+    state,
+    // Who is at this table — derived from the match SEED, so a resumed game
+    // re-seats the same opponents and a fresh deal brings new ones.
+    seating: buildSeating(state.seed, state.seats, { humanSeat: HUMAN_SEAT, humanName: humanName() }),
+    // From the PACK rather than the manifest alone: the deck is what tells a
+    // style which colours it actually has to draw. Built once per match rather
+    // than per render — resolving a theme walks the whole deck.
+    cardArt: makeCardRenderer(pack.manifest, pack.cardsById),
+    handPrefs: loadHandPrefs(pack.id),
   });
-  handPrefs = loadHandPrefs(pack.id);
+  // Set on the NEW session, not before it exists: a fresh deal staggers its
+  // cards in, a resumed match must not (the cards have been there all along).
+  session.dealAnimation = dealing;
+  // The parsed-SVG cache is keyed by markup the OLD renderer produced, so it is
+  // dead weight from here on — and left alone it would accumulate one entry per
+  // card per pack for as long as the tab is open.
+  clearSvgCache();
   hideAllPanels();
   hideBanner();
   render(state, message);
   persistMatch();
-  scheduleNextTurn(state, epoch);
-  scheduleAnnouncementBeats(state, epoch);
+  scheduleNextTurn();
+  scheduleAnnouncementBeats();
 }
 
 function startGame(pack, seats) {
@@ -3004,9 +1711,8 @@ function startGame(pack, seats) {
   // seating is derived from it, what rotates the opponents per game.
   const state = createState({ pack, seats: seatCount, seed: Date.now() });
   pack.template.setup(makeCtx(state));
-  dealAnimation = true;
   playDeal(seatCount);
-  adoptMatch(state.pack, state, `Playing ${pack.manifest.name}.`);
+  adoptMatch(state.pack, state, `Playing ${pack.manifest.name}.`, { dealing: true });
 }
 
 /**
@@ -3020,8 +1726,7 @@ export async function openTable(packId, { variants, seats } = {}) {
   const myToken = ++openToken;
   cancelBotTurn();
   cancelAnnouncementBeats();
-  closeChoiceModal();
-  matchDirty = false;
+  closeChoiceDialog();
 
   el.statusText.textContent = 'Dealing…';
 
@@ -3044,7 +1749,15 @@ export async function openTable(packId, { variants, seats } = {}) {
   hideAllPanels();
 
   if (stored) {
+    // Asked BEFORE the replay, because a version bump is the one cause of a
+    // failed replay we can name. Reordering two entries in a deck file changes
+    // cardsById's insertion order, which changes the seeded shuffle, which
+    // deals every stored match a different hand — so the log replays into a
+    // state its own moves are illegal in. "The rules changed" is the honest
+    // sentence; "could not replay" is not one a player can do anything with.
+    const rulesMoved = packVersionChanged(pack, stored);
     try {
+      if (rulesMoved) throw new Error(`pack version changed: ${stored.packVersion} → ${pack.manifest.version}`);
       const state = rehydrateMatch(pack, stored);
       if (!state.gameOver) {
         adoptMatch(pack, state, `Resumed ${pack.manifest.name}.`);
@@ -3055,6 +1768,7 @@ export async function openTable(packId, { variants, seats } = {}) {
       // right cost; resuming into a state the current rules could never have
       // produced is not.
       console.warn('[cardstock] could not replay the stored match, starting fresh', err);
+      if (rulesMoved) reportTableError(`${pack.manifest.name}'s rules have changed — dealing a fresh game.`);
     }
     clearMatch(packId);
   }
@@ -3070,36 +1784,30 @@ export function closeTable() {
   epoch += 1;              // and any bot turn already scheduled
   cancelBotTurn();
   cancelAnnouncementBeats();
-  closeChoiceModal();
+  closeChoiceDialog();
   closeConfirm();
   hideInspector();
   if (drag) drag.cancel();
   flushTable();
-  // Keyed to the pack that just closed, so the next table gets a clean
-  // deal-in rather than inheriting this one's idea of what is already there.
-  // (adoptMatch clears these too — this is the leaving-for-the-lobby path,
-  // which may not be followed by another table at all.)
-  shownCardKeys = new Set();
-  enteringKeys = null;
-  liveState = null;
-  livePack = null;
-  selection = null;
-  seating = [];
-  pendingRender = null;
+  // ONE RESET POINT. Everything a match owned — its timers, its selection, its
+  // bot decisions, its idea of which cards were already on the felt — goes with
+  // the object. There is no longer a list here to fall out of date with the one
+  // in adoptMatch.
   hideBanner();
+  stopSession(session);
+  session = null;
   hideAllPanels();
-  el.contractLadder.hidden = true;
-  el.contractLadder.replaceChildren();
+  if (ladder) ladder.hide();
 }
 
 export function isTableOpen() {
-  return liveState !== null;
+  return liveState() !== null;
 }
 
 /** Re-render in place — onResume, and after a settings change. */
 export function rerenderTable() {
   settings = loadSettings();
-  if (liveState) render(liveState);
+  if (liveState()) render(liveState());
 }
 
 export function initTable({ onExit }) {
@@ -3110,21 +1818,92 @@ export function initTable({ onExit }) {
     layer: flightLayer,
     onLift: onDragLift,
     onSettle: onDragSettled,
-    // The controller is deliberately SDK-free, so the session clock is handed
-    // to it rather than imported — same reasoning as the timers at §6c below.
-    schedule: sessionSchedule,
     // Only a hand card can be scrubbed along; a pile top has no row to read.
     classifyGesture: ({ dx, dy, handle }) => (
       handle.kind === 'hand' ? classifyHandGesture({ dx, dy }) : 'drag'
     ),
   });
 
+  // Every extracted module takes its seams rather than reaching for this file's
+  // state. The zone renderer draws the piles and melds; the table tells it what
+  // a tap on one MEANS.
+  zones = createZoneRenderer({
+    humanSeat: HUMAN_SEAT,
+    session: () => session,
+    art,
+    cardById,
+    markEntry,
+    onTarget: (move, node) => { if (liveState()) performHumanMove(liveState(), move, node); },
+    onPickUp: (address, top) => {
+      session.selection = isSelected(session.selection, address, top)
+        ? null
+        : { from: address, cardIds: [top] };
+      renderSelection(liveState());
+    },
+    onMeld: (meldKey, node) => {
+      const ready = session?.ui?.readyMelds.get(meldKey);
+      if (ready && liveState()) performHumanMove(liveState(), ready, node);
+    },
+    attachInspector,
+    attachDrag: (node, handle) => { if (drag) drag.attach(node, handle); },
+    isBusy: () => !!drag && drag.isDragging(),
+    identityOf,
+  });
+
+  record = createMatchRecord({
+    humanSeat: HUMAN_SEAT,
+    seating: () => session.seating,
+    art,
+    // The record is written on the way out of a match, so the timers stop
+    // first — a bot turn landing after the books are closed would reopen it.
+    onConclude: () => { cancelBotTurn(); cancelAnnouncementBeats(); },
+  });
+
+  ladder = createContractLadder({
+    el: el.contractLadder,
+    humanSeat: HUMAN_SEAT,
+    identityOf,
+    attachInspector,
+    isBusy: () => !!drag && drag.isDragging(),
+  });
+
+  moments = createCelebrations({
+    humanSeat: HUMAN_SEAT,
+    seatLabel,
+    currentEpoch: () => epoch,
+    el,
+    art,
+    zoneRect,
+    seatRect,
+    pulseSeat,
+    cardById,
+  });
+
+  // Per §10/§17.5 this runs host-side when Phase 8 lands — see src/ui/botDriver.js.
+  bots = createBotDriver({
+    currentEpoch: () => epoch,
+    botDelayMs: () => settings.botDelayMs,
+    humanSeat: HUMAN_SEAT,
+    identityOf,
+    actingSeatsOf,
+    announcementsFor,
+    playMove: (state, move, seat) => {
+      const from = move.type === 'draw'
+        ? (zoneRect(move.from ?? 'draw') || seatRect(seat))
+        : seatRect(seat);
+      applyStateChange(state, move, { far: true });
+      afterMove(state, move, from, `${identityOf(seat).name} ${botVerb(state.pack.template, move.type)}.`);
+    },
+    playAnnouncement: (state, move, myEpoch) => performAnnouncement(state, move, myEpoch),
+    onError: reportTableError,
+  });
+
   initPanels({
     onContinueRound: () => dismissRoundSummary(),
-    onPlayAgain: () => livePack && startGame(livePack, liveState?.seats),
+    onPlayAgain: () => livePack() && startGame(livePack(), liveState()?.seats),
     onLobby: () => exitToLobby(),
     onEndMatch: () => endMatchFromSummary(),
-    onRules: () => livePack && showRules(packRules(livePack)),
+    onRules: () => livePack() && showRules(packRules(livePack())),
     onCloseScoreboard: () => {},
   });
 
@@ -3132,8 +1911,16 @@ export function initTable({ onExit }) {
   // has, and it is a custom property rather than a re-render — so reacting to
   // a width change costs two measurements, not a repaint of the table.
   watchHandWidth();
-  watchLadderWidth();
-  watchHandPeek();
+  ladder.watch(liveState);
+  gestures = watchHandGestures({
+    hand: el.hand,
+    session: () => session,
+    humanSeat: HUMAN_SEAT,
+    cardById,
+    onSelect: onHandCard,
+    // A full render: the gathered cards leave the fan for the tray.
+    onGathered: (state, count) => render(state, `Gathered ${count} cards.`),
+  });
 
   el.lobbyButton.addEventListener('click', () => exitToLobby());
   el.scoreChip.addEventListener('click', () => openScoreboard());

@@ -129,6 +129,69 @@ export function expandDeckFile(deckJson) {
   return { id: deckJson.id, cards };
 }
 
+/**
+ * ONE NOTION OF "WILD", for the three that had grown apart.
+ *
+ * shedding asked the EFFECT (`type === 'wild' || 'wildDrawN'`), contract-rummy
+ * asked a TAG (`rules.wilds.tag`), and sequencing asked the same tag through a
+ * selector. Three predicates, three spellings, and no way for a pack to be wild
+ * in a template that happened to ask the other question.
+ *
+ * Both questions are now asked, in that order, so every existing pack answers
+ * exactly as it did: a card is wild if the pack's `wilds` spec tags it, or if
+ * it carries a wild effect.
+ *
+ * @param wilds the template's `rules.wilds` spec ({ tag }), or undefined.
+ */
+export function isWild(card, wilds) {
+  if (!card) return false;
+  const tag = wilds?.tag;
+  if (tag && Array.isArray(card.tags) && card.tags.includes(tag)) return true;
+  const type = typeof card.effect === 'string' ? card.effect : card.effect?.type;
+  return type === 'wild' || type === 'wildDrawN';
+}
+
+/**
+ * Every distinct non-null value of one attribute across a deck, in deck order.
+ *
+ * "The colours this deck actually has" was enumerated in this exact shape in
+ * three places — shedding's colour chooser, contract-rummy's wild-hit values,
+ * and (as a hardcoded list of four French suits) the platform's chooser.
+ */
+export function distinctValues(cardsById, attr) {
+  const seen = [];
+  for (const card of cardsById.values()) {
+    const value = card?.[attr];
+    if (value === null || value === undefined || seen.includes(value)) continue;
+    seen.push(value);
+  }
+  return seen;
+}
+
+/**
+ * Where a card sits on its deck's ladder, for "who wins the trick" and "what
+ * are my highest cards".
+ *
+ * Standard-52's RANKS array was the ONLY answer, hardcoded into trick
+ * resolution, pass selection and the bot — which is a claim about the deck that
+ * two of the five packs cannot make.
+ *
+ * The order tried is numeric rank, then the standard ladder, then `sortOrder`.
+ * `sortOrder` is deliberately LAST rather than first: it is deck order, which
+ * for a standard 52 is suit-major, so preferring it would make the ace of clubs
+ * a lower card than the two of diamonds everywhere the comparison crosses
+ * suits (pass selection, the bot's "play low"). Within one suit — which is the
+ * only comparison trick resolution makes — all three agree.
+ */
+export function rankOrder(card) {
+  if (!card) return -1;
+  const n = Number(card.rank);
+  if (Number.isFinite(n)) return n;
+  const i = RANKS.indexOf(card.rank);
+  if (i !== -1) return i;
+  return typeof card.sortOrder === 'number' ? card.sortOrder : -1;
+}
+
 export function applyCardTags(cards, cardTagsMap) {
   if (!cardTagsMap) return cards;
   return cards.map((card) => {

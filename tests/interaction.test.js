@@ -319,12 +319,17 @@ test("tapping a meld with a wild hands the table the question, not an answer", (
   assert.strictEqual(ready.choice.wilds, undefined,
     "the tap inherited a value the player never chose");
 
-  const ask = state.pack.template.wildChoice(makeCtx(state), ready);
-  assert.deepStrictEqual(ask, { cardId: "wild#3", attr: "rank", values: ["2", "7"] });
-  // And every answer it offers has to be one the engine takes.
-  for (const value of ask.values) {
-    const answered = { ...ready, choice: { ...ready.choice, wilds: { "wild#3": { rank: value } } } };
-    assert.ok(validateMove(state, answered).legal, `answering ${value} left an illegal move`);
+  // The question is asked through the generic hook the platform drives — one
+  // `pendingChoice` loop for every move that still owes an answer.
+  const ask = state.pack.template.pendingChoice(makeCtx(state), ready);
+  assert.strictEqual(ask.cardId, "wild#3");
+  assert.strictEqual(ask.attr, "rank");
+  assert.deepStrictEqual(ask.options.map((o) => o.value), ["2", "7"]);
+  // And every answer it offers has to be one the engine takes — applied the way
+  // the platform applies it, through the hook's own `apply`.
+  for (const option of ask.options) {
+    const answered = ask.apply(ready, option.value);
+    assert.ok(validateMove(state, answered).legal, `answering ${option.value} left an illegal move`);
   }
 });
 
@@ -347,7 +352,7 @@ test("a meld with only one value on offer is never asked about", () => {
   // A wild in a set of fives is a five; there is nothing to ask, so the value
   // rides along with the move instead of stopping the player for a modal.
   assert.deepStrictEqual(ready.choice.wilds, { "wild#3": { rank: "5" } });
-  assert.strictEqual(state.pack.template.wildChoice(makeCtx(state), ready), null);
+  assert.strictEqual(state.pack.template.pendingChoice(makeCtx(state), ready), null);
 });
 
 /* ------------------------------------------------------------------ *

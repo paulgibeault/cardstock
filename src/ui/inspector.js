@@ -31,6 +31,8 @@ let anchor = null;
 // The node whose inspection is pending or showing. Tracked so a NESTED
 // inspectable (a meld chip inside a seat plate) can win against its own
 // ancestor — see claimedByDescendant() below.
+
+import { schedule } from './clock.js';
 let pendingNode = null;
 
 function ensurePanel() {
@@ -49,15 +51,6 @@ function clearTimer() {
     timer.cancel ? timer.cancel() : clearTimeout(timer);
     timer = null;
   }
-}
-
-/** Schedule with the launcher's session clock when it exists, so a suspended
- *  frame does not wake up to show a tooltip for a card that has since moved. */
-function schedule(fn, ms) {
-  const session = typeof window !== 'undefined' && window.Arcade && window.Arcade.session;
-  if (session && typeof session.setTimeout === 'function') return session.setTimeout(fn, ms);
-  const id = setTimeout(fn, ms);
-  return { cancel: () => clearTimeout(id) };
 }
 
 export function hideInspector() {

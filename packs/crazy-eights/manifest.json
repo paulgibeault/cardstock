@@ -40,10 +40,15 @@
       "description": "Instead of drawing one card when stuck, draw until you can play.",
       "default": false,
       "patch": { "rules.drawWhenStuck": "until-playable" }
+    },
+    {
+      "id": "must-play",
+      "name": "Play if you can",
+      "description": "You may only draw when nothing in your hand fits — no holding an eight back for later.",
+      "default": false,
+      "patch": { "rules.mustPlayIfAble": true }
     }
   ],
-  "undo": "none",
-  "turnTimer": null,
   "ui": {
     "cardBack": { "pattern": "pinstripe", "color": "#2f6fb0", "emblem": "8" }
   },

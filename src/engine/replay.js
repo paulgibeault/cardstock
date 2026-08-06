@@ -35,19 +35,39 @@ export const MATCH_FORMAT_VERSION = 1;
  * applied move AND every announcement, so the cost grew with the match and
  * added up to quadratic work over a long one.
  *
- * The log is append-only (movePipeline.js pushes and never rewrites), so the
- * entries already stripped can never go stale, and only the tail is new. Keyed
- * on the log ARRAY rather than the state: rehydrateMatch builds fresh state
- * objects around a log, and a WeakMap lets an abandoned match's cache go with
- * it. The length guard is for a hypothetical truncation — cheap insurance
- * against a cache that would otherwise be silently wrong rather than slow.
+ * The log is append-only TODAY (movePipeline.js pushes and never rewrites), so
+ * the entries already stripped can never go stale, and only the tail is new.
+ * Keyed on the log ARRAY rather than the state: rehydrateMatch builds fresh
+ * state objects around a log, and a WeakMap lets an abandoned match's cache go
+ * with it.
+ *
+ * A LENGTH GUARD IS NOT ENOUGH, AND UNDO IS WHY. §8's promised undo is "replay
+ * the log minus the last events" — truncate, then re-grow. A log that goes
+ * 40 → 38 → 40 is back at a length the cache has already seen, so a guard of
+ * `entry.len > log.length` never fires and the cache serves two moves that were
+ * taken back. That is not a stale render; it is a CORRUPTED SAVE, written
+ * silently, on the next persist.
+ *
+ * So the guard also checks that the last entry it cached is still the last
+ * entry in the log, BY IDENTITY. Truncate-and-regrow pushes new move objects,
+ * so this catches it even at an identical length. Any future truncation site
+ * should still call `invalidateLogCache(log)` — belt and braces, and a name to
+ * grep for. Both are pinned by tests/replay.test.js.
  */
 const strippedLogs = new WeakMap();
 
+/** Drop a log's cached serialization. Call this from any site that TRUNCATES. */
+export function invalidateLogCache(log) {
+  strippedLogs.delete(log);
+}
+
 function strippedLog(log) {
   let entry = strippedLogs.get(log);
-  if (!entry || entry.len > log.length) {
-    entry = { len: 0, moves: [] };
+  const stale = entry
+    && (entry.len > log.length
+      || (entry.len > 0 && log[entry.len - 1] !== entry.lastRef));
+  if (!entry || stale) {
+    entry = { len: 0, moves: [], lastRef: null };
     strippedLogs.set(log, entry);
   }
   for (let i = entry.len; i < log.length; i++) {
@@ -55,6 +75,7 @@ function strippedLog(log) {
     entry.moves.push(move);
   }
   entry.len = log.length;
+  entry.lastRef = log.length ? log[log.length - 1] : null;
   // A copy, because the payload is handed to storage and to the stats reader,
   // and neither should be able to see a later move appear in a log it was
   // given earlier.
@@ -63,19 +84,47 @@ function strippedLog(log) {
 
 /**
  * The persistable/​sendable form of a live match.
+ *
  * `variants` is recorded because a pack loaded with different variants active
  * is a different rule set, and replaying a log against it would diverge.
+ *
+ * `packVersion` is recorded for a subtler version of the same thing. THE DECK'S
+ * ORDER IS PART OF THE RULE SET: deck.json's entry order becomes cardsById's
+ * insertion order (packLoader.js), which becomes the array the seeded shuffle
+ * permutes (state.js) — so reordering two entries in a deck file, a change that
+ * looks purely cosmetic, deals every stored match a different hand. The log
+ * then replays into a state its own moves are illegal in and the player is told
+ * nothing except that their game is gone.
+ *
+ * OPTIONAL BY DESIGN, so MATCH_FORMAT_VERSION does not need bumping and saves
+ * written before this field survive: a payload without one is replayed as it
+ * always was. `packVersionChanged` is what turns a mismatch into an honest
+ * "the rules changed" rather than a bare replay throw.
  */
 export function serializeMatch(state, { savedAt = Date.now() } = {}) {
   return {
     formatVersion: MATCH_FORMAT_VERSION,
     packId: state.pack.id,
+    packVersion: state.pack.manifest?.version,
     variants: state.pack.activeVariants ?? [],
     seats: state.seats,
     seed: state.seed,
     log: strippedLog(state.log),
     savedAt,
   };
+}
+
+/**
+ * Was this payload written against a different version of the pack?
+ *
+ * `false` for a payload that carries no version (written before the field
+ * existed) — "unknown" is not "changed", and refusing to resume those would
+ * throw away every match in flight at the moment this shipped.
+ */
+export function packVersionChanged(pack, snapshot) {
+  const stored = snapshot?.packVersion;
+  if (stored === undefined || stored === null) return false;
+  return stored !== pack.manifest?.version;
 }
 
 /**

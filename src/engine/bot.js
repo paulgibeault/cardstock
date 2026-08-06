@@ -31,7 +31,7 @@
 // re-applies the logged move and never re-runs this function, so a bot's coin
 // flips can never desync a resumed match.
 
-import { enumerateLegalMoves } from './movePipeline.js';
+import { legalMovesFor } from './movePipeline.js';
 import { makeCtx } from './context.js';
 
 function defaultHeuristic(ctx, move) {
@@ -54,7 +54,7 @@ const TILT_SHARE = 0.25;
  * @returns Array<{ move, score }> — a fresh array, safe to mutate.
  */
 export function rankMoves(state, seat, { persona = null } = {}) {
-  const moves = enumerateLegalMoves(state, seat);
+  const moves = legalMovesFor(state, seat);
   if (moves.length === 0) return [];
   const ctx = makeCtx(state);
   const heuristic = state.pack.template.botHeuristic || defaultHeuristic;

@@ -15,12 +15,8 @@
 // Output is data — { title, tagline, sections: [{ heading, lines }] } — so the
 // panel renders text nodes and nothing here can put markup on screen.
 
-import { effectText } from './describe.js';
+import { effectText, titleCase } from './describe.js';
 import { describeContract } from './interaction.js';
-
-function titleCase(s) {
-  return String(s).charAt(0).toUpperCase() + String(s).slice(1);
-}
 
 function list(items, conjunction = 'and') {
   const kept = items.filter(Boolean);
@@ -49,7 +45,13 @@ function dealCount(rules) {
   return `${deal.default} cards each${exceptions.length ? ` (${list(exceptions)})` : ''}`;
 }
 
-/** What ends the match, in the pack's own terms. */
+/**
+ * What ends the match: the part every pack states the same way (a points
+ * threshold), plus whatever the template has to add about its own genre.
+ *
+ * The genre half used to be four `if (template.id === …)` clauses here. It is
+ * the template's `endingLines(pack)` hook now — see src/templates/CONTRACT.md.
+ */
 function endingLines(pack) {
   const out = [];
   const over = pack.scoring?.gameOver;
@@ -61,74 +63,16 @@ function endingLines(pack) {
       ? 'The highest score at that point wins.'
       : 'The LOWEST score at that point wins — points are what you are trying to avoid.');
   }
-  if (pack.rules?.winner === 'first-empty-hand') {
-    out.push('A round ends the moment one player is out of cards.');
-  }
-  if (pack.template?.id === 'contract-rummy' && pack.rules?.contracts) {
-    out.push(`There are ${pack.rules.contracts.length} contracts; the match ends when the last one is played.`);
-  }
-  if (pack.template?.id === 'sequencing') {
-    out.push('The first player to empty their stock pile wins immediately.');
-  }
+  out.push(...(pack.template?.endingLines?.(pack) || []));
   return out;
 }
 
-/** The shape of a turn, which is a property of the template. */
+/**
+ * The shape of a turn, which is a property of the template — so the template
+ * says it (`ruleLines(rules)`), and this file no longer has to know four games.
+ */
 function turnLines(pack) {
-  const rules = pack.rules || {};
-  const id = pack.template?.id;
-
-  if (id === 'shedding') {
-    // "or", emphatically: matching on colour AND rank would be a different and
-    // much worse game, and this is the sentence a new player reads first.
-    const on = list((rules.matchOn || []).map((a) => `the same ${a}`), 'or');
-    const out = [`On your turn, play one card matching ${on || 'the top card'}.`];
-    // "If you cannot play, draw" and "you may draw whenever you like" are
-    // different games, and the pack already says which one this is. Reading
-    // `mustPlayIfAble` here is what stops the help page from teaching a rule
-    // the table no longer enforces.
-    const optional = rules.mustPlayIfAble !== true;
-    if (rules.drawWhenStuck === 'until-playable') {
-      out.push(optional
-        ? 'You may draw instead of playing, and you keep drawing until something fits.'
-        : 'If you cannot play, draw until you can.');
-    } else if (rules.drawWhenStuck) {
-      const n = rules.drawWhenStuck;
-      const cards = n === 1 ? 'a card' : `${n} cards`;
-      out.push(optional
-        ? `You may draw ${cards} instead of playing — even holding something that fits, which is how you hang on to a card you would rather not spend yet.`
-        : `If you cannot play, draw ${cards} and your turn ends.`);
-    }
-    if (rules.playAfterDraw && rules.drawWhenStuck) {
-      out.push('A card you draw can be played straight away if it fits, or kept — either ends your turn, '
-        + 'and the rest of your hand is out of play until your next one.');
-    }
-    return out;
-  }
-  if (id === 'trick-taking') {
-    const out = ['Everyone plays one card; the highest card of the suit that was led takes the trick.'];
-    if (rules.mustFollowSuit !== false) out.push('Follow the suit that was led if you can.');
-    if (rules.passing) {
-      out.push(`Before play, pass ${rules.passing.count ?? 3} cards to another player.`);
-    }
-    return out;
-  }
-  if (id === 'contract-rummy') {
-    return [
-      'A turn is draw, then meld, then discard.',
-      'Draw from the deck or take the top of the discard pile.',
-      'Once your contract is complete you can lay it down; after that you may add cards to anyone\'s melds.',
-      'End your turn by discarding one card.',
-    ];
-  }
-  if (id === 'sequencing') {
-    return [
-      'Play cards up the build piles in the middle, one rank at a time.',
-      'Cards come from your stock pile, your hand, or your own discard piles.',
-      'End your turn by discarding to one of your own piles.',
-    ];
-  }
-  return [];
+  return pack.template?.ruleLines?.(pack.rules || {}) || [];
 }
 
 /** Every card that does something, said once each. */

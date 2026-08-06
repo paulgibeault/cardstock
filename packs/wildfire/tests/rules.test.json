@@ -1756,6 +1756,43 @@
           }
         }
       ]
+    },
+    {
+      "name": "with the standard rules a playable card in hand does not close the draw pile",
+      "setup": {
+        "seats": 3,
+        "turn": { "seat": 0, "phase": "play" },
+        "zones": { "discard": ["red-7"], "hand.0": ["red-3", "blue-2"] },
+        "vars": { "activeColor": "red" }
+      },
+      "assert": [
+        { "move": { "actor": 0, "type": "draw" }, "legal": true }
+      ]
+    },
+    {
+      "name": "draw-to-match keeps drawing until something fits",
+      "variants": ["draw-to-match"],
+      "setup": {
+        "seats": 3,
+        "turn": { "seat": 0, "phase": "play" },
+        "zones": {
+          "discard": ["red-7"],
+          "hand.0": ["blue-2"],
+          "draw": ["yellow-1", "red-5", "green-9", "blue-4"]
+        },
+        "vars": { "activeColor": "red" },
+        "unlisted": "void"
+      },
+      "assert": [
+        { "apply": { "actor": 0, "type": "draw" } },
+        {
+          "expect": {
+            "zones": { "hand.0": ["blue-2", "blue-4", "green-9", "red-5"] },
+            "turn": { "seat": 0, "phase": "playDrawn" },
+            "vars": { "drawnCardId": "red-5" }
+          }
+        }
+      ]
     }
   ]
 }

@@ -3,9 +3,9 @@
 // constraints relax automatically when they'd leave the actor with zero legal cards
 // (design doc §5).
 
-import { RANKS } from '../engine/cards.js';
+import { rankOrder } from '../engine/cards.js';
 import { selectorMatches } from '../engine/selectors.js';
-import { runRoundScore, evaluateGameOver, cardValue } from '../engine/scoring.js';
+import { cardValue } from '../engine/scoring.js';
 
 function isExactCardFirstLead(ctx) {
   const fl = ctx.rules.firstLead;
@@ -137,7 +137,10 @@ function resolveTrick(ctx) {
   for (let i = 0; i < trickCards.length; i++) {
     const card = ctx.cardById(trickCards[i]);
     if (card.suit !== led) continue;
-    const rank = RANKS.indexOf(card.rank);
+    // Within the led suit, every rank ladder agrees — see rankOrder in
+    // src/engine/cards.js for why the standard-52 array is no longer the only
+    // answer, and why deck order is the last of the three rather than the first.
+    const rank = rankOrder(card);
     if (rank > bestRank) {
       bestRank = rank;
       winnerSeat = seats[i];
@@ -232,14 +235,24 @@ function determineFirstLeader(ctx) {
     }
     return 0;
   }
-  if (fl === 'left-of-dealer') return ctx.nextSeat(0, 1);
-  return 0;
+  if (fl === 'left-of-dealer') return ctx.nextSeat(ctx.openingSeat(), 1);
+  return ctx.openingSeat();
 }
 
+/**
+ * The whole deck, round-robin, starting at whoever this round opens on.
+ *
+ * THE DEALER ROTATES. It did not: this started at seat 0 every round, which
+ * contradicts the design doc's `"dealer": "rotate"` and the two templates that
+ * already rotate. Writing the zones directly rather than going through
+ * ctx.moveCards is sanctioned for the initial deal only — see
+ * src/templates/CONTRACT.md — because there is nothing for a zoneEmpty reaction
+ * to respond to while the deck is being handed out.
+ */
 function dealAll(ctx) {
   const removeIds = new Set(ctx.rules.dealAdjust?.[String(ctx.seats)] || []);
   const ids = ctx.rng.shuffle([...ctx.pack.cardsById.keys()].filter((id) => !removeIds.has(id)));
-  let seat = 0;
+  let seat = ctx.openingSeat();
   for (const id of ids) {
     const addr = ctx.zoneAddr('hand', seat);
     ctx.zone(addr).cards.push(id);
@@ -251,11 +264,16 @@ function dealAll(ctx) {
 const trickTaking = {
   id: 'trick-taking',
 
-  defaultZones() {
+  defaultZones(rules, seats) {   // eslint-disable-line no-unused-vars
     return [
       { id: 'hand', per: 'player', visibility: 'owner', layout: 'fan', order: 'sorted', facing: 'up' },
-      { id: 'trick', per: 'shared', visibility: 'all', layout: 'spread', order: 'sequence', facing: 'up', label: 'Trick' },
-      { id: 'won', per: 'player', visibility: 'none', layout: 'stack', order: 'stack', facing: 'down', label: 'Won' },
+      // `landing: 'play'`: where a played card goes when the move names no
+      // destination. The table used to probe zone ids by name.
+      { id: 'trick', per: 'shared', visibility: 'all', layout: 'spread', order: 'sequence', facing: 'up', label: 'Trick', landing: 'play' },
+      // `showsHeldValue`: this pile's contents are worth points, so the felt
+      // shows what it has cost so far. Hearts is why, but the flag is the fact
+      // rather than the game.
+      { id: 'won', per: 'player', visibility: 'none', layout: 'stack', order: 'stack', facing: 'down', label: 'Won', showsHeldValue: true },
     ];
   },
 
@@ -322,7 +340,7 @@ const trickTaking = {
       const count = ctx.rules.passing.count;
       const cards = hand
         .slice()
-        .sort((a, b) => RANKS.indexOf(ctx.cardById(b).rank) - RANKS.indexOf(ctx.cardById(a).rank))
+        .sort((a, b) => rankOrder(ctx.cardById(b)) - rankOrder(ctx.cardById(a)))
         .slice(0, count);
       return [{ actor: seat, type: 'passCards', cards }];
     }
@@ -345,18 +363,57 @@ const trickTaking = {
     return Array.from({ length: ctx.seats }, (_, s) => ctx.countIn(ctx.zoneAddr('hand', s))).every((n) => n === 0);
   },
 
-  scoreRound(ctx) {
-    return runRoundScore(ctx);
+
+  /* ---------------------------------------------------------------- *
+   * What the platform asks this template about itself (src/templates/CONTRACT.md)
+   * ---------------------------------------------------------------- */
+
+  interactionMode(ctx) {
+    return ctx.turn.phase === 'pass' ? 'pass' : 'tap';
   },
 
-  isGameOver(ctx) {
-    return evaluateGameOver(ctx)?.over ?? ctx.state.gameOver;
+  /**
+   * The cards this seat has committed to a simultaneous phase but not yet
+   * played — drawn as chosen, and NOT re-choosable.
+   *
+   * The private `__pendingPass` var is this template's bookkeeping; the table
+   * was reading it directly in three places, double underscore and all.
+   */
+  committedSelection(ctx, seat) {
+    return ctx.playerVar(seat, '__pendingPass') ?? null;
+  },
+
+  ruleLines(rules) {
+    const out = ['Everyone plays one card; the highest card of the suit that was led takes the trick.'];
+    if (rules.followSuit === 'must') out.push('Follow the suit that was led if you can.');
+    if (rules.passing) {
+      out.push(`Before play, pass ${rules.passing.count ?? 3} cards to another player.`);
+    }
+    return out;
+  },
+
+  endingLines() {
+    return [];
+  },
+
+  botVerbs: { passCards: 'passed' },
+
+  statLines(seat) {
+    return [
+      { label: 'Tricks won', value: seat.tricksWon, always: true },
+      { label: 'Points taken', value: seat.pointsTaken, always: true },
+    ];
   },
 
   botHeuristic(ctx, move) {
     const card = ctx.cardById(move.cards[0]);
-    let score = -RANKS.indexOf(card.rank);
-    if (card.tags?.includes('penalty')) score -= 5;
+    // Play low, and shed anything the pack charges you for holding. The second
+    // clause used to be `card.tags?.includes('penalty')` — Hearts' own tag name,
+    // hardcoded into the template, and worth exactly −5 whether the card was a
+    // two of hearts or the queen of spades. The pack's scoring config already
+    // says what each card costs, so it says it here too.
+    let score = -rankOrder(card);
+    score -= cardValue(card, ctx.pack.scoring || {});
     return score;
   },
 };

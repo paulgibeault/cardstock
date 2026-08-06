@@ -16,11 +16,17 @@
 // Pure and DOM-free: these return data, callers render it with textContent.
 
 import { cardValue } from '../engine/scoring.js';
-import { baseId } from '../engine/selectors.js';
+import { makeCtx } from '../engine/context.js';
 
 const SUIT_GLYPH = { clubs: '♣', diamonds: '♦', hearts: '♥', spades: '♠' };
 
-function titleCase(word) {
+/**
+ * "hearts" → "Hearts". Exported because src/ui/rules.js had a second copy, and
+ * it lives HERE rather than in a DOM helper module because this file is
+ * deliberately DOM-free (see the header) and the rules page is its only other
+ * reader.
+ */
+export function titleCase(word) {
   const s = String(word || '');
   return s ? s[0].toUpperCase() + s.slice(1) : s;
 }
@@ -37,13 +43,6 @@ export function cardName(card) {
   if (card.suit) return `${spoken || 'Card'} of ${titleCase(card.suit)}`;
   if (card.color) return `${titleCase(card.color)} ${spoken}`.trim();
   return titleCase(spoken) || 'Card';
-}
-
-/** The short form that fits in a corner or a chip: "Q♠", "7". */
-export function cardShortName(card) {
-  if (!card) return '';
-  const rank = card.rank == null ? '' : String(card.rank);
-  return card.suit ? `${rank}${SUIT_GLYPH[card.suit] || ''}` : rank;
 }
 
 /** What an effect does, in one sentence, or null when the card is plain. */
@@ -111,21 +110,19 @@ export function cardAriaLabel(card, pack, { position, of } = {}) {
  * recycles from the discard — the manifest already declares that (design doc
  * §3) and nobody should have to learn it by watching the pile run out.
  */
+
 /**
- * True when the top card of `address` carries none of the attributes the given
- * active-vars stand for — i.e. the active value outlived the card that set it,
- * which is what a wild does and nothing else does.
+ * The value the whole table is playing to, if the open pack has one.
+ *
+ * ASKED OF THE TEMPLATE (`activeMatch`), because the `activeSuit`/`activeColor`
+ * var convention belongs to shedding and this file used to reverse-engineer it:
+ * it read `state.vars.activeSuit || state.vars.activeColor` by name, then
+ * derived an attribute back OUT of a var name to find out whether the top card
+ * could show the value for itself. Three files spelled that convention three
+ * different ways.
  */
-function topCardLacks(state, address, ...activeVarNames) {
-  const topId = state.zones.top(address);
-  if (!topId) return false;
-  const card = state.pack.cardsById.get(baseId(topId));
-  if (!card) return false;
-  return activeVarNames.every((varName) => {
-    const attr = varName.slice('active'.length);
-    const key = attr[0].toLowerCase() + attr.slice(1);
-    return card[key] === null || card[key] === undefined;
-  });
+function activeMatchOf(state) {
+  return state.pack.template.activeMatch?.(makeCtx(state)) ?? null;
 }
 
 export function describeZone(state, { def, n, address }) {
@@ -145,16 +142,14 @@ export function describeZone(state, { def, n, address }) {
     notes.push(`Refilled from the ${reaction.from} pile when it runs out.`);
   }
 
-  if (def.id === 'discard' && def.per !== 'player') {
-    const active = state.vars.activeSuit || state.vars.activeColor;
-    if (active) lines.push({ label: 'Active', value: titleCase(active) });
+  const match = activeMatchOf(state);
+  if (match && match.address === address) {
+    lines.push({ label: 'Active', value: titleCase(match.value) });
     // A wild leaves the table matching on something its own face does not
     // show, so that becomes a NOTE rather than only a line — notes are what
     // reach the pile's accessible name (zoneAriaLabel), and a player who
     // cannot see the swatch on the badge has no other way to learn it.
-    if (active && topCardLacks(state, address, 'activeSuit', 'activeColor')) {
-      notes.push(`Now matching ${titleCase(active)}.`);
-    }
+    if (!match.onCard) notes.push(`Now matching ${titleCase(match.value)}.`);
   }
 
   return { title, lines, notes };
@@ -183,21 +178,19 @@ export function zoneBadge(state, { def, n, address }) {
     return { text: `${def.label || titleCase(def.id)}${n != null ? ` ${n}` : ''}`, kind: 'name' };
   }
   if (def.capacity != null) return { text: `${count}/${def.capacity}`, kind: 'count' };
-  if (def.id === 'discard' && def.per !== 'player') {
-    const active = state.vars.activeSuit || state.vars.activeColor;
+  const match = activeMatchOf(state);
+  if (match && match.address === address) {
     // `kind: 'match'` is what lets the caller draw this one BIG. Everywhere else
     // the badge is a number you glance at; here it is the rule in force — what
     // the whole table must play to — and a 0.72rem pill said that in the same
     // voice as a card count. Own the glyph, hand the styling decision over
     // rather than making it here: this module stays DOM-free (see the header).
     //
-    // hasOwn, not a bare lookup: `active` is a var a PACK writes, and on a plain
-    // object a pack setting it to "constructor" would resolve to a function and
-    // stringify the whole thing into the badge.
-    if (active) {
-      const suit = Object.hasOwn(SUIT_GLYPH, active) ? active : null;
-      return { text: suit ? SUIT_GLYPH[suit] : titleCase(active), kind: 'match', suit };
-    }
+    // hasOwn, not a bare lookup: the value comes from a PACK's own var, and on
+    // a plain object a pack setting it to "constructor" would resolve to a
+    // function and stringify the whole thing into the badge.
+    const suit = Object.hasOwn(SUIT_GLYPH, match.value) ? match.value : null;
+    return { text: suit ? SUIT_GLYPH[suit] : titleCase(match.value), kind: 'match', suit };
   }
   return { text: String(count), kind: 'count' };
 }
