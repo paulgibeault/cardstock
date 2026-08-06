@@ -407,8 +407,11 @@ body {
 .opponent-row--tight .seat .mini-hand { --mini-max: 60px; }
 
 /* A seat is a player, so it gets a face and a name plate rather than a line of
-   text. The count is a badge on the plate — the number you actually watch. */
+   text. The count is a badge on the plate — the number you actually watch.
+   `position: relative` is for .seat__catch, which is worn over the plate
+   rather than added to it — see its own note. */
 .seat {
+  position: relative;
   padding: 0.4rem 0.55rem 0.5rem;
   border-radius: 12px;
   background: var(--chip-bg);
@@ -480,12 +483,20 @@ body {
 }
 
 /* "Catch!" — the accusation, worn by the seat it accuses. Deliberately loud:
-   the window is short and the whole mechanic is about noticing in time. */
+   the window is short and the whole mechanic is about noticing in time.
+
+   WORN OVER THE PLATE, NOT ADDED TO IT. In the seat's own flow this button made
+   the seat 29px taller for the two seconds it existed, and the opponent row is
+   the top of the felt's flex column — so every pile below it slid down 15px
+   and back at the exact moment the table was asking the player to react to
+   something (#13, the same rule as #action-bar). Out of flow it costs nothing
+   and moves nothing, and lying across the accused seat's own fan is where it
+   belongs anyway: the eye goes to the seat being accused. */
 .seat__catch {
-  position: relative;
-  display: block;
-  width: 100%;
-  margin-top: 0.4rem;
+  position: absolute;
+  left: 0.4rem;
+  right: 0.4rem;
+  bottom: 0.4rem;
   padding: 0.28rem 0.5rem;
   font: inherit;
   font-size: 0.75rem;
@@ -825,13 +836,28 @@ button.pile-stack:focus-visible { outline: 2px solid var(--accent); outline-offs
  *
  * Cards here are full size and side by side, not fanned: the point of the tray
  * is that what you have gathered is READABLE, which is the one thing a closed
- * fan cannot offer. */
+ * fan cannot offer.
+ *
+ * The fixed height was only ever half the promise, though: the row itself
+ * still left the flex column whenever the human could not stage, and in a
+ * contract-rummy game that is TWICE PER TURN — every seat draws (no staging)
+ * and then melds (staging), for the bots as much as for you, so this strip of
+ * felt was flickering in and out under the hand for the whole match (#13). So
+ * the slot now belongs to the PHASE, not to whose turn it is: reserved for as
+ * long as anybody could be gathering cards, and `--empty` — invisible, but
+ * still holding its ground — when the human is not one of them. */
 #stage-row {
   display: flex;
   justify-content: center;
-  min-height: calc(var(--hand-card-w, 70px) * 1.4 + 0.7rem);
+  /* A card (1.4 × its own width), the tray's 0.35rem of padding top and
+     bottom, and the 1px the dashed outline costs on each edge — that last
+     term is easy to forget and worth exactly the 2px jump the first gathered
+     card used to make. */
+  min-height: calc(var(--hand-card-w, 70px) * 1.4 + 0.7rem + 2px);
+  transition: opacity 0.3s ease, visibility 0.3s;
 }
 #stage-row[hidden] { display: none; }
+#stage-row.stage-row--empty { opacity: 0; visibility: hidden; }
 
 #stage-tray {
   display: flex;
@@ -1080,12 +1106,28 @@ body.is-dragging .card-face { cursor: grabbing; }
  * Announcements (§E2)
  * ------------------------------------------------------------------ */
 
+/* THE BAR'S SLOT IS RESERVED, AND THAT IS THE POINT — same discipline as
+   #status-bar and #action-bar, for the same reason: this row is in the felt's
+   flex column, so a bar that appears pushes everything below it.
+   The moment it appears is the WORST possible moment to move the table: a
+   seat has one card left, the window to say so is measured in seconds, and
+   the player is already reaching for a button. Reserving the height means the
+   button arrives where the eye already is.
+   `hidden` still means something here, and something different: no slot at
+   all, for a pack whose template has no announcements to make. That is a
+   property of the pack, decided once when it opens, so it can never move the
+   table mid-hand. `--empty` is the per-moment state. */
 #announce-bar {
   display: flex;
   justify-content: center;
   gap: 0.5rem;
+  /* One announce button: its 0.95rem label at line-height 1.2, plus the
+     0.4rem it is padded with top and bottom. Borderless, so that is all. */
+  min-height: calc(1.2 * 0.95rem + 0.8rem);
+  transition: opacity 0.3s ease, visibility 0.3s;
 }
 #announce-bar[hidden] { display: none; }
+#announce-bar.announce-bar--empty { opacity: 0; visibility: hidden; }
 
 /* Loud, and pulsing, because the window is measured in seconds and missing it
    costs you two cards. */
@@ -1093,6 +1135,9 @@ body.is-dragging .card-face { cursor: grabbing; }
   position: relative;
   font: inherit;
   font-size: 0.95rem;
+  /* Pinned, like #action-button's: the bar's reserved height is measured off
+     this line, and `normal` is whatever the font feels like. */
+  line-height: 1.2;
   font-weight: 800;
   letter-spacing: 0.02em;
   padding: 0.4rem 1.4rem;
@@ -1174,7 +1219,26 @@ body.is-dragging .card-face { cursor: grabbing; }
 /* One line of guidance plus at most one button, floating above the hand.
    This is also where the human wears the turn token — the same chip the
    seats wear, in the same place every game. */
+
+/* THE BAR'S SLOT IS RESERVED, AND THAT IS THE POINT.
+   Read #status-bar's note first — this is the same failure in the same flex
+   column, one row further down. This bar used to toggle `hidden`, so it left
+   normal flow the instant the turn passed to a bot and re-entered it when the
+   turn came back, and #center-piles (flex: 1) absorbed the difference by
+   sliding the deck and the discard up and down by ~19px on EVERY turn change.
+   The cue that says "it's your turn" was moving the cards you play it with.
+   So the row's height is now permanent and only its VISIBILITY changes. The
+   fade is opacity — a compositor property, no layout, no paint — never
+   height, margin, padding or display. If you are here to simplify this back
+   into `display: none`, that is the bug (#13).
+   `visibility: hidden` is doing accessibility work too: it takes the empty
+   bar's contents out of the tab order and off the screen reader, so nobody
+   lands on a ghost button in a bar they cannot see. It only lands at the end
+   of the fade, which is why renderActionBar also sets `inert`. */
 #action-bar {
+  /* Named because the reserved height is computed from it, and the mobile
+     block below changes it. */
+  --action-bar-pad: 0.35rem;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1182,18 +1246,30 @@ body.is-dragging .card-face { cursor: grabbing; }
   margin: 0 auto;
   width: fit-content;
   max-width: 100%;
-  padding: 0.35rem 0.9rem;
+  padding: var(--action-bar-pad) 0.9rem;
+  /* The slot is as tall as the TALLEST thing that can stand in it — the
+     action button — so a hint that arrives without one (Wildfire's bare "Your
+     turn") leaves exactly the same hole as one that arrives with a "Pass 3
+     cards" beside it. The terms are #action-button's own: its 0.85rem label
+     at line-height 1.2 (pinned there so this arithmetic cannot drift with the
+     font), its 0.35rem of padding top and bottom, then this bar's own padding
+     and its 1px border on each edge. */
+  min-height: calc(1.2 * 0.85rem + 0.7rem + var(--action-bar-pad) * 2 + 2px);
   border-radius: 999px;
   background: var(--chip-bg);
   border: 1px solid var(--chip-border);
   font-size: 0.85rem;
+  transition: opacity 0.3s ease, visibility 0.3s;
 }
-#action-bar[hidden] { display: none; }
+#action-bar.action-bar--empty { opacity: 0; visibility: hidden; }
 #action-bar:not(.action-bar--acting) .turn-token { display: none; }
 
 #action-button {
   font: inherit;
   font-size: 0.85rem;
+  /* Pinned, not inherited from the UA's `normal`: #action-bar's reserved
+     height is measured off this line. */
+  line-height: 1.2;
   font-weight: 600;
   padding: 0.35rem 0.9rem;
   border-radius: 999px;
@@ -1722,7 +1798,9 @@ body.is-dragging .card-face { cursor: grabbing; }
      short screen it is charged for during every turn of a lay-down phase.
      Smaller cards here, not a collapsing row — a tray that appeared on the
      first pick would shove the fan down mid-gesture. */
-  #stage-row { min-height: calc(var(--hand-card-w, 70px) * 1.1 + 0.5rem); }
+  /* Same three terms as the full-size slot, with this block's own numbers: the
+     0.78 the cards shrink to, the tray's smaller padding, its outline. */
+  #stage-row { min-height: calc(var(--hand-card-w, 70px) * 0.78 * 1.4 + 0.5rem + 2px); }
   .stage-card .card-face { width: calc(var(--hand-card-w, 70px) * 0.78); }
   #stage-tray { padding: 0.25rem 0.4rem; }
 }
@@ -1766,8 +1844,16 @@ body.is-dragging .card-face { cursor: grabbing; }
   .meld-strip--mini .meld-chip__card .card-face { width: 20px; }
   .meld-strip--mini .meld-chip__label { font-size: 0.46rem; }
   /* The hint is a sentence, and a sentence that wraps costs a whole line of
-     felt. Smaller type keeps it on one. */
-  #action-bar { padding: 0.3rem 0.7rem; font-size: 0.78rem; gap: 0.45rem; }
+     felt. Smaller type keeps it on one.
+     Only the padding VARIABLE moves, so the reserved height above follows it:
+     the button inside keeps its full-size type at every width, and a slot cut
+     to the small size would be shorter than the button standing in it. */
+  #action-bar {
+    --action-bar-pad: 0.3rem;
+    padding: var(--action-bar-pad) 0.7rem;
+    font-size: 0.78rem;
+    gap: 0.45rem;
+  }
   /* The chrome bar is not the game. It can no longer wrap (see #status-bar),
      but it can still be quieter about the room it takes. */
   #status-bar { padding: 0.35rem 0.5rem; font-size: 0.82rem; gap: 0.35rem; }

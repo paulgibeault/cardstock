@@ -44,6 +44,21 @@ export function interactionMode(state) {
   return 'tap';
 }
 
+/**
+ * Could ANYBODY be gathering cards in this phase?
+ *
+ * Deliberately not "may the human gather cards right now" — that is
+ * `ui.handMulti`, and it flips as the turn moves. This is the question the
+ * staging tray's SLOT is reserved on, so it has to be stable across a turn
+ * change or the felt moves under the hand every time one happens (#13). A
+ * rummy turn is draw-then-meld, so both of its modes answer yes; a trick game
+ * only stages while the pass is open; a shedding game never does.
+ */
+export function stagingPhase(state) {
+  const mode = interactionMode(state);
+  return mode === 'pass' || mode === 'rummy-draw' || mode === 'rummy-meld';
+}
+
 export function selectedIds(selection) {
   return selection ? selection.cardIds : [];
 }

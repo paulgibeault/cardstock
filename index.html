@@ -94,8 +94,13 @@
 
       <!-- Phase-contextual guidance and the one action that needs a button
            (passing, laying down). Carries the turn token when it is the
-           human's turn — the same token the seats wear. -->
-      <div id="action-bar" hidden>
+           human's turn — the same token the seats wear.
+
+           Starts EMPTY, not `hidden`: this bar always holds its place in the
+           column and only fades in and out of view, because a bar that comes
+           and goes with the turn moves the whole table with it (#13, and the
+           reserved height in src/ui/table.css). -->
+      <div id="action-bar" class="action-bar--empty" inert>
         <span class="turn-token" aria-hidden="true"></span>
         <span id="action-hint"></span>
         <button type="button" id="action-button" hidden></button>
