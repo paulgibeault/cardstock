@@ -6,11 +6,7 @@
 import { selectorMatches, selectorMatchesAny } from '../engine/selectors.js';
 import { initializeDeckInto } from '../engine/state.js';
 import { evaluateGameOver } from '../engine/scoring.js';
-
-function resolveCount(spec, seats) {
-  if (typeof spec === 'number') return spec;
-  return spec.byPlayers?.[String(seats)] ?? spec.default;
-}
+import { resolveByPlayers } from '../engine/deal.js';
 
 // Zone addresses this template cares about are always `<kind>[.n].<seat>` for
 // per-player zones (hand/stock/discard) — the seat is always the last segment.
@@ -105,7 +101,7 @@ const sequencing = {
 
   setup(ctx) {
     initializeDeckInto(ctx.state, 'draw');
-    const stockSize = resolveCount(ctx.rules.stockSize, ctx.seats);
+    const stockSize = resolveByPlayers(ctx.rules.stockSize, ctx.seats);
     for (let s = 0; s < ctx.seats; s++) {
       for (let i = 0; i < stockSize; i++) {
         const top = ctx.topOf('draw');

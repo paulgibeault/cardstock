@@ -4,11 +4,7 @@
 
 import { runRoundScore, evaluateGameOver } from '../engine/scoring.js';
 import { initializeDeckInto } from '../engine/state.js';
-
-function resolveCount(spec, seats) {
-  if (typeof spec === 'number') return spec;
-  return spec.byPlayers?.[String(seats)] ?? spec.default;
-}
+import { resolveByPlayers } from '../engine/deal.js';
 
 function isWildEffect(effect) {
   if (!effect) return false;
@@ -88,6 +84,20 @@ function cardMatchesActive(ctx, card) {
     const active = getActiveValue(ctx, attr);
     return active !== undefined && card[attr] === active;
   });
+}
+
+/**
+ * Is there anything in this hand that could be played right now?
+ *
+ * Only asked under `mustPlayIfAble`, and asked of the WHOLE hand because that
+ * is the rule: you may not draw while you are holding a card that fits. The
+ * same predicate the enumerator filters on (a wild always fits, everything else
+ * has to match), so the offered moves and the validator cannot disagree — which
+ * is the invariant that made this flag worth implementing rather than deleting.
+ * The help text in src/ui/rules.js has been reading it since it was written.
+ */
+function hasPlayableCard(ctx, seat) {
+  return ctx.cardIdsIn(ctx.zoneAddr('hand', seat)).some((id) => cardMatchesActive(ctx, ctx.cardById(id)));
 }
 
 function updateActiveAfterPlay(ctx, card, choice) {
@@ -427,8 +437,8 @@ function applyChallenge(ctx, move) {
   const cfg = ctx.rules.lastCardCall;
   if (!cfg) return;
   const target = move.target;
-  // Re-checked rather than assumed legal: applyAnnouncement (the rule-test
-  // entry point) reaches this without going through validateMove.
+  // Re-checked rather than assumed legal: applyAnnouncementUnlogged (the
+  // rule-test entry point) reaches this without going through validateMove.
   if (!isVulnerable(ctx, cfg, target)) return;
   const penalty = cfg.penalty?.draw ?? 0;
   const before = handSizeOf(ctx, target);
@@ -458,7 +468,7 @@ const shedding = {
 
   setup(ctx) {
     initializeDeckInto(ctx.state, 'draw');
-    const dealCount = resolveCount(ctx.rules.deal, ctx.seats);
+    const dealCount = resolveByPlayers(ctx.rules.deal, ctx.seats);
     for (let s = 0; s < ctx.seats; s++) {
       for (let i = 0; i < dealCount; i++) {
         const top = ctx.zone('draw').cards.slice(-1)[0];
@@ -603,6 +613,9 @@ const shedding = {
       // One draw a turn. Nothing enumerates a second one, but a stored log or a
       // peer's move arrives here without having asked.
       if (drawnCardId) return ctx.fail('one-draw', 'You have already drawn this turn.');
+      if (ctx.rules.mustPlayIfAble && hasPlayableCard(ctx, move.actor)) {
+        return ctx.fail('must-play', 'You are holding a card that fits, and this game makes you play it.');
+      }
       return ctx.ok();
     }
 
@@ -685,7 +698,12 @@ const shedding = {
     }
     // Exactly two ways out of playDrawn — play it, or keep it — so the table
     // can never render a dead end, and a bot can never be stranded in it.
-    moves.push(drawnCardId ? { actor: seat, type: 'pass' } : { actor: seat, type: 'draw' });
+    if (drawnCardId) moves.push({ actor: seat, type: 'pass' });
+    // `mustPlayIfAble` withheld from the enumeration as well as the validator:
+    // a bot picks from this list, so a draw offered here and refused there is a
+    // frozen table rather than a rule. `moves.length` is exactly "something in
+    // this hand is playable", which is the condition the validator checks.
+    else if (!ctx.rules.mustPlayIfAble || moves.length === 0) moves.push({ actor: seat, type: 'draw' });
     return moves;
   },
 

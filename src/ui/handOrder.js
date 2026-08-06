@@ -29,7 +29,7 @@ export const SORT_LABELS = Object.freeze({
   manual: 'My order',
 });
 
-export const DEFAULT_MODE = 'auto';
+const DEFAULT_MODE = 'auto';
 
 export function isSortMode(mode) {
   return SORT_MODES.includes(mode);

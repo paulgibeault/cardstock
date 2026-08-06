@@ -30,14 +30,10 @@
       ["set(5)", "set(2)"],
       ["set(5)", "set(3)"]
     ],
-    "progression": "advance-on-complete",
     "wilds": { "tag": "wild", "minNaturals": 1, "maxPerMeld": null },
-    "layDown": "once-per-round-when-complete",
-    "hitting": "own-and-others-after-laydown",
     "drawFrom": ["draw", "discard"],
     "discardPickupForbidden": ["tag:skip"],
-    "meldForbidden": ["tag:skip"],
-    "goingOut": "play-or-discard-last"
+    "meldForbidden": ["tag:skip"]
   },
   "scoring": {
     "roundScore": "leftover-hand-values",
@@ -47,8 +43,6 @@
   "reactions": [
     { "when": "zoneEmpty:draw", "do": "recycle", "from": "discard", "keepTop": true, "shuffle": true }
   ],
-  "undo": "none",
-  "turnTimer": null,
   "ui": {
     "cardStyle": "sequencing",
     "cardPalette": { "red": "#c0392b", "blue": "#2f6fb0", "green": "#1f7a63", "yellow": "#d9a520" },

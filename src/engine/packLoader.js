@@ -1,7 +1,12 @@
 // Loads a pack (manifest + optional deck file) into the runtime `pack` object every
 // other engine module consumes: { id, manifest, rules, scoring, template, cardsById }.
-// Packs are already schema-validated offline (schema/manifest.schema.json etc.) — this
-// loader does not re-implement JSON Schema; it does the structural assembly.
+//
+// This loader does no schema validation and must not: it runs in the browser on
+// the hot path of opening a table, and the engine stays browser-clean (§17.10).
+// The schemas are enforced OFFLINE instead — tools/schema-check.mjs, run by
+// tools/pack-test.mjs and gated in tests/repo-gates.test.js, over every pack on
+// disk and every available variant patch. Until that existed this comment was a
+// claim nothing backed.
 
 import { builtinDeckByName, expandDeckFile, applyCardTags } from './cards.js';
 import { resolveSelectorMap } from './selectors.js';
@@ -25,7 +30,13 @@ function defaultVariantIds(manifest) {
   return (manifest.variants || []).filter((v) => v.default).map((v) => v.id);
 }
 
-function applyPatch(obj, dottedPath, value) {
+/**
+ * One dotted-path assignment over a manifest ('rules.drawWhenStuck'), null to
+ * delete. Exported for the offline gate, which applies each available variant's
+ * patch and re-validates the result — a mistyped path vivifies an object here
+ * rather than failing, so the schema is what catches it.
+ */
+export function applyPatch(obj, dottedPath, value) {
   const segments = dottedPath.split('.');
   let cursor = obj;
   for (let i = 0; i < segments.length - 1; i++) {

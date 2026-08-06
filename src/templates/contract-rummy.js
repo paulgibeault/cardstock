@@ -5,6 +5,7 @@
 import { runRoundScore } from '../engine/scoring.js';
 import { initializeDeckInto } from '../engine/state.js';
 import { selectorMatches } from '../engine/selectors.js';
+import { resolveByPlayers } from '../engine/deal.js';
 
 function isWildCard(ctx, card) {
   const tag = ctx.rules.wilds?.tag;
@@ -528,7 +529,7 @@ function skipNextTurnFrom(ctx, seat) {
 // from createState, or cleared by the pipeline's round boundary.
 function dealRound(ctx) {
   initializeDeckInto(ctx.state, 'draw');
-  const dealCount = typeof ctx.rules.deal === 'number' ? ctx.rules.deal : ctx.rules.deal?.default ?? 10;
+  const dealCount = resolveByPlayers(ctx.rules.deal, ctx.seats);
   for (let s = 0; s < ctx.seats; s++) {
     for (let i = 0; i < dealCount; i++) {
       const top = ctx.zone('draw').cards.slice(-1)[0];

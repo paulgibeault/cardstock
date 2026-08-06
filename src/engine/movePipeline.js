@@ -92,7 +92,18 @@ function maybeFinishRound(state) {
   emitEvent(state, 'roundStart', { round: state.roundNumber });
 }
 
-export function applyAnnouncement(state, announcement) {
+/**
+ * A SIDE DOOR, AND THE NAME SAYS SO. No validation, no log append — the
+ * announcement lands on the state and leaves no trace a replay could reproduce.
+ *
+ * A LIVE TABLE MUST NEVER CALL THIS. The UI routes announcements as ordinary
+ * logged moves (`announce` / `challenge` through applyMove), which is what lets
+ * a resumed match remember who had declared. This exists for exactly one
+ * caller — the rule-test harness's `announce` assertion (tools/pack-test.mjs),
+ * which constructs a state directly and has no log to be consistent with.
+ * Anything else calling it forks replay from live play silently.
+ */
+export function applyAnnouncementUnlogged(state, announcement) {
   const ctx = makeCtx(state);
   const template = state.pack.template;
   if (!template.applyAnnouncement) return;

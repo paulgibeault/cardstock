@@ -107,10 +107,12 @@
       "required": ["actor", "type"],
       "properties": {
         "actor": { "type": "integer" },
-        "type": { "type": "string", "description": "Template move types, e.g. playCard, draw, pass, discard, layDown, hit, passCards." },
+        "type": { "type": "string", "description": "Template move types, e.g. playCard, draw, pass, discard, layDown, hit, passCards, announce, challenge." },
         "cards": { "type": "array", "items": { "type": "string" } },
         "from": { "type": "string" },
         "to": { "type": "string" },
+        "id": { "type": "string", "description": "Announcement id, for the out-of-turn `announce` / `challenge` moves (shedding's lastCardCall)." },
+        "target": { "type": "integer", "description": "The seat a `challenge` is aimed at." },
         "choice": { "description": "Free-form move payload: chosen suit/color/player, laydown melds, hit target, …" }
       }
     }

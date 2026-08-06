@@ -27,10 +27,8 @@
   ],
   "rules": {
     "buildRule": {
-      "type": "ascending",
       "from": 1,
-      "to": 12,
-      "wrap": false
+      "to": 12
     },
     "buildPiles": 4,
     "buildStart": [
@@ -58,7 +56,6 @@
       "hand",
       "discard"
     ],
-    "turnEnd": "discard-to-own-pile",
     "winner": "first-empty-stock"
   },
   "reactions": [
@@ -74,8 +71,6 @@
       "shuffle": true
     }
   ],
-  "undo": "none",
-  "turnTimer": null,
   "ui": {
     "cardStyle": "rankrun",
     "cardPalette": {

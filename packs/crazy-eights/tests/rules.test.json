@@ -95,6 +95,77 @@
       ]
     },
     {
+      "name": "by default you may draw with a playable card in hand",
+      "setup": {
+        "seats": 3,
+        "turn": { "seat": 0, "phase": "play" },
+        "zones": { "discard": ["hearts-7"], "hand.0": ["hearts-K", "clubs-4"] },
+        "vars": { "activeSuit": "hearts" }
+      },
+      "assert": [
+        { "move": { "actor": 0, "type": "draw" }, "legal": true }
+      ]
+    },
+    {
+      "name": "under Play-if-you-can, a playable card in hand closes the draw pile",
+      "variants": ["must-play"],
+      "setup": {
+        "seats": 3,
+        "turn": { "seat": 0, "phase": "play" },
+        "zones": { "discard": ["hearts-7"], "hand.0": ["hearts-K", "clubs-4"] },
+        "vars": { "activeSuit": "hearts" }
+      },
+      "assert": [
+        { "move": { "actor": 0, "type": "draw" }, "legal": false, "rule": "must-play" },
+        { "move": { "actor": 0, "type": "playCard", "cards": ["hearts-K"] }, "legal": true }
+      ]
+    },
+    {
+      "name": "under Play-if-you-can, an eight counts as a card that fits",
+      "variants": ["must-play"],
+      "setup": {
+        "seats": 3,
+        "turn": { "seat": 0, "phase": "play" },
+        "zones": { "discard": ["hearts-7"], "hand.0": ["spades-8", "clubs-4"] },
+        "vars": { "activeSuit": "hearts" }
+      },
+      "assert": [
+        { "move": { "actor": 0, "type": "draw" }, "legal": false, "rule": "must-play" }
+      ]
+    },
+    {
+      "name": "under Play-if-you-can, a hand with nothing in it still draws",
+      "variants": ["must-play"],
+      "setup": {
+        "seats": 3,
+        "turn": { "seat": 0, "phase": "play" },
+        "zones": { "discard": ["hearts-7"], "hand.0": ["clubs-4", "spades-9"] },
+        "vars": { "activeSuit": "hearts" }
+      },
+      "assert": [
+        { "move": { "actor": 0, "type": "draw" }, "legal": true }
+      ]
+    },
+    {
+      "name": "drawing until playable turns up a card that fits",
+      "variants": ["draw-until-playable"],
+      "setup": {
+        "seats": 3,
+        "turn": { "seat": 0, "phase": "play" },
+        "zones": {
+          "discard": ["hearts-7"],
+          "hand.0": ["clubs-4"],
+          "draw": ["diamonds-3", "hearts-5", "spades-9", "clubs-2"]
+        },
+        "vars": { "activeSuit": "hearts" },
+        "unlisted": "void"
+      },
+      "assert": [
+        { "apply": { "actor": 0, "type": "draw" } },
+        { "expect": { "zones": { "hand.0": ["clubs-4", "clubs-2", "spades-9", "hearts-5"] }, "turn": { "seat": 0, "phase": "playDrawn" } } }
+      ]
+    },
+    {
       "name": "round scoring sends leftover hand values to the winner",
       "setup": {
         "seats": 3,

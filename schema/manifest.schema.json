@@ -167,20 +167,6 @@
         "$ref": "#/$defs/variant"
       }
     },
-    "undo": {
-      "enum": [
-        "none",
-        "own-turn-until-committed"
-      ],
-      "default": "none"
-    },
-    "turnTimer": {
-      "type": [
-        "integer",
-        "null"
-      ],
-      "description": "Seconds per turn, or null for untimed."
-    },
     "ui": {
       "$ref": "#/$defs/ui"
     },
@@ -595,10 +581,6 @@
           "type": "string",
           "description": "Asset path for a face sprite/SVG set; omit for the vanilla renderer."
         },
-        "felt": {
-          "type": "string",
-          "description": "Table color (CSS)."
-        },
         "table": {
           "type": "string",
           "description": "Asset path for a table texture."
@@ -677,8 +659,7 @@
       "additionalProperties": false,
       "required": [
         "matchOn",
-        "deal",
-        "winner"
+        "deal"
       ],
       "properties": {
         "matchOn": {
@@ -721,26 +702,14 @@
         },
         "mustPlayIfAble": {
           "type": "boolean",
-          "default": false
-        },
-        "stacking": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "drawN": {
-              "type": "boolean",
-              "default": false
-            }
-          }
-        },
-        "jumpIn": {
-          "type": "boolean",
-          "default": false
+          "default": false,
+          "description": "When true, drawing is illegal while you hold a card you could play. The rules page says which of the two games this is, and the validator enforces the same answer."
         },
         "winner": {
           "enum": [
             "first-empty-hand"
-          ]
+          ],
+          "description": "DECLARATIVE ONLY. Win detection is fixed (first empty hand); this drives the wording on the rules page. Optional — omit it rather than declaring a value the template does not branch on."
         },
         "lastCardCall": {
           "type": "object",
@@ -777,8 +746,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "followSuit",
-        "trickWinner"
+        "followSuit"
       ],
       "properties": {
         "followSuit": {
@@ -787,27 +755,9 @@
             "free"
           ]
         },
-        "trump": {
-          "type": "string",
-          "description": "'none', 'chosen', or a suit id.",
-          "default": "none"
-        },
-        "trickWinner": {
-          "enum": [
-            "highest-of-led",
-            "highest-trump-else-led"
-          ]
-        },
         "firstLead": {
           "type": "string",
           "description": "A card id ('clubs-2'), 'left-of-dealer', or 'winner'."
-        },
-        "leader": {
-          "enum": [
-            "trick-winner",
-            "left-of-dealer"
-          ],
-          "default": "trick-winner"
         },
         "leadConstraints": {
           "type": "object",
@@ -863,13 +813,6 @@
               }
             }
           }
-        },
-        "dealAll": {
-          "type": "boolean",
-          "default": true
-        },
-        "deal": {
-          "$ref": "#/$defs/countOrByPlayers"
         },
         "dealAdjust": {
           "type": "object",
@@ -938,13 +881,6 @@
             }
           }
         },
-        "progression": {
-          "enum": [
-            "advance-on-complete",
-            "all-play-all"
-          ],
-          "default": "advance-on-complete"
-        },
         "wilds": {
           "type": "object",
           "additionalProperties": false,
@@ -966,18 +902,6 @@
             }
           }
         },
-        "layDown": {
-          "enum": [
-            "once-per-round-when-complete"
-          ]
-        },
-        "hitting": {
-          "enum": [
-            "own-and-others-after-laydown",
-            "own-after-laydown",
-            "none"
-          ]
-        },
         "drawFrom": {
           "type": "array",
           "items": {
@@ -998,11 +922,12 @@
           },
           "description": "Selectors that may not be taken from the discard (Milestones' Skip)."
         },
-        "goingOut": {
-          "enum": [
-            "discard-last",
-            "play-or-discard-last"
-          ]
+        "meldForbidden": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/selector"
+          },
+          "description": "Selectors that may not be part of a meld at all (Milestones' Skip — an action you play at somebody, not a card with a place in a run). Same selector vocabulary as discardPickupForbidden."
         }
       }
     },
@@ -1011,34 +936,23 @@
       "additionalProperties": false,
       "required": [
         "buildRule",
-        "stockSize",
-        "winner"
+        "stockSize"
       ],
       "properties": {
         "buildRule": {
           "type": "object",
           "additionalProperties": false,
           "required": [
-            "type",
             "from",
             "to"
           ],
-          "description": "Build-pile capacity is derived: to \u2212 from + 1. zoneFull fires when a pile completes.",
+          "description": "The closed rank range a build pile fills, ascending. Build-pile capacity is derived: to \u2212 from + 1. zoneFull fires when a pile completes.",
           "properties": {
-            "type": {
-              "enum": [
-                "ascending"
-              ]
-            },
             "from": {
               "type": "integer"
             },
             "to": {
               "type": "integer"
-            },
-            "wrap": {
-              "type": "boolean",
-              "default": false
             }
           }
         },
@@ -1097,15 +1011,11 @@
           },
           "description": "Sources for plays onto build piles; stock and discard mean their top card only."
         },
-        "turnEnd": {
-          "enum": [
-            "discard-to-own-pile"
-          ]
-        },
         "winner": {
           "enum": [
             "first-empty-stock"
-          ]
+          ],
+          "description": "DECLARATIVE ONLY. Win detection is fixed (first empty stock); this drives the wording on the rules page."
         }
       }
     }

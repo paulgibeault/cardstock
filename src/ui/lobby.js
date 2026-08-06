@@ -17,7 +17,7 @@ import { fetchPackIndex, fetchPackManifest, fetchPack } from './packSource.js';
 import { safeAccent } from './css.js';
 import { listMatchSummaries, readStats, lastPlayedPack, clearMatch, recordResult } from '../arcade/storage.js';
 import { buildSeating } from '../players/roster.js';
-import { confirmAction } from './confirm.js';
+import { confirmAction, closeConfirm } from './confirm.js';
 import { showRules } from './panels.js';
 import { packRules } from './rules.js';
 import { askNewGame, hasChoices, closeNewGame } from './newGame.js';
@@ -27,7 +27,6 @@ const el = {
   screen: document.getElementById('lobby'),
   grid: document.getElementById('lobby-grid'),
   note: document.getElementById('lobby-note'),
-  confirmModal: document.getElementById('confirm-modal'),
 };
 
 const GENRE = {
@@ -284,9 +283,19 @@ export function showLobby() {
   el.screen.hidden = false;
 }
 
+/**
+ * Leave the lobby, taking anything it opened with it.
+ *
+ * Both sheets are closed through their OWN modules rather than by poking their
+ * elements from here: confirm.js and newGame.js each own a hidden flag and a
+ * pending promise, and a screen change that hid the element without telling
+ * them left an unresolved `askNewGame` behind — the next answer resolved a
+ * dialog for a game the player had already left.
+ */
 export function hideLobby() {
   el.screen.hidden = true;
-  el.confirmModal.hidden = true;
+  closeConfirm();
+  closeNewGame();
 }
 
 export function reportLobbyError(message) {

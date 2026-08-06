@@ -22,16 +22,12 @@
   },
   "rules": {
     "followSuit": "must",
-    "trump": "none",
-    "trickWinner": "highest-of-led",
-    "dealAll": true,
     "dealAdjust": {
       "3": ["diamonds-2"],
       "5": ["diamonds-2", "spades-2"],
       "6": ["diamonds-2", "diamonds-3", "spades-2", "spades-3"]
     },
     "firstLead": "clubs-2",
-    "leader": "trick-winner",
     "leadConstraints": { "suit:hearts": "untilBroken" },
     "playConstraints": { "tag:penalty": "notTrick1" },
     "breaking": { "var": "heartsBroken", "when": "tag:penalty played" },
@@ -75,10 +71,7 @@
       "patch": { "rules.passing": null }
     }
   ],
-  "undo": "none",
-  "turnTimer": null,
   "ui": {
-    "felt": "#1b5e3a",
     "cardBack": { "pattern": "lattice", "color": "#8c2740", "emblem": "♥" }
   },
   "credits": "Traditional (public domain)."

@@ -39,13 +39,6 @@ export function cardName(card) {
   return titleCase(spoken) || 'Card';
 }
 
-/** The short form that fits in a corner or a chip: "Q♠", "7". */
-export function cardShortName(card) {
-  if (!card) return '';
-  const rank = card.rank == null ? '' : String(card.rank);
-  return card.suit ? `${rank}${SUIT_GLYPH[card.suit] || ''}` : rank;
-}
-
 /** What an effect does, in one sentence, or null when the card is plain. */
 export function effectText(effect) {
   if (!effect) return null;
