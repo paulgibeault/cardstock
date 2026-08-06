@@ -19,6 +19,8 @@ const el = {
   roundTitle: document.getElementById('round-title'),
   roundScores: document.getElementById('round-scores'),
   roundContinue: document.getElementById('round-continue'),
+  roundTarget: document.getElementById('round-target'),
+  roundEndMatch: document.getElementById('round-end-match'),
 
   scoreOverlay: document.getElementById('scoreboard-overlay'),
   scoreTotals: document.getElementById('scoreboard-totals'),
@@ -82,7 +84,30 @@ export function showRoundSummary(state, ev, seating) {
     el.roundScores.appendChild(row);
   }
   el.roundContinue.textContent = `Deal round ${state.roundNumber}`;
+  el.roundTarget.textContent = targetSentence(state, ev);
+  el.roundTarget.hidden = !el.roundTarget.textContent;
   el.roundOverlay.hidden = false;
+}
+
+/**
+ * How much further this match has to run.
+ *
+ * "The match continues indefinitely" was the complaint, and it was a complaint
+ * about not being able to SEE the end rather than about there not being one:
+ * Wildfire runs to 500 and nothing on the felt ever said so, so every round
+ * summary looked like it could be the first of arbitrarily many. Read from the
+ * pack's own declared threshold, so a pack that ends some other way (Milestones
+ * on its tenth contract) simply says nothing here.
+ */
+function targetSentence(state, ev) {
+  const when = state.pack.scoring?.gameOver?.when;
+  const m = /^anyScore\s*>=\s*(\d+)$/.exec(when || '');
+  if (!m) return '';
+  const target = Number(m[1]);
+  const leader = Math.max(...ev.totals);
+  const togo = target - leader;
+  if (togo <= 0) return '';
+  return `First to ${target} wins — ${togo} to go.`;
 }
 
 export function hideRoundSummary() {
@@ -236,8 +261,9 @@ export function hideAllPanels() {
  * Wire the panels' buttons once. Every callback belongs to the table, which
  * owns the match — these overlays only ask.
  */
-export function initPanels({ onContinueRound, onPlayAgain, onLobby, onCloseScoreboard }) {
+export function initPanels({ onContinueRound, onPlayAgain, onLobby, onCloseScoreboard, onEndMatch }) {
   el.roundContinue.addEventListener('click', () => onContinueRound());
+  el.roundEndMatch.addEventListener('click', () => onEndMatch());
   el.playAgainButton.addEventListener('click', () => onPlayAgain());
   el.gameOverLobbyButton.addEventListener('click', () => onLobby());
   el.scoreClose.addEventListener('click', () => {

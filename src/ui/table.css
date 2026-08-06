@@ -1947,6 +1947,14 @@ body.is-dragging .card-face { cursor: grabbing; }
 }
 .round-scores__total { text-align: right; font-variant-numeric: tabular-nums; }
 
+/* How far this match still has to run. Sits between the sheet and the buttons
+   because it is the fact the two buttons are a choice between. */
+.round-target {
+  margin: -0.75rem 0 1rem;
+  font-size: 0.85rem;
+  opacity: 0.72;
+}
+
 /* Every player's name carries their mark, everywhere it appears — the seat
    plate, the score sheet, the stats. One face per opponent, one place it is
    decided (src/players/roster.js). */

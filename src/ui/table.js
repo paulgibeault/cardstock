@@ -53,7 +53,7 @@ import { makeCardRenderer } from './cardStyles/index.js';
 import { fetchPack } from './packSource.js';
 import { flyCard, landOn, motionAllowed, flightLayer } from './flight.js';
 import { safeCssColor } from './css.js';
-import { closeConfirm } from './confirm.js';
+import { closeConfirm, confirmAction } from './confirm.js';
 import { createDragController } from './dragController.js';
 import { attachInspector, hideInspector } from './inspector.js';
 import {
@@ -2019,6 +2019,49 @@ function flashFelt(ev) {
   el.table.classList.add('table--flash');
 }
 
+/**
+ * Stop here, between rounds, without playing the match out.
+ *
+ * The door that was missing. A match runs to its pack's threshold — Wildfire's
+ * is 500 points, which is a long evening — and the only way out was to close
+ * the table, which by design does NOT end anything: the game keeps its place
+ * and sits in the lobby waiting. That is right for "I'll come back to this"
+ * and wrong for "I'm done with this one", and there was no way to say the
+ * second.
+ *
+ * Recorded as a forfeit through the same contract the lobby's Start over uses.
+ * The two doors out of an unfinished match must not disagree about what a loss
+ * is — leaving while behind is not a way to avoid the loss appearing.
+ */
+async function endMatchFromSummary() {
+  if (!liveState) return;
+  const state = liveState;
+  const myEpoch = epoch;
+  const leader = Math.max(...state.scores);
+  const ahead = state.scores[HUMAN_SEAT] >= leader;
+  const ok = await confirmAction(
+    `End this ${state.pack.manifest.name} match after ${state.roundNumber - 1} `
+    + `${state.roundNumber - 1 === 1 ? 'round' : 'rounds'}?`
+    + (ahead ? '' : ' It counts as a forfeit.'),
+    { okLabel: 'End match', cancelLabel: 'Keep playing' },
+  );
+  if (!ok || myEpoch !== epoch || liveState !== state) return;
+
+  cancelBotTurn();
+  cancelAnnouncementBeats();
+  matchDirty = false;
+  clearMatch(state.pack.id);
+  recordResult(state.pack.id, {
+    won: false,
+    forfeit: true,
+    opponents: seating
+      .filter((identity) => identity.isBot)
+      .map((identity) => ({ key: identity.opponentKey, beaten: false })),
+  });
+  hideRoundSummary();
+  exitToLobby();
+}
+
 function dismissRoundSummary() {
   if (!isRoundSummaryOpen() || !liveState) return;
   hideRoundSummary();
@@ -2711,6 +2754,7 @@ export function initTable({ onExit }) {
     onContinueRound: () => dismissRoundSummary(),
     onPlayAgain: () => livePack && startGame(livePack),
     onLobby: () => exitToLobby(),
+    onEndMatch: () => endMatchFromSummary(),
     onCloseScoreboard: () => {},
   });
 

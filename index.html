@@ -130,8 +130,14 @@
     <div class="panel">
       <div id="round-title" class="panel__title"></div>
       <div id="round-scores" class="round-scores"></div>
+      <!-- The round summary is the one moment a player is actually deciding
+           whether to keep going, so it is where leaving belongs. Without it,
+           a match that runs to 500 points offers no exit but closing the
+           table, which keeps the game in progress and waiting in the lobby. -->
+      <div id="round-target" class="round-target"></div>
       <div class="panel__actions">
         <button id="round-continue">Deal the next round</button>
+        <button id="round-end-match" class="ghost-button">End match</button>
       </div>
     </div>
   </div>
