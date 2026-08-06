@@ -147,6 +147,34 @@ export function describeContract(items) {
  * ------------------------------------------------------------------ */
 
 /**
+ * How long a hint may be before it costs the felt a line.
+ *
+ * The action bar reserves TWO lines of text (src/ui/table.css) and the table
+ * below it is laid out around that reservation, so a hint that wraps to three
+ * pushes the deck, the discard and the hand down the screen — the shift #13
+ * fixed, coming back through the words rather than through the box (#17).
+ *
+ * Two budgets because the action button eats the width the words would have
+ * used: a hint standing beside a "Lay down" gets barely two thirds of the row.
+ * Both are MEASURED at 360x780, the narrowest phone the felt is designed for —
+ * at 66 and 90 the sample sentences fill two lines, a few characters further
+ * they spill onto a third.
+ *
+ * Characters are a proxy for pixels and a coarse one: they hold because every
+ * hint is ordinary lower-case prose, and the numbers above are set below the
+ * widths actually measured to absorb the difference between an `i` and a `W`.
+ * A hint that wants capitals or digits en masse should be measured in a
+ * browser rather than counted.
+ *
+ * Enforced by tests/interaction.test.js over every pack, because the one hint
+ * that interpolates PACK DATA — the contract sentence — is the one a future
+ * pack could lengthen without anyone touching this file.
+ */
+export const HINT_MAX_CHARS = 66;
+/** …and what a hint gets when it has the row to itself. */
+export const HINT_MAX_CHARS_BARE = 90;
+
+/**
  * Everything a render needs to know about what is tappable, derived in one
  * place from the enumerated legal moves so the pile builders stay dumb:
  *   handSelectable  Set of hand card ids that respond to a tap
@@ -261,10 +289,20 @@ export function buildUiModel(state, { seat, moves = [], acts = false, selection 
 
     if (!laidDown) {
       const contract = state.pack.rules.contracts?.[(state.playerVars[seat]?.phase ?? 1) - 1] || [];
-      // The hold is worth a sentence: it is the fastest way to build a meld and
-      // nothing on the felt would otherwise say it is there.
-      ui.hint = `Contract: ${contract.map(describeContractItem).join(' + ')} — tap cards to gather them, `
-        + 'hold one to gather its whole meld, or discard';
+      // TWO CLAUSES, BOTH EARNING THEIR WORDS. The contract is what a
+      // contract-rummy player most needs on screen — it is the whole shape of
+      // the turn — and the hold is the fastest way to build a meld with
+      // nothing else on the felt to say it is there. What went is the padding
+      // around them: this used to run "tap cards to gather them, hold one to
+      // gather its whole meld, or discard", which wrapped to FOUR lines on a
+      // 360px phone and grew the action bar by ~30px on most Milestones turns
+      // — the table-shifting bug of #13 surviving inside the fix for it (#17).
+      // The discard clause is the one that went: the discard pile lights up as
+      // a target on its own, so it was the sentence explaining the affordance
+      // the felt was already showing.
+      // Keep it inside two lines — see the reserved slot in src/ui/table.css
+      // and the budget test in tests/interaction.test.js.
+      ui.hint = `Contract: ${describeContract(contract)} — tap to gather, hold for a meld`;
       if (sel.length && selection.from === handAddr && state.pack.template.arrangeContract) {
         const melds = state.pack.template.arrangeContract(ctx, seat, sel);
         if (melds) {

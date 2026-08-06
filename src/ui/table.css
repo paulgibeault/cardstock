@@ -1247,14 +1247,30 @@ body.is-dragging .card-face { cursor: grabbing; }
   width: fit-content;
   max-width: 100%;
   padding: var(--action-bar-pad) 0.9rem;
-  /* The slot is as tall as the TALLEST thing that can stand in it — the
-     action button — so a hint that arrives without one (Wildfire's bare "Your
-     turn") leaves exactly the same hole as one that arrives with a "Pass 3
-     cards" beside it. The terms are #action-button's own: its 0.85rem label
-     at line-height 1.2 (pinned there so this arithmetic cannot drift with the
-     font), its 0.35rem of padding top and bottom, then this bar's own padding
-     and its 1px border on each edge. */
-  min-height: calc(1.2 * 0.85rem + 0.7rem + var(--action-bar-pad) * 2 + 2px);
+  /* The slot is as tall as the TALLEST thing that can stand in it, and on a
+     phone that is TWO LINES OF HINT, not the button (#17). The first cut of
+     this reserved a single line, which held for "Your turn" and cost the felt
+     nothing — but a sentence long enough to wrap grew the bar anyway, and the
+     table shifted again on exactly the turns where the hint had something to
+     say. A second line is cheap — 2.4px on a phone, because the button was
+     already reserving more than one line of text — so every pack buys it
+     rather than the packs with long hints getting a special case.
+     The two terms, whichever is taller:
+       2 * 1.2em  two lines of hint. `em` is this bar's own font-size, so the
+                  mobile block's smaller type shrinks the slot with it, and
+                  #action-hint pins its line-height to 1.2 to match.
+       button     its 0.85rem label at line-height 1.2 (pinned there for the
+                  same reason) plus 0.35rem of padding top and bottom. Two
+                  lines of hint currently win at every width; the button stays
+                  in the arithmetic because it keeps FULL-SIZE type when the
+                  hint shrinks, so a smaller hint type would eventually leave
+                  a slot shorter than the button standing in it.
+     Then this bar's own padding and its 1px border on each edge.
+     TWO LINES IS A BUDGET, NOT A CEILING THE BROWSER ENFORCES: a hint that
+     wraps to three grows the bar and puts #13 back. tests/interaction.test.js
+     holds every hint the UI can build to the character count that fits. */
+  min-height: calc(max(2 * 1.2em, 1.2 * 0.85rem + 0.7rem)
+    + var(--action-bar-pad) * 2 + 2px);
   border-radius: 999px;
   background: var(--chip-bg);
   border: 1px solid var(--chip-border);
@@ -1263,6 +1279,11 @@ body.is-dragging .card-face { cursor: grabbing; }
 }
 #action-bar.action-bar--empty { opacity: 0; visibility: hidden; }
 #action-bar:not(.action-bar--acting) .turn-token { display: none; }
+
+/* Pinned, not the UA's `normal`: the reserved height above counts two of
+   these, and `normal` is the font's own suggestion — it changes with the
+   family and would drift the arithmetic out from under the slot. */
+#action-hint { line-height: 1.2; }
 
 #action-button {
   font: inherit;
@@ -1812,6 +1833,27 @@ body.is-dragging .card-face { cursor: grabbing; }
   #center-piles { gap: 0.4rem 0.7rem; }
   #player-piles { gap: 0.3rem 0.55rem; }
   .pile--mini { --pile-w: 24px; }
+  /* The hint is a sentence, and every line it wraps to is a line of felt the
+     reserved slot has to buy. Smaller type is what keeps the long ones inside
+     the two lines the slot reserves.
+     THIS BELONGS TO THE PHONE BREAKPOINT, NOT THE 360px ONE. It used to sit
+     with the 320px rules, which made 375px — the commonest phone there is —
+     the WORST case on the felt rather than a comfortable one: full-size type
+     in a row barely wider than a 360px phone's, so hints that fitted two lines
+     at 360 spilled onto a third at 375 and took ~16px of table with them
+     (#17). Every phone gets the small type now, and 360px is once again the
+     narrowest case the hint budget in src/ui/interaction.js is measured at.
+     Only the padding VARIABLE and the font-size move, and the reserved height
+     above is written in terms of both — `em` for the hint's two lines, the
+     button's own pinned 0.85rem for the button, whichever is taller. The
+     button keeps full-size type at every width, so a slot cut to the small
+     size alone would be shorter than the button standing in it. */
+  #action-bar {
+    --action-bar-pad: 0.3rem;
+    padding: var(--action-bar-pad) 0.7rem;
+    font-size: 0.78rem;
+    gap: 0.45rem;
+  }
 }
 
 /* The smallest phones still in the wild, 320px.
@@ -1843,17 +1885,6 @@ body.is-dragging .card-face { cursor: grabbing; }
   .meld-strip--mini .meld-chip__card:not(:first-child) { margin-left: -9px; }
   .meld-strip--mini .meld-chip__card .card-face { width: 20px; }
   .meld-strip--mini .meld-chip__label { font-size: 0.46rem; }
-  /* The hint is a sentence, and a sentence that wraps costs a whole line of
-     felt. Smaller type keeps it on one.
-     Only the padding VARIABLE moves, so the reserved height above follows it:
-     the button inside keeps its full-size type at every width, and a slot cut
-     to the small size would be shorter than the button standing in it. */
-  #action-bar {
-    --action-bar-pad: 0.3rem;
-    padding: var(--action-bar-pad) 0.7rem;
-    font-size: 0.78rem;
-    gap: 0.45rem;
-  }
   /* The chrome bar is not the game. It can no longer wrap (see #status-bar),
      but it can still be quieter about the room it takes. */
   #status-bar { padding: 0.35rem 0.5rem; font-size: 0.82rem; gap: 0.35rem; }

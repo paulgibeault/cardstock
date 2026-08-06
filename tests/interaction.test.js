@@ -23,7 +23,7 @@ import {
   interactionMode, buildUiModel, dropCandidates, draggableSources,
   pruneSelection, isSelected, handAddress, implicitLandingZone,
   shortContract, shortContractItem, describeContract, describeContractItem,
-  ladderRungs,
+  ladderRungs, HINT_MAX_CHARS, HINT_MAX_CHARS_BARE,
 } from "../src/ui/interaction.js";
 import {
   orderHand, applyManual, reorder, nextMode, fanStep, fanWidth, SORT_MODES,
@@ -472,6 +472,95 @@ test("every contract Milestones ships abbreviates without collapsing into ambigu
   }
   // Two rungs that abbreviate the same way would make the ladder lie.
   assert.strictEqual(new Set(shorts).size, shorts.length, `duplicate rungs: ${shorts}`);
+});
+
+/* ------------------------------------------------------------------ *
+ * The action bar's two-line budget
+ * ------------------------------------------------------------------ */
+
+// WHY A CHARACTER COUNT IS A LAYOUT TEST.
+//
+// The action bar reserves two lines of text and the felt is laid out around
+// that reservation (src/ui/table.css). A hint that wraps to three grows the
+// bar, and #center-piles absorbs the difference by sliding the deck, the
+// discard and the hand down the screen — the table-shifting bug of #13,
+// coming back through the words rather than through the box (#17).
+//
+// Nothing in this process can lay out text, so the budget is measured in a
+// browser at 360x780 and pinned in src/ui/interaction.js; what these tests
+// enforce is that no hint has grown past it since. The count is a proxy for a
+// width and the constant is set below the width actually measured, which is
+// what keeps ordinary prose safely inside it.
+//
+// The hint that matters most is the contract sentence, because it is the only
+// one that interpolates PACK DATA: a pack can lengthen it without anyone
+// touching the UI, and there is no browser in the loop to notice.
+
+/** The budget a hint gets, which depends on whether a button shares its row. */
+function hintBudget(ui) {
+  return ui.action ? HINT_MAX_CHARS : HINT_MAX_CHARS_BARE;
+}
+
+test("every hint a real deal produces fits the action bar's reserved two lines", () => {
+  let checked = 0;
+  for (const packId of PACKS) {
+    const state = tableFor(packId, `hints:${packId}`);
+    if (!untilHumansTurn(state)) continue;
+    const moves = enumerateLegalMoves(state, 0);
+    const handAddr = handAddress(0);
+    const hand = state.zones.cards(handAddr);
+
+    // Bare, and then holding cards — a selection is what summons the action
+    // button, and the button is what leaves the words two thirds of the row.
+    const selections = [null];
+    for (const size of [1, 3]) {
+      if (hand.length >= size) selections.push({ from: handAddr, cardIds: hand.slice(0, size) });
+    }
+    for (const selection of selections) {
+      const ui = buildUiModel(state, { seat: 0, moves, acts: true, selection });
+      assert.ok(ui.hint.length <= hintBudget(ui),
+        `${packId}: hint is ${ui.hint.length} chars against a budget of ${hintBudget(ui)} `
+        + `— it will wrap past the reserved slot: "${ui.hint}"`);
+      checked++;
+    }
+  }
+  assert.ok(checked >= PACKS.length, "no hints were exercised at all");
+});
+
+test("no contract a pack declares can grow the meld hint past its slot", () => {
+  // Every rung of every ladder, not just the one a fresh deal opens on: phase
+  // 1 is "set of 3 + set of 3" and phase 10 is longer, and it is the LAST
+  // contract of a new pack that will quietly be the one that overflows.
+  let checked = 0;
+  for (const packId of PACKS) {
+    const state = tableFor(packId, `contract-hints:${packId}`);
+    const contracts = state.pack.rules.contracts;
+    if (!Array.isArray(contracts) || !contracts.length) continue;
+    if (!untilHumansTurn(state)) continue;
+
+    // The meld half of a rummy turn, before the lay-down: the state that shows
+    // the contract. `laidDown` is the switch between this hint and the shorter
+    // one that replaces it.
+    state.turn.phase = "meld";
+    state.playerVars[0] = { ...state.playerVars[0], laidDown: false };
+    assert.strictEqual(interactionMode(state), "rummy-meld", `${packId} is not melding`);
+
+    for (let phase = 1; phase <= contracts.length; phase++) {
+      state.playerVars[0].phase = phase;
+      const ui = buildUiModel(state, { seat: 0, moves: [], acts: true, selection: null });
+      assert.ok(ui.hint.includes(describeContract(contracts[phase - 1])),
+        `${packId} phase ${phase}: the hint stopped naming the contract`);
+      // Budgeted against the WITH-BUTTON figure whether or not this particular
+      // call produced one: staging a legal meld is what makes "Lay down"
+      // appear, and it appears while this very sentence is on screen.
+      assert.ok(ui.hint.length <= HINT_MAX_CHARS,
+        `${packId} phase ${phase}: hint is ${ui.hint.length} chars against a budget of `
+        + `${HINT_MAX_CHARS} — shorten the sentence or the contract will shift the felt: `
+        + `"${ui.hint}"`);
+      checked++;
+    }
+  }
+  assert.ok(checked >= 10, `only ${checked} contract hints were exercised`);
 });
 
 test("an unrecognised contract item degrades to its own text rather than vanishing", () => {
