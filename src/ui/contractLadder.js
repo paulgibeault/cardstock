@@ -42,10 +42,19 @@ export function createContractLadder({ el, humanSeat, identityOf, attachInspecto
    * A desktop row fits the whole course, so it gets it — truncation is a
    * response to a narrow screen, not the ladder's preference.
    */
+  /**
+   * How many rungs there is room for.
+   *
+   * ASKED OF THE HEIGHT, because the ladder is a column now (it stands beside
+   * the piles rather than across the felt — see #felt-middle). Keyed on width
+   * it answered the wrong question entirely: a narrow phone held in portrait
+   * is the case with the MOST vertical room for a stack of rungs, and it was
+   * the case the old budget truncated hardest.
+   */
   function ladderBudget() {
-    if (typeof window.matchMedia !== 'function') return 5;
-    if (window.matchMedia('(max-width: 420px)').matches) return 5;
-    if (window.matchMedia('(max-width: 720px)').matches) return 7;
+    if (typeof window.matchMedia !== 'function') return 6;
+    if (window.matchMedia('(max-height: 620px)').matches) return 5;
+    if (window.matchMedia('(max-height: 800px)').matches) return 7;
     return Infinity;
   }
 

@@ -43,6 +43,7 @@ const OPTIONAL_FUNCTIONS = [
   "defaultReactions", "startRound", "scoreRound", "isGameOver", "botHeuristic",
   "actingSeats", "enumerateAnnouncements", "applyAnnouncement",
   "interactionMode", "pendingChoice", "activeMatch", "scoreChip",
+  "seatCounters",
   "committedSelection", "getMeldGroups", "describeEvent",
   "ruleLines", "endingLines", "statLines",
   "arrangeContract", "suggestMeld",
@@ -115,6 +116,59 @@ test("every template's interactionMode names a mode the platform can render", as
     const mode = pack.template.interactionMode?.(makeCtx(state));
     assert.ok(INTERACTION_MODES.includes(mode),
       `${packId}: interactionMode gave "${mode}", which is not in INTERACTION_MODES`);
+  }
+});
+
+test("seatCounters, where offered, is a usable list and its primary always shows", async () => {
+  for (const packId of listPackIds()) {
+    const pack = await loadPackFromDisk(packId);
+    if (!pack.template.seatCounters) continue;
+    const state = createState({ pack, seats: 4, seed: `contract:${packId}` });
+    pack.template.setup(makeCtx(state));
+
+    for (let seat = 0; seat < state.seats; seat++) {
+      const counters = pack.template.seatCounters(makeCtx(state), seat);
+      assert.ok(Array.isArray(counters) && counters.length,
+        `${packId}: seatCounters gave nothing for seat ${seat} — return null to take the default`);
+      for (const counter of counters) {
+        assert.strictEqual(typeof counter.text, "string", `${packId}: a counter with no text`);
+        assert.ok(counter.text.length <= 4,
+          `${packId}: "${counter.text}" is too long for a face — a counter is a couple of characters`);
+        assert.ok(typeof counter.aria === "string" && counter.aria,
+          `${packId}: "${counter.text}" is printed but never said`);
+      }
+      // THE FIRST ONE IS THE NUMBER THE ROW IS READ FOR, so it may not be the
+      // kind that only appears once a seat is minimized. Marking it that way
+      // made a Stockpile row read "20 20 5 20 20" — four seats showing their
+      // stock and the open one still showing a hand count, the same badge
+      // meaning two different quantities depending on whose turn it was.
+      assert.ok(!counters[0].minimizedOnly,
+        `${packId}: the primary counter is minimizedOnly, so an open seat shows a different quantity`);
+    }
+  }
+});
+
+test("a sequencing seat counts down its STOCK, which is the race, not its hand", async () => {
+  // The regression this exists for: the platform's default is the hand count,
+  // and sequencing tops every hand back up to a full five at the end of a turn
+  // — so a minimized row said "5 cards" once per opponent, the same digit every
+  // time, while the number the whole game is a race on was the one it had put
+  // away. Asserted through the template registry rather than a pack id.
+  for (const packId of listPackIds()) {
+    const pack = await loadPackFromDisk(packId);
+    if (pack.template.id !== "sequencing") continue;
+    const state = createState({ pack, seats: 4, seed: `contract:${packId}` });
+    pack.template.setup(makeCtx(state));
+
+    const seat = 1;
+    const stock = state.zones.count(`stock.${seat}`);
+    const hand = state.zones.count(`hand.${seat}`);
+    assert.notStrictEqual(stock, hand,
+      `${packId}: stock and hand deal to the same size, so this test cannot tell them apart`);
+
+    const primary = pack.template.seatCounters(makeCtx(state), seat)[0];
+    assert.strictEqual(primary.text, String(stock),
+      `${packId}: a minimized seat shows "${primary.text}" where its stock holds ${stock}`);
   }
 });
 

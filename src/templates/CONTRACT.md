@@ -70,6 +70,7 @@ platform file.
 | `pendingChoice` | `(ctx, move) -> Ask \| null` | `src/ui/table.js` | no question |
 | `activeMatch` | `(ctx) -> {address, attr, value, onCard} \| null` | `describe.js`, `table.js` | none |
 | `scoreChip` | `(ctx, seat) -> {short, long, aria} \| null` | `table.js` | the plain total |
+| `seatCounters` | `(ctx, seat) -> {text, aria, kind?}[] \| null` | `table.js` | the hand count |
 | `committedSelection` | `(ctx, seat) -> cardId[] \| null` | `table.js` | none |
 | `getMeldGroups` | `(ctx, seat) -> Group[]` | `table.js` | `[]` |
 | `describeEvent` | `(ev, {seatLabel, humanSeat}) -> {text, tone} \| null` | `table.js` | the engine-effect vocabulary |
@@ -127,6 +128,44 @@ question with one answer is not a question.
 
 `apply` is the whole point: the platform renders a chooser and knows nothing
 about effect schemas, so a pack-defined effect gets one for free.
+
+## `seatCounters` — what a minimized seat is worth showing
+
+A crowded opponent row minimizes the seats that cannot act to a face
+(`src/ui/table.js`, SEAT_TIERS). That face has room for a name and one or two
+small numbers, and **which numbers those should be is a fact about the genre**,
+not about the platform.
+
+The platform's default is the hand count, which is right wherever the hand is
+the race — shedding empties it, and a rummy contract is finished by going out.
+It is exactly wrong for sequencing: Stockpile tops every hand back up to five
+at the end of a turn, so a minimized row read "5 cards" five times over while
+the stock count — the thing the entire game is a race on — was the number it
+had put away.
+
+```js
+seatCounters(ctx, seat) {
+  const stock = ctx.countIn(`stock.${seat}`);
+  return [{ text: String(stock), aria: `${stock} left in stock`, kind: 'stock' }];
+}
+```
+
+Most important first: the first entry is worn as the primary badge and the rest
+as smaller marks beside it. `text` is what is printed — keep it to a couple of
+characters — and `aria` is the whole truth said in words, because the printed
+form is a glyph and a digit. `label` names it in the inspector. `kind` is an
+optional slug the stylesheet may use; it must be a value the TEMPLATE chose,
+never pack data (§7b).
+
+**These are asked of every seat, open or minimized**, so the badge in a given
+spot on the row always means the same quantity. Mark a counter
+`minimizedOnly: true` when it is genuinely redundant on an open seat — a rummy
+meld count sits directly above the meld chips, and Hearts' points sit above the
+won pile that holds them. Do NOT use it for the primary number: a row that read
+`20 20 5 20 20`, where the 5 was the open seat showing a hand count while the
+rest showed stock, is the bug this rule exists to prevent.
+
+Return `null` or `[]` to take the default.
 
 ## Zone definition fields the platform reads
 

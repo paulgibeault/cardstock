@@ -1,26 +1,32 @@
 // The card inspector: what is this thing, without having to play it.
 //
-// One floating panel, reused. Two ways in, because the two pointer families
-// genuinely differ:
+// One floating panel, reused. ONE WAY IN, ON EVERY POINTER: press and hold.
 //
-//   fine pointer (mouse/trackpad) — hover, after a short dwell so sweeping
-//     the cursor across a fanned hand does not strobe the panel;
-//   coarse pointer (touch) — LONG PRESS, cancelled the instant the finger
-//     travels past the drag slop, so it can never fight a drag. Reaching for a
-//     card to move it must always win over reaching for a card to read it.
+// It used to open on mouse HOVER after a short dwell, and that was the wrong
+// bargain. A hover panel opens because the cursor is somewhere, not because
+// anybody asked — so crossing the felt on the way to a card popped a panel
+// over the table, and the bigger the target the worse it was. The seats and
+// the ladder are big targets sitting directly in the path of ordinary
+// movement. It got in the way more often than it answered anything.
+//
+// Holding is a REQUEST. It costs a moment, which is exactly why it never
+// fires by accident, and it is the gesture touch already used — so the two
+// pointer families stopped needing two different answers. Cancelled the
+// instant the pointer travels past the drag slop, so it can never fight a
+// drag: reaching for a card to move it must always win over reaching for a
+// card to read it. A hold that DID open the panel swallows the click that
+// follows it, or letting go would also play the card you were only reading.
 //
 // DECORATIVE BY CONSTRUCTION. The panel is aria-hidden and adds no
 // information: everything in it is already in the element's own accessible
-// name (src/ui/describe.js), which is the rule that lets the labels come off
-// the felt without taking anything away from a screen reader or a touch device.
+// name (src/ui/describe.js). That is what made dropping hover cheap — a
+// screen reader never used this path, and still hears every word of it.
 //
 // The content is built LAZILY — the caller registers a thunk, not a string —
-// so hovering costs nothing until it is actually hovered, and a card whose
-// point value depends on live state reads the live state.
+// so a press costs nothing until it is actually held, and a card whose point
+// value depends on live state reads the live state.
 
-/** Mouse dwell before the panel appears. */
-const HOVER_MS = 350;
-/** Finger hold before the panel appears. */
+/** Hold before the panel appears, on any pointer. */
 const PRESS_MS = 500;
 /** Travel that turns a press into a drag, and so cancels the inspection. */
 const SLOP = 6;
@@ -32,7 +38,7 @@ let anchor = null;
 // inspectable (a meld chip inside a seat plate) can win against its own
 // ancestor — see claimedByDescendant() below.
 
-import { schedule } from './clock.js';
+import { schedule, swallowNextClick } from './clock.js';
 let pendingNode = null;
 
 function ensurePanel() {
@@ -146,35 +152,15 @@ function show(target, describe) {
  *                 inspector never guesses at what else is going on.
  */
 export function attachInspector(node, describe, { isBusy = () => false } = {}) {
-  node.addEventListener('pointerenter', (event) => {
-    if (event.pointerType !== 'mouse' || isBusy()) return;
-    if (claimedByDescendant(node)) return;
-    clearTimer();
-    pendingNode = node;
-    timer = schedule(() => {
-      timer = null;
-      if (!isBusy()) show(node, describe);
-    }, HOVER_MS);
-  });
-
-  node.addEventListener('pointerleave', () => {
-    // Leaving an ancestor while the pointer is still inside a descendant that
-    // owns the panel must not close it.
-    if (claimedByDescendant(node)) return;
-    if (anchor === node || !anchor) hideInspector();
-    else clearTimer();
-  });
-
   node.addEventListener('pointerdown', (event) => {
-    if (event.pointerType === 'mouse') {
-      hideInspector();
-      return;
-    }
     if (claimedByDescendant(node)) return;
     const startX = event.clientX;
     const startY = event.clientY;
     clearTimer();
     pendingNode = node;
+    // Whether this particular hold got as far as opening the panel. Read on
+    // release, so only a press that actually showed something eats its click.
+    let opened = false;
 
     const onMove = (move) => {
       const dx = move.clientX - startX;
@@ -182,19 +168,31 @@ export function attachInspector(node, describe, { isBusy = () => false } = {}) {
       // Past the slop this is a drag, and a drag outranks a look.
       if (dx * dx + dy * dy > SLOP * SLOP) done();
     };
+    const onUp = () => {
+      // THE CLICK AFTER A HOLD IS NOT A TAP. Every inspectable thing on this
+      // table is also something you can act on — a card that plays itself, a
+      // pile that picks its top card up, a meld chip that takes your card — so
+      // letting the release through would mean reading a card and playing it
+      // in one gesture. Only swallowed when the panel opened; a short press
+      // that never reached PRESS_MS is an ordinary tap and must stay one.
+      if (opened) swallowNextClick();
+      done();
+    };
     const done = () => {
       clearTimer();
       window.removeEventListener('pointermove', onMove);
-      window.removeEventListener('pointerup', done);
+      window.removeEventListener('pointerup', onUp);
       window.removeEventListener('pointercancel', done);
     };
     window.addEventListener('pointermove', onMove, { passive: true });
-    window.addEventListener('pointerup', done);
+    window.addEventListener('pointerup', onUp);
     window.addEventListener('pointercancel', done);
 
     timer = schedule(() => {
       timer = null;
-      if (!isBusy()) show(node, describe);
+      if (isBusy()) return;
+      show(node, describe);
+      opened = true;
     }, PRESS_MS);
   });
 }

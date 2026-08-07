@@ -226,6 +226,32 @@ const sequencing = {
     return 'place';
   },
 
+  /**
+   * THE STOCK IS THE RACE, so the stock is what a minimized seat shows.
+   *
+   * The platform's default is the hand count, and in this genre that is the
+   * one number on the table that never means anything: a turn ends by topping
+   * the hand back up, so every seat sits at the same full hand almost always.
+   * A crowded row said "5 cards" once per opponent — the same digit, five
+   * times — while the number the entire game is a race on was the one it had
+   * put away behind a tap.
+   *
+   * The hand is not offered as a second counter for the same reason it is not
+   * the first: it is a constant. What is worth the space beside the stock is
+   * nothing at all.
+   */
+  seatCounters(ctx, seat) {
+    const stock = ctx.countIn(`stock.${seat}`);
+    return [{
+      text: String(stock),
+      // Said in full, because the printed form is a bare digit that could be
+      // read as a hand, a score or a pile.
+      aria: `${stock} left in stock`,
+      label: 'Stock',
+      kind: 'stock',
+    }];
+  },
+
   ruleLines() {
     return [
       'Play cards up the build piles in the middle, one rank at a time.',

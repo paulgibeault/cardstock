@@ -1083,6 +1083,80 @@
           "rule": "not-meldable"
         }
       ]
+    },
+    {
+      "name": "completing the final contract wins the match there and then, hand or no hand",
+      "setup": {
+        "seats": 3,
+        "turn": {
+          "seat": 0,
+          "phase": "meld"
+        },
+        "playerVars": {
+          "0": {
+            "phase": 10,
+            "laidDown": false,
+            "drawn": true
+          }
+        },
+        "zones": {
+          "hand.0": [
+            "red-7",
+            "blue-7",
+            "green-7",
+            "yellow-7",
+            "red-7#2",
+            "red-2",
+            "blue-2",
+            "green-2",
+            "blue-12"
+          ]
+        }
+      },
+      "assert": [
+        {
+          "apply": {
+            "actor": 0,
+            "type": "layDown",
+            "choice": {
+              "melds": [
+                {
+                  "item": "set(5)",
+                  "cards": [
+                    "red-7",
+                    "blue-7",
+                    "green-7",
+                    "yellow-7",
+                    "red-7#2"
+                  ]
+                },
+                {
+                  "item": "set(3)",
+                  "cards": [
+                    "red-2",
+                    "blue-2",
+                    "green-2"
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "expect": {
+            "playerVars": {
+              "0": {
+                "phase": 11
+              }
+            },
+            "zones": {
+              "hand.0": 1
+            },
+            "gameOver": true,
+            "winner": 0
+          }
+        }
+      ]
     }
   ]
 }

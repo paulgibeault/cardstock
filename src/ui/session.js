@@ -63,6 +63,39 @@ export function createSession({ pack, state, seating, cardArt, handPrefs }) {
     // record of "we are between rounds".
     roundSummaryOpen: false,
 
+    // Which collapsed seat the player has PICKED to open, or null to let the
+    // plate follow whoever is playing. The opponent row is rebuilt wholesale on
+    // every render, so an open plate cannot live in the DOM alone — a bot
+    // moving would close it under the player's finger.
+    openSeat: null,
+    // The player closed the plate the turn opened for them. Cleared the moment
+    // play moves on, so dismissing it is "not this turn" rather than a mode
+    // they have to remember to switch back out of.
+    plateDismissed: false,
+    // Which seat the plate last opened itself for, so a change of turn can be
+    // told from a re-render on the same turn.
+    plateActor: null,
+    // How the player wants the opponent row shown — 'auto' | 'minimized' |
+    // 'all'. Per match, deliberately: it is a way of looking at THIS table,
+    // not a setting to carry between them.
+    //
+    // 'auto' gives up only what will not fit (renderSeats' fit loop), which is
+    // right until it is not: Stockpile's piles are small enough that five
+    // opponents' worth of them technically fit on any desktop, so 'auto' alone
+    // meant that table never minimized at all no matter how cluttered it read.
+    // 'minimized' is the player saying they would rather see faces regardless,
+    // and 'all' is the opposite — every plate open, the row scrolling.
+    seatView: 'auto',
+    // Which rung of SEAT_TIERS the opponent row last fitted at, and what that
+    // answer depended on. Cached so an ordinary turn rebuilds the row once
+    // instead of probing the whole ladder from the top every time anybody
+    // moves — see renderSeats' fit loop and seatFitKey.
+    seatFit: null,
+    // The biggest the opponent row has been for the current configuration, so
+    // it can hold that shape instead of resizing under the player every time
+    // the turn passes. See reserveSeatRowSpace.
+    seatRowReserve: null,
+
     // Timers. Every one of these freezes with a suspended frame (§6c) and every
     // one is cancelled by stopSession below.
     botTimer: null,
