@@ -330,11 +330,22 @@ body {
    the hairline highlight on top of it is what keeps the wood from reading as
    a flat brown stripe. */
 #table {
-  /* Every pile and card size on the felt derives from these two, so the whole
+  /* Every pile and card size on the felt derives from these, so the whole
      table can step down together on a narrow screen (the breakpoint below).
      Safe to scale: type on card faces is px-in-viewBox and rides the card. */
   --pile-w: 90px;
   --hand-card-w: 70px;
+  /* The cards ON THE OTHER PLAYERS' PLATES — their fan of backs, their laid-out
+     melds, their own small piles. These were three hand-tuned pixel values
+     scattered across the sheet, which meant the seats could not follow the
+     felt when it grew: on a tall window the deck and the hand took the room
+     and an opponent's melds stayed postage stamps. Named here, they scale with
+     everything else and each overlap below is derived from them rather than
+     tuned beside them. */
+  --seat-fan-w: 28px;      /* one card back in an opponent's fan */
+  --seat-fan-max: 118px;   /* how wide that fan may spread before it closes up */
+  --seat-meld-w: 26px;     /* a card in a laid-down meld chip */
+  --seat-pile-w: 34px;     /* a compact pile on a seat */
   flex: 1;
   /* Deliberately NOT `min-height: 0`. Letting the felt shrink below its
      content does keep it inside the window, but it does it by sliding the
@@ -361,6 +372,15 @@ body {
 .opponent-row {
   display: flex;
   justify-content: center;
+  /* NOT the default stretch, and NOT centred either.
+     Stretch made a collapsed seat a tall empty box with the face at the top
+     and its corner count badge stranded at the bottom. Centring fixed that and
+     introduced a worse one: the row's height changes with whoever is playing —
+     a seat holding melds is taller than one holding none — so every waiting
+     face slid up or down a few pixels EVERY TURN, on a row the player is
+     tracking. Pinned to the top, a face is in the same place all game and only
+     the seat that is actually playing changes shape. */
+  align-items: flex-start;
   gap: 1.25rem;
   /* NOT wrap. Seats wrapping to a second row is how the felt loses its height
      to the players and pushes the piles under the hand — and with the seat
@@ -369,7 +389,40 @@ body {
      up their fan first. */
   flex-wrap: nowrap;
   gap: clamp(0.35rem, 1.5vw, 1.25rem);
+
+  /* THE SAFETY NET UNDER THE COLLAPSE RULES.
+     Collapsing seats is a seat-COUNT heuristic, and a count cannot promise a
+     fit: two full plates — whoever is playing, plus a seat you can catch —
+     next to three faces still ran 183px past a 509px felt. Overflow with no
+     scroller does not clip politely; it spills into #table-screen's own
+     scrollport, which is the "player cards extend beyond the screen" bug in
+     the first place, just one level up and harder to find.
+     So the row scrolls. In practice it almost never has to — the tiers above
+     keep it inside the felt — but when it does, every seat stays REACHABLE
+     instead of silently running off the table. */
+  overflow-x: auto;
+  /* `overflow-x` alone makes the block axis a scrollport too, which would clip
+     .seat--active's 2px lift and its glow. The block padding is the room for
+     them.
+     THE INLINE PADDING IS THE TOGGLE'S CORNER, KEPT CLEAR. The toggle is
+     positioned out of the row's flow, which stopped it pushing the seats off
+     centre — but out of flow also means the row will happily lay a seat under
+     it, and on an 820px window it did. Reserved on BOTH sides, so the corner
+     stays empty and the seats stay centred; one-sided padding would just move
+     the off-centre bug from the toggle to the padding. */
+  padding: 4px 2.9rem 2px;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
 }
+/* Only a row that actually scrolls shows a bar, and only on approach — an
+   always-visible track under a row that fits is a line of chrome across the
+   felt saying nothing. */
+.opponent-row:hover { scrollbar-color: var(--chip-border) transparent; }
+.opponent-row::-webkit-scrollbar { height: 6px; }
+.opponent-row::-webkit-scrollbar-track { background: transparent; }
+.opponent-row::-webkit-scrollbar-thumb { background: transparent; border-radius: 999px; }
+.opponent-row:hover::-webkit-scrollbar-thumb { background: var(--chip-border); }
 
 /* ------------------------------------------------------------------ *
  * Crowded tables
@@ -388,8 +441,14 @@ body {
 
 /* The fan of backs only. NOT .seat__zones — a seat's melds are live hit
    targets in Milestones and its piles are real destinations in Stockpile, and
-   a crowded table is not a reason to make a legal move unreachable. */
-.opponent-row--compact .seat:not(.seat--active) .mini-hand {
+   a crowded table is not a reason to make a legal move unreachable.
+
+   EVERY seat, including the one acting. It used to spare `.seat--active`, and
+   that exemption was a movement bug wearing a feature's clothes: the acting
+   seat stayed a fan wider than the rest, so each turn shoved every seat to its
+   right along by the width of a fan. Whose turn it is has never needed to be
+   said in geometry — the token and the ring say it, and they cost no width. */
+.opponent-row--compact .seat .mini-hand {
   display: none;
 }
 
@@ -403,8 +462,103 @@ body {
 /* Past a certain crowd even the names have to go; the avatar and the card
    count are the last things standing, and they are still a player and how
    close they are to going out. */
-.opponent-row--tight .seat:not(.seat--active) .seat__name { display: none; }
+/* Same rule, same reason as the fan above: every seat, acting or not, so the
+   row's shape does not track whose turn it is. */
+.opponent-row--tight .seat .seat__name { display: none; }
 .opponent-row--tight .seat .mini-hand { --mini-max: 60px; }
+
+/* ------------------------------------------------------------------ *
+ * The carousel
+ * ------------------------------------------------------------------ *
+ *
+ * The other answer to a crowd, and the player's own choice: instead of putting
+ * the waiting seats away, keep every plate open and let the ROW scroll.
+ *
+ * This is the one place the no-wrap rule above is relaxed in the player's
+ * favour, and it is safe because it relaxes it the right way — sideways, in a
+ * container of its own, so the felt's height is still untouched and the piles
+ * below still cannot be pushed under the hand. Comparing four players' melds
+ * before choosing a discard is a real thing to want, and a row that had put
+ * three of them behind a tap could not answer it.
+ *
+ * `justify-content` has to go: a centred flex container with overflowing
+ * content clips the START of it — the first seat becomes unreachable, because
+ * scrollLeft cannot go negative. `flex-start` keeps the whole row scrollable. */
+.opponent-row--carousel {
+  justify-content: flex-start;
+  overflow-x: auto;
+  /* `overflow-x` alone still makes the block axis a scrollport, which would
+     clip .seat--active's 2px lift and its glow. The padding is the room for
+     them; the row is otherwise unchanged. */
+  padding: 4px 0 6px;
+  scroll-snap-type: x proximity;
+  /* In carousel mode the bar is always shown, not shown on hover like the
+     safety-net one above: here scrolling is the POINT — the player asked for a
+     row longer than the felt — so the affordance has to be visible without
+     going looking for it. Both spellings, since Firefox reads the standard
+     properties and WebKit needs the pseudo-elements. */
+  scrollbar-color: var(--chip-border) transparent;
+  padding-bottom: 6px;
+}
+.opponent-row--carousel::-webkit-scrollbar-thumb { background: var(--chip-border); }
+.opponent-row--carousel::-webkit-scrollbar-thumb:hover { background: var(--accent); }
+
+.opponent-row--carousel .seat {
+  scroll-snap-align: center;
+  /* A seat may not shrink to fit a row it is now allowed to overflow — that is
+     the whole point of scrolling it. */
+  flex: none;
+}
+
+/* TUCKED INTO THE FELT'S TOP CORNER, and nothing but dots.
+   It is a way of LOOKING at the table rather than a move in it, so it wants
+   the least ink on the felt that still leaves it findable — no pill, no fill,
+   no border, just the count. Out of the row's flow entirely (see the note
+   where it is built) so it can sit clear of the seats instead of leaning on
+   them, and far enough into the corner that it never covers a player. */
+.opponent-row__toggle {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.6rem;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  /* One dot and three dots occupy the same box, so cycling it does not make
+     the control change shape. Right-aligned inside that box, so the dots grow
+     INTO the corner rather than away from it. */
+  box-sizing: border-box;
+  width: 2.1rem;
+  height: 1.1rem;
+  justify-content: flex-end;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+}
+
+/* The dots themselves — the count is the whole message, so they are plain,
+   equal, and drawn rather than typed. Faint at rest; the hit area is the
+   button's box, which is comfortably bigger than the ink. */
+.opponent-row__dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--chrome-text);
+  opacity: 0.4;
+  flex: none;
+  transition: opacity 0.15s ease;
+}
+
+.opponent-row__toggle:hover .opponent-row__dot { opacity: 0.9; }
+/* Only the ends of the scale are marked as a deliberate choice; the middle is
+   the default and should not look like a setting the player has switched on. */
+.opponent-row__toggle[data-view="minimized"] .opponent-row__dot,
+.opponent-row__toggle[data-view="all"] .opponent-row__dot {
+  background: var(--accent);
+  opacity: 0.85;
+}
+.opponent-row__toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 4px; }
 
 /* A seat is a player, so it gets a face and a name plate rather than a line of
    text. The count is a badge on the plate — the number you actually watch.
@@ -417,6 +571,14 @@ body {
   background: var(--chip-bg);
   border: 1px solid var(--chip-border);
   transition: box-shadow 0.25s ease, transform 0.25s ease;
+  /* A SEAT DOES NOT SQUISH — it fits, or the ladder minimizes it.
+     As an ordinary flex item this could shrink, and its zones (below) could
+     wrap, so a crowded Stockpile row would cram every plate's discard piles
+     into two or three ragged rows and still report "I fit" — and the fit
+     ladder, which only asks whether the ROW overflows, never saw a reason to
+     act. Rigid, the row's scrollWidth tells the truth, the ladder steps down,
+     and a plate is only ever drawn at the width it was designed at. */
+  flex: none;
 }
 
 .seat--active {
@@ -480,6 +642,233 @@ body {
   text-align: center;
   border-radius: 999px;
   background: var(--chip-border);
+}
+
+/* ------------------------------------------------------------------ *
+ * A seat put away, and the plate it opens
+ * ------------------------------------------------------------------ *
+ *
+ * Past three opponents a seat that cannot act keeps its face, its name, its
+ * score and its counts — which is the INFORMATION — and puts its fan and its
+ * piles behind a tap. The row stops growing with the table: eight players fit
+ * where four used to run off the felt.
+ *
+ * The rule this replaces said a crowded table is not a reason to make a legal
+ * move unreachable, and that rule still holds — it is why .seat--target below
+ * exists and why the plate carries the REAL chips rather than a picture of
+ * them. Nothing here hides a move; it moves it one tap away and lights the way.
+ */
+.seat--collapsed {
+  padding: 0.3rem 0.35rem;
+}
+
+/* The head is a <button> when collapsed. Stripped back to the plate it already
+   was, so putting a seat away does not restyle it into a control. */
+.seat--collapsed .seat__head {
+  margin-bottom: 0;
+  width: 100%;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+.seat--collapsed .seat__head:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
+/* The counts carry the seat on their own at this size, so the name may shrink
+   as far as the row needs — but never to nothing. Reading WHO is out of cards
+   is the whole reason the count is worth showing. */
+.seat--collapsed .seat__name {
+  max-width: 5rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The SECOND number a minimized seat wears, when its pack declares one — melds
+   laid down in rummy, points taken in Hearts (see `seatCounters` in
+   src/templates/CONTRACT.md). Reads as a companion to the primary count rather
+   than a rival to it: same size and pill, different ink, and the glyph the
+   template puts in front does the naming. */
+.seat__count--aux {
+  margin-left: 0.3rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 0.08rem 0.35rem;
+  border-radius: 999px;
+  color: var(--accent);
+  background: var(--chip-bg);
+  border: 1px solid var(--chip-border);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ------------------------------------------------------------------ *
+ * Faces only
+ * ------------------------------------------------------------------ *
+ *
+ * The last step down, for the tables that need it: five collapsed plates with
+ * their names and score chips still ran a couple of hundred pixels past a
+ * phone's felt, so past four of them the plate becomes the FACE — and the card
+ * count, which is the one number worth watching, is worn on the corner of it
+ * rather than beside it.
+ *
+ * Nothing is lost that is not one tap away: the head button's accessible name
+ * still reads the player, the count and the melds in a sentence, and the
+ * inspector still says it on hover. */
+.opponent-row--faces .seat--collapsed {
+  padding: 0.25rem;
+}
+
+.opponent-row--faces .seat--collapsed .seat__name,
+.opponent-row--faces .seat--collapsed .seat__score {
+  display: none;
+}
+
+.opponent-row--faces .seat--collapsed .seat__head { gap: 0; }
+
+/* Worn on the avatar, not beside it. `.seat` is the positioned ancestor (it
+   already is, for .seat__catch), so both badges hang off the plate's corners
+   and the seat's width is the avatar's and nothing else. */
+.opponent-row--faces .seat--collapsed .seat__count {
+  position: absolute;
+  right: -0.15rem;
+  bottom: -0.15rem;
+  margin: 0;
+  min-width: 0;
+  padding: 0.02rem 0.28rem;
+  font-size: 0.62rem;
+  background: var(--chip-border);
+  /* Over the felt now rather than inside a plate, so it needs its own edge to
+     stay legible against whatever colour the avatar under it happens to be. */
+  border: 1px solid var(--panel-bg);
+  border-radius: 999px;
+}
+
+.opponent-row--faces .seat--collapsed .seat__count--aux {
+  position: absolute;
+  left: -0.15rem;
+  top: -0.2rem;
+  margin: 0;
+  padding: 0.02rem 0.22rem;
+  font-size: 0.55rem;
+  border-color: var(--panel-bg);
+}
+
+/* THE GLOW THAT WAS ON THE MELD CHIP, MOVED TO THE FACE.
+ *
+ * With the chips put away, this is the only thing on screen saying "the card
+ * you are holding can be played here" — so it wears the same accent ring the
+ * ready chips and piles wear, and the player learns one signal, not two.
+ *
+ * A fading ring on a pseudo-element, never a growing shadow: see the note over
+ * @keyframes ring-pulse. The seat is already `position: relative` for
+ * .seat__catch, so the ring has something to be inset in. */
+.seat--target {
+  border-color: var(--accent);
+}
+.seat--target::before {
+  content: "";
+  position: absolute;
+  inset: -2px;
+  border-radius: 14px;
+  box-shadow: 0 0 0 2px var(--accent);
+  opacity: 0;
+  pointer-events: none;
+  animation: ring-pulse 1.4s ease-in-out infinite;
+}
+
+/* The plate itself: everything the seat would have shown inline, in a card
+ * that hangs off the face that opened it.
+ *
+ * FIXED, AND IN ITS OWN LAYER. Out of flow for the same reason .seat__catch
+ * is — the opponent row is the top of the felt's flex column, so a plate that
+ * opened IN the row would push every pile below it down the screen, mid-turn,
+ * under the hand the player is reaching for.
+ *
+ * But absolute-inside-the-seat was not enough once the row itself became a
+ * scrollport: a scroller clips its own absolute children, so the plate would
+ * be cut off by the container it was opened from. Fixed, positioned from the
+ * seat's rect by positionPlate() and re-anchored when the row scrolls, it is
+ * clamped to the VIEWPORT instead — which is the edge that was overflowing. */
+.seat__plate {
+  position: fixed;
+  /* Ordering INSIDE #seat-plate-layer only — what lifts this above the felt is
+     the layer's own z-index, for the reason spelled out there. */
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.5rem 0.6rem;
+  border-radius: 12px;
+  /* A floating surface, so it is the one every other floating surface on this
+     screen is — the note over --panel-bg is the reason there is no second
+     answer here. The accent border is what makes it read as the OPEN one. */
+  background: var(--panel-bg);
+  color: var(--panel-text);
+  border: 1px solid var(--accent);
+  box-shadow: 0 10px 26px var(--panel-shadow);
+  /* Wide enough for a laid-down contract, and allowed to be wider than the
+     face it hangs off — a meld strip is the reason the plate exists. */
+  max-width: min(19rem, 80vw);
+}
+
+/* A pure anchor point with NO BOX OF ITS OWN. It sits inside #table-screen so
+   renderSelection's repaint pass still walks into it, and #table-screen is a
+   viewport-capped flex column with its own scrollport — so a layer with any
+   size would either take a row in that column or extend what it can scroll to.
+   Zero-sized and fixed, it does neither; the plate inside is `position: fixed`
+   and positions itself against the viewport, not against this. */
+#seat-plate-layer {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 0;
+  height: 0;
+  /* THE Z-INDEX BELONGS ON THE LAYER, NOT ON THE PLATE INSIDE IT.
+     `position: fixed` makes this its own stacking context, so the plate's own
+     z-index only ever ordered it against its siblings IN HERE — against the
+     felt it counted for nothing, and the layer sat at `auto` (level 0 of the
+     positioned layer). Every pile card is `position: absolute; z-index: 1`
+     (see .pile-stack > *), which paints in the positive-z step, i.e. AFTER it:
+     the board drew straight over an open plate and ate the information it was
+     opened to show.
+     6 puts the whole layer above the felt and deliberately below the things
+     that must still cover it — the event banner (8), the panels and modals
+     (9/10), a card in flight or under the finger (12), and the inspector (14),
+     which may be describing a chip inside this very plate. */
+  z-index: 6;
+}
+
+/* The melds are the reason the plate was opened, so they get room to be read
+   rather than the squeezed strip the seat wore. */
+.seat__plate .meld-strip {
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+/* A plate is a considered look, not a glance — the fan may be full width. */
+.seat__plate .mini-hand { --mini-max: calc(var(--seat-fan-max, 118px) * 1.02); }
+
+/* PLATE SCALE: bigger than the row wears them, small enough to stay one line.
+   The row's piles are 34px because a row of seats has to hold five of them and
+   still be a row; in here there is one seat and the width is the plate's, so
+   they can be half again as big — readable, and a finger-sized drop target —
+   without wrapping into the ragged grid that full-size parts produced. */
+.seat__plate .pile--mini { --pile-w: calc(var(--seat-pile-w, 34px) * 1.53); }
+.seat__plate .meld-strip--mini { --meld-card-w: calc(var(--seat-meld-w, 26px) * 1.3); }
+.seat__plate .meld-strip--mini .meld-chip__label { font-size: 0.6rem; }
+
+/* Carrying a card to a seat that is put away: the plate is a DROP surface now,
+   not just something to read, so it says so. The ring is the same one every
+   other drop target on the felt wears (.drop-target), and the room around the
+   chips is what stops a finger with a card under it from landing between two. */
+.seat__plate .meld-strip { gap: 0.5rem; }
+.is-dragging .seat__plate {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent), 0 12px 30px var(--panel-shadow);
 }
 
 /* "Catch!" — the accusation, worn by the seat it accuses. Deliberately loud:
@@ -567,8 +956,8 @@ body {
  * silently never applied — the same trap the player's fan documents below.
  * That is why a ten-card seat used to be 280px wide instead of 154px. */
 .mini-hand {
-  --mini-w: 28px;
-  --mini-max: 118px;
+  --mini-w: var(--seat-fan-w, 28px);
+  --mini-max: var(--seat-fan-max, 118px);
   --mini-step: clamp(
     calc(var(--mini-w) * 0.2),
     calc((var(--mini-max) - var(--mini-w)) / max(1, var(--mini-count, 1) - 1)),
@@ -605,6 +994,31 @@ body {
    hand, and holds however many shared piles the pack declares — one for
    Hearts' trick, six for Stockpile's deck + four builds + recycled-hidden.
    Wrapping beats shrinking: a second row of piles is still a table. */
+/* THE LADDER STANDS BESIDE THE PILES, NOT ABOVE THEM.
+   It used to be its own row across the felt, which spent a whole band of
+   HEIGHT — the scarce axis, the one the cards want — to say ten short things
+   that stack perfectly well in a column. Down the left it costs width, which
+   on this table is the axis with room to spare, and the piles get the height
+   back. `flex: 1` so the middle absorbs the felt's spare space rather than
+   leaving a void between the piles and the hand. */
+#felt-middle {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(0.5rem, 2vw, 1.5rem);
+}
+
+/* BESIDE the ladder, not across the rest of the felt. #center-piles grows to
+   fill its row by default, which in here shoved the ladder out to the far
+   edge and left it floating half a table away from the deck it annotates.
+   Sized to its content, the two centre as one group and the ladder reads as
+   belonging to the piles. */
+#felt-middle > #center-piles {
+  flex: 0 1 auto;
+}
+
 #center-piles {
   flex: 1;
   /* Without this a flex child refuses to shrink below its content, so adding
@@ -1211,6 +1625,22 @@ body.is-dragging .card-face { cursor: grabbing; }
   color: #4a3200;
 }
 
+/* Worn on the corner of a minimized seat rather than taking a slot in its
+   head, so the seat that is acting is exactly the size of the ones that are
+   not — the whole point of the uniform row.
+   AFTER `.turn-token`, not before it: both are one class, so they carry the
+   same specificity and source order is the only tie-break. Declared first,
+   `position: absolute` lost to the base rule's `relative`, the token stayed in
+   flow, and the acting seat quietly grew 19px taller than its neighbours —
+   which is the exact movement it was added to remove. */
+.turn-token--worn {
+  position: absolute;
+  left: -0.2rem;
+  top: -0.25rem;
+  z-index: 2;
+  pointer-events: none;
+}
+
 
 /* ------------------------------------------------------------------ *
  * The action bar
@@ -1313,12 +1743,30 @@ body.is-dragging .card-face { cursor: grabbing; }
   display: flex;
   justify-content: center;
   align-items: flex-end;
-  flex-wrap: wrap;
+  /* NOWRAP ON THE ROW, and it is load-bearing: wrapping is how a squeezed
+     seat used to dodge the fit ladder — the piles folded into extra rows, the
+     width stopped growing, and the row swore it fit while every plate on it
+     was visibly crushed. One line here means the seat's width is honest, the
+     ladder sees the overflow, and the seats minimize instead of squishing.
+     The open PLATE re-enables wrap below: stacking is fine in a popup that
+     owns its own height. */
+  flex-wrap: nowrap;
   gap: 0.3rem;
   margin-top: 0.4rem;
 }
 
-.pile--mini { --pile-w: 34px; }
+.seat__plate .seat__zones {
+  flex-wrap: wrap;
+  /* flex-END is right on the row, where piles of different heights should sit
+     on a common floor like real piles on a table. In the plate they WRAP, and
+     bottom-aligning wrapped rows staggers every pile against its neighbours
+     and floats the count badges to different heights. Top-aligned, a wrapped
+     row reads as a grid. */
+  align-items: flex-start;
+  row-gap: 0.6rem;
+}
+
+.pile--mini { --pile-w: var(--seat-pile-w, 34px); }
 .pile--mini .pile-stack { border-radius: 4px; }
 .pile--mini .card-face--empty { border-width: 1px; border-radius: 4px; }
 
@@ -1349,6 +1797,14 @@ body.is-dragging .card-face { cursor: grabbing; }
   flex-wrap: wrap;
   gap: 0.4rem;
 }
+
+/* On a seat plate in the ROW the strip may not wrap, for the same reason
+   .seat__zones may not (see its note): folding melds into a second line is a
+   seat lying to the fit ladder about its width. The player's own strip below
+   the felt keeps the wrap — it owns its row — and the popup plate re-enables
+   it, where stacking is the point. */
+.seat__zones .meld-strip { flex-wrap: nowrap; }
+.seat__plate .seat__zones .meld-strip { flex-wrap: wrap; }
 .meld-chip {
   position: relative;
   display: flex;
@@ -1367,9 +1823,13 @@ body.is-dragging .card-face { cursor: grabbing; }
 /* Overlap by ~45% rather than ~55%: the corner index lives in the left
    quarter of a card face, so this is the point where every card in a meld
    still announces its own rank. */
-.meld-chip__card { display: block; width: 32px; }
-.meld-chip__card:not(:first-child) { margin-left: -14px; }
-.meld-chip__card .card-face { width: 32px; animation: none; }
+/* THE OVERLAP IS DERIVED, NOT TUNED. Each card shows a sliver of the one under
+   it, and that sliver is a fraction of the card — so when the card grows the
+   margin has to grow with it or a scaled-up meld turns into a fan. 0.44 is the
+   ratio the hand-picked pairs were already at (32/-14, 26/-12). */
+.meld-chip__card { display: block; width: var(--meld-card-w, 32px); }
+.meld-chip__card:not(:first-child) { margin-left: calc(var(--meld-card-w, 32px) * -0.44); }
+.meld-chip__card .card-face { width: var(--meld-card-w, 32px); animation: none; }
 .meld-chip__label {
   font-size: 0.58rem;
   letter-spacing: 0.03em;
@@ -1398,11 +1858,9 @@ body.is-dragging .card-face { cursor: grabbing; }
 
 /* The seat-plate copy is smaller, but only a little — it is still meant to be
    READ from across the table, which is the whole point of the change. */
-.meld-strip--mini { gap: 0.25rem; }
+/* One variable, and the width and the overlap both follow from it. */
+.meld-strip--mini { gap: 0.25rem; --meld-card-w: var(--seat-meld-w, 26px); }
 .meld-strip--mini .meld-chip { padding: 0.2rem 0.25rem; }
-.meld-strip--mini .meld-chip__card { width: 26px; }
-.meld-strip--mini .meld-chip__card:not(:first-child) { margin-left: -12px; }
-.meld-strip--mini .meld-chip__card .card-face { width: 26px; }
 .meld-strip--mini .meld-chip__label { font-size: 0.52rem; }
 
 /* An empty strip must not leave a mystery gap on the seat plate. */
@@ -1427,10 +1885,15 @@ body.is-dragging .card-face { cursor: grabbing; }
 #contract-ladder {
   flex: none;
   display: flex;
+  /* A COLUMN, and the truncation note above still applies — only the axis it
+     applies to has changed. Ten rungs never fitted across a phone; stacked,
+     they fit down almost anything, so ladderBudget now asks about height. */
+  flex-direction: column;
   justify-content: center;
   align-items: stretch;
   flex-wrap: nowrap;
-  gap: 0.3rem;
+  gap: 0.2rem;
+  max-height: 100%;
 }
 #contract-ladder[hidden] { display: none; }
 
@@ -1439,11 +1902,11 @@ body.is-dragging .card-face { cursor: grabbing; }
    renderContractLadder for why that is what makes collapsing safe. */
 .ladder__gap {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   align-items: center;
   justify-content: center;
-  gap: 0.1rem;
-  padding: 0 0.1rem;
+  gap: 0.2rem;
+  padding: 0.1rem;
 }
 .ladder__gap-mark {
   font-size: 0.75rem;
@@ -1459,18 +1922,25 @@ body.is-dragging .card-face { cursor: grabbing; }
   font-size: 0.5rem;
 }
 
+/* A ROW now that the ladder is a column: number, requirement, then whoever is
+   standing there. Stacked rungs that each stacked their own contents again
+   made a tall narrow tower of very little; read across, a rung is one short
+   line and the ladder is a list you scan down. */
 .ladder__rung {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   align-items: center;
-  gap: 0.1rem;
-  min-width: 3rem;
-  padding: 0.25rem 0.35rem 0.2rem;
+  gap: 0.3rem;
+  min-width: 0;
+  padding: 0.15rem 0.4rem;
   border-radius: 8px;
   background: var(--chip-bg);
   border: 1px solid var(--chip-border);
   font-size: 0.68rem;
 }
+/* The requirement is the wide part and the only elastic one, so it takes the
+   slack and the rungs all come out the same width. */
+.ladder__rung .ladder__req { margin-right: auto; }
 
 /* The rung the player is on, in the same gold everything "yours" wears. */
 .ladder__rung--mine {
@@ -1765,6 +2235,36 @@ body.is-dragging .card-face { cursor: grabbing; }
  * then overflowed, raised a scrollbar, narrowed the viewport, and could flip
  * the breakpoint back mid-game. */
 
+/* TALL: a desktop window with height to spare, where the cards should take it.
+ *
+ * The felt is a stack whose middle now absorbs the slack (#felt-middle is
+ * `flex: 1`), so on a big window the cards kept their default size and the
+ * space they did not take became a void between the piles and the hand. This
+ * spends it on the cards instead.
+ *
+ * ONE BLOCK, AND IT SCALES CONTINUOUSLY. A ladder of min-height steps would
+ * have to be written largest-last to work, which is the exact inversion of the
+ * ordering rule above — so `vh` does the interpolation and the clamps hold it
+ * between "no smaller than the default" and "no bigger than a card wants to
+ * be". Every block below is a tighter constraint and still overrules it, which
+ * is what keeps a tall-but-narrow phone on its own small numbers. */
+@media (min-height: 860px) {
+  #table {
+    --pile-w: clamp(90px, 11vh, 132px);
+    --hand-card-w: clamp(70px, 8.6vh, 104px);
+    /* The other players' cards grow with the felt too. Left behind, an
+       opponent's laid-down meld stayed a row of 26px stamps on a window whose
+       deck had gone to 130 — and their melds are the thing you plan a turn
+       against, so they are the last cards that should be hard to read.
+       Held to a gentler slope than the deck: these sit in a ROW of seats, and
+       what they cost is the width that keeps that row on one line. */
+    --seat-fan-w: clamp(28px, 3.2vh, 38px);
+    --seat-fan-max: clamp(118px, 13vh, 156px);
+    --seat-meld-w: clamp(26px, 3vh, 36px);
+    --seat-pile-w: clamp(34px, 3.9vh, 47px);
+  }
+}
+
 /* Short: a laptop window, or a phone in landscape. */
 @media (max-height: 800px) {
   #table {
@@ -1880,10 +2380,8 @@ body.is-dragging .card-face { cursor: grabbing; }
   /* Two seats side by side or two seats stacked — and stacked costs a whole
      seat's height. A laid-down opponent's meld strip is what decides which,
      so it gives up card size before the row gives up its shape. */
+  .meld-strip--mini { --meld-card-w: 20px; }
   .meld-strip--mini .meld-chip { padding: 0.15rem 0.2rem; }
-  .meld-strip--mini .meld-chip__card { width: 20px; }
-  .meld-strip--mini .meld-chip__card:not(:first-child) { margin-left: -9px; }
-  .meld-strip--mini .meld-chip__card .card-face { width: 20px; }
   .meld-strip--mini .meld-chip__label { font-size: 0.46rem; }
   /* The chrome bar is not the game. It can no longer wrap (see #status-bar),
      but it can still be quieter about the room it takes. */

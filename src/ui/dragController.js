@@ -115,6 +115,33 @@ export function createDragController({
     if (drag.hover) drag.hover.node.classList.remove('drop-target--over');
     drag.hover = next;
     if (next) next.node.classList.add('drop-target--over');
+    // A TARGET MAY OPEN ONTO MORE TARGETS.
+    //
+    // Still game-agnostic: this module does not know what was revealed, only
+    // that hovering somewhere can change what may be dropped on. The caller
+    // uses it for a collapsed seat, whose melds are real drop targets that are
+    // not on screen until you hover it — without this, the only way to reach
+    // them mid-drag would be to have rendered every one of them up front,
+    // which is the crowding this whole row exists to avoid.
+    if (next && next.onHoverIn) next.onHoverIn();
+  }
+
+  /**
+   * Add drop targets to a drag already in flight.
+   *
+   * Measured immediately, and NOT re-measuring the ones already there: the
+   * existing rects are still good (nothing this does reflows the row), and the
+   * whole reason rects are snapshotted at lift is to keep forced layout out of
+   * the pointer path. One extra layout when a plate opens is the honest cost
+   * of the plate opening.
+   */
+  function addTargets(list) {
+    if (!drag || !list || !list.length) return;
+    for (const target of list) {
+      target.node.classList.add('drop-target');
+      target.rect = rectOf(target.node);
+      drag.targets.push(target);
+    }
   }
 
   function moveGhost(clientX, clientY) {
@@ -383,6 +410,15 @@ export function createDragController({
 
     isDragging() {
       return drag !== null;
+    },
+
+    /**
+     * Offer more drop targets mid-drag — see addTargets and paintHover's note.
+     * Safe to call when no drag is live, which is what lets the caller wire it
+     * to a hover without also tracking whether the gesture is still going.
+     */
+    revealTargets(list) {
+      addTargets(list);
     },
 
     /** Abandon any live drag — leaving the table, a state replacement. */

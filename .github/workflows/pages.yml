@@ -27,27 +27,22 @@ jobs:
       # version (§10).
       version_bump: true
 
-      # DELIBERATELY OFF UNTIL THE CATALOG ENTRY LANDS.
+      # The §13 checklist as a per-push gate. `launcher: true` checks the
+      # launcher out and runs `npm run acceptance` (in THIS repo —
+      # tools/acceptance.mjs) after our own tests. It covers the surface that
+      # only breaks from the launcher side and that our own tests can never
+      # see: bridged storage, the settings snapshot, suspend/resume, the caps
+      # contract.
       #
-      # `launcher: true` checks the launcher out and runs `npm run acceptance`
-      # (in THIS repo — tools/acceptance.mjs) after our own tests, making the
-      # §13 checklist a per-push gate. That is where this repo wants to end up:
-      # the surface it covers — bridged storage, the settings snapshot,
-      # suspend/resume, the caps contract — breaks from the launcher side,
-      # where our own tests can never see it.
-      #
-      # It cannot pass yet. CI checks the launcher out fresh from upstream
-      # `main`, and until `cardstock` is in that repo's catalog.json there is
-      # no launcher tile to launch the game from, so the framed-boot check
-      # fails with "launcher has no .launcher-btn[data-game-id=cardstock]".
-      # That is a correct signal, not a flake: registration is real and it has
-      # not happened. See ARCADE_ENHANCEMENTS.md Phase 6, whose step 1 is the
-      # catalog entry and whose step 3 is this flag.
-      #
-      # `npm run acceptance` runs fine locally today against a sibling
-      # launcher checkout that carries the entry. Re-enable both lines below
-      # in a follow-up once the catalog entry is merged upstream:
-      #
-      #   launcher: true
-      #   browsers: chromium   # the checklist runner is Playwright-driven and
-      #                        # the test tier installs no browsers unless asked
+      # ITS ONE PREREQUISITE IS UPSTREAM, NOT HERE. CI checks the launcher out
+      # fresh from that repo's `main`, so the run is only green once
+      # `cardstock` is in its catalog.json — without the tile there is nothing
+      # to launch the game from and the framed-boot check fails with "launcher
+      # has no .launcher-btn[data-game-id=cardstock]". That is a correct
+      # signal rather than a flake: registration is real, and this flag is
+      # step 3 of ARCADE_ENHANCEMENTS.md Phase 6 precisely because step 1 is
+      # the catalog entry.
+      launcher: true
+      # The checklist runner is Playwright-driven and the test tier installs
+      # no browsers unless asked.
+      browsers: chromium

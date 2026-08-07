@@ -1,8 +1,12 @@
 {
   "id": "milestones",
   "name": "Milestones",
-  "version": "0.1.0",
-  "players": { "min": 2, "max": 6, "best": 4 },
+  "version": "0.2.0",
+  "players": {
+    "min": 2,
+    "max": 6,
+    "best": 4
+  },
   "deck": "deck.json",
   "template": "contract-rummy",
   "tagline": "Ten contracts, each harder than the last.",
@@ -12,38 +16,95 @@
   ],
   "accent": "#1f7a63",
   "heroCards": [
-    { "rank": "7", "color": "green" },
-    { "rank": "7", "color": "blue" },
-    { "rank": "wild" }
+    {
+      "rank": "7",
+      "color": "green"
+    },
+    {
+      "rank": "7",
+      "color": "blue"
+    },
+    {
+      "rank": "wild"
+    }
   ],
   "rules": {
     "deal": 10,
     "contracts": [
-      ["set(3)", "set(3)"],
-      ["set(3)", "run(4)"],
-      ["set(4)", "run(4)"],
-      ["run(7)"],
-      ["run(8)"],
-      ["run(9)"],
-      ["set(4)", "set(4)"],
-      ["colorGroup(7)"],
-      ["set(5)", "set(2)"],
-      ["set(5)", "set(3)"]
+      [
+        "set(3)",
+        "set(3)"
+      ],
+      [
+        "set(3)",
+        "run(4)"
+      ],
+      [
+        "set(4)",
+        "run(4)"
+      ],
+      [
+        "run(7)"
+      ],
+      [
+        "run(8)"
+      ],
+      [
+        "run(9)"
+      ],
+      [
+        "set(4)",
+        "set(4)"
+      ],
+      [
+        "colorGroup(7)"
+      ],
+      [
+        "set(5)",
+        "set(2)"
+      ],
+      [
+        "set(5)",
+        "set(3)"
+      ]
     ],
-    "wilds": { "tag": "wild", "minNaturals": 1, "maxPerMeld": null },
-    "drawFrom": ["draw", "discard"],
-    "discardPickupForbidden": ["tag:skip"],
-    "meldForbidden": ["tag:skip"]
+    "wilds": {
+      "tag": "wild",
+      "minNaturals": 1,
+      "maxPerMeld": null
+    },
+    "drawFrom": [
+      "draw",
+      "discard"
+    ],
+    "discardPickupForbidden": [
+      "tag:skip"
+    ],
+    "meldForbidden": [
+      "tag:skip"
+    ]
   },
   "scoring": {
     "roundScore": "leftover-hand-values",
     "accumulate": true,
-    "gameOver": { "when": "template", "winner": "template" }
+    "gameOver": {
+      "when": "template",
+      "winner": "template"
+    }
   },
   "ui": {
     "cardStyle": "sequencing",
-    "cardPalette": { "red": "#c0392b", "blue": "#2f6fb0", "green": "#1f7a63", "yellow": "#d9a520" },
-    "cardBack": { "pattern": "rings", "color": "#1f7a63", "emblem": "M" }
+    "cardPalette": {
+      "red": "#c0392b",
+      "blue": "#2f6fb0",
+      "green": "#1f7a63",
+      "yellow": "#d9a520"
+    },
+    "cardBack": {
+      "pattern": "rings",
+      "color": "#1f7a63",
+      "emblem": "M"
+    }
   },
   "credits": "An original contract-rummy pack: ten milestones of sets and runs, one per round, first to finish them all wins."
 }

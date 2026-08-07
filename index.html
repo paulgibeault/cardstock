@@ -68,18 +68,25 @@
     <div id="table">
       <div class="opponent-row" id="opponents-top"></div>
 
-      <!-- The contract ladder: every rung of a contract-rummy race, with each
-           player's face on the one they are standing on. Rendered only for
-           packs that declare `rules.contracts`; hidden for everything else. -->
-      <div id="contract-ladder" hidden></div>
+      <!-- The middle of the felt: the ladder standing beside the piles rather
+           than above them. Horizontal room is what a table runs out of first —
+           the ladder used to take a whole row of the felt's HEIGHT to say ten
+           short things that stack perfectly well — so it reads as a column
+           down the left and gives the piles the vertical space back. -->
+      <div id="felt-middle">
+        <!-- The contract ladder: every rung of a contract-rummy race, with each
+             player's face on the one they are standing on. Rendered only for
+             packs that declare `rules.contracts`; hidden for everything else. -->
+        <div id="contract-ladder" hidden></div>
 
-      <!-- Every pile the open pack's shared zones call for — draw, discard,
-           trick, build.1..N — drawn from the zone definitions themselves
-           (src/ui/table.js renderCenterZones). The draw pile IS the draw
-           control where drawing is a move: reaching for the stock is how
-           drawing works at a real table, and it puts the card's flight start
-           under the finger that asked for it. -->
-      <div id="center-piles"></div>
+        <!-- Every pile the open pack's shared zones call for — draw, discard,
+             trick, build.1..N — drawn from the zone definitions themselves
+             (src/ui/table.js renderCenterZones). The draw pile IS the draw
+             control where drawing is a move: reaching for the stock is how
+             drawing works at a real table, and it puts the card's flight start
+             under the finger that asked for it. -->
+        <div id="center-piles"></div>
+      </div>
 
       <!-- The human's own piles beyond the hand: a Stockpile stock and
            discards, Milestones melds, a Hearts won pile. Empty (and

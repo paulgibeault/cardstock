@@ -409,43 +409,502 @@ function directionBadge(state) {
   return badge;
 }
 
-// How many opponent plates fit on one line before they have to give things up.
-// Measured in seats rather than pixels because the plates are all the same
-// width: the mini-hand closes its own fan to a fixed cap (see .mini-hand), so
-// a seat holding seventeen cards is exactly as wide as one holding two.
-const COMPACT_FROM_SEATS = 4;
-const TIGHT_FROM_SEATS = 6;
+/**
+ * WHAT THE ROW GIVES UP, IN THE ORDER IT GIVES IT UP.
+ *
+ * Each rung hides more than the one above. Which rung is used is MEASURED, not
+ * guessed: renderSeats builds the row, asks whether it overflows, and steps
+ * down only if it does — so a wide screen never collapses anything, and a
+ * phone collapses exactly as far as it has to and no further.
+ *
+ * It used to be a set of seat-count thresholds (collapse at 3 opponents, faces
+ * at 4), which is the same guess made twice: a count cannot know how wide a
+ * name is, how long a score chip has grown, how many melds are laid down, or
+ * how big the window is. It collapsed four-handed tables that had room to
+ * spare, and still overflowed by 183px when two seats had to stay open at
+ * once.
+ *
+ * The seat that may ACT never gives anything up, at any rung — whose turn it
+ * is, and what they are holding, is what the row is read for.
+ */
+const SEAT_TIERS = [
+  // Everything: fan, name, score, counts, melds, piles.
+  'full',
+  // Waiting seats lose the fan of backs — decoration, and the widest thing on
+  // the plate. Melds and piles stay, so every hit target is still on the felt.
+  'compact',
+  // ...and their names. The face and the count are still a player and how
+  // close they are to going out.
+  'tight',
+  // Waiting seats become a face you open: fan, melds and piles move into the
+  // plate behind a tap (or a drag-hover). This is the first rung that puts a
+  // legal move behind a gesture, which is why .seat--target exists.
+  'collapsed',
+  // ...and lose their names and scores too, wearing the card count on the
+  // corner of the avatar. The last rung; below this there is nothing left to
+  // give and the row scrolls instead.
+  'faces',
+];
+const TIER_COLLAPSED = SEAT_TIERS.indexOf('collapsed');
+const TIER_FACES = SEAT_TIERS.indexOf('faces');
+/** Offer the "show everyone" toggle from this many opponents up. */
+const CAROUSEL_FROM_SEATS = 3;
 
-function renderSeats(state, stagger, acting, ui) {
+/**
+ * Does this seat hold something the human's selected card can be played onto?
+ *
+ * A collapsed seat has no visible meld chips, so the glow that would have been
+ * on the chip has to move somewhere the player can still see it — onto the
+ * avatar, which is then the way in. Without this a legal layoff at a crowded
+ * table is a move with no affordance anywhere on screen, which is the one
+ * thing the old "never hide .seat__zones" rule existed to prevent.
+ */
+function seatHasReadyTarget(state, seat, ui) {
+  for (const key of ui.readyMelds.keys()) {
+    // "1:" cannot match seat 11's "11:0" — the colon is part of the prefix.
+    if (key.startsWith(`${seat}:`)) return true;
+  }
+  for (const inst of perPlayerZoneInstances(state, seat)) {
+    if (ui.readyTargets.has(inst.address)) return true;
+  }
+  return false;
+}
+
+/**
+ * The numbers a MINIMIZED seat's face is worth wearing — the pack's answer.
+ *
+ * Every pack still minimizes; what changes per pack is which number survives
+ * it. The default is the hand count, which is right wherever the hand is the
+ * race (shedding empties it, a rummy contract is finished by going out) and
+ * wrong in sequencing, where Stockpile tops every hand back up to five — so a
+ * minimized row read "5 cards" five times over while the stock count, the
+ * thing the whole game is a race on, was the number it had put away.
+ *
+ * See `seatCounters` in src/templates/CONTRACT.md.
+ */
+function seatCountersFor(state, seat, { minimized }) {
+  const declared = state.pack.template.seatCounters?.(makeCtx(state), seat);
+  const count = state.zones.count(`hand.${seat}`);
+  const list = Array.isArray(declared) && declared.length
+    ? declared
+    : [{ text: String(count), aria: cardsPhrase(count) }];
+  // THE PRIMARY NUMBER IS THE SAME WHETHER OR NOT THE SEAT IS MINIMIZED.
+  //
+  // Counters were once read only off minimized seats, which meant the badge in
+  // a given spot on the row silently changed what it MEANT: at a Stockpile
+  // table the row read "20 20 5 20 20", and the 5 was not a player whose stock
+  // had collapsed — it was the one seat whose turn it was, open, and therefore
+  // showing a hand count instead. A number that changes quantity depending on
+  // whose turn it is is worse than either quantity alone.
+  //
+  // `minimizedOnly` is for the counters that are genuinely redundant when the
+  // seat is open: a rummy meld count sits directly above the meld chips, and
+  // Hearts' points sit above the won pile that holds them.
+  return minimized ? list : list.filter((counter) => !counter.minimizedOnly);
+}
+
+/**
+ * "1 card", not "1 cards".
+ *
+ * A seat holding one card is the most consequential moment a rummy table has —
+ * it is the one everybody is watching, and the sentence a screen reader says
+ * about it should not be the one that sounds broken.
+ */
+function cardsPhrase(count) {
+  return `${count} ${count === 1 ? 'card' : 'cards'}`;
+}
+
+/** The collapsed head's accessible name, rebuilt from its two stored halves. */
+function paintSeatHead(head, targeted) {
+  head.setAttribute('aria-label',
+    `${head.dataset.seatBase || ''}`
+    + `${targeted ? ' Your selected card can be played here.' : ''}`
+    + `${head.dataset.seatTail || ''}`);
+}
+
+/**
+ * Re-light the collapsed seats after a SELECTION changed and nothing else did.
+ *
+ * The same repaint-don't-rebuild contract renderSelection keeps for piles and
+ * meld chips (see its header), and the collapsed row genuinely needs it: the
+ * avatar glow IS the layoff affordance once the chips are put away, so a glow
+ * that only refreshed on a full render would light up one bot move late and
+ * stay lit after the card that earned it was played.
+ */
+function paintSeatTargets(state, ui) {
+  for (const plate of el.opponentsTop.querySelectorAll('.seat--collapsed')) {
+    const targeted = seatHasReadyTarget(state, Number(plate.dataset.seat), ui);
+    plate.classList.toggle('seat--target', targeted);
+    const head = plate.querySelector('.seat__head');
+    if (head) paintSeatHead(head, targeted);
+  }
+}
+
+/**
+ * The fan of card backs and the seat's own piles: the BODY of a seat plate.
+ *
+ * Factored out of renderSeats because a collapsed seat still has to be able to
+ * show all of it. The popup its avatar opens is this same body, built by this
+ * same code, carrying the same live hit targets — so a meld you can lay off
+ * onto is never a different object depending on how much room the row happened
+ * to have, and the paint pass in renderSelection finds its chips either way.
+ */
+function buildSeatBody(state, seat, stagger, ui, into, { compactZones = true } = {}) {
+  const count = state.zones.count(`hand.${seat}`);
+
+  // THE OPPONENT'S HAND, DRAWN AS WHAT IS ACTUALLY VISIBLE OF IT.
+  //
+  // `--mini-step` closes this fan to as little as a fifth of a card, so all
+  // but the rightmost back is covered to within a few pixels of its left
+  // edge — white paper margin, then the printed panel, and nothing else.
+  // Drawing a full back for the covered ones meant rasterising up to ninety
+  // vector lines apiece to fill that sliver, for every card in every
+  // opponent's hand, on every render. Two opponents holding seventeen cards
+  // is a couple of thousand invisible line segments per frame, and it is why
+  // a phone dropped frames on a table nothing was even moving on.
+  //
+  // So the covered ones are a box in the pack's own panel colour (see
+  // .mini-hand__edge in table.css) and the one card you can genuinely see is
+  // the real thing. Pixel-identical where it counts.
+  const mini = document.createElement('div');
+  mini.className = 'mini-hand';
+  // The count is all the CSS needs to close the fan to a fixed width — see
+  // .mini-hand in table.css for why a seat's geometry must not track how
+  // many cards it holds. Deliberately not measured here: the card width is a
+  // breakpoint-driven custom property, so the arithmetic belongs where that
+  // property is defined rather than in a second copy that can drift from it.
+  mini.style.setProperty('--mini-count', String(count));
+  mini.style.setProperty('--back-panel', art().backPanel);
+  for (let i = 0; i < count; i++) {
+    const last = i === count - 1;
+    const node = last
+      ? svgNode(art().back(), stagger ? 'card-deal' : '')
+      : document.createElement('span');
+    if (!last) {
+      if (stagger) node.className = 'card-deal';
+      const edge = document.createElement('span');
+      edge.className = 'mini-hand__edge';
+      node.appendChild(edge);
+    }
+    markEntry(node, `back:${seat}:${i}`);
+    if (stagger) node.style.animationDelay = `${i * 35}ms`;
+    mini.appendChild(node);
+  }
+  // Decorative, and now genuinely unreadable: the covered cards are boxes
+  // with nothing to announce. No loss — the fan was announcing "Face-down
+  // card" once per card, thirteen times in a row, next to a count badge that
+  // already says "13 cards" in one breath.
+  mini.setAttribute('aria-hidden', 'true');
+  into.appendChild(mini);
+
+  // The seat's own piles, compact: a Stockpile stock and discards, laid-down
+  // melds (live hit targets), a Hearts won pile with the points it holds.
+  const seatZones = perPlayerZoneInstances(state, seat);
+  if (seatZones.length) {
+    const strip = document.createElement('div');
+    strip.className = 'seat__zones';
+    for (const inst of seatZones) {
+      if (inst.def.id === 'melds') {
+        strip.appendChild(zones.buildMeldStrip(state, seat, ui, { mini: compactZones }));
+      } else if (inst.def.visibility === 'none') {
+        const pts = heldValueText(state, inst.def, inst.address);
+        const chip = line('seat__pilechip', `${inst.def.label || inst.def.id} ${state.zones.count(inst.address)}${pts ? ` · ${pts}` : ''}`);
+        chip.dataset.zone = inst.address;
+        strip.appendChild(chip);
+      } else {
+        strip.appendChild(zones.buildPileNode(state, inst, ui, { mini: compactZones }));
+      }
+    }
+    into.appendChild(strip);
+  }
+}
+
+/**
+ * The open seat plate, and where on the screen it sits.
+ *
+ * FIXED, AND OUTSIDE THE ROW IT BELONGS TO. The obvious build — append it to
+ * the seat, position it absolutely — works right up until the row has to
+ * scroll, and the row now always can (see .opponent-row's overflow-x): a
+ * scrollport clips its own absolutely-positioned children, so the plate would
+ * be cut off by the very container the player opened it from. Anchoring it to
+ * the seat's rect instead makes it immune to both the row scroller and the
+ * carousel, and lets it be clamped to the VIEWPORT rather than to the felt,
+ * which is the edge that actually matters.
+ *
+ * It lives inside el.screen so renderSelection's repaint pass — which walks
+ * `el.screen` for `.meld-chip[data-meld]` — keeps finding its chips. That is
+ * what makes the melds in here live rather than a picture of live ones.
+ */
+function plateLayer() {
+  let layer = document.getElementById('seat-plate-layer');
+  if (!layer) {
+    layer = document.createElement('div');
+    layer.id = 'seat-plate-layer';
+    el.screen.appendChild(layer);
+  }
+  return layer;
+}
+
+/** Sit under the seat's face, nudged back inside the viewport rather than clipped. */
+function positionPlate(plate, anchorNode) {
+  const seatRect = anchorNode.getBoundingClientRect();
+  const size = plate.getBoundingClientRect();
+  const margin = 8;
+
+  let left = seatRect.left + seatRect.width / 2 - size.width / 2;
+  left = Math.max(margin, Math.min(left, window.innerWidth - size.width - margin));
+
+  let top = seatRect.bottom + 6;
+  // No room below (a short window, or a row pushed down the felt) — flip above.
+  if (top + size.height > window.innerHeight - margin) {
+    top = Math.max(margin, seatRect.top - size.height - 6);
+  }
+  plate.style.left = `${Math.round(left)}px`;
+  plate.style.top = `${Math.round(top)}px`;
+}
+
+/**
+ * The seat element whose plate is on screen, or null.
+ *
+ * Read off the DOM rather than off `session.openSeat`, because the plate may
+ * be open without anybody having picked it — the row opens the acting seat's
+ * plate by itself. `openSeat` answers "what did the player choose", which is a
+ * different question and was the wrong one for the dismiss handlers: with a
+ * plate open by turn rather than by tap, they saw `null` and did nothing, so
+ * Escape and tapping the felt both stopped closing it.
+ */
+function openPlateSeat() {
+  const plate = document.querySelector('#seat-plate-layer .seat__plate');
+  return plate || null;
+}
+
+/** Put the open plate away until play moves on. */
+function dismissPlate() {
+  if (!session) return;
+  session.openSeat = null;
+  session.plateDismissed = true;
+}
+
+/** Take the open plate off the screen. Safe when there is not one. */
+function closePlate() {
+  const layer = document.getElementById('seat-plate-layer');
+  if (layer) layer.replaceChildren();
+}
+
+/**
+ * Build the open plate for `seat`. NOT positioned here — see placeOpenPlate.
+ */
+function buildPlateFor(state, seat, identity, stagger, ui) {
+  const layer = plateLayer();
+  layer.replaceChildren();
+  const plate = document.createElement('div');
+  plate.className = 'seat__plate';
+  plate.dataset.seat = String(seat);
+  // A disclosure of the head button, which already names the player and says
+  // what this does — so this names only what it contains.
+  plate.setAttribute('role', 'group');
+  plate.setAttribute('aria-label', `${identity.name}'s cards`);
+  // The COMPACT pile and chip builders, scaled up by the plate's own CSS
+  // rather than swapped for the full-size ones. Full size looked like the
+  // right answer for "magnified" and was not: five 90px Stockpile piles do not
+  // fit across a plate, so they wrapped, collided, and made the popup taller
+  // than the board behind it. Compact parts at plate scale fit on one line,
+  // stay a comfortable drop target, and keep the plate small enough to read
+  // the felt around it.
+  buildSeatBody(state, seat, stagger, ui, plate, { compactZones: true });
+  layer.appendChild(plate);
+}
+
+/**
+ * Anchor the open plate to its seat, once the row it hangs off actually exists.
+ *
+ * SEPARATE FROM BUILDING IT, and that is the whole point of the split: the
+ * plate is built inside the seat loop, where the seat's own element has not
+ * been appended to the row yet. Measured there, the anchor is an unlaid-out
+ * node whose rect is all zeros, and the plate pinned itself to the top-left
+ * corner of the window instead of to the face that opened it.
+ */
+function placeOpenPlate() {
+  const plate = document.querySelector('#seat-plate-layer .seat__plate');
+  if (!plate) return;
+  const seat = el.opponentsTop.querySelector(`[data-seat="${plate.dataset.seat}"]`);
+  if (seat) positionPlate(plate, seat);
+}
+
+/**
+ * HOW MUCH OF THE OTHER PLAYERS TO SHOW — the player's own three-way choice.
+ *
+ * This was a two-state carousel toggle, and two states could not express what
+ * a table actually needs. Fitting alone is not the whole question: Stockpile's
+ * piles are small enough that five opponents' worth of them technically fit on
+ * any desktop, so the automatic rule — give up only what will not fit — meant
+ * that table never minimized at ANY width, however cluttered it read. The
+ * answer is not a cleverer width threshold; it is that "is this too busy" is a
+ * preference, and the player is the one holding it.
+ *
+ * HOW IT IS DRAWN: one dot, two dots, three dots — how much of each player is
+ * on the felt, counted out. The states are ORDERED by that, least to most, and
+ * the button cycles through them in order, so the control teaches itself: dots
+ * go up, you see more; they wrap round to one, you see least. It replaced a set
+ * of invented glyphs (⊞ ⊟ ⇥⇤) that had no relationship to each other and so had
+ * to be learned three times over, once per state, with nothing carrying between
+ * them.
+ *
+ *   1 dot   minimized  faces for everyone who cannot act, fit or no fit
+ *   2 dots  auto       give up only what will not fit  (the default)
+ *   3 dots  all        every plate open, the row scrolls sideways
+ *
+ * Only offered once there is a crowd, because on a small table every plate is
+ * already open and all three states draw the same row.
+ */
+const SEAT_VIEWS = ['minimized', 'auto', 'all'];
+// `label` is the whole of what this control says: it is the button's own
+// accessible name, and it names both the rung it is on and what a tap does
+// next. There was a `title`/`note` pair here as well, for a hover panel that
+// explained the glyphs — the dots need no explaining, and the panel is gone.
+const SEAT_VIEW_COPY = {
+  minimized: { dots: 1, label: 'Player cards: minimized. Tap to show as much as fits.' },
+  auto: { dots: 2, label: 'Player cards: as much as fits. Tap to open every player in full.' },
+  all: { dots: 3, label: 'Player cards: all open. Tap to go back to minimized.' },
+};
+
+function seatViewOf() {
+  const view = session?.seatView;
+  return SEAT_VIEWS.includes(view) ? view : 'auto';
+}
+
+function seatViewToggle() {
+  const view = seatViewOf();
+  const copy = SEAT_VIEW_COPY[view];
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'opponent-row__toggle';
+  button.dataset.view = view;
+  // Dots as elements rather than a string of "•" characters: they are drawn by
+  // the stylesheet, so they stay round and evenly spaced at any font scale the
+  // launcher applies (§5), where punctuation would ride the text metrics.
+  for (let i = 0; i < copy.dots; i++) {
+    const dot = document.createElement('span');
+    dot.className = 'opponent-row__dot';
+    button.appendChild(dot);
+  }
+  // Not aria-pressed: this is a three-way cycle, and a pressed/unpressed
+  // boolean would describe two of the states and lie about the third. The
+  // label says which one it is in and what tapping does next, which also
+  // overrides the dots — they are a picture of what the label already says.
+  button.setAttribute('aria-label', copy.label);
+  button.addEventListener('click', () => {
+    if (!session || !liveState()) return;
+    session.seatView = SEAT_VIEWS[(SEAT_VIEWS.indexOf(view) + 1) % SEAT_VIEWS.length];
+    // The seat holding an open plate may not be minimized in the next view.
+    session.openSeat = null;
+    render(liveState());
+  });
+  // NO INSPECTOR HERE EITHER. It existed to explain three invented glyphs;
+  // one, two and three dots are a scale that explains itself, and the button's
+  // own accessible name still says which rung it is on and what a tap does
+  // next. A panel that opens over the felt to describe a control in the corner
+  // is exactly the kind that was in the way.
+  return button;
+}
+
+/**
+ * Draw the opponent row at one rung of SEAT_TIERS. Called more than once per
+ * render while renderSeats finds the rung that fits — so it must be a pure
+ * rebuild with no side effects outside the row and the plate layer.
+ */
+function buildSeatRow(state, stagger, acting, ui, { tier, carousel, mustOpen, showToggle, actor }) {
   el.opponentsTop.replaceChildren();
-  // One row, always — see .opponent-row. Past these counts the seats that are
-  // not acting shed their card fan, then their names, so the row narrows
-  // instead of wrapping and stealing the felt's height.
-  const opponents = state.seats - 1;
-  el.opponentsTop.classList.toggle('opponent-row--compact', opponents >= COMPACT_FROM_SEATS);
-  el.opponentsTop.classList.toggle('opponent-row--tight', opponents >= TIGHT_FROM_SEATS);
+  // The plate lives outside the row, so clearing the row no longer clears it.
+  // Dropped here and rebuilt below if its seat is still open, which keeps
+  // "what is on screen" a function of this build rather than of the last one.
+  closePlate();
+
+  const collapsing = !carousel && tier >= TIER_COLLAPSED;
+  const isCollapsed = (seat) => collapsing && !mustOpen(seat);
+
+  // WHOSE PLATE IS SHOWING: the player's own pick if they made one, otherwise
+  // whoever's turn it is. Their pick is retired when play moves on (see
+  // renderSeats), so this follows the turn again by itself rather than leaving
+  // them in a state they have to remember to leave.
+  const picked = session?.openSeat;
+  const shownSeat = typeof picked === 'number' ? picked
+    : (session?.plateDismissed ? null : actor);
+
+  // In carousel mode every rung is off. That is the bargain: the player asked
+  // to see everything and the row bought the room by scrolling, so shedding
+  // fans on top of it would answer the request by hiding what it asked for.
+  el.opponentsTop.classList.toggle('opponent-row--compact', !carousel && tier >= 1);
+  el.opponentsTop.classList.toggle('opponent-row--tight', !carousel && tier >= 2);
+  el.opponentsTop.classList.toggle('opponent-row--faces', !carousel && tier >= TIER_FACES);
+  el.opponentsTop.classList.toggle('opponent-row--carousel', carousel);
+
+  // THE TOGGLE IS NOT IN THE ROW AT ALL — it lives in the felt's top corner
+  // (see seatViewToggle). Inside the row it was content like any other, so
+  // `justify-content: center` centred the seats-plus-a-control and pushed the
+  // faces 29px off centre; balancing it needed a second empty item at the far
+  // end, which was two pieces of furniture to solve a problem neither of them
+  // needed to have. Out of the row, the row centres seats and nothing else.
+  el.table.querySelector('.opponent-row__toggle')?.remove();
+  if (showToggle) el.table.appendChild(seatViewToggle());
+
   const reversed = directionBadge(state);
   if (reversed) el.opponentsTop.appendChild(reversed);
   const scored = showsScores(state);
-  // Hoisted out of the seat loop: the answer does not depend on the seat, and
-  // enumerating announcements builds a fresh engine context every time. Asking
-  // once per opponent and throwing all but one answer away cost N contexts per
-  // render for a list that is the same list N times over.
   const challenges = humanAnnouncements(state).filter((a) => a.type === 'challenge');
   for (let seat = 0; seat < state.seats; seat++) {
     if (seat === HUMAN_SEAT) continue;
     const identity = identityOf(seat);
     const count = state.zones.count(`hand.${seat}`);
     const active = acting.includes(seat);
+    const collapsed = isCollapsed(seat);
+    const open = collapsed && shownSeat === seat;
+    // Only worth asking about a collapsed seat, whose chips are not on screen
+    // to glow for themselves.
+    const targeted = collapsed && seatHasReadyTarget(state, seat, ui);
 
     const wrap = document.createElement('div');
-    wrap.className = `seat ${active ? 'seat--active' : ''}`;
+    wrap.className = `seat ${active ? 'seat--active' : ''} ${collapsed ? 'seat--collapsed' : ''} ${targeted ? 'seat--target' : ''}`;
     wrap.dataset.seat = String(seat);
 
-    const head = document.createElement('div');
+    // Collapsed, the head IS the way into the plate, so it is a real button —
+    // not a div with a click handler. A span-only child list keeps it valid
+    // markup; the Catch! button stays a SIBLING below for the same reason.
+    const head = document.createElement(collapsed ? 'button' : 'div');
     head.className = 'seat__head';
+    if (collapsed) {
+      head.type = 'button';
+      head.setAttribute('aria-expanded', String(open));
+      head.addEventListener('click', () => {
+        if (!session || !liveState()) return;
+        // Closing the seat the TURN opened is "not this turn" rather than a
+        // pick of nobody, so it is recorded as a dismissal — which renderSeats
+        // retires the moment play moves on.
+        if (open) {
+          session.openSeat = null;
+          session.plateDismissed = true;
+        } else {
+          session.openSeat = seat;
+          session.plateDismissed = false;
+        }
+        render(liveState());
+      });
+    }
 
-    if (active) head.appendChild(turnToken());
+    // On a MINIMIZED seat the token is worn on the avatar (absolutely, see the
+    // stylesheet) rather than taking a slot in the head. In the head it made
+    // the acting seat wider than every other seat, which is the exact shift
+    // this layout works to remove — a player would move sideways because their
+    // neighbour's turn began. An open seat has room for it inline.
+    if (active) {
+      const token = turnToken();
+      if (collapsed) {
+        token.classList.add('turn-token--worn');
+        wrap.appendChild(token);
+      } else {
+        head.appendChild(token);
+      }
+    }
 
     const avatar = document.createElement('span');
     avatar.className = 'seat__avatar';
@@ -466,90 +925,61 @@ function renderSeats(state, stagger, acting, ui) {
 
     if (scored) head.appendChild(seatScoreChip(state, seat));
 
-    const badge = document.createElement('span');
-    badge.className = 'seat__count';
-    badge.textContent = String(count);
-    // The visible badge is a bare number, which reads as nothing on its own.
-    badge.setAttribute('aria-label', `${count} cards${active ? '. Their turn.' : ''}`);
-    head.appendChild(badge);
+    // WHAT SURVIVES BEING MINIMIZED, and it is the pack that decides.
+    //
+    // An open seat wears the plain hand count and shows its piles below, so
+    // there is nothing to choose between. A minimized one has room for a
+    // couple of digits and has put every pile away, so the number on the face
+    // has to be the one the game is actually read for — see seatCountersFor.
+    const counters = seatCountersFor(state, seat, { minimized: collapsed });
+    counters.forEach((counter, i) => {
+      const badge = document.createElement('span');
+      // First is the primary badge; the rest are smaller marks beside it. The
+      // kind is a TEMPLATE-chosen slug, never pack data reaching an attribute
+      // the stylesheet matches on (§7b) — hence the whitelist-ish shape.
+      badge.className = i === 0 ? 'seat__count' : 'seat__count--aux';
+      if (counter.kind) badge.dataset.counter = String(counter.kind).replace(/[^a-z0-9-]/gi, '');
+      badge.textContent = counter.text;
+      // The visible badge is a bare number, which reads as nothing on its own.
+      badge.setAttribute('aria-label', `${counter.aria}${i === 0 && active ? '. Their turn.' : ''}`);
+      head.appendChild(badge);
+    });
+
+    if (collapsed) {
+      // The head is a button now, and a button made of badges names itself
+      // "🂠 Delphine 42 7 ▤2" if left to name-from-content. Said outright, in
+      // the order a player would ask it, with the affordance last.
+      //
+      // Split into dataset halves for the same reason .meld-chip keeps its
+      // label there: the middle clause changes when the SELECTION changes, and
+      // paintSeatTargets has to rewrite it without the seat, the counts or the
+      // player's name to rebuild it from.
+      head.dataset.seatBase = `${identity.name}. ${counters.map((c) => c.aria).join(', ')}.`;
+      head.dataset.seatTail = ` ${open ? 'Hide' : 'Show'} their cards.`;
+      paintSeatHead(head, targeted);
+    }
 
     wrap.appendChild(head);
 
-    // Who this opponent IS, on hover — the personality is only playable if it
-    // is legible.
-    attachInspector(wrap, () => ({
-      title: `${identity.icon} ${identity.name}`.trim(),
-      lines: [
-        { label: 'Cards', value: String(count) },
-        { label: 'Score', value: String(state.scores[seat]) },
-      ],
-      notes: identity.tagline ? [identity.tagline] : [],
-    }), { isBusy: () => !!drag && drag.isDragging() });
-
-    // THE OPPONENT'S HAND, DRAWN AS WHAT IS ACTUALLY VISIBLE OF IT.
+    // NO INSPECTOR ON A SEAT. It used to carry the player's name, card count,
+    // score and what they had laid down — and every one of those is now
+    // printed on the face itself (the name, the score chip, and the counters
+    // the pack declares). A panel that repeats the thing it is covering is
+    // worse than no panel, and a seat is a big target sitting in the path of
+    // ordinary pointer movement, so it was the one that got in the way most.
     //
-    // `--mini-step` closes this fan to as little as a fifth of a card, so all
-    // but the rightmost back is covered to within a few pixels of its left
-    // edge — white paper margin, then the printed panel, and nothing else.
-    // Drawing a full back for the covered ones meant rasterising up to ninety
-    // vector lines apiece to fill that sliver, for every card in every
-    // opponent's hand, on every render. Two opponents holding seventeen cards
-    // is a couple of thousand invisible line segments per frame, and it is why
-    // a phone dropped frames on a table nothing was even moving on.
-    //
-    // So the covered ones are a box in the pack's own panel colour (see
-    // .mini-hand__edge in table.css) and the one card you can genuinely see is
-    // the real thing. Pixel-identical where it counts.
-    const mini = document.createElement('div');
-    mini.className = 'mini-hand';
-    // The count is all the CSS needs to close the fan to a fixed width — see
-    // .mini-hand in table.css for why a seat's geometry must not track how
-    // many cards it holds. Deliberately not measured here: the card width is a
-    // breakpoint-driven custom property, so the arithmetic belongs where that
-    // property is defined rather than in a second copy that can drift from it.
-    mini.style.setProperty('--mini-count', String(count));
-    mini.style.setProperty('--back-panel', art().backPanel);
-    for (let i = 0; i < count; i++) {
-      const last = i === count - 1;
-      const node = last
-        ? svgNode(art().back(), stagger ? 'card-deal' : '')
-        : document.createElement('span');
-      if (!last) {
-        if (stagger) node.className = 'card-deal';
-        const edge = document.createElement('span');
-        edge.className = 'mini-hand__edge';
-        node.appendChild(edge);
-      }
-      markEntry(node, `back:${seat}:${i}`);
-      if (stagger) node.style.animationDelay = `${i * 35}ms`;
-      mini.appendChild(node);
-    }
-    // Decorative, and now genuinely unreadable: the covered cards are boxes
-    // with nothing to announce. No loss — the fan was announcing "Face-down
-    // card" once per card, thirteen times in a row, next to a count badge that
-    // already says "13 cards" in one breath.
-    mini.setAttribute('aria-hidden', 'true');
-    wrap.appendChild(mini);
+    // The seat is also the one inspectable that had somewhere better to go:
+    // holding it is how you OPEN it, and the plate says all of this at full
+    // size with the cards themselves. The tagline is the only thing genuinely
+    // lost, and a bot's one-liner is flavour, not information.
 
-    // The seat's own piles, compact: a Stockpile stock and discards, laid-down
-    // melds (live hit targets), a Hearts won pile with the points it holds.
-    const seatZones = perPlayerZoneInstances(state, seat);
-    if (seatZones.length) {
-      const strip = document.createElement('div');
-      strip.className = 'seat__zones';
-      for (const inst of seatZones) {
-        if (inst.def.id === 'melds') {
-          strip.appendChild(zones.buildMeldStrip(state, seat, ui, { mini: true }));
-        } else if (inst.def.visibility === 'none') {
-          const pts = heldValueText(state, inst.def, inst.address);
-          const chip = line('seat__pilechip', `${inst.def.label || inst.def.id} ${state.zones.count(inst.address)}${pts ? ` · ${pts}` : ''}`);
-          chip.dataset.zone = inst.address;
-          strip.appendChild(chip);
-        } else {
-          strip.appendChild(zones.buildPileNode(state, inst, ui, { mini: true }));
-        }
-      }
-      wrap.appendChild(strip);
+    // The fan and the seat's piles: on the plate itself when there is room for
+    // it, and inside the popup the avatar opens when there is not. Same
+    // builder, same live chips, either way.
+    if (!collapsed) {
+      buildSeatBody(state, seat, stagger, ui, wrap);
+    } else if (open) {
+      buildPlateFor(state, seat, identity, stagger, ui);
     }
 
     // The catch affordance (§E2) lives on the seat it accuses, which is the
@@ -567,6 +997,219 @@ function renderSeats(state, stagger, acting, ui) {
 
     el.opponentsTop.appendChild(wrap);
   }
+}
+
+/** Does the row need more width than it has? The whole fit question. */
+function seatRowOverflows() {
+  // 1px of tolerance: scrollWidth and clientWidth are integers rounded from
+  // fractional layout, so a row that fits exactly can report one pixel over
+  // and send the whole ladder down a rung for nothing.
+  return el.opponentsTop.scrollWidth > el.opponentsTop.clientWidth + 1;
+}
+
+function renderSeats(state, stagger, acting, ui) {
+  const opponents = state.seats - 1;
+  // Three ways to show a crowd, and the player picks — see seatViewToggle.
+  const view = seatViewOf();
+  const carousel = view === 'all';
+
+  // WHICH SEATS MAY NOT BE MINIMIZED — and it is no longer "whoever is
+  // playing".
+  //
+  // The acting seat used to be forced open in the row, and that one exception
+  // was where the movement came from: an open seat is two to three times the
+  // width of a face, so every turn it pushed each seat to its right along by
+  // 130-ish pixels. Players who had not done anything moved because somebody
+  // ELSE started their turn. Now every seat is the same size and the acting
+  // seat's detail opens in the plate below it instead — new information
+  // appearing rather than existing information sliding.
+  //
+  // A seat you can CATCH is still forced open, for a reason that is not about
+  // turns: the button is worn across the accused seat's own fan (see
+  // .seat__catch) and a face has no fan to wear it across. The window is a
+  // couple of seconds, the whole mechanic is noticing in time, and the row
+  // lurching is a fair price for an alarm — arguably it IS the alarm.
+  //
+  // Enumerating announcements builds a fresh engine context, which is why it
+  // is asked once for the row rather than once per opponent.
+  const accused = new Set(
+    humanAnnouncements(state).filter((a) => a.type === 'challenge').map((a) => a.target),
+  );
+  const mustOpen = (seat) => accused.has(seat);
+
+  // Whose plate the row will open by itself: the opponent whose turn it is.
+  // `acting` can name several seats in a simultaneous phase (Hearts' pass), and
+  // there is no single actor to follow then — so the plate stays out of it.
+  const actingOpponents = acting.filter((seat) => seat !== HUMAN_SEAT);
+  const actor = actingOpponents.length === 1 && !accused.has(actingOpponents[0])
+    ? actingOpponents[0]
+    : null;
+  // Play moving on retires both the player's pick and their dismissal, so the
+  // plate goes back to following the turn without them having to undo anything.
+  if (session && session.plateActor !== actor) {
+    session.plateActor = actor;
+    session.openSeat = null;
+    session.plateDismissed = false;
+  }
+
+  // The toggle is a view control for a crowd; it is not offered on a table
+  // where every seat is already open and it would toggle between two identical
+  // rows. Its width is part of the row, so it is present for the measuring.
+  const showToggle = carousel || opponents >= CAROUSEL_FROM_SEATS;
+
+  const build = (tier) => buildSeatRow(state, stagger, acting, ui, { tier, carousel, mustOpen, showToggle, actor });
+
+  if (carousel) {
+    // Nothing is given up and nothing is measured: the row is allowed to be
+    // longer than the felt, which is the point of it.
+    build(0);
+  } else {
+    // THE FIT LOOP. Start at the rung that fitted last time — turn to turn the
+    // answer is the same, so the common case rebuilds the row exactly once —
+    // then step down while it still overflows. It only ever steps DOWN here;
+    // stepping back up is what the cache key below is for, so a row cannot
+    // oscillate between two rungs on alternating turns.
+    //
+    // FLOOR, NOT START: 'minimized' means the player has asked for faces, so
+    // the ladder begins at the collapsed rung and is still free to go further
+    // if even faces do not fit. Beginning at 0 in that mode would just have
+    // the fit test hand back the open row it was told not to draw.
+    const floor = view === 'minimized' ? TIER_COLLAPSED : 0;
+    const cached = session?.seatFit?.key === seatFitKey(state, mustOpen, view)
+      ? session.seatFit.tier
+      : 0;
+    let tier = Math.max(floor, cached);
+    build(tier);
+    while (tier < SEAT_TIERS.length - 1 && seatRowOverflows()) {
+      tier += 1;
+      build(tier);
+    }
+    if (session) session.seatFit = { key: seatFitKey(state, mustOpen, view), tier };
+  }
+
+  // A seat the player picked but which is no longer minimized — the row grew
+  // enough room for it, or it became the accused — cannot keep a plate it has
+  // no face to hang off. Checked against what was actually BUILT rather than
+  // recomputed, so this cannot disagree with the row on screen.
+  if (session && session.openSeat !== null
+      && !el.opponentsTop.querySelector(`.seat--collapsed[data-seat="${session.openSeat}"]`)) {
+    session.openSeat = null;
+    closePlate();
+  }
+
+  reserveSeatRowSpace(state, view, carousel);
+  scrollActingSeatIntoView();
+
+  // Every seat is in the DOM now, so the open plate has a rect to hang off.
+  placeOpenPlate();
+}
+
+/**
+ * HOLD THE ROW'S SHAPE STILL ACROSS TURNS.
+ *
+ * The row is drawn fresh every time anybody moves, and its natural size tracks
+ * whoever is playing — a seat that opens for its turn is both taller and wider
+ * than the face it replaced. Left alone that costs the player two pieces of
+ * re-orientation on EVERY turn, measured on a six-handed Stockpile table:
+ *
+ *   - the row grew 43px -> 145px, and the whole felt below it moved down with
+ *     it. The build piles — the things you are aiming at — sat 103px lower on
+ *     a bot's turn than on yours.
+ *   - `justify-content: center` re-centred the seats every time that width
+ *     changed, so all five avatars slid ~66px sideways. Nothing about those
+ *     players had changed; they moved because somebody ELSE's seat opened.
+ *
+ * So the row reserves the tallest it has been for this configuration and stays
+ * there. A HIGH-WATER MARK rather than a computed maximum because the honest
+ * maximum depends on the pack, the seat count and the melds laid down — all
+ * things the row can measure about itself once it has been drawn, and none of
+ * which it can be told up front.
+ *
+ * HEIGHT ONLY. There was a width reservation here too, a trailing spacer that
+ * held the content at its widest so the seats would stop re-centring. It was
+ * the right fix for the wrong era: back then the acting seat opened INSIDE the
+ * row and was three times the width of a face. Seats are uniform now — the
+ * acting seat's detail goes to the plate — so the content width no longer
+ * changes and there is nothing to hold still. What the spacer did instead was
+ * outlive its own reason: once a transiently wider row had set the high-water
+ * mark, every later row was padded on the right and the faces sat visibly left
+ * of centre for the rest of the match. Reserving a width that never varies is
+ * all cost and no benefit, so it is gone.
+ *
+ * The reserve is per configuration, so a resize or a change of view starts a
+ * fresh one instead of inheriting a stale, too-large floor.
+ */
+function reserveSeatRowSpace(state, view, carousel) {
+  const row = el.opponentsTop;
+  // DELIBERATELY COARSER THAN seatFitKey, which counts how many seats have to
+  // stay open. That count is the difference between your turn and a bot's —
+  // exactly the transition this reservation exists to smooth — so keying off
+  // it reset the high-water mark on every turn and the reserve never applied.
+  // What the reserve may NOT span is a resize, a seat count, or a view change.
+  const key = `${row.clientWidth}:${state.seats}:${view}`;
+  const held = session?.seatRowReserve;
+  const reserve = held && held.key === key ? held : { key, height: 0 };
+
+  // The carousel is a scroller the player drives; reserving inside it would
+  // pad the scrollable length for no one's benefit.
+  if (carousel) {
+    row.style.minHeight = '';
+    if (session) session.seatRowReserve = null;
+    return;
+  }
+
+  // Measured, not summed: `getBoundingClientRect().height` already includes
+  // whatever floor is currently applied, and content taller than the floor
+  // still reports its real height — so taking the max is enough to grow the
+  // reserve and it can never shrink under its own reservation.
+  reserve.height = Math.max(reserve.height, Math.round(row.getBoundingClientRect().height));
+  row.style.minHeight = `${reserve.height}px`;
+  if (session) session.seatRowReserve = reserve;
+}
+
+/**
+ * Bring the seat that is playing into view, centred where the row allows it.
+ *
+ * Carousel only. It is the one view whose whole premise is a row longer than
+ * the felt, which means it is the one view where the seat you most need to see
+ * can be off the end of it — and a player watching a six-handed table should
+ * not have to go looking for whose turn it is.
+ *
+ * Every other view fits by construction (the fit ladder guarantees it), so
+ * there is nothing to scroll and this stays out of the way.
+ */
+function scrollActingSeatIntoView() {
+  const row = el.opponentsTop;
+  if (!row.classList.contains('opponent-row--carousel')) return;
+  const seat = row.querySelector('.seat--active');
+  if (!seat) return;
+  const max = row.scrollWidth - row.clientWidth;
+  if (max <= 0) return;
+  const centred = seat.offsetLeft + (seat.offsetWidth / 2) - (row.clientWidth / 2);
+  const left = Math.max(0, Math.min(max, Math.round(centred)));
+  // Already there, near enough: re-issuing a smooth scroll every render would
+  // restart the animation on each of a turn's several renders and leave the
+  // row permanently gliding.
+  if (Math.abs(row.scrollLeft - left) < 2) return;
+  row.scrollTo({ left, behavior: motionAllowed() ? 'smooth' : 'auto' });
+}
+
+/**
+ * What the chosen rung depends on, as a string.
+ *
+ * Only things that change how WIDE the row wants to be, because the whole
+ * point is to avoid re-probing from the top on an ordinary turn. Melds
+ * accumulating and score chips growing are deliberately NOT in here: they only
+ * ever make the row wider, and the fit loop already steps down when it
+ * overflows. What is in here is what can make the row need LESS room — a seat
+ * count, a resize, or a change in how many seats have to stay open.
+ */
+function seatFitKey(state, mustOpen, view) {
+  let open = 0;
+  for (let seat = 0; seat < state.seats; seat++) if (seat !== HUMAN_SEAT && mustOpen(seat)) open += 1;
+  // `view` is in the key so switching back to 'auto' re-probes from the top
+  // rather than inheriting the floor 'minimized' was pinned to.
+  return `${el.opponentsTop.clientWidth}:${state.seats}:${open}:${view}`;
 }
 
 function renderCenterZones(state, ui, draggable) {
@@ -606,8 +1249,23 @@ function renderPlayerZones(state, ui, draggable) {
  * card that is about to be played somewhere, and lifting it out of the fan
  * would be motion for a card that is leaving anyway.
  */
-function stagedIds(state, ui) {
-  if (!ui.handMulti) return [];
+function stagedIds(state) {
+  // ASKED OF THE PHASE, NOT OF THE MOMENT.
+  //
+  // This used to gate on `ui.handMulti`, and that flips partway through a
+  // turn — a rummy turn is draw, then meld, then discard, and only the middle
+  // of those gathers. So the SAME picked cards were drawn two different ways
+  // depending on when you looked: sitting in the tray while gathering, and
+  // lifted out of the fan on either side of it. Nothing about the cards had
+  // changed; the display bounced because the mode had.
+  //
+  // `stagingPhase` is the stable question — its own note explains that it has
+  // to be, because the tray's SLOT is reserved on it and a slot that comes and
+  // goes moves the felt under the hand. Gating the CONTENTS on the same
+  // question means a pack that stages always stages, and a pack that never
+  // does (shedding) still shows its single selection in the fan, which is the
+  // only place it has.
+  if (!stagingPhase(state)) return [];
   if (!session.selection || session.selection.from !== handAddress(HUMAN_SEAT)) return [];
   return session.selection.cardIds;
 }
@@ -627,23 +1285,26 @@ function stagedIds(state, ui) {
  * runs the same toggle a tap in the fan runs.
  */
 function renderStageTray(state, ui) {
-  const staged = stagedIds(state, ui);
+  const staged = stagedIds(state);
   // The SLOT belongs to the phase, the CONTENTS belong to the human. Gating
   // the row itself on `ui.handMulti` meant it left the felt's flex column
   // every time the answer changed — twice a turn in contract rummy, once the
   // bots start drawing and melding — and took a card's height of table with
   // it (#13). A pack that never stages still gets no row at all.
   el.stageRow.hidden = !stagingPhase(state);
-  el.stageRow.classList.toggle('stage-row--empty', !ui.handMulti);
-  el.stageRow.inert = !ui.handMulti;
-  if (!ui.handMulti) {
-    el.stageTray.replaceChildren();
+  // Empty and inert follow WHAT IS IN THE TRAY, not what mode the turn is in.
+  // Keyed on `ui.handMulti` these disagreed with the tray's own contents the
+  // moment stagedIds stopped asking that question — the row would go inert
+  // while still holding cards the player could tap to put back.
+  el.stageRow.classList.toggle('stage-row--empty', !staged.length);
+  el.stageRow.inert = !staged.length;
+  el.stageTray.replaceChildren();
+  if (!staged.length) {
+    el.stageTray.setAttribute('aria-label', 'Gathered cards appear here.');
     return;
   }
-  el.stageTray.setAttribute('aria-label', staged.length
-    ? `Gathered: ${staged.length} cards. Tap one to put it back.`
-    : 'Gathered cards appear here.');
-  el.stageTray.replaceChildren();
+  el.stageTray.setAttribute('aria-label',
+    `Gathered: ${staged.length} cards. Tap one to put it back.`);
   for (const cardId of staged) {
     const card = cardById(state, cardId);
     if (!card) continue;
@@ -677,7 +1338,7 @@ function renderHand(state, ui, stagger, draggable) {
   // Gathered cards are drawn in the tray instead, so the fan holds only what
   // is still to be chosen from. handPrefs.order is NOT touched — a card put
   // back returns to the exact slot it left, because it never left the order.
-  const staged = new Set(stagedIds(state, ui));
+  const staged = new Set(stagedIds(state));
   const fanned = staged.size ? session.displayedHand.filter((id) => !staged.has(id)) : session.displayedHand;
 
   fanned.forEach((cardId, i) => {
@@ -805,6 +1466,49 @@ function watchHandWidth() {
   // Observing the ROW, not the hand: the hand's own width is what layoutHand
   // changes, so watching it would be a feedback loop.
   new ResizeObserver(() => { if (liveState()) layoutHand(); }).observe(el.handRow);
+}
+
+/**
+ * Re-fit the opponent row when the room it has changes.
+ *
+ * The same shape, and the same reason, as watchHandWidth above: the width that
+ * decides how much the seats have to give up is the ROW's, and it moves for
+ * things a window `resize` never hears about — the launcher's font scale, the
+ * table screen going from `hidden` to shown at boot, a suspended frame waking
+ * with real geometry. Without this the row keeps whichever rung it picked at
+ * whatever width it was first measured at, which on a rotated phone is a row
+ * still dressed for a screen that is no longer there.
+ *
+ * Only the seats are rebuilt, not the whole table: nothing else on the felt
+ * cares, and a full render here would fight the hand's own observer.
+ */
+function watchSeatRowWidth() {
+  // WIDTH ONLY, and remembered, because this observes the very element it
+  // rebuilds. Re-fitting changes the row's HEIGHT — five faces are a third of
+  // a row of open plates — so reacting to every box change would answer its
+  // own notification: refit, height moves, observer fires, refit again. It
+  // would settle (the second pass produces the same DOM) but it would do a
+  // wasted rebuild every time, and it is the shape that becomes a real loop
+  // the moment anything downstream is less stable. Width is what the fit
+  // question is about; height is only ever its answer.
+  let lastWidth = -1;
+  const refit = () => {
+    const state = liveState();
+    // A rebuild mid-drag would replace the seat the pointer is carrying a card
+    // to — and the drag holds measured rects for nodes this would throw away.
+    if (!state || !session || (drag && drag.isDragging())) return;
+    const width = el.opponentsTop.clientWidth;
+    if (width === lastWidth) return;
+    lastWidth = width;
+    renderSeats(state, false, actingSeatsOf(state), session.ui || buildUiModel(state, {
+      seat: HUMAN_SEAT, moves: [], acts: false, selection: session.selection,
+    }));
+  };
+  if (typeof ResizeObserver !== 'function') {
+    window.addEventListener('resize', refit);
+    return;
+  }
+  new ResizeObserver(refit).observe(el.opponentsTop);
 }
 
 /**
@@ -962,6 +1666,7 @@ function renderSelection(state) {
   }
   for (const stack of el.screen.querySelectorAll('.pile-stack[data-zone]')) zones.paintPileState(stack, ui);
   for (const chip of el.screen.querySelectorAll('.meld-chip[data-meld]')) zones.paintMeldState(chip, ui);
+  paintSeatTargets(state, ui);
   renderActionBar(state, ui, humanActs);
 }
 
@@ -1037,6 +1742,57 @@ function onDragSettled() {
  * offer a drop the engine would refuse, and an empty target list (a card with
  * nothing to do) is a perfectly ordinary answer that ends in a snap-back.
  */
+/**
+ * Which seat's plate would hold this drop candidate, or null for a shared one.
+ *
+ * Asked only of candidates whose node is not on screen, so the answer is
+ * always "the collapsed seat that is hiding it" or nothing.
+ */
+function seatOfCandidate(state, candidate) {
+  if (candidate.kind === 'meld') {
+    const seat = Number(String(candidate.meldKey).split(':')[0]);
+    return Number.isInteger(seat) ? seat : null;
+  }
+  for (let seat = 0; seat < state.seats; seat++) {
+    if (seat === HUMAN_SEAT) continue;
+    for (const inst of perPlayerZoneInstances(state, seat)) {
+      if (inst.address === candidate.address) return seat;
+    }
+  }
+  return null;
+}
+
+/**
+ * Open a collapsed seat's plate mid-drag and offer what is inside it.
+ *
+ * NOT a render: renders are deferred while a drag is live (they would replace
+ * the node the pointer is holding), so this builds the one thing that has to
+ * change and hands the new nodes straight to the drag controller.
+ *
+ * `session.openSeat` is set as well as drawn, so the plate is still open after
+ * the drag settles and the ordinary render runs. That is what makes a release
+ * over the face useful rather than a dead end when the seat has more than one
+ * meld the card could go on: the plate stays up and the player finishes by tap.
+ */
+function revealSeatForDrag(state, seat, candidates) {
+  if (!session || session.openSeat === seat) return;
+  session.openSeat = seat;
+  buildPlateFor(state, seat, identityOf(seat), false, session.ui);
+  placeOpenPlate();
+
+  // zoneStackNode and meldChipNode both look inside el.screen, and the plate
+  // layer lives there — so the same lookups that found nothing a moment ago
+  // now find the real chips, and no second way of addressing them is needed.
+  const revealed = [];
+  for (const candidate of candidates) {
+    const node = candidate.kind === 'zone'
+      ? zoneStackNode(candidate.address)
+      : meldChipNode(candidate.meldKey);
+    if (node) revealed.push({ node, onDrop: () => performHumanMove(state, candidate.move, node) });
+  }
+  if (drag) drag.revealTargets(revealed);
+}
+
 function onDragLift(handle) {
   const state = liveState();
   if (!state) return null;
@@ -1053,6 +1809,10 @@ function onDragLift(handle) {
 
   if (humanActs) {
     const moves = legalMovesFor(state, HUMAN_SEAT);
+    // Candidates whose target is real but not on screen, because the seat
+    // holding it is collapsed. Grouped by seat: the face is one drop target
+    // that opens onto however many the seat actually has.
+    const behindAFace = new Map();
     for (const candidate of dropCandidates(state, {
       seat: HUMAN_SEAT,
       moves,
@@ -1061,7 +1821,34 @@ function onDragLift(handle) {
       const node = candidate.kind === 'zone'
         ? zoneStackNode(candidate.address)
         : meldChipNode(candidate.meldKey);
-      if (node) targets.push({ node, onDrop: () => performHumanMove(state, candidate.move, node) });
+      if (node) {
+        targets.push({ node, onDrop: () => performHumanMove(state, candidate.move, node) });
+        continue;
+      }
+      const seat = seatOfCandidate(state, candidate);
+      if (seat === null) continue;
+      if (!behindAFace.has(seat)) behindAFace.set(seat, []);
+      behindAFace.get(seat).push(candidate);
+    }
+
+    // DRAGGING ONTO A SEAT THAT IS PUT AWAY.
+    //
+    // The face is the target while the plate is shut, and hovering it opens
+    // the plate — so a card can be carried to a collapsed opponent and dropped
+    // on the exact meld it extends, without the row ever having had to show
+    // every meld at once. Releasing on the face itself plays the move when
+    // there is only one it could mean, and otherwise leaves the plate open so
+    // the choice can be made by tap.
+    for (const [seat, candidates] of behindAFace) {
+      const node = el.opponentsTop.querySelector(`.seat--collapsed[data-seat="${seat}"]`);
+      if (!node) continue;
+      targets.push({
+        node,
+        onHoverIn: () => revealSeatForDrag(state, seat, candidates),
+        onDrop: () => {
+          if (candidates.length === 1) performHumanMove(state, candidates[0].move, node);
+        },
+      });
     }
   }
 
@@ -1124,13 +1911,23 @@ function cycleHandSort() {
 /** Where a seat's cards live on screen — the source or target of a card in flight. */
 function seatRect(seat) {
   if (seat === HUMAN_SEAT) return rectOf(el.hand);
-  const mini = el.opponentsTop.querySelector(`[data-seat="${seat}"] .mini-hand`);
-  if (!mini) return null;
+  const plate = el.opponentsTop.querySelector(`[data-seat="${seat}"]`);
+  if (!plate) return null;
+  const mini = plate.querySelector('.mini-hand');
   // The fan's last child is the one genuinely rendered card; the rest are the
   // cheap edge boxes renderSeats draws instead of real SVG. Preferring it gives
   // a card-shaped rect where the row is a squat strip, which is what a card
   // leaving this seat should be seen to launch from.
-  return rectOf(mini.lastElementChild) || rectOf(mini);
+  //
+  // FALLING BACK TO THE PLATE IS THE POINT, not a tidy-up. A seat whose fan is
+  // put away — collapsed to its face, or merely `display: none` at a compact
+  // table — has no rect at all (rectOf answers null for a zero-width node), and
+  // this returned null with it: every card that seat drew or played crossed the
+  // felt from nowhere, silently, on exactly the crowded tables where watching
+  // WHO acted matters most. The face is where the player is looking anyway.
+  return (mini && (rectOf(mini.lastElementChild) || rectOf(mini)))
+    || rectOf(plate.querySelector('.seat__avatar'))
+    || rectOf(plate);
 }
 
 function zoneRect(address) {
@@ -1814,6 +2611,64 @@ export function initTable({ onExit }) {
   exitToLobby = onExit;
   settings = loadSettings();
 
+  // AN OPEN SEAT PLATE IS DISMISSIBLE, by the two gestures every other overlay
+  // on this screen already answers to. Wired once here rather than per render,
+  // because renderSeats rebuilds the row wholesale and would otherwise stack a
+  // fresh pair of window listeners on every bot move.
+  //
+  // Capturing, and BEFORE the plate's own handlers rather than after: a tap
+  // that lands inside the plate is a tap on a meld chip and must reach it.
+  document.addEventListener('pointerdown', (event) => {
+    if (!session || !openPlateSeat()) return;
+
+    // THE WHOLE OPPONENT ROW, not merely the seat that happens to be open.
+    //
+    // This handler runs on pointerdown, in the CAPTURE phase, so it beats the
+    // click that follows it — and re-rendering here throws away the very node
+    // that click was travelling to. Guarding only the open seat therefore made
+    // switching plates a two-tap operation: the first tap on another face
+    // dismissed the open one and rebuilt the row, and the button the player
+    // had aimed at no longer existed to receive the click. Every control in
+    // this row already knows what a tap on it means; none of them wants this
+    // one deciding first.
+    if (el.opponentsTop.contains(event.target)) return;
+
+    // The plate is a separate element in its own layer, and a tap on a meld
+    // chip in there has to reach the chip.
+    const plate = document.getElementById('seat-plate-layer');
+    if (plate && plate.contains(event.target)) return;
+
+    // A PRESS ON A CARD IS NOT A DISMISSAL, it is the start of a play.
+    //
+    // Pressing a hand card either selects it or begins a drag, and both of
+    // those are the opening move of "put this on that opponent's meld" — so
+    // closing the plate here shut the drop target before the card had left the
+    // hand. Whether the gesture turns out to be a tap or a drag is not known
+    // until it has travelled (src/ui/dragController.js), and by then the plate
+    // would already be gone.
+    if (event.target.closest?.('.draggable, .card-face-wrap')) return;
+
+    dismissPlate();
+    if (liveState()) render(liveState());
+  }, true);
+
+  // The plate is anchored to a seat's rect, so anything that moves that rect
+  // has to move the plate with it — the row scrolling under it most of all.
+  el.opponentsTop.addEventListener('scroll', placeOpenPlate, { passive: true });
+  window.addEventListener('resize', placeOpenPlate, { passive: true });
+
+  window.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape' || !session) return;
+    const node = openPlateSeat();
+    if (!node) return;
+    const seat = node.dataset.seat;
+    dismissPlate();
+    if (liveState()) render(liveState());
+    // Focus goes back to the face it came from, or Escape is a dead end for
+    // anyone playing this from the keyboard.
+    el.opponentsTop.querySelector(`[data-seat="${seat}"] .seat__head`)?.focus();
+  });
+
   drag = createDragController({
     layer: flightLayer,
     onLift: onDragLift,
@@ -1911,6 +2766,7 @@ export function initTable({ onExit }) {
   // has, and it is a custom property rather than a re-render — so reacting to
   // a width change costs two measurements, not a repaint of the table.
   watchHandWidth();
+  watchSeatRowWidth();
   ladder.watch(liveState);
   gestures = watchHandGestures({
     hand: el.hand,

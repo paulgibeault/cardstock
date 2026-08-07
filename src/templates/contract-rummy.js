@@ -214,6 +214,26 @@ const contractRummy = {
       const completed = ctx.playerVar(seat, 'phase');
       ctx.setPlayerVar(seat, 'phase', completed + 1);
       ctx.emit('laidDown', { seat, contract: completed, melds: groups.length });
+
+      // COMPLETING THE LAST CONTRACT WINS, THERE AND THEN.
+      //
+      // It used to advance the phase past the final rung and carry on, and the
+      // two rules together made a trap: advance-on-complete does not care who
+      // goes out, but the match-over question only ever asked about the seat
+      // that DID go out. Finish the course while somebody else goes out and
+      // nobody asks about you — so you sit one rung past the end of the ladder
+      // with no contract to lay down, unable to empty your hand, unable to go
+      // out, and therefore unable ever to win. The match then runs until some
+      // other seat manages to finish AND go out in the same round; a real game
+      // reached round sixteen this way.
+      //
+      // Ending the round here also keeps `isGameOver` honest, because it means
+      // no seat can ever be sitting past the last rung while play continues.
+      if (completed >= ctx.rules.contracts.length) {
+        ctx.endRound(seat);
+        return;
+      }
+
       if (ctx.cardIdsIn(ctx.zoneAddr('hand', seat)).length === 0) ctx.endRound(seat);
       return;
     }
@@ -354,6 +374,43 @@ const contractRummy = {
     };
   },
 
+  /**
+   * The hand IS the race here — you win a round by going out — so the default
+   * primary counter is already right and this only adds the second one.
+   *
+   * "Has this player laid down yet" is the question a rummy table is read for,
+   * and it is exactly what minimizing a seat hides: the meld chips are the
+   * first thing to go behind the tap. The count comes out onto the face so the
+   * answer survives at a glance even when the melds themselves do not.
+   *
+   * Suppressed at zero rather than shown as "▤0": an empty badge on every seat
+   * for the first three rounds is noise, and its absence already says nobody
+   * has laid down.
+   */
+  seatCounters(ctx, seat) {
+    const hand = ctx.countIn(`hand.${seat}`);
+    const counters = [{
+      text: String(hand),
+      aria: `${hand} ${hand === 1 ? 'card' : 'cards'}`,
+      label: 'Cards',
+      kind: 'hand',
+    }];
+    const melds = getMeldGroups(ctx, seat).length;
+    if (melds > 0) {
+      counters.push({
+        text: `▤${melds}`,
+        aria: `${melds} laid down`,
+        label: 'Laid down',
+        kind: 'melds',
+        // Only worth the space once the melds are hidden — on an open seat the
+        // chips themselves are directly below, and counting them for the
+        // player is saying twice what the felt already says once.
+        minimizedOnly: true,
+      });
+    }
+    return counters;
+  },
+
   ruleLines() {
     return [
       'A turn is draw, then meld, then discard.',
@@ -422,14 +479,28 @@ const contractRummy = {
   },
 
 
-  // Not exercised end-to-end by the rule tests: the whole-game winner is whoever goes
-  // out (the seat handed to ctx.endRound, which the pipeline has already put in
-  // state.winner provisionally by the time this is asked) having already completed
-  // the final contract in ctx.rules.contracts (their 'phase' playerVar advanced past it).
+  /**
+   * The match is over once ANYBODY has finished the course.
+   *
+   * Asked of every seat rather than only of the one that went out. Those are
+   * the same seat in ordinary play — applyMove ends the round the moment a
+   * final contract is laid down — but they were NOT the same under the old
+   * rule, and the gap is what stranded a player one rung past the end of the
+   * ladder with no contract left and no way to win. Reading the board rather
+   * than a single provisional winner means the answer cannot depend on which
+   * seat the pipeline happened to publish.
+   *
+   * It also decides correctly for a match SAVED under the old rule, where a
+   * seat can already be sitting past the last contract: that game is over, and
+   * this says so instead of replaying it into the same trap.
+   */
   isGameOver(ctx) {
-    if (ctx.state.winner == null) return false;
-    const phase = ctx.playerVar(ctx.state.winner, 'phase');
-    return phase != null && phase > ctx.rules.contracts.length;
+    const last = ctx.rules.contracts.length;
+    for (let seat = 0; seat < ctx.seats; seat++) {
+      const phase = ctx.playerVar(seat, 'phase');
+      if (phase != null && phase > last) return true;
+    }
+    return false;
   },
 
   botHeuristic(ctx, move) {

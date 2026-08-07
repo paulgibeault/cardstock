@@ -373,6 +373,43 @@ const trickTaking = {
   },
 
   /**
+   * The hand still counts down honestly here — thirteen cards to nothing, one
+   * per trick — so the default primary counter stands. What minimizing hides
+   * is the WON PILE, and in a game whose whole object is what you have been
+   * made to take, that is the number the table is watched for.
+   *
+   * Only for a pack that actually scores its cards (`scoring.cardValues`).
+   * Hearts does; a plain trick race does not, and there the pile is a count of
+   * tricks the seat's own score chip already reports.
+   */
+  seatCounters(ctx, seat) {
+    const hand = ctx.countIn(`hand.${seat}`);
+    const counters = [{
+      text: String(hand),
+      aria: `${hand} ${hand === 1 ? 'card' : 'cards'}`,
+      label: 'Cards',
+      kind: 'hand',
+    }];
+    const scoring = ctx.pack.scoring || {};
+    if (!scoring.cardValues) return counters;
+    const points = ctx.cardsIn(ctx.zoneAddr('won', seat))
+      .reduce((sum, card) => sum + cardValue(card, scoring), 0);
+    if (points) {
+      counters.push({
+        text: `♥${points}`,
+        aria: `${points} points taken`,
+        label: 'Taken',
+        kind: 'taken',
+        // The won pile carries this number on its own chip when the seat is
+        // open (`showsHeldValue`), so this is only earning its space once that
+        // pile has been put away.
+        minimizedOnly: true,
+      });
+    }
+    return counters;
+  },
+
+  /**
    * The cards this seat has committed to a simultaneous phase but not yet
    * played — drawn as chosen, and NOT re-choosable.
    *
