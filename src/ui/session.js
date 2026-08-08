@@ -101,6 +101,16 @@ export function createSession({ pack, state, seating, cardArt, handPrefs }) {
     botTimer: null,
     bannerTimer: null,
     announceTimers: [],
+    // The one-shot that replays a pulse when the human has been sitting on
+    // their own turn (see scheduleIdleNudge in src/ui/table.js). Re-armed by
+    // every render, so at most one of these exists at a time.
+    nudgeTimer: null,
+
+    // Whether the human could act as of the last render. The action bar's turn
+    // token is static markup, so its finite pulse has to be replayed on the
+    // transition into the human's turn — and a boolean here is what tells that
+    // transition apart from the renders that follow it.
+    humanActing: false,
 
     // ONE ROLL PER VULNERABILITY WINDOW, not one per re-render: without the
     // cache a bot gets a fresh chance to remember every time anybody moves, and
@@ -119,6 +129,9 @@ export function stopSession(session) {
   session.bannerTimer = null;
   for (const timer of session.announceTimers) timer.cancel();
   session.announceTimers = [];
+  if (session.nudgeTimer) session.nudgeTimer.cancel();
+  session.nudgeTimer = null;
+  session.humanActing = false;
   session.botCallDecision.clear();
   session.botCatchDecision.clear();
   session.peek = null;
