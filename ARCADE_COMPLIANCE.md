@@ -47,13 +47,15 @@ release. Listing in `catalog.json` *is* that public release. See
 | 3c | `migrate` / `adopt` | ✅ n/a | greenfield, no legacy keys |
 | 4 | Player name, scores/records/stats | ❌ absent | — |
 | 5 | `fontScale` | ⚠️ mostly | chrome is `rem`; card SVG text is `px` — defensible, needs documenting |
-| 5 | `theme` | ❌ absent | `src/ui/table.css` — fixed green felt, no `[data-theme]` |
+| 5 | `theme` | ✅ pass | full `[data-theme]` light/dark per [Decision 2](#decision-2--theme-support) — `src/ui/table.css:21` (dark, the default) and `:79` (light) |
 | 5 | `reducedMotion` | ⚠️ partial | CSS covered free by SDK kill-switch; JS deal stagger is not gated |
 | 5 | `handedness` | ❌ absent | — |
 | 5 | `Arcade.audio` | ❌ no audio | optional, but see [Phase 7](#phase-7--audio-optional) |
-| 6a | `onSuspend` / `onResume` | ❌ absent | — |
-| 6a | Managed timers | ❌ bare `setTimeout` | `src/main.js:188` |
+| 6a | `onSuspend` / `onResume` | ✅ pass | `src/main.js:86-87` — suspend flushes the open match synchronously, resume re-renders |
+| 6a | Managed timers | ✅ pass | one wrapper, `schedule()` in `src/ui/clock.js:16-21`, over `Arcade.session.setTimeout`; the only bare timer left is the deliberate animation-race in `src/ui/flight.js:108` |
 | 6b | Survive eviction | ❌ all state in memory | `src/main.js:36` `liveState` |
+| 6d | No infinite animations; pulses bounded by `--arcade-pulse-count` | ✅ pass | all 8 emphasis animations in `src/ui/table.css` — see "Pulsing without repainting" (`:947`) |
+| 6d | Ambient effects gated on `powerSaver` | ✅ pass | the idle re-nudge, `scheduleIdleNudge` in `src/ui/table.js`; the read is guarded for pre-3.13 SDKs |
 | 7 | `Arcade.ui.setTitle` / `toast` | ❌ raw `document.title` | `src/main.js:215` |
 | 7a | Multiplayer | ⏸ out of scope | optional by contract |
 | 7b | Escape untrusted strings | ❌ **latent hole** | `src/ui/renderCard.js:33`, `src/main.js:88` |
@@ -117,12 +119,25 @@ the frame. Note also that the pack selector is a **query param**
 the chosen pack cannot survive a relaunch by that route either. Last-played pack
 must move into `Arcade.state`.
 
-**B3. Lifecycle is unmanaged.** No `onSuspend`/`onResume`, and bot turns are
+**B3. Lifecycle is unmanaged.** ~~No `onSuspend`/`onResume`, and bot turns are
 scheduled with a bare `setTimeout` (`src/main.js:188`) that keeps firing into a
 hidden frame — exactly the §6c "forgotten timers are the #1 battery drain"
-case. `Arcade.session.setTimeout` freezes while suspended and self-cancels on a
-save import. The existing `epoch` guard is still needed for "Play again", but
-`session` timers make the state-import leg free.
+case.~~ **Resolved.** `Arcade.onSuspend` flushes the open match synchronously
+and `Arcade.onResume` re-renders (`src/main.js:86-87`), and every cancellable
+timer in the game goes through one wrapper — `schedule()` in
+`src/ui/clock.js`, which is `Arcade.session.setTimeout` when the SDK is there
+and a plain timer when it is not. Those freeze while suspended and self-cancel
+on a save import; `stopSession` (`src/ui/session.js`) cancels the rest. The
+`epoch` guard is still needed for "Play again".
+
+What §6c does not cover is the **visible-but-idle** frame, which turned out to
+be the expensive one for a turn-based game: eight infinite CSS pulses meant the
+compositor never reached 0 fps while the player sat looking at the table. That
+is §6d, and it is closed by issue #24 — every emphasis animation is now bounded
+by `--arcade-pulse-count` and settles onto a static treatment, the one
+non-compositable animation (`text-shadow` on the acting seat's name) was
+converted to an opacity fade, and the one piece of ambient emphasis left — the
+idle re-nudge — is gated off under `powerSaver`.
 
 **B4. No `onStateReplaced`.** A launcher save import while the table is open
 leaves the UI showing a match that no longer exists in storage.

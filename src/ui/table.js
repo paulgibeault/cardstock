@@ -299,6 +299,128 @@ function turnToken() {
   return token;
 }
 
+/* ------------------------------------------------------------------ *
+ * Finite pulses — replay, and the idle re-nudge
+ * ------------------------------------------------------------------ */
+
+/*
+ * WHY THIS EXISTS AT ALL. Every emphasis animation on the table is bounded by
+ * `--arcade-pulse-count` now (GAME_INTEGRATION §6d, issue #24) so that a game
+ * that is visible and waiting for input lets the display pipeline reach 0 fps.
+ * The cost of that is a new obligation on the render path: a finite animation
+ * only plays when it is CREATED, so whether a cue fires is now a question
+ * about DOM churn rather than about CSS.
+ *
+ * Three cases, and all three are already covered:
+ *
+ *   - Rebuilt per render. renderSeats builds the opponent row from scratch, so
+ *     the acting seat's name glow, its turn token and its Catch! ring replay
+ *     whenever anything moves — and renderSelection deliberately does NOT call
+ *     it, so merely tapping a card in hand does not re-cue the turn. Same for
+ *     the announce buttons, which renderAnnounceBar replaceChildren()s.
+ *     Arcade.onResume -> rerenderTable is a full render, so returning to a
+ *     suspended game re-states whose turn it is. That is a state change from
+ *     the player's side even though the state did not move, and re-cueing it
+ *     is the point rather than a spurious replay.
+ *   - Toggled in place. paintPileState / paintMeldState / paintSeatTargets flip
+ *     `--ready` and `--target` classes on nodes they keep, so those rings fire
+ *     on the genuine transition into "ready" and stay quiet across renders that
+ *     do not change the answer.
+ *   - Neither. The action bar's turn token is static markup in index.html
+ *     (`#action-bar > .turn-token`). Left alone its three pulses would run out
+ *     while the game was still booting and never fire again, so renderActionBar
+ *     replays it on the transition into the human's turn.
+ */
+
+/**
+ * Restart a finished CSS pulse by re-creating the animation.
+ *
+ * Removing the class that declares the animation cancels it; the forced reflow
+ * makes the browser adopt that state; re-adding it starts a NEW one. All three
+ * happen in one task, so nothing is painted in between and the node never
+ * appears unstyled. Same idiom as pulseSeat above.
+ *
+ * The class is re-applied rather than a separate "replay" class being toggled
+ * because only a change to `animation-name` reliably restarts an animation that
+ * has already finished — a rule that merely changes iteration-count does not.
+ */
+function replayPulse(node, className) {
+  if (!node || !node.classList.contains(className)) return;
+  node.classList.remove(className);
+  void node.offsetWidth;
+  node.classList.add(className);
+}
+
+/**
+ * Is the player asking us to spend less battery?
+ *
+ * GUARDED, and it has to be: this repo loads the evergreen `/arcade-sdk.js`,
+ * so it can be talking to an SDK older than 3.13.0 where `powerSaver` simply
+ * does not exist — and `Arcade.settings.powerSaver()` on one of those throws.
+ * This is read from a render, and renders run from onSettingsChange, so an
+ * unguarded call would be a throw on every settings write the launcher makes,
+ * not merely a bad boot. An older SDK degrades to "not saving", which is the
+ * same answer standalone gives (§5).
+ */
+function powerSaving() {
+  const sdk = typeof window !== 'undefined' ? window.Arcade : null;
+  const s = sdk && sdk.settings;
+  return !!(s && s.powerSaver && s.powerSaver());
+}
+
+/** How long the human may sit on their own turn before the table clears its throat. */
+const IDLE_NUDGE_MS = 10000;
+
+/**
+ * ONE more pulse if the human's turn has gone quiet, and never more than one.
+ *
+ * A finite pulse solves the battery problem and introduces a human one: a
+ * player who looks away for a minute comes back to a table with no motion on
+ * it at all, and the resting treatments — an accent ring, a gold token — are
+ * meant to be read, not noticed. So after ~10s of the human's own turn the
+ * affordances replay their pulse once, and then the table goes quiet again.
+ *
+ * The rules this must not break:
+ *   - Never during a bot turn. Nothing is being asked of the player then, and
+ *     a nudge would be motion for its own sake.
+ *   - Never looping. The timer is one-shot and is not rescheduled when it
+ *     fires; only the next render arms it again.
+ *   - Never under power saver. The re-nudge is emphasis nobody asked for,
+ *     which makes it exactly the "ambient effect" §5 says to gate off. It is
+ *     re-evaluated on every settings change for free, because main.js
+ *     re-renders on onSettingsChange.
+ *   - Frozen while hidden. schedule() is Arcade.session.setTimeout when the
+ *     SDK is there (src/ui/clock.js), so a suspended frame does not wake up
+ *     owing itself a nudge, and stopSession cancels whatever is in flight.
+ */
+function scheduleIdleNudge(humanActs) {
+  if (!session) return;
+  if (session.nudgeTimer) {
+    session.nudgeTimer.cancel();
+    session.nudgeTimer = null;
+  }
+  if (!humanActs || powerSaving()) return;
+  session.nudgeTimer = schedule(() => {
+    if (session) session.nudgeTimer = null;
+    replayIdleNudge();
+  }, IDLE_NUDGE_MS);
+}
+
+/**
+ * The affordances a waiting player is being asked to act on: a pile that will
+ * take the selected card, a meld it extends, a collapsed seat hiding one of
+ * those, and the announce button whose window is measured in seconds. The turn
+ * token is not in the list — it says whose turn it is, which the player who has
+ * been sitting on that turn for ten seconds already knows.
+ */
+function replayIdleNudge() {
+  if (!session || !liveState()) return;
+  for (const stack of el.screen.querySelectorAll('.pile-stack--ready')) replayPulse(stack, 'pile-stack--ready');
+  for (const chip of el.screen.querySelectorAll('.meld-chip--ready')) replayPulse(chip, 'meld-chip--ready');
+  for (const seat of el.screen.querySelectorAll('.seat--target')) replayPulse(seat, 'seat--target');
+  for (const button of el.screen.querySelectorAll('.announce-button')) replayPulse(button, 'announce-button');
+}
+
 /** Zone instances of a definition: 'build' with count 4 -> build.1..build.4. */
 function instancesOf(def, seat) {
   const numbers = def.count ? Array.from({ length: def.count }, (_, i) => i + 1) : [null];
@@ -921,6 +1043,12 @@ function buildSeatRow(state, stagger, acting, ui, { tier, carousel, mustOpen, sh
     const name = document.createElement('span');
     name.className = 'seat__name';
     name.textContent = identity.name;
+    // The same string again, for the acting seat's glow: the stylesheet draws
+    // it a second time in transparent ink so the halo can be faded on its own
+    // layer instead of tweening a text-shadow (see .seat--active .seat__name).
+    // A dataset write is data, and CSS attr() inserts a string and never
+    // markup, so this is as safe as the textContent above (§7b).
+    name.dataset.name = identity.name;
     head.appendChild(name);
 
     if (scored) head.appendChild(seatScoreChip(state, seat));
@@ -1573,6 +1701,15 @@ function renderActionBar(state, ui, humanActs) {
     && !humanActs && !state.gameOver
     && committedSelectionOf(state, HUMAN_SEAT) !== null;
   const hint = humanActs ? ui.hint : (waitingOnPass ? 'Waiting for the other players to pass…' : '');
+  // THE ONE TOKEN NOBODY REBUILDS. This bar's turn token is static markup in
+  // index.html, so its finite pulse would have run itself out during boot and
+  // never fired again (see "Finite pulses" above). Replayed on the transition
+  // INTO the human's turn — the single moment it has something new to say —
+  // and not on the renders that follow within the same turn.
+  if (session && humanActs && !session.humanActing) {
+    replayPulse(el.actionBar.querySelector('.turn-token'), 'turn-token');
+  }
+  if (session) session.humanActing = humanActs;
   // NOT `hidden`. This bar sits in the felt's flex column, and a bar that
   // leaves the column takes its height with it — which meant the turn cue
   // moved the whole table every time the turn changed hands (#13). It keeps
@@ -1668,6 +1805,8 @@ function renderSelection(state) {
   for (const chip of el.screen.querySelectorAll('.meld-chip[data-meld]')) zones.paintMeldState(chip, ui);
   paintSeatTargets(state, ui);
   renderActionBar(state, ui, humanActs);
+  // A selection change is the player acting, so the idle clock starts over.
+  scheduleIdleNudge(humanActs);
 }
 
 function render(state, message) {
@@ -1720,6 +1859,11 @@ function render(state, message) {
   } else if (message) {
     el.log.textContent = message;
   }
+
+  // Every pulse this render started is finite, so the table will be still in a
+  // few seconds. Arm the one re-nudge that is allowed to break that stillness.
+  // (A finished match acts on nobody: actingSeatsOf returns [] once gameOver.)
+  scheduleIdleNudge(humanActs);
 }
 
 /** Re-render after a drag settles, replaying whatever was deferred. */
