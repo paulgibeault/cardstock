@@ -15,9 +15,14 @@ permissions:
   id-token: write
 
 # Per-ref, so a PR run never cancels main's deploy.
+#
+# Cancelling is for PRs ONLY. A main run cancelled mid-deploy can have already
+# pushed the version bump without publishing it, leaving the origin serving a
+# version that no longer matches the repo — the exact drift the bump exists
+# to prevent. Pushes to main queue and drain instead.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   fleet:
