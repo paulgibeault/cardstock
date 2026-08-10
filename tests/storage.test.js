@@ -16,8 +16,10 @@ import { applyMove } from "../src/engine/movePipeline.js";
 import { chooseBotMove } from "../src/engine/bot.js";
 import { serializeMatch } from "../src/engine/replay.js";
 import { ROOT } from "../tools/stage.mjs";
+import { soloSeatTable } from "../src/players/seats.js";
 import {
   KEYS, MATCH_KEY_PREFIX, matchKey, isMatchKey, saveMatch, loadMatch, clearMatch,
+  saveHostMatch, loadHostMatch, clearHostMatch,
   listMatchSummaries, lastPlayedPack, rememberPack,
 } from "../src/arcade/storage.js";
 
@@ -132,4 +134,32 @@ test("the last pack played is a hint the lobby can trust or ignore", () => {
 
   assert.strictEqual(rememberPack("../evil"), false);
   assert.strictEqual(lastPlayedPack(), "stockpile");
+});
+
+test('the shared table is stored under its own key, not match.<packId>', () => {
+  // LOBBY_PLAN.md reserved this: a multiplayer match belongs to a party rather
+  // than to a pack, and "only the open table advances" is exactly the invariant
+  // a shared table inverts.
+  const pack = packFromDisk('crazy-eights');
+  const state = createState({ pack, seats: 3, seed: 7 });
+  pack.template.setup(makeCtx(state));
+  const seats = soloSeatTable(3);
+
+  saveHostMatch(state, seats);
+  assert.ok(Arcade.state.get('mpMatch'), 'written under mpMatch');
+  assert.equal(Arcade.state.get(matchKey('crazy-eights')), undefined,
+    'and emphatically not over the solo save for this pack');
+
+  const loaded = loadHostMatch();
+  assert.equal(loaded.packId, 'crazy-eights');
+  assert.equal(loaded.seed, 7);
+  assert.ok(loaded.seatBindings, 'the seat bindings ride along, so a reload re-seats everyone');
+
+  clearHostMatch();
+  assert.equal(loadHostMatch(), null);
+});
+
+test('a malformed shared table is refused rather than half-resumed', () => {
+  Arcade.state.set('mpMatch', { formatVersion: 999, packId: 'crazy-eights' });
+  assert.equal(loadHostMatch(), null);
 });
