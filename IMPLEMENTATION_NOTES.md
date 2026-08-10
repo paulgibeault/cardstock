@@ -157,17 +157,22 @@ two- and three-launcher test scenarios. It is deliberately a later pass.
 What this pass owed it, and delivered:
 
 - `activeMatch` persists as **seed + event log**, re-hydrated by replaying
-  the reducer — the identical payload a multiplayer `snapshot` frame and
-  the resync path consume. `tests/replay.test.js` pins this for all five
-  packs, so a regression to a bare state dump fails CI rather than quietly
-  making Phase 8 expensive.
+  the reducer — which is how a multiplayer *host* survives a reload and
+  rebuilds the table it is the authority for. It is emphatically not the
+  wire payload: seed + log is full information, so it never leaves the host,
+  and a `snapshot` frame carries that seat's view instead (MULTIPLAYER_PLAN.md
+  §6). `tests/replay.test.js` pins the save shape for all five packs, so a
+  regression to a bare state dump fails CI rather than quietly making
+  Phase 8 expensive.
 - The RNG is the platform's vendored `arcade-rng.js`, so every device
   replays the same stream from the same seed.
 - The escaping/validation pass (`tests/security.test.js`) is the
   peer-input hardening Phase 8 builds frame-shape validation on top of.
 
 Two seams are NOT yet in place and Phase 8 must add them: seat identity is
-still a bare index (`HUMAN_SEAT`/`SEAT_COUNT` in `src/main.js`) rather than
+still a bare index (`HUMAN_SEAT`/`SEAT_COUNT` in `src/ui/table.js` — they
+moved out of `src/main.js` with the lobby extraction, when `main.js` became
+boot plus the router and `table.js` took the one open match) rather than
 `(deviceId, localIndex)`, and bot turns run on `Arcade.session` timers,
 which freeze on suspend and must become host-wall-clock timeout events at a
 shared table.

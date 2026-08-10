@@ -49,8 +49,11 @@ by teaching the table its moves.
 full — see [ARCADE_ENHANCEMENTS.md](ARCADE_ENHANCEMENTS.md) Phase 8 —
 but it is deliberately a later pass. What exists today is the seam it
 needs: a match persists as **seed + event log** and re-hydrates by
-replaying the reducer, which is the identical payload a multiplayer
-snapshot and resync consume ([src/engine/replay.js](src/engine/replay.js)).
+replaying the reducer ([src/engine/replay.js](src/engine/replay.js)) —
+which is exactly how a multiplayer *host* will survive a reload. It is not
+what goes on the wire: the seed reconstructs the whole shuffle, so it never
+leaves the host, and a joiner receives a per-seat view instead
+(MULTIPLAYER_PLAN.md).
 
 See **[IMPLEMENTATION_NOTES.md](IMPLEMENTATION_NOTES.md)** for what
 simulation caught and fixed, and known limitations.
@@ -114,6 +117,12 @@ through the shared fleet pipeline on every push to `main`.
   `table.js` owns the one open match; `packSource.js` is the only module
   that builds a URL from a pack id; `flight.js` sends cards across the
   table; `css.js` gates the manifest values that reach a style.
+- **`src/ui/cardStyles/`** — the card art: five face styles (`vanilla`,
+  `classic`, `shedding`, `sequencing`, `rankrun`), the shared back
+  patterns, the lobby's chooser tiles, and `index.js`, the factory that
+  picks a pack's style from its manifest and is the only entry point the
+  rest of the UI imports. A pack's manifest never reaches a style
+  ungated — see [CARD_ART_PLAN.md](CARD_ART_PLAN.md).
 - **`packs/index.json`** — the catalog the lobby fetches, because a browser
   cannot list a directory. Its order is the grid's order;
   `tests/repo-gates.test.js` keeps its contents matching `packs/`.
@@ -153,5 +162,5 @@ through the shared fleet pipeline on every push to `main`.
   Wildfire is color-and-rank shedding with wilds, Milestones is
   ten-contract rummy, Stockpile is stock-racing sequencing — but no pack
   carries another publisher's name, deck design, or artwork. Card faces
-  are drawn from scratch by `src/ui/renderCard.js`; there are no
-  third-party assets in the repo.
+  are drawn from scratch by the nine modules under `src/ui/cardStyles/`;
+  there are no third-party assets in the repo.
