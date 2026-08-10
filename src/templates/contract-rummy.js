@@ -51,6 +51,10 @@ function dealRound(ctx) {
 const contractRummy = {
   id: 'contract-rummy',
 
+  // Which shared vars a peer may see (src/engine/view.js). This template keeps
+  // its state per player (`phase`, `laidDown`, `melds`), so it publishes none.
+  publicVars: [],
+
   defaultZones(rules, seats) {   // eslint-disable-line no-unused-vars
     return [
       { id: 'hand', per: 'player', visibility: 'owner', layout: 'fan', order: 'sorted', facing: 'up' },
