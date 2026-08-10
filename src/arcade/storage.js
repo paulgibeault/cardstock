@@ -23,6 +23,19 @@ import { serializeMatch, isReplayableMatch } from '../engine/replay.js';
 export const KEYS = {
   lastPack: 'lastPack',
   settings: 'settings',
+  // THE SHARED TABLE DOES NOT LIVE UNDER `match.<packId>`, and LOBBY_PLAN.md
+  // reserved this the day the per-pack keys shipped. Two reasons, and the
+  // second is the load-bearing one: a multiplayer match belongs to a PARTY
+  // rather than to a pack, so two of them are not two saved games the lobby
+  // should offer side by side; and "only the open table advances" is exactly
+  // the invariant a shared table inverts — the host must keep advancing a
+  // table its own player is not looking at.
+  //
+  // HOST-ONLY. This is seed + log, which is full information: it replays every
+  // hand at the table. A joiner never writes it and is never sent it (see
+  // src/engine/view.js) — a client keeps nothing across a reload and re-asks
+  // for a snapshot instead.
+  mpMatch: 'mpMatch',
 };
 // The pre-lobby single-match key (`activeMatch`) and its boot-time migration
 // are GONE. They said "delete one release after the lobby ships"; the lobby
@@ -170,6 +183,34 @@ export function saveMatch(state) {
  * mismatch anyway — catching it here means the lobby never advertises a
  * resumable game that the table would then refuse to open.
  */
+/**
+ * The host's copy of a shared table: the ordinary seed + log payload plus the
+ * seat bindings, so a host that reloads can put everybody back in the chair
+ * they were in rather than re-running the lobby.
+ *
+ * The bindings are stored SEPARATELY from the match rather than inside
+ * serializeMatch, because they are not part of the game: replaying the log
+ * reproduces the cards whoever is holding them, and a seat changing hands
+ * mid-match (a drop, a bot filling in) must not make the log unreplayable.
+ */
+export function saveHostMatch(state, seatTable) {
+  return Arcade.state.set(KEYS.mpMatch, {
+    ...serializeMatch(state),
+    seatBindings: seatTable.serialize(),
+  });
+}
+
+/** The stored shared table, or null when there is none this build can replay. */
+export function loadHostMatch() {
+  const stored = Arcade.state.get(KEYS.mpMatch);
+  if (!isReplayableMatch(stored)) return null;
+  return stored;
+}
+
+export function clearHostMatch() {
+  return Arcade.state.set(KEYS.mpMatch, null);
+}
+
 export function loadMatch(packId) {
   if (!isValidPackId(packId)) return null;
   const stored = Arcade.state.get(matchKey(packId));
