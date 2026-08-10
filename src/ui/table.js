@@ -57,7 +57,8 @@ import { line, svgNode, clearSvgCache } from './dom.js';
 import { promptChoice, closeChoiceDialog } from './choiceDialog.js';
 import { createCelebrations } from './celebrations.js';
 import { createContractLadder } from './contractLadder.js';
-import { createSeatLens, soloSeatTable } from '../players/seats.js';
+import { createSeatLens, soloSeatTable, createSeatTable, LOCAL_DEVICE as LOCAL_VIEWER } from '../players/seats.js';
+import { modelFromView } from './tableModel.js';
 import { sessionClock } from '../match/clock.js';
 import { createMatchRecord } from './matchRecord.js';
 import { watchHandGestures } from './handGestures.js';
@@ -158,6 +159,16 @@ const el = {
 let session = null;
 let epoch = 0;
 
+// THE CLIENT, when this device is a joiner rather than the host.
+//
+// Null in solo and null on the host, and both of those are the SAME null: a
+// host holds a real state and moves through the ordinary pipeline, exactly as
+// a solo player does. Only a joiner has to ask somebody else, which is why
+// every branch that consults this is guarded on `state.isView` rather than on
+// the presence of this object — the state knows what it is, and one test for
+// it beats two that can disagree.
+let sharedTable = null;
+
 // The screen's own furniture, not the match's.
 let settings = null;
 let exitToLobby = () => {};
@@ -234,9 +245,25 @@ function committedSelectionOf(state, seat) {
 
 /** What a seat may SAY right now, out of turn (§E2). Never enumerated as a play. */
 function announcementsFor(state, seat) {
+  // A CLIENT IS TOLD, IT DOES NOT WORK IT OUT. The host ships the acting
+  // seat's options with the view (design decision D3); enumerating here would
+  // mean running the template over a state with other people's hands missing.
+  if (state.isView) return state.announcements;
   const template = state.pack.template;
   if (!template.enumerateAnnouncements) return [];
   return template.enumerateAnnouncements(makeCtx(state), seat) || [];
+}
+
+/**
+ * The legal moves for a seat — enumerated locally when we hold the whole
+ * table, taken from the host's view when we do not.
+ *
+ * The memo behind `legalMovesFor` is only sound while state changes solely
+ * through applyMove, which is true of a host and vacuous on a client (whose
+ * state never changes at all — it is replaced).
+ */
+function movesFor(state, seat) {
+  return state.isView ? state.moves : legalMovesFor(state, seat);
 }
 
 
@@ -1808,7 +1835,7 @@ function renderSelection(state) {
   session.selection = pruneSelection(state, session.selection);
   const acting = actingSeatsOf(state);
   const humanActs = acting.some(isMySeat);
-  const humanMoves = humanActs ? legalMovesFor(state, mySeat()) : [];
+  const humanMoves = humanActs ? movesFor(state, mySeat()) : [];
   const ui = buildUiModel(state, { seat: mySeat(), moves: humanMoves, acts: humanActs, selection: session.selection });
   session.ui = ui;
 
@@ -1841,7 +1868,7 @@ function render(state, message) {
   session.selection = pruneSelection(state, session.selection);
   const acting = actingSeatsOf(state);
   const humanActs = acting.some(isMySeat);
-  const humanMoves = humanActs ? legalMovesFor(state, mySeat()) : [];
+  const humanMoves = humanActs ? movesFor(state, mySeat()) : [];
   const ui = buildUiModel(state, { seat: mySeat(), moves: humanMoves, acts: humanActs, selection: session.selection });
   const draggable = draggableSources(state, { seat: mySeat(), acts: humanActs });
   const stagger = session.dealAnimation && motionAllowed();
@@ -1971,7 +1998,7 @@ function onDragLift(handle) {
   const targets = [];
 
   if (humanActs) {
-    const moves = legalMovesFor(state, mySeat());
+    const moves = movesFor(state, mySeat());
     // Candidates whose target is real but not on screen, because the seat
     // holding it is collapsed. Grouped by seat: the face is one drop target
     // that opens onto however many the seat actually has.
@@ -2223,6 +2250,10 @@ let saveFailureReported = false;
 function persistMatch() {
   const state = liveState();
   if (!state) return;
+  // A JOINER STORES NOTHING. It holds a view rather than a match, the log is
+  // the host's, and a rejoin re-asks for a snapshot rather than resuming from
+  // whatever it happened to be holding (src/match/client.js).
+  if (state.isView) return;
   const ok = saveMatch(state);
   if (ok !== false || saveFailureReported) return;
   saveFailureReported = true;
@@ -2473,6 +2504,17 @@ async function performHumanMove(state, move, sourceNode) {
   if (completed === null || myEpoch !== epoch) return;
   move = completed;
 
+  // A CLIENT ASKS; IT DOES NOT DECIDE. Running validateMove here would run the
+  // template over a state missing everybody else's hands — the soundness trap
+  // D3 exists to avoid — and it would be answering a question that is not ours:
+  // the host owns legality, and its answer arrives as the next view or as a
+  // reject. The move already came from the host-shipped list, so the affordance
+  // has been honoured; nothing here is a rule being checked.
+  if (state.isView) {
+    sharedTable?.propose(move);
+    return;
+  }
+
   const check = validateMove(state, move);
   if (!check.legal) {
     playInvalid();
@@ -2615,7 +2657,12 @@ let bots = null;
 
 function cancelBotTurn() { if (bots) bots.cancelTurn(session); }
 function cancelAnnouncementBeats() { if (bots) bots.cancelBeats(session); }
-function scheduleNextTurn() { if (bots) bots.scheduleNextTurn(session, epoch); }
+function scheduleNextTurn() {
+  // Bots run HOST-SIDE, and only there: a joiner scheduling one would be a
+  // second device trying to move the same seat.
+  if (liveState()?.isView) return;
+  if (bots) bots.scheduleNextTurn(session, epoch);
+}
 function scheduleAnnouncementBeats() { if (bots) bots.scheduleAnnouncementBeats(session, epoch); }
 
 /* ------------------------------------------------------------------ *
@@ -2664,6 +2711,58 @@ function adoptMatch(pack, state, message, { dealing = false } = {}) {
   persistMatch();
   scheduleNextTurn();
   scheduleAnnouncementBeats();
+}
+
+/**
+ * Draw the table from a view the host sent us.
+ *
+ * The joiner's counterpart to adoptMatch. It builds a state-shaped model
+ * (src/ui/tableModel.js) and hands it to exactly the same render path, which is
+ * the whole design: one felt, drawn by one renderer, whether the cards are in
+ * front of us or being described to us.
+ *
+ * `seating` IS A PARAMETER rather than derived here, and that is the one real
+ * difference from a solo table. Solo seating comes from the match SEED — a
+ * seeded shuffle of the bot roster — and a joiner has no seed and should not
+ * have one. Who is at a shared table is a fact the host publishes in its lobby
+ * frame, so the caller that read that frame is the one that knows.
+ *
+ * @param client  the table client (src/match/client.js), for proposing moves
+ */
+export function adoptSharedView({ view, pack, seating, client, message = '' }) {
+  sharedTable = client || sharedTable;
+  const model = modelFromView(view, pack);
+
+  const seats = createSeatTable({ seats: view.seats, localDeviceId: LOCAL_VIEWER });
+  if (view.seat !== null && view.seat !== undefined) {
+    seats.claim(view.seat, { deviceId: LOCAL_VIEWER });
+  }
+
+  if (!session || session.pack?.id !== pack.id) {
+    epoch += 1;
+    stopSession(session);
+    if (drag) drag.cancel();
+    session = createSession({
+      pack, state: model, seats, seating, cardArt: makeCardRenderer(pack.manifest, pack.cardsById),
+      handPrefs: loadHandPrefs(pack.id),
+    });
+    clearSvgCache();
+    hideAllPanels();
+    hideBanner();
+  } else {
+    // AN ORDINARY VIEW IS A REPLACEMENT, NOT A NEW MATCH (design decision D2).
+    // Swapping the model in place is what lets a card animate from where it
+    // was to where it is, instead of the table blinking on every move.
+    session.state = model;
+    session.seats = seats;
+    session.seating = seating;
+  }
+  render(model, message);
+}
+
+/** Stop being a joiner. The felt is torn down by the caller's ordinary exit. */
+export function leaveSharedTable() {
+  sharedTable = null;
 }
 
 function startGame(pack, seats) {
