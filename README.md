@@ -49,8 +49,11 @@ by teaching the table its moves.
 full — see [ARCADE_ENHANCEMENTS.md](ARCADE_ENHANCEMENTS.md) Phase 8 —
 but it is deliberately a later pass. What exists today is the seam it
 needs: a match persists as **seed + event log** and re-hydrates by
-replaying the reducer, which is the identical payload a multiplayer
-snapshot and resync consume ([src/engine/replay.js](src/engine/replay.js)).
+replaying the reducer ([src/engine/replay.js](src/engine/replay.js)) —
+which is exactly how a multiplayer *host* will survive a reload. It is not
+what goes on the wire: the seed reconstructs the whole shuffle, so it never
+leaves the host, and a joiner receives a per-seat view instead
+(MULTIPLAYER_PLAN.md).
 
 See **[IMPLEMENTATION_NOTES.md](IMPLEMENTATION_NOTES.md)** for what
 simulation caught and fixed, and known limitations.

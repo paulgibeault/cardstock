@@ -362,11 +362,14 @@ the work breakdown plus the deltas that postdate the design doc.
 These are why Phase 8 can be "later" without becoming "expensive":
 
 - **Phase 2** persists `activeMatch` as **seed + event log** and
-  re-hydrates by reducer replay — the identical shape a multiplayer
-  `snapshot` frame and the resync path consume. Do not regress this to a
-  bare state snapshot.
+  re-hydrates by reducer replay — the shape the multiplayer *host* rebuilds
+  its table from after a reload. Do not regress this to a bare state
+  snapshot. It is not the wire payload, though: seed + log is full
+  information and stays host-side, and a `snapshot` frame carries the
+  addressed seat's view (MULTIPLAYER_PLAN.md §6).
 - **Phase 2**'s vendored `arcade-rng` guarantees every device replays the
-  same stream from the same seed — a prerequisite for log-replay sync.
+  same stream from the same seed — which is what makes the host's own
+  rehydrate and every saved match reproducible.
 - **Phase 4**'s escaping/validation is the peer-input hardening; Phase 8
   adds frame-shape validation on top, not instead.
 - Seat identity is `(deviceId, localIndex)` from day one (design §17.4) —
