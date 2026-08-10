@@ -180,8 +180,11 @@ Rules:
   returns every uncommitted seat; each seat's `passCards` is an ordinary propose, and
   commits stay hidden because `__pendingPass` lives in host state and is redacted
   from views (§6).
-- Shared replay files (post-v1) use `sendBlob`/`onBlob` (broadcast-only, which fits)
-  and are untrusted input: schema-validate before load.
+- Shared replay files (post-v1) use `sendBlob`/`onBlob`, which honours `{to}` like an
+  ordinary send, and are untrusted input: schema-validate before load. What blob
+  transfer cannot do cheaply is fan ONE file to a subset of seats — that is N
+  transfers, re-chunked under N ids — so a per-seat payload belongs in a `view`
+  frame, not a blob.
 
 ---
 
