@@ -59,7 +59,7 @@ function tiltFor(cardId, spread) {
 }
 
 /**
- * @param humanSeat   whose melds read as "Your"
+ * @param me          the seat lens (src/players/seats.js) — whose melds read as "Your"
  * @param session     () => the open session (selection and the live UI model)
  * @param art         () => the open match's card renderer
  * @param cardById    (state, id) => card
@@ -73,7 +73,7 @@ function tiltFor(cardId, spread) {
  * @param identityOf  (seat) => roster identity
  */
 export function createZoneRenderer({
-  humanSeat, session, art, cardById, markEntry,
+  me, session, art, cardById, markEntry,
   onTarget, onPickUp, onMeld, attachInspector, attachDrag, isBusy, identityOf,
 }) {
   /**
@@ -348,7 +348,7 @@ export function createZoneRenderer({
     strip.className = `meld-strip ${mini ? 'meld-strip--mini' : ''}`;
     strip.dataset.zone = `melds.${seat}`;
     const groups = meldGroupsOf(state, seat);
-    const owner = seat === humanSeat ? 'Your' : `${identityOf(seat).name}'s`;
+    const owner = me.holds(seat) ? 'Your' : `${identityOf(seat).name}'s`;
 
     groups.forEach((group, i) => {
       const meldKey = `${seat}:${i}`;

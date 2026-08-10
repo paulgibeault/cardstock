@@ -73,7 +73,7 @@ platform file.
 | `seatCounters` | `(ctx, seat) -> {text, aria, kind?}[] \| null` | `table.js` | the hand count |
 | `committedSelection` | `(ctx, seat) -> cardId[] \| null` | `table.js` | none |
 | `getMeldGroups` | `(ctx, seat) -> Group[]` | `table.js` | `[]` |
-| `describeEvent` | `(ev, {seatLabel, humanSeat}) -> {text, tone} \| null` | `table.js` | the engine-effect vocabulary |
+| `describeEvent` | `(ev, {seatLabel, viewerSeat}) -> {text, tone} \| null` | `table.js` | the engine-effect vocabulary |
 | `ruleLines` | `(rules) -> string[]` | `src/ui/rules.js` | none |
 | `endingLines` | `(pack) -> string[]` | `src/ui/rules.js` | none |
 | `statLines` | `(seatStats) -> {label, value, always?}[]` | `src/stats/matchStats.js` | moves + cards played |

@@ -15,12 +15,12 @@ import { ladderRungs, describeContract, describeContractItem, shortContract, CON
 
 /**
  * @param el          the #contract-ladder element
- * @param humanSeat   whose rung is "mine"
+ * @param me          the seat lens (src/players/seats.js) — whose rung is "mine"
  * @param identityOf  (seat) => roster identity
  * @param attachInspector (node, describe, opts) => void
  * @param isBusy      () => true while a drag owns the pointer
  */
-export function createContractLadder({ el, humanSeat, identityOf, attachInspector, isBusy }) {
+export function createContractLadder({ el, me, identityOf, attachInspector, isBusy }) {
   /**
    * The contract ladder: every rung of the race, and who is standing on it.
    *
@@ -66,7 +66,7 @@ export function createContractLadder({ el, humanSeat, identityOf, attachInspecto
       return;
     }
 
-    const minePhase = state.playerVars[humanSeat]?.phase ?? null;
+    const minePhase = state.playerVars[me.seat()]?.phase ?? null;
     el.replaceChildren();
 
     // Which rungs survive the squeeze, and where the collapsed runs go — see
@@ -102,7 +102,7 @@ export function createContractLadder({ el, humanSeat, identityOf, attachInspecto
           gap.appendChild(pip);
         }
 
-        const names = inside.map((i) => (i.seat === humanSeat ? 'you' : i.name));
+        const names = inside.map((i) => (me.holds(i.seat) ? 'you' : i.name));
         gap.setAttribute('aria-label', `${where}.`
           + (names.length ? ` On them: ${names.join(', ')}.` : ' Nobody is on them.'));
         attachInspector(gap, () => ({
@@ -143,7 +143,7 @@ export function createContractLadder({ el, humanSeat, identityOf, attachInspecto
       }
       rung.appendChild(who);
 
-      const names = here.map((i) => (i.seat === humanSeat ? 'you' : i.name));
+      const names = here.map((i) => (me.holds(i.seat) ? 'you' : i.name));
       rung.setAttribute('aria-label',
         `Contract ${phase} of ${contracts.length}: ${describeContract(items)}.`
         + (names.length ? ` On it: ${names.join(', ')}.` : ' Nobody is on it.'));

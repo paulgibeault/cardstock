@@ -57,6 +57,7 @@ import { line, svgNode, clearSvgCache } from './dom.js';
 import { promptChoice, closeChoiceDialog } from './choiceDialog.js';
 import { createCelebrations } from './celebrations.js';
 import { createContractLadder } from './contractLadder.js';
+import { createSeatLens, soloSeatTable } from '../players/seats.js';
 import { createMatchRecord } from './matchRecord.js';
 import { watchHandGestures } from './handGestures.js';
 import { createZoneRenderer } from './zoneRenderer.js';
@@ -86,7 +87,24 @@ import {
   playDeal, playCardPlayed, playDraw, playShuffle, playInvalid, playWin, playAnnouncement,
 } from '../arcade/audio.js';
 
-const HUMAN_SEAT = 0;
+// WHICH SEAT AM I, AND IS THIS ONE MINE — asked through the match's ownership
+// table (src/players/seats.js) rather than answered by a constant.
+//
+// It was `const HUMAN_SEAT = 0`, read from about fifty places here and captured
+// once into six other modules at init(). Both halves of that are assumptions a
+// shared table breaks: a seat index is not a player, and the seat that is mine
+// is not knowable before the match exists. The lens is read at call time and
+// falls back to seat 0 while there is no session, so the empty felt behind the
+// lobby draws exactly as it always did.
+const me = createSeatLens(() => session?.seats ?? null);
+const mySeat = () => me.seat();
+const isMySeat = (seat) => me.holds(seat);
+
+// Where the star sits at a table with no peers. Solo play has always dealt the
+// player seat 0 and the roster paints them there; this names that fact instead
+// of spelling it as a bare literal in the two places that still need one.
+const SOLO_HUMAN_SEAT = 0;
+
 // The table's own default when nothing asks for anything else — a deep link,
 // a resumed match with its own seat count, a pack whose minimum is higher.
 // The new-game sheet (src/ui/newGame.js) is what usually decides this now.
@@ -173,13 +191,13 @@ function humanName() {
 }
 
 function identityOf(seat) {
-  return session?.seating[seat] || { seat, name: `Seat ${seat}`, icon: '', color: '#6b7280', isBot: seat !== HUMAN_SEAT };
+  return session?.seating[seat] || { seat, name: `Seat ${seat}`, icon: '', color: '#6b7280', isBot: !isMySeat(seat) };
 }
 
 /** The name to put in a sentence about a seat. */
 function seatLabel(seat) {
   const identity = identityOf(seat);
-  return seat === HUMAN_SEAT ? 'You' : identity.name;
+  return isMySeat(seat) ? 'You' : identity.name;
 }
 
 /**
@@ -282,7 +300,7 @@ function markEntry(node, key) {
  * half of what all three copies had in common.
  */
 function pulseSeat(seat, tone = 'good') {
-  const node = seat === HUMAN_SEAT
+  const node = isMySeat(seat)
     ? el.hand
     : el.opponentsTop.querySelector(`[data-seat="${seat}"]`);
   if (!node) return;
@@ -975,7 +993,7 @@ function buildSeatRow(state, stagger, acting, ui, { tier, carousel, mustOpen, sh
   const scored = showsScores(state);
   const challenges = humanAnnouncements(state).filter((a) => a.type === 'challenge');
   for (let seat = 0; seat < state.seats; seat++) {
-    if (seat === HUMAN_SEAT) continue;
+    if (isMySeat(seat)) continue;
     const identity = identityOf(seat);
     const count = state.zones.count(`hand.${seat}`);
     const active = acting.includes(seat);
@@ -1168,7 +1186,7 @@ function renderSeats(state, stagger, acting, ui) {
   // Whose plate the row will open by itself: the opponent whose turn it is.
   // `acting` can name several seats in a simultaneous phase (Hearts' pass), and
   // there is no single actor to follow then — so the plate stays out of it.
-  const actingOpponents = acting.filter((seat) => seat !== HUMAN_SEAT);
+  const actingOpponents = acting.filter((seat) => !isMySeat(seat));
   const actor = actingOpponents.length === 1 && !accused.has(actingOpponents[0])
     ? actingOpponents[0]
     : null;
@@ -1334,7 +1352,7 @@ function scrollActingSeatIntoView() {
  */
 function seatFitKey(state, mustOpen, view) {
   let open = 0;
-  for (let seat = 0; seat < state.seats; seat++) if (seat !== HUMAN_SEAT && mustOpen(seat)) open += 1;
+  for (let seat = 0; seat < state.seats; seat++) if (!isMySeat(seat) && mustOpen(seat)) open += 1;
   // `view` is in the key so switching back to 'auto' re-probes from the top
   // rather than inheriting the floor 'minimized' was pinned to.
   return `${el.opponentsTop.clientWidth}:${state.seats}:${open}:${view}`;
@@ -1351,9 +1369,9 @@ function renderCenterZones(state, ui, draggable) {
 
 function renderPlayerZones(state, ui, draggable) {
   el.playerPiles.replaceChildren();
-  for (const inst of perPlayerZoneInstances(state, HUMAN_SEAT)) {
+  for (const inst of perPlayerZoneInstances(state, mySeat())) {
     if (inst.def.id === 'melds') {
-      el.playerPiles.appendChild(zones.buildMeldStrip(state, HUMAN_SEAT, ui));
+      el.playerPiles.appendChild(zones.buildMeldStrip(state, mySeat(), ui));
     } else if (inst.def.visibility === 'none') {
       // The human's own hidden pile (a Hearts won pile): a face-down pile with
       // its count — and its cost, when the pack scores what it holds.
@@ -1394,7 +1412,7 @@ function stagedIds(state) {
   // does (shedding) still shows its single selection in the fan, which is the
   // only place it has.
   if (!stagingPhase(state)) return [];
-  if (!session.selection || session.selection.from !== handAddress(HUMAN_SEAT)) return [];
+  if (!session.selection || session.selection.from !== handAddress(mySeat())) return [];
   return session.selection.cardIds;
 }
 
@@ -1456,12 +1474,12 @@ function renderStageTray(state, ui) {
 
 function renderHand(state, ui, stagger, draggable) {
   el.hand.replaceChildren();
-  const handAddr = handAddress(HUMAN_SEAT);
+  const handAddr = handAddress(mySeat());
   const engineHand = state.zones.cards(handAddr);
   // The engine's order is dealing order and stays that way; what the player
   // sees is their own arrangement (src/ui/handOrder.js).
   session.displayedHand = orderHand(engineHand, (id) => cardById(state, id), session.handPrefs.mode, session.handPrefs.order);
-  const committedPass = committedSelectionOf(state, HUMAN_SEAT);
+  const committedPass = committedSelectionOf(state, mySeat());
 
   // Gathered cards are drawn in the tray instead, so the fan holds only what
   // is still to be chosen from. handPrefs.order is NOT touched — a card put
@@ -1629,7 +1647,7 @@ function watchSeatRowWidth() {
     if (width === lastWidth) return;
     lastWidth = width;
     renderSeats(state, false, actingSeatsOf(state), session.ui || buildUiModel(state, {
-      seat: HUMAN_SEAT, moves: [], acts: false, selection: session.selection,
+      seat: mySeat(), moves: [], acts: false, selection: session.selection,
     }));
   };
   if (typeof ResizeObserver !== 'function') {
@@ -1648,7 +1666,7 @@ function watchSeatRowWidth() {
  * customer of this surface (§E2).
  */
 function humanAnnouncements(state) {
-  return announcementsFor(state, HUMAN_SEAT);
+  return announcementsFor(state, mySeat());
 }
 
 /**
@@ -1699,7 +1717,7 @@ function renderAnnounceBar(state) {
 function renderActionBar(state, ui, humanActs) {
   const waitingOnPass = interactionMode(state) === 'pass'
     && !humanActs && !state.gameOver
-    && committedSelectionOf(state, HUMAN_SEAT) !== null;
+    && committedSelectionOf(state, mySeat()) !== null;
   const hint = humanActs ? ui.hint : (waitingOnPass ? 'Waiting for the other players to pass…' : '');
   // THE ONE TOKEN NOBODY REBUILDS. This bar's turn token is static markup in
   // index.html, so its finite pulse would have run itself out during boot and
@@ -1742,24 +1760,24 @@ function renderActionBar(state, ui, humanActs) {
 
 function renderStatusBar(state, acting) {
   el.statusText.textContent = statusTextFor(state, acting);
-  const humanActs = acting.includes(HUMAN_SEAT);
+  const humanActs = acting.some(isMySeat);
   el.status.classList.toggle('status-bar--your-turn', humanActs);
   el.status.classList.toggle('status-bar--thinking', !state.gameOver && !humanActs);
 
   const scored = showsScores(state);
   el.scoreChip.hidden = !scored;
   if (scored) {
-    el.scoreChipValue.textContent = scoreChipFor(state, HUMAN_SEAT).long;
-    el.scoreChip.setAttribute('aria-label', `Your score: ${state.scores[HUMAN_SEAT]}. Open the scoreboard.`);
+    el.scoreChipValue.textContent = scoreChipFor(state, mySeat()).long;
+    el.scoreChip.setAttribute('aria-label', `Your score: ${state.scores[mySeat()]}. Open the scoreboard.`);
   }
 }
 
 function statusTextFor(state, acting) {
   if (state.gameOver) return `Game over — ${winnerSentence(state)}`;
   if (state.turn.phase === 'pass') {
-    return acting.includes(HUMAN_SEAT) ? 'Passing — your pick' : 'Waiting for passes…';
+    return acting.some(isMySeat) ? 'Passing — your pick' : 'Waiting for passes…';
   }
-  return acting.includes(HUMAN_SEAT) ? 'Your turn' : `${seatLabel(state.turn.seat)}'s turn`;
+  return acting.some(isMySeat) ? 'Your turn' : `${seatLabel(state.turn.seat)}'s turn`;
 }
 
 /**
@@ -1788,13 +1806,13 @@ function renderSelection(state) {
   }
   session.selection = pruneSelection(state, session.selection);
   const acting = actingSeatsOf(state);
-  const humanActs = acting.includes(HUMAN_SEAT);
-  const humanMoves = humanActs ? legalMovesFor(state, HUMAN_SEAT) : [];
-  const ui = buildUiModel(state, { seat: HUMAN_SEAT, moves: humanMoves, acts: humanActs, selection: session.selection });
+  const humanActs = acting.some(isMySeat);
+  const humanMoves = humanActs ? legalMovesFor(state, mySeat()) : [];
+  const ui = buildUiModel(state, { seat: mySeat(), moves: humanMoves, acts: humanActs, selection: session.selection });
   session.ui = ui;
 
-  const handAddr = handAddress(HUMAN_SEAT);
-  const committedPass = committedSelectionOf(state, HUMAN_SEAT) || [];
+  const handAddr = handAddress(mySeat());
+  const committedPass = committedSelectionOf(state, mySeat()) || [];
   for (const wrapper of el.hand.children) {
     const cardId = wrapper.dataset.cardId;
     const selected = isSelected(session.selection, handAddr, cardId) || committedPass.includes(cardId);
@@ -1821,10 +1839,10 @@ function render(state, message) {
   session.enteringKeys = new Set();
   session.selection = pruneSelection(state, session.selection);
   const acting = actingSeatsOf(state);
-  const humanActs = acting.includes(HUMAN_SEAT);
-  const humanMoves = humanActs ? legalMovesFor(state, HUMAN_SEAT) : [];
-  const ui = buildUiModel(state, { seat: HUMAN_SEAT, moves: humanMoves, acts: humanActs, selection: session.selection });
-  const draggable = draggableSources(state, { seat: HUMAN_SEAT, acts: humanActs });
+  const humanActs = acting.some(isMySeat);
+  const humanMoves = humanActs ? legalMovesFor(state, mySeat()) : [];
+  const ui = buildUiModel(state, { seat: mySeat(), moves: humanMoves, acts: humanActs, selection: session.selection });
+  const draggable = draggableSources(state, { seat: mySeat(), acts: humanActs });
   const stagger = session.dealAnimation && motionAllowed();
 
   session.ui = ui;
@@ -1898,7 +1916,7 @@ function seatOfCandidate(state, candidate) {
     return Number.isInteger(seat) ? seat : null;
   }
   for (let seat = 0; seat < state.seats; seat++) {
-    if (seat === HUMAN_SEAT) continue;
+    if (isMySeat(seat)) continue;
     for (const inst of perPlayerZoneInstances(state, seat)) {
       if (inst.address === candidate.address) return seat;
     }
@@ -1948,17 +1966,17 @@ function onDragLift(handle) {
   if (gestures) gestures.clearPeek();
 
   const acting = actingSeatsOf(state);
-  const humanActs = acting.includes(HUMAN_SEAT);
+  const humanActs = acting.some(isMySeat);
   const targets = [];
 
   if (humanActs) {
-    const moves = legalMovesFor(state, HUMAN_SEAT);
+    const moves = legalMovesFor(state, mySeat());
     // Candidates whose target is real but not on screen, because the seat
     // holding it is collapsed. Grouped by seat: the face is one drop target
     // that opens onto however many the seat actually has.
     const behindAFace = new Map();
     for (const candidate of dropCandidates(state, {
-      seat: HUMAN_SEAT,
+      seat: mySeat(),
       moves,
       source: { from: handle.from, cardId: handle.cardId },
     })) {
@@ -2054,7 +2072,7 @@ function cycleHandSort() {
 
 /** Where a seat's cards live on screen — the source or target of a card in flight. */
 function seatRect(seat) {
-  if (seat === HUMAN_SEAT) return rectOf(el.hand);
+  if (isMySeat(seat)) return rectOf(el.hand);
   const plate = el.opponentsTop.querySelector(`[data-seat="${seat}"]`);
   if (!plate) return null;
   const mini = plate.querySelector('.mini-hand');
@@ -2094,8 +2112,8 @@ function animateMove(state, move, from) {
     // arrival rather than pretending to become a particular card. The human's
     // own draw is face-up because they are about to see it anyway.
     const to = cardSizedRect(seatRect(move.actor), from.width);
-    const card = move.actor === HUMAN_SEAT
-      ? cardById(state, state.zones.cards(handAddress(HUMAN_SEAT)).at(-1) || '')
+    const card = isMySeat(move.actor)
+      ? cardById(state, state.zones.cards(handAddress(mySeat())).at(-1) || '')
       : null;
     flyCard(card ? art().face(card) : art().back(), from, to, { fade: true });
     return;
@@ -2153,7 +2171,7 @@ async function endMatchFromSummary() {
   const state = liveState();
   const myEpoch = epoch;
   const leader = Math.max(...state.scores);
-  const ahead = state.scores[HUMAN_SEAT] >= leader;
+  const ahead = state.scores[mySeat()] >= leader;
   const ok = await confirmAction(
     `End this ${state.pack.manifest.name} match after ${state.roundNumber - 1} `
     + `${state.roundNumber - 1 === 1 ? 'round' : 'rounds'}?`
@@ -2239,7 +2257,7 @@ export function flushTable() {
  * lookup.
  */
 function winnerSentence(state) {
-  return state.winner === HUMAN_SEAT ? 'You win!' : `${seatLabel(state.winner)} wins.`;
+  return isMySeat(state.winner) ? 'You win!' : `${seatLabel(state.winner)} wins.`;
 }
 
 /**
@@ -2255,7 +2273,7 @@ function finalPlaySentence(state, move) {
   if (!move || (move.type !== 'playCard' && move.type !== 'discard')) return '';
   const card = cardById(state, move.cards && move.cards[0]);
   if (!card) return '';
-  const who = move.actor === HUMAN_SEAT ? 'you' : seatLabel(move.actor);
+  const who = isMySeat(move.actor) ? 'you' : seatLabel(move.actor);
   return `Last card: ${cardName(card)}, played by ${who}.`;
 }
 
@@ -2460,7 +2478,7 @@ async function performHumanMove(state, move, sourceNode) {
     render(state, `Can't do that: ${check.reason}`);
     return;
   }
-  const from = rectOf(sourceNode) || (move.from ? zoneRect(move.from) : null) || seatRect(HUMAN_SEAT);
+  const from = rectOf(sourceNode) || (move.from ? zoneRect(move.from) : null) || seatRect(mySeat());
   // NOT `selection = null`. The render inside afterMove prunes it per card
   // (pruneSelection), which drops exactly what this move consumed and leaves
   // the rest staged. Clearing wholesale is what made a Milestones meld
@@ -2472,14 +2490,14 @@ async function performHumanMove(state, move, sourceNode) {
 
 /** A tap on one of the human's own hand cards, interpreted per the UI model. */
 function onHandCard(state, cardId, card, sourceNode, ui) {
-  const handAddr = handAddress(HUMAN_SEAT);
+  const handAddr = handAddress(mySeat());
 
   if (ui.mode === 'tap' || ui.mode === 'play-drawn') {
     // One tap plays it — the destination is implicit, and the wild's question
     // is asked by performHumanMove, the same place a drop asks it. In
     // 'play-drawn' only the drawn card is in ui.handSelectable, and this is
     // reached only through a selectable card.
-    performHumanMove(state, { actor: HUMAN_SEAT, type: 'playCard', cards: [cardId] }, sourceNode);
+    performHumanMove(state, { actor: mySeat(), type: 'playCard', cards: [cardId] }, sourceNode);
     return;
   }
 
@@ -2551,14 +2569,14 @@ function performAnnouncement(state, move, myEpoch = epoch) {
 
   let message = '';
   if (announced) {
-    const who = announced.seat === HUMAN_SEAT ? 'You' : identityOf(announced.seat).name;
+    const who = isMySeat(announced.seat) ? 'You' : identityOf(announced.seat).name;
     message = `${who}: “${announced.label}”`;
-    showBanner(message, announced.seat === HUMAN_SEAT ? 'good' : 'neutral');
+    showBanner(message, isMySeat(announced.seat) ? 'good' : 'neutral');
   } else if (caught) {
-    const catcher = caught.seat === HUMAN_SEAT ? 'You' : identityOf(caught.seat).name;
-    const victim = caught.target === HUMAN_SEAT ? 'you' : identityOf(caught.target).name;
+    const catcher = isMySeat(caught.seat) ? 'You' : identityOf(caught.seat).name;
+    const victim = isMySeat(caught.target) ? 'you' : identityOf(caught.target).name;
     message = `${catcher} caught ${victim} — ${caught.drew} card${caught.drew === 1 ? '' : 's'}.`;
-    showBanner(message, caught.target === HUMAN_SEAT ? 'bad' : 'good');
+    showBanner(message, isMySeat(caught.target) ? 'bad' : 'good');
   }
 
   render(state, message);
@@ -2618,9 +2636,14 @@ function adoptMatch(pack, state, message, { dealing = false } = {}) {
   session = createSession({
     pack,
     state,
+    // WHO OWNS EACH SEAT, before who they are: this is a solo table, so one
+    // human on this device and bots in the rest. A shared table builds the
+    // same structure from the host's lobby frame instead, which is the whole
+    // reason ownership is a table rather than the number zero.
+    seats: soloSeatTable(state.seats, { humanSeat: SOLO_HUMAN_SEAT }),
     // Who is at this table — derived from the match SEED, so a resumed game
     // re-seats the same opponents and a fresh deal brings new ones.
-    seating: buildSeating(state.seed, state.seats, { humanSeat: HUMAN_SEAT, humanName: humanName() }),
+    seating: buildSeating(state.seed, state.seats, { humanSeat: SOLO_HUMAN_SEAT, humanName: humanName() }),
     // From the PACK rather than the manifest alone: the deck is what tells a
     // style which colours it actually has to draw. Built once per match rather
     // than per render — resolving a theme walks the whole deck.
@@ -2827,7 +2850,7 @@ export function initTable({ onExit }) {
   // state. The zone renderer draws the piles and melds; the table tells it what
   // a tap on one MEANS.
   zones = createZoneRenderer({
-    humanSeat: HUMAN_SEAT,
+    me,
     session: () => session,
     art,
     cardById,
@@ -2850,7 +2873,7 @@ export function initTable({ onExit }) {
   });
 
   record = createMatchRecord({
-    humanSeat: HUMAN_SEAT,
+    me,
     seating: () => session.seating,
     art,
     // The record is written on the way out of a match, so the timers stop
@@ -2860,14 +2883,14 @@ export function initTable({ onExit }) {
 
   ladder = createContractLadder({
     el: el.contractLadder,
-    humanSeat: HUMAN_SEAT,
+    me,
     identityOf,
     attachInspector,
     isBusy: () => !!drag && drag.isDragging(),
   });
 
   moments = createCelebrations({
-    humanSeat: HUMAN_SEAT,
+    me,
     seatLabel,
     currentEpoch: () => epoch,
     el,
@@ -2882,7 +2905,7 @@ export function initTable({ onExit }) {
   bots = createBotDriver({
     currentEpoch: () => epoch,
     botDelayMs: () => settings.botDelayMs,
-    humanSeat: HUMAN_SEAT,
+    me,
     identityOf,
     actingSeatsOf,
     announcementsFor,
@@ -2915,7 +2938,7 @@ export function initTable({ onExit }) {
   gestures = watchHandGestures({
     hand: el.hand,
     session: () => session,
-    humanSeat: HUMAN_SEAT,
+    me,
     cardById,
     onSelect: onHandCard,
     // A full render: the gathered cards leave the fan for the tray.
