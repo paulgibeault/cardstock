@@ -67,6 +67,10 @@ function applyDiscard(ctx, move) {
 const sequencing = {
   id: 'sequencing',
 
+  // Which shared vars a peer may see (src/engine/view.js). Everything at this
+  // table is a pile somebody can point at.
+  publicVars: [],
+
   defaultZones(rules, seats) {   // eslint-disable-line no-unused-vars
     const buildCapacity = rules.buildRule.to - rules.buildRule.from + 1;
     return [

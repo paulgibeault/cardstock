@@ -47,6 +47,11 @@ const OPTIONAL_FUNCTIONS = [
   "committedSelection", "getMeldGroups", "describeEvent",
   "ruleLines", "endingLines", "statLines",
   "arrangeContract", "suggestMeld",
+  // Not called by the engine but by the per-seat view filter
+  // (src/engine/view.js): which shared vars a peer may see. A FUNCTION when the
+  // names come from the rules, which is why it belongs in this list rather
+  // than among the data members below.
+  "publicVars",
 ];
 
 test("every template answers everything the engine calls unconditionally", () => {

@@ -264,6 +264,11 @@ function dealAll(ctx) {
 const trickTaking = {
   id: 'trick-taking',
 
+  // Which shared vars a peer may see (src/engine/view.js). Who leads, what was
+  // led and which way the pass goes are all facts of the table.
+  publicVars: (rules) => ['leader', 'led', 'trickNumber', 'passDirection',
+    ...(rules.broken?.varName ? [rules.broken.varName] : [])],
+
   defaultZones(rules, seats) {   // eslint-disable-line no-unused-vars
     return [
       { id: 'hand', per: 'player', visibility: 'owner', layout: 'fan', order: 'sorted', facing: 'up' },

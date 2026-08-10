@@ -178,6 +178,59 @@ Beyond `id`/`per`/`visibility`/`layout`/`order`/`facing`/`capacity`/`count`/`lab
 | `landing: 'play' \| 'discard' \| 'both'` | where a card lands when the move names no destination |
 | `showsHeldValue` | this pile's contents are worth points; the felt shows the running cost |
 
+## `visibility` as a FILTERING vocabulary — the per-seat audit
+
+`visibility` predates multiplayer and, until `src/engine/view.js`, only the
+renderer read it. Its values therefore meant "draw this face down" rather than
+"do not tell them", and the two are not the same claim: a renderer that hides a
+pile still has the cards in memory, and a peer that is sent them has them for
+good.
+
+Every zone in every template was re-read against the filtering question. The
+rule the view layer applies:
+
+| `visibility` | What a peer is sent |
+|---|---|
+| `all` | every id, in order |
+| `owner` | every id **to its owner**; a bare count to everyone else |
+| `top` | the top id and a count; the pile beneath stays hidden |
+| `none` | a count, to everybody — **including the owner** |
+
+And the audit itself, which is the part worth keeping:
+
+| Zone | Template | Filtering decision |
+|---|---|---|
+| `hand` | all four | `owner`. The one that matters. |
+| `draw` | shedding, contract-rummy, sequencing | `none` — this pile IS the remaining shuffle; publishing its order publishes every future draw. |
+| `discard` | shedding, contract-rummy | `top`. Not merely taste: shedding RECYCLES the discard back into the draw pile, so its order is the future deck. |
+| `discard` | sequencing | `all`, and deliberately not `top` — **playability**, not secrecy, is what limits these to the top card. Everyone can see what you have thrown. |
+| `melds` | contract-rummy | `all`. Laid face up on the table. |
+| `trick` | trick-taking | `all`. Face up in the middle. |
+| `won` | trick-taking | `none` **plus `heldValue`**. The subtlest one: nobody may leaf back through the tricks, yet the running point cost is public, because everyone watched them being taken. A count alone would have deleted a number the felt has always shown. |
+| `stock` | sequencing | `top`. The count is the whole race and is public anyway. |
+| `build` | sequencing | `top` + capacity. |
+| `recycled` | sequencing | `none`. Feeds the draw pile. |
+
+### Vars
+
+Per-player vars use the `__` prefix the templates already had for their own
+bookkeeping (`__pendingPass`, shedding's `__<id>Called`/`__<id>Seen`): a
+`__` var reaches **only its owner**. Hearts' passing phase is a simultaneous
+commit, and a commit anybody else can read is not one.
+
+Shared vars are an **allowlist**: `publicVars` below. Anything a template does
+not declare is treated as this turn's private bookkeeping and reaches only the
+seat whose turn produced it.
+
+**This is fail-closed on purpose.** The live example is shedding's
+`drawnCardId`, which holds a card sitting in a player's hand — in a SHARED
+var. A denylist would have had to know to exclude it in advance; an allowlist
+simply never published it. A fifth template that declares nothing leaks nothing.
+
+| Member | Signature | Notes |
+|---|---|---|
+| `publicVars` | `string[] \| (rules) -> string[]` | Optional. A FUNCTION when the names come from the rules: shedding publishes one `active<Attr>` per attribute the pack matches on, and trick-taking publishes whichever var the manifest named for "hearts are broken". |
+
 ## Ending a round
 
 `ctx.endRound(winnerSeat)` — **this hand is finished**. Whether the *match* is

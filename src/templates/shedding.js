@@ -408,6 +408,13 @@ function applyChallenge(ctx, move) {
 const shedding = {
   id: 'shedding',
 
+  // WHICH SHARED VARS A PEER MAY SEE (src/engine/view.js). An ALLOWLIST, so a
+  // var nobody thought about stays private: `drawnCardId` is the reason — it
+  // holds a card sitting in one player's hand, and a denylist would have had
+  // to know to exclude it in advance. It is deliberately absent here, so it
+  // reaches only the seat that drew it.
+  publicVars: (rules) => (rules.matchOn || []).map(activeVarName),
+
   defaultZones(rules, seats) {   // eslint-disable-line no-unused-vars
     return [
       { id: 'hand', per: 'player', visibility: 'owner', layout: 'fan', order: 'sorted', facing: 'up' },
