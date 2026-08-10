@@ -24,7 +24,8 @@ import { thinkTimeMs } from '../players/roster.js';
 /**
  * @param currentEpoch  () => the table's epoch, read at fire time
  * @param botDelayMs    () => the player's bot-speed setting
- * @param humanSeat     the seat the driver must never play for
+ * @param me            the seat lens (src/players/seats.js); the driver never
+ *                      plays a seat this device holds
  * @param identityOf    (seat) => roster identity (name, persona)
  * @param actingSeatsOf (state) => seats that may act right now
  * @param announcementsFor (state, seat) => what that seat may declare/call
@@ -36,7 +37,7 @@ import { thinkTimeMs } from '../players/roster.js';
 export function createBotDriver({
   currentEpoch,
   botDelayMs,
-  humanSeat,
+  me,
   identityOf,
   actingSeatsOf,
   announcementsFor,
@@ -62,7 +63,7 @@ export function createBotDriver({
     if (!session) return;
     const state = session.state;
     if (state.gameOver) return;
-    const seat = actingSeatsOf(state).find((s) => s !== humanSeat);
+    const seat = actingSeatsOf(state).find((s) => !me.holds(s));
     if (seat === undefined) return;
 
     session.botTimer = Arcade.session.setTimeout(() => {
@@ -74,7 +75,7 @@ export function createBotDriver({
       // table freezes mid-turn, and the player is given no reason at all. A
       // caught one at least says so on the log line and leaves the felt usable.
       try {
-        const actingNow = actingSeatsOf(state).find((s) => s !== humanSeat);
+        const actingNow = actingSeatsOf(state).find((s) => !me.holds(s));
         if (actingNow === undefined) return; // the human became the only one who may act
         const move = chooseBotMove(state, actingNow, { persona: identityOf(actingNow).persona });
         if (!move) return;
@@ -116,7 +117,7 @@ export function createBotDriver({
     };
 
     for (let seat = 0; seat < state.seats; seat++) {
-      if (seat === humanSeat) continue;
+      if (me.holds(seat)) continue;
       const identity = identityOf(seat);
       const persona = identity.persona;
       if (!persona) continue;

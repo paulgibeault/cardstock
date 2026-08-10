@@ -23,13 +23,13 @@ export function heroFaces(manifest) {
 }
 
 /**
- * @param humanSeat  the seat whose win/loss is recorded
+ * @param me         the seat lens (src/players/seats.js); its seat is the one recorded
  * @param seating    () => the match's seating
  * @param art        () => the open match's card renderer
  * @param onConclude () => void, called before the record is written (the
  *                   table's cue to stop its timers)
  */
-export function createMatchRecord({ humanSeat, seating, art, onConclude }) {
+export function createMatchRecord({ me, seating, art, onConclude }) {
   /**
    * This match's numbers, replayed out of its own log (src/stats/matchStats.js).
    *
@@ -55,7 +55,7 @@ export function createMatchRecord({ humanSeat, seating, art, onConclude }) {
       .filter((identity) => identity.isBot && identity.opponentKey)
       .map((identity) => ({
         key: identity.opponentKey,
-        beaten: !!rank && rank[humanSeat] < rank[identity.seat],
+        beaten: !!rank && rank[me.seat()] < rank[identity.seat],
       }));
   }
 
@@ -96,7 +96,7 @@ export function createMatchRecord({ humanSeat, seating, art, onConclude }) {
     clearMatch(state.pack.id);
     const stats = safeStats(state);
     recordResult(state.pack.id, {
-      won: state.winner === humanSeat,
+      won: me.holds(state.winner),
       forfeit: false,
       opponents: opponentOutcomes(state, stats),
     });

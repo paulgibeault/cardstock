@@ -30,7 +30,7 @@ import { smartSelection } from './interaction.js';
 /**
  * @param hand        the #hand element
  * @param session     () => the open session, or null
- * @param humanSeat   the seat whose fan this is
+ * @param me          the seat lens (src/players/seats.js); its seat owns this fan
  * @param cardById    (state, id) => card
  * @param onSelect    (state, cardId, card, node, ui) => void — the same handler
  *                    a tap runs. A scrub is a nicer way to REACH a card, never
@@ -38,7 +38,7 @@ import { smartSelection } from './interaction.js';
  * @param onGathered  (state, count) => void — re-render after a hold gathered a
  *                    meld (the cards leave the fan for the tray)
  */
-export function watchHandGestures({ hand, session, humanSeat, cardById, onSelect, onGathered }) {
+export function watchHandGestures({ hand, session, me, cardById, onSelect, onGathered }) {
   const el = { hand };
   /**
    * PEEK: the card under the finger rises out of the fan, before the finger is
@@ -117,7 +117,7 @@ export function watchHandGestures({ hand, session, humanSeat, cardById, onSelect
       if (!peek()) return;
       peek().hold = null;
       const cardId = wrapper.dataset.cardId;
-      const next = smartSelection(session().state, humanSeat, cardId, session().selection);
+      const next = smartSelection(session().state, me.seat(), cardId, session().selection);
       if (!next) {
         // Nothing in hand goes with it. Say so on the card rather than in words:
         // a group that does not exist is not an error, just an answer.

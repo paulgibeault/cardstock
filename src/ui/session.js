@@ -23,14 +23,19 @@
 /**
  * @param pack     the loaded pack
  * @param state    the live engine state
+ * @param seats    who OWNS each seat (src/players/seats.js) — device or bot
  * @param seating  who is in each seat (src/players/roster.js)
  * @param cardArt  this pack's renderer (src/ui/cardStyles)
  * @param handPrefs the human's saved fan arrangement for this pack
  */
-export function createSession({ pack, state, seating, cardArt, handPrefs }) {
+export function createSession({ pack, state, seats, seating, cardArt, handPrefs }) {
   return {
     pack,
     state,
+    // Ownership (which device plays which chair) and identity (what that seat
+    // is called) are two different facts, and a shared table can change the
+    // first without touching the second — so they are two fields, not one.
+    seats,
     seating,
     cardArt,
     handPrefs,

@@ -21,7 +21,8 @@ import { handAddress } from './interaction.js';
 import { playTrickTaken, playActionCard } from '../arcade/audio.js';
 
 /**
- * @param humanSeat   the seat everything is worded from the point of view of
+ * @param me          the seat lens (src/players/seats.js); everything is worded
+ *                    from the point of view of the seat it names
  * @param seatLabel   (seat) => the name to put in a sentence
  * @param currentEpoch () => the table's epoch; a delayed flight checks it
  * @param elements    { table, eventBanner, log, hand, opponentsTop }
@@ -32,7 +33,7 @@ import { playTrickTaken, playActionCard } from '../arcade/audio.js';
  * @param cardById    (state, id) => card
  */
 export function createCelebrations({
-  humanSeat, seatLabel, currentEpoch, el, art, zoneRect, seatRect, pulseSeat, cardById,
+  me, seatLabel, currentEpoch, el, art, zoneRect, seatRect, pulseSeat, cardById,
 }) {
   /**
    * How many penalty cards are worth watching arrive.
@@ -68,7 +69,7 @@ export function createCelebrations({
     const to = cardSizedRect(seatRect(seat), from.width);
     if (!to) return;
 
-    const ids = seat === humanSeat
+    const ids = me.holds(seat)
       ? state.zones.cards(handAddress(seat)).slice(-count)
       : [];
     const myEpoch = currentEpoch();
@@ -125,7 +126,7 @@ export function createCelebrations({
    * flight uses.
    */
   function celebrateTrick(session, state, ev) {
-    const mine = ev.seat === humanSeat;
+    const mine = me.holds(ev.seat);
     const bad = mine && ev.points > 0;
 
     const from = zoneRect('trick');
@@ -166,7 +167,7 @@ export function createCelebrations({
    * way would be describing the cards rather than the game.
    */
   function defaultEventText(ev) {
-    const you = (seat) => seat === humanSeat;
+    const you = (seat) => me.holds(seat);
     const name = (seat) => (you(seat) ? 'You' : seatLabel(seat));
 
     if (ev.type === 'skipped') {
@@ -222,7 +223,7 @@ export function createCelebrations({
     if (ev.say && typeof ev.say.text === 'string') {
       return { text: ev.say.text, tone: ev.say.tone || 'neutral' };
     }
-    return state.pack.template.describeEvent?.(ev, { seatLabel, humanSeat })
+    return state.pack.template.describeEvent?.(ev, { seatLabel, viewerSeat: me.seat() })
       ?? defaultEventText(ev);
   }
 
@@ -246,7 +247,7 @@ export function createCelebrations({
     if (!said) return null;
 
     showBanner(session, said.text, said.tone);
-    playActionCard({ against: ev.seat === humanSeat && said.tone === 'bad' });
+    playActionCard({ against: me.holds(ev.seat) && said.tone === 'bad' });
 
     // After the card that caused it has landed on the discard (animateMove's 260ms
     // flight, launched a beat before this): the play and the punishment are two

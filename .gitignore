@@ -1,3 +1,7 @@
 node_modules/
 *.log
 .DS_Store
+
+# Agent worktrees the Claude Code harness creates in-repo. Never artifacts.
+.claude/worktrees/
+.claude/settings.local.json
