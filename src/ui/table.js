@@ -58,6 +58,7 @@ import { promptChoice, closeChoiceDialog } from './choiceDialog.js';
 import { createCelebrations } from './celebrations.js';
 import { createContractLadder } from './contractLadder.js';
 import { createSeatLens, soloSeatTable } from '../players/seats.js';
+import { sessionClock } from '../match/clock.js';
 import { createMatchRecord } from './matchRecord.js';
 import { watchHandGestures } from './handGestures.js';
 import { createZoneRenderer } from './zoneRenderer.js';
@@ -2902,7 +2903,12 @@ export function initTable({ onExit }) {
   });
 
   // Per §10/§17.5 this runs host-side when Phase 8 lands — see src/ui/botDriver.js.
+  //
+  // THE SESSION CLOCK IS THE SOLO ANSWER, and naming it here rather than
+  // reaching for `Arcade.session` inside the driver is what lets a shared
+  // table hand it the host wall clock instead (src/match/clock.js).
   bots = createBotDriver({
+    clock: sessionClock(),
     currentEpoch: () => epoch,
     botDelayMs: () => settings.botDelayMs,
     me,

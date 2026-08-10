@@ -11,10 +11,11 @@
 // time. These tests pin that: the driver skips whatever the lens calls mine,
 // not seat zero, and it re-asks rather than trusting an answer it cached.
 //
-// The felt cannot pin this itself. Every timer in the driver is
-// `Arcade.session.setTimeout`, which freezes while the frame is suspended
-// (§6c) — and a preview pane loads the page hidden, so a browser check of the
-// bot path silently verifies nothing at all.
+// The felt cannot pin this itself. The driver's clock is injected, and the one
+// solo hands it is the session clock — `Arcade.session.setTimeout`, which
+// freezes while the frame is suspended (§6c). A preview pane loads the page
+// hidden, so a browser check of the bot path sits frozen and verifies nothing
+// at all. A fake clock is the only honest way to assert any of this.
 
 import { test } from 'node:test';
 import assert from 'node:assert';
@@ -26,26 +27,27 @@ import { createSeatTable, createSeatLens, soloSeatTable } from '../src/players/s
 import { createBotDriver } from '../src/ui/botDriver.js';
 
 /**
- * A stand-in for the SDK's session clock that fires nothing on its own.
+ * A clock that fires nothing on its own.
  *
- * The driver schedules through `Arcade.session.setTimeout`; the tests want to
- * decide WHEN that lands, so pending callbacks are parked here and run by
- * hand. `flush` is what a suspended frame never does, which is the whole
- * reason these tests exist rather than a click-through.
+ * The driver takes its clock as a seam (src/match/clock.js), so the tests hand
+ * it one whose pending callbacks are parked and run by hand. `flush` is what a
+ * suspended frame never does — which is the whole reason this coverage is a
+ * Node test rather than a click-through: a preview pane loads the page hidden,
+ * so the real session clock would sit frozen and every assertion below would
+ * pass vacuously.
  */
-function fakeSessionClock() {
+function fakeClock() {
   const pending = [];
-  globalThis.Arcade = {
-    session: {
-      setTimeout(fn, ms) {
-        const entry = { fn, ms, cancelled: false };
-        pending.push(entry);
-        return { cancel() { entry.cancelled = true; } };
-      },
-    },
-  };
   return {
     pending,
+    kind: 'fake',
+    now: () => 0,
+    after(ms, fn) {
+      const entry = { fn, ms, cancelled: false };
+      pending.push(entry);
+      return { cancel() { entry.cancelled = true; } };
+    },
+    at(expiresAt, fn) { return this.after(expiresAt, fn); },
     flush() {
       const live = pending.filter((e) => !e.cancelled);
       pending.length = 0;
@@ -66,11 +68,12 @@ function freshSession(state) {
 }
 
 /** A driver wired to a lens, recording every seat it actually moved. */
-function driverFor(seatTable, state, { acting = null } = {}) {
+function driverFor(seatTable, state, { acting = null, clock = fakeClock() } = {}) {
   const played = [];
   const errors = [];
   const me = createSeatLens(() => seatTable);
   const bots = createBotDriver({
+    clock,
     currentEpoch: () => 1,
     botDelayMs: () => 0,
     me,
@@ -92,11 +95,11 @@ async function crazyEights(seats = 3) {
 }
 
 test('the driver plays a seat the lens does not call mine', async () => {
-  const clock = fakeSessionClock();
+  const clock = fakeClock();
   const state = await crazyEights(3);
   state.turn.seat = 1; // a bot's turn
 
-  const { bots, played, errors } = driverFor(soloSeatTable(3), state);
+  const { bots, played, errors } = driverFor(soloSeatTable(3), state, { clock });
   const session = freshSession(state);
   bots.scheduleNextTurn(session, 1);
   assert.equal(clock.flush(), 1, 'one turn was scheduled');
@@ -107,11 +110,11 @@ test('the driver plays a seat the lens does not call mine', async () => {
 });
 
 test('the driver never plays the seat this device holds', async () => {
-  const clock = fakeSessionClock();
+  const clock = fakeClock();
   const state = await crazyEights(3);
   state.turn.seat = 0; // the human's own turn, in a solo table
 
-  const { bots, played } = driverFor(soloSeatTable(3), state);
+  const { bots, played } = driverFor(soloSeatTable(3), state, { clock });
   bots.scheduleNextTurn(freshSession(state), 1);
 
   assert.equal(clock.pending.length, 0, 'nothing is scheduled on my own turn');
@@ -122,7 +125,7 @@ test('MINE IS NOT SEAT ZERO: the driver skips whichever seat the lens names', as
   // The regression this package exists for. A joiner holding seat 2 must see
   // the driver play seats 0 and 1 and leave 2 alone — the exact inverse of
   // what a hard-coded `humanSeat = 0` would do.
-  const clock = fakeSessionClock();
+  const clock = fakeClock();
   const state = await crazyEights(3);
 
   const seats = createSeatTable({ seats: 3, localDeviceId: 'me' });
@@ -130,7 +133,7 @@ test('MINE IS NOT SEAT ZERO: the driver skips whichever seat the lens names', as
   seats.seatBot(0);
   seats.seatBot(1);
 
-  const { bots, played } = driverFor(seats, state);
+  const { bots, played } = driverFor(seats, state, { clock });
 
   state.turn.seat = 2; // MY turn now — the driver must not move for me
   bots.scheduleNextTurn(freshSession(state), 1);
@@ -144,7 +147,7 @@ test('MINE IS NOT SEAT ZERO: the driver skips whichever seat the lens names', as
 });
 
 test('hotseat: every seat this device holds is skipped, not just the first', async () => {
-  const clock = fakeSessionClock();
+  const clock = fakeClock();
   const state = await crazyEights(3);
 
   const seats = createSeatTable({ seats: 3, localDeviceId: 'me' });
@@ -152,7 +155,7 @@ test('hotseat: every seat this device holds is skipped, not just the first', asy
   seats.claim(1, { deviceId: 'me', localIndex: 1 });
   seats.seatBot(2);
 
-  const { bots, played } = driverFor(seats, state);
+  const { bots, played } = driverFor(seats, state, { clock });
 
   for (const seat of [0, 1]) {
     state.turn.seat = seat;
@@ -170,7 +173,7 @@ test('ownership is re-read at fire time, not captured when the turn was schedule
   // A bot filling an abandoned seat, and the player coming back to reclaim it,
   // both change the answer BETWEEN the schedule and the fire. A captured
   // number cannot see that; the lens can.
-  const clock = fakeSessionClock();
+  const clock = fakeClock();
   const state = await crazyEights(3);
   state.turn.seat = 1;
 
@@ -179,7 +182,7 @@ test('ownership is re-read at fire time, not captured when the turn was schedule
   seats.seatBot(1);
   seats.seatBot(2);
 
-  const { bots, played } = driverFor(seats, state);
+  const { bots, played } = driverFor(seats, state, { clock });
   bots.scheduleNextTurn(freshSession(state), 1);
   assert.equal(clock.pending.length, 1, 'seat 1 was a bot when this was scheduled');
 

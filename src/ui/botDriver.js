@@ -12,16 +12,27 @@
 // from the table — who is in a seat, what a move looks like when it lands, how
 // to report a failure — is injected, so this module never touches the DOM.
 //
-// TIMERS, NOT A LOOP. Every timer here is `Arcade.session.setTimeout`, which
-// freezes while the frame is suspended (§6c — forgotten timers are the fleet's
-// number one battery drain) and cancels itself when a save import replaces the
-// state. The `epoch` guard is still needed on top of that, for "Play again" and
-// for leaving to the lobby, which the SDK knows nothing about.
+// TIMERS, NOT A LOOP — AND THE CLOCK IS INJECTED. Solo passes the session
+// clock, which is `Arcade.session.setTimeout`: it freezes while the frame is
+// suspended (§6c — forgotten timers are the fleet's number one battery drain)
+// and cancels itself when a save import replaces the state. That is right for
+// one player and wrong for a table three people share, where a hand does not
+// stop because somebody pocketed their phone — so a shared table passes the
+// host's wall clock instead (src/match/clock.js). This module does not care
+// which it was given; that is the entire point of taking it as a seam.
+//
+// The `epoch` guard is still needed on top of either, for "Play again" and for
+// leaving to the lobby, which no clock knows anything about.
 
 import { chooseBotMove } from '../engine/bot.js';
 import { thinkTimeMs } from '../players/roster.js';
 
 /**
+ * @param clock         the match clock (src/match/clock.js). Solo passes the
+ *                      session clock, which freezes with a suspended frame
+ *                      (§6c); a shared table passes the HOST wall clock,
+ *                      because a hand does not stop when one player pockets
+ *                      their phone.
  * @param currentEpoch  () => the table's epoch, read at fire time
  * @param botDelayMs    () => the player's bot-speed setting
  * @param me            the seat lens (src/players/seats.js); the driver never
@@ -35,6 +46,7 @@ import { thinkTimeMs } from '../players/roster.js';
  * @param onError       (message) => void, for a move that throws
  */
 export function createBotDriver({
+  clock,
   currentEpoch,
   botDelayMs,
   me,
@@ -66,7 +78,7 @@ export function createBotDriver({
     const seat = actingSeatsOf(state).find((s) => !me.holds(s));
     if (seat === undefined) return;
 
-    session.botTimer = Arcade.session.setTimeout(() => {
+    session.botTimer = clock.after(thinkTimeMs(identityOf(seat), botDelayMs()), () => {
       session.botTimer = null;
       if (myEpoch !== currentEpoch()) return; // superseded — drop the stale turn
       // WRAPPED, BECAUSE A BOT'S MOVE REACHES THE ENGINE FROM INSIDE A TIMER.
@@ -84,7 +96,7 @@ export function createBotDriver({
         console.error('[cardstock] a bot move failed', err);
         onError('Something went wrong on a bot’s turn. The game is paused here.');
       }
-    }, thinkTimeMs(identityOf(seat), botDelayMs()));
+    });
   }
 
   /**
@@ -110,10 +122,10 @@ export function createBotDriver({
     if (state.gameOver || !state.pack.template.enumerateAnnouncements) return;
 
     const beat = (fn, ms) => {
-      session.announceTimers.push(Arcade.session.setTimeout(() => {
+      session.announceTimers.push(clock.after(ms, () => {
         if (myEpoch !== currentEpoch()) return;
         fn();
-      }, ms));
+      }));
     };
 
     for (let seat = 0; seat < state.seats; seat++) {
