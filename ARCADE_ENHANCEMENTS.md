@@ -1,19 +1,30 @@
 # Cardstock arcade integration — implementation plan (v2)
 
+**This document asks the launcher for nothing.** Despite the filename, v2
+is a *Cardstock-side* implementation plan: every task below is work in this
+repo. The platform ask-list is **fully satisfied** — read that before
+anything else, because the filename and the E-labels scattered through the
+other docs both invite the opposite conclusion.
+
 **Status: ready to implement. All open decisions are resolved (2026-08-04).**
+
+**What v1 asked for, and where it went.** v1 of this document specified four
+platform-side `Arcade.peer` enhancements — E0 capability flags, E1 targeted
+sends, E2 roster + per-peer status, E3 message metadata — as prerequisites
+for Cardstock's multiplayer design. **All four shipped in the launcher SDK**,
+and a fifth surface the original spec never asked for, `peer.party`, shipped
+after them; the documented capability list now carries `peer.sendTo`,
+`peer.roster`, `peer.meta`, and `peer.party`. So: nothing here is blocked on,
+waiting for, or owed by the launcher, and no launcher change is a
+prerequisite for any phase below, Phase 8 included. **Do not re-request any
+of it.** The E-labels survive in other docs, so
+[Appendix B](#appendix-b--e-label-glossary) keeps them resolvable — it is a
+glossary of shipped features, not a backlog.
 
 This is the canonical, self-contained plan for bringing Cardstock into the
 arcade launcher fleet (`paulgibeault.github.io`), written to be executed
 end-to-end by a later implementation session without needing this
 conversation's context.
-
-**History**: v1 of this document specified four platform-side `Arcade.peer`
-enhancements (E0–E3) that Cardstock's multiplayer design depended on. All
-of them have since shipped in the launcher SDK — the documented capability
-list now includes `peer.sendTo`, `peer.roster`, and `peer.meta`, plus a
-newer `peer.party` that postdates the original spec. The platform asks are
-done; what remains is the Cardstock side. The E-labels survive in other
-docs, so [Appendix B](#appendix-b--e-label-glossary) keeps them resolvable.
 
 **Authorities, in order of precedence:**
 
@@ -254,7 +265,10 @@ reduced motion deals cards instantly.
 widens once frames and names arrive from peers.*
 
 1. Escape `cardAriaLabel` output before it enters the `aria-label`
-   attribute (`src/ui/renderCard.js:33`) — reuse the local `escapeXml`.
+   attribute (`src/ui/renderCard.js:33` when this was written; the card art
+   pass replaced that file with `src/ui/cardStyles/`, so the escape now
+   belongs in every style that opens an `<svg>`) — reuse the local
+   `escapeXml`.
 2. Validate the pack id against `/^[\w-]+$/` before it enters the fetch
    path (`src/main.js:14,51`).
 3. Convert the opponent-row `innerHTML` (`src/main.js:88`) to

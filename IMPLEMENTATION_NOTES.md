@@ -167,7 +167,9 @@ What this pass owed it, and delivered:
   peer-input hardening Phase 8 builds frame-shape validation on top of.
 
 Two seams are NOT yet in place and Phase 8 must add them: seat identity is
-still a bare index (`HUMAN_SEAT`/`SEAT_COUNT` in `src/main.js`) rather than
+still a bare index (`HUMAN_SEAT`/`SEAT_COUNT` in `src/ui/table.js` — they
+moved out of `src/main.js` with the lobby extraction, when `main.js` became
+boot plus the router and `table.js` took the one open match) rather than
 `(deviceId, localIndex)`, and bot turns run on `Arcade.session` timers,
 which freeze on suspend and must become host-wall-clock timeout events at a
 shared table.

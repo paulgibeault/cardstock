@@ -321,6 +321,35 @@ and reference them from its deck file by name.
 
 ## 8. State, determinism, and P2P sync
 
+> **READ `MULTIPLAYER_PLAN.md` FIRST.** For everything below the
+> event-sourcing half — the sync protocol, the frame kinds, the per-seat view
+> delivery — `MULTIPLAYER_PLAN.md` is the authoritative design and this
+> section is a superseded sketch kept for its reasoning. Two of its
+> assumptions are now wrong, and both are load-bearing enough to mislead an
+> implementer who reads on without knowing:
+>
+> - **Clients do not replay a seed + log.** This section reads as though a
+>   client resyncs from the same `serializeMatch` payload the save file uses.
+>   It cannot: **seed + log is full information** — the seed reconstructs the
+>   entire shuffle — so the seed and the full log **never leave the host**.
+>   Clients hold a per-seat `ViewState`, a plain serializable object
+>   containing exactly what that seat may see, and **do not run the reducer at
+>   all** (`MULTIPLAYER_PLAN.md` §2 D1, §6).
+> - **There are no `event` frames.** They are `view` frames, and a `view`
+>   carries the seat's **complete fresh state, replacing the last one** —
+>   derived events ride along for animation only and are never authoritative.
+>   This kills incremental desync as a category and makes a snapshot and a
+>   normal frame the same payload (`MULTIPLAYER_PLAN.md` §2 D2, §5).
+>
+> Everything else here carries forward **unchanged**: host authority, the
+> caps gate, the lobby rebroadcast over `onReady`, the `relayed: true` spoof
+> check, treating `send() === false` on a private frame as an error path,
+> host-wall-clock timers, and the three-launcher Definition of Done. One
+> smaller staleness: the parenthetical below calling the targeted-send
+> enhancement "implementation underway in the arcade repo" is out of date —
+> E0–E3 all shipped in the launcher SDK long since, plus `peer.party`
+> (`ARCADE_ENHANCEMENTS.md` Appendix B).
+
 > **STATUS: half built.** The event-sourcing half is real and shipped — the
 > reducer, the seeded PRNG, the log-is-the-state save format
 > (`src/engine/replay.js`), headless simulation. The P2P half is **designed,
@@ -935,6 +964,14 @@ disagree, the arcade docs win and this section gets updated.
   event-log format itself is versioned from day one instead.
 
 ### 17.4 Identity, seats, lobby
+
+> **`MULTIPLAYER_PLAN.md` is authoritative for 17.4 and 17.5.** The seat
+> model, the lobby handshake, and the transport facts below all survived into
+> it intact; the frame table in 17.5 did not. `event` frames are `view`
+> frames carrying complete per-seat view replacement, and a client's
+> `snapshot` is that same ViewState — never the seed + log, which is full
+> information and stays on the host. See the §8 banner and
+> `MULTIPLAYER_PLAN.md` §5–§6.
 
 - **Seat = `(deviceId, localIndex)`** — supports hotseat players and
   remote players mixed at one table. `deviceId` comes from

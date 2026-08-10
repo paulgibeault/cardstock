@@ -271,6 +271,13 @@ this plan pre-builds Phase 8, but two seams are kept honest: the table
 controller keeps its single-entry move funnel (`afterMove`), and the
 router comment records the solo-only timer assumption §8.2 will replace.
 
+**Confirmed.** `MULTIPLAYER_PLAN.md` §8 takes the reservation and names the
+slot: a multiplayer match persists host-only under
+`arcade.v1.cardstock.mpMatch`, deliberately outside the `match.<packId>`
+namespace, one live match at a time in v1. The per-pack keys therefore keep
+meaning exactly what they mean today — "only the open table advances" stays
+true on a client, and on the host the shared table *is* the open table.
+
 ## Test impact summary
 
 - New: migration test, summary-listing test, `packs/index.json` repo-gate.
