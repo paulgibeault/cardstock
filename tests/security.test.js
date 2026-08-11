@@ -205,3 +205,69 @@ test("no chooser tile can be talked into a colour the repo did not generate", ()
     }
   }
 });
+
+/* ------------------------------------------------------------------ *
+ * Peer text — the Phase 8 surface
+ * ------------------------------------------------------------------ */
+
+// A PEER NAME IS THE FLEET'S SHIPPED-TWICE XSS SHAPE, and Phase 8 is where this
+// game acquires one. Two gates, because they fail differently:
+//
+//   1. The WIRE must carry the name through unchanged but bounded. Sanitising
+//      it here would be the wrong layer and the wrong answer — a name with a
+//      `<` in it is a rude peer, not an attacker, and mangling it would also
+//      hide the payload from the renderer test that is supposed to catch it.
+//   2. The RENDERER must never put it in markup. src/ui/party.js is the only
+//      file that draws peer-supplied text, and the rule it follows is stricter
+//      than escaping: `textContent` everywhere, because a missing escape call
+//      is invisible in review and a missing textContent is a type error.
+//
+// The second one is a source gate rather than a DOM test on purpose. This is
+// the whole reason the rule is expressible: there is exactly one file, and
+// "does it contain innerHTML" is a question with no false negatives. The DOM
+// half — a hostile name rendering inert in a real browser, on a real table —
+// is scenario 7 of tools/mp-acceptance.mjs.
+test("the wire carries a hostile peer name through, bounded and unmangled", async () => {
+  const { validateFrame, FRAME, PROTOCOL_VERSION } = await import("../src/match/protocol.js");
+  const verdict = validateFrame({
+    k: FRAME.LOBBY,
+    protocol: PROTOCOL_VERSION,
+    packId: "crazy-eights",
+    variants: [],
+    hostDeviceId: "host",
+    seatCount: 2,
+    seats: [{ seat: 0, kind: "device", deviceId: "host", name: PAYLOAD }],
+  });
+  assert.ok(verdict.ok, verdict.reason);
+  assert.equal(verdict.frame.seats[0].name, PAYLOAD,
+    "the validator rewrote a name — escaping is the DOM's job and doing it here hides the payload");
+
+  const long = validateFrame({
+    k: FRAME.LOBBY,
+    protocol: PROTOCOL_VERSION,
+    packId: "crazy-eights",
+    variants: [],
+    hostDeviceId: "host",
+    seatCount: 2,
+    seats: [{ seat: 0, kind: "device", deviceId: "host", name: "x".repeat(5000) }],
+  });
+  assert.ok(long.ok);
+  assert.ok(long.frame.seats[0].name.length <= 60, "an unbounded name reached the roster");
+});
+
+test("the only file that renders peer text never reaches for markup", async () => {
+  const { readFileSync } = await import("node:fs");
+  // Comments stripped first: the file NAMES these sinks in the very comment
+  // that forbids them, and a gate that cannot tell a prohibition from a use is
+  // a gate somebody deletes.
+  const source = readFileSync(new URL("../src/ui/party.js", import.meta.url), "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/(^|[^:])\/\/.*$/gm, "$1");
+  for (const sink of ["innerHTML", "outerHTML", "insertAdjacentHTML", "document.write"]) {
+    // The header's own promise, enforced. If markup ever becomes genuinely
+    // necessary here, `Arcade.html.escape` is the required tool and this gate
+    // is the place to say so out loud.
+    assert.ok(!source.includes(sink),
+      `src/ui/party.js uses ${sink} — peer names must reach the DOM through textContent`);
+  }
+});

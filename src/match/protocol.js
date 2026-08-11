@@ -65,6 +65,50 @@ export const EMOTES = Object.freeze(['👏', '😂', '😮', '🤔', '😅', '�
 /** The charset every wire-supplied id is held to before it can reach anything. */
 const SAFE_ID = /^[\w-]{1,64}$/;
 
+/**
+ * A CARD INSTANCE ID, WHICH IS NOT THE SAME CHARSET — and pretending it was
+ * meant that four of the five packs could not play a card over the wire.
+ *
+ * `src/engine/cards.js` mints the second and later copies of a card as
+ * `base#N` (`yellow-draw2#2`, `sb-wild#6`), and `baseId()` splits on that '#'.
+ * Held to `SAFE_ID`, every one of those ids failed, so a `propose` carrying a
+ * real card from Wildfire or Stockpile was refused as malformed before it ever
+ * reached a rule. Only Crazy Eights' opening `draw` — a move with no cards at
+ * all — got through, which is exactly why the gap survived a passing suite.
+ *
+ * The suffix is bounded to digits, so the widened charset still cannot express
+ * a selector, a path or a template hole.
+ */
+const SAFE_CARD_ID = /^[\w-]{1,64}(#\d{1,4})?$/;
+
+/**
+ * A ZONE ADDRESS: a zone name plus its dot-separated numeric parts —
+ * `hand.1`, `build.2`, `discard.4.3`. Same story as the card ids above; a
+ * move's `from`/`to` are addresses, and no address with a seat index in it
+ * matched `SAFE_ID` either.
+ *
+ * The parts are DIGITS ONLY. That is what keeps the dot from becoming a path:
+ * there is no `../`, no `.length`, no `.constructor` expressible here.
+ */
+const SAFE_ADDRESS = /^[\w-]{1,64}(\.\d{1,3}){0,3}$/;
+
+export function isSafeCardId(value) {
+  return typeof value === 'string' && SAFE_CARD_ID.test(value);
+}
+
+export function isSafeAddress(value) {
+  return typeof value === 'string' && SAFE_ADDRESS.test(value);
+}
+
+/**
+ * A CONTRACT ITEM: `set(3)`, `run(7)`, `colorGroup(4)`. The grammar is
+ * `parseItem`'s own (src/templates/melds.js), copied rather than imported —
+ * this module knows the wire and nothing about templates, and a validator that
+ * reached into a template for its charset would be a validator that changes
+ * meaning when a template does.
+ */
+const SAFE_ITEM = /^\w{1,20}\(\d{1,2}\)$/;
+
 /** Bounds. A peer that sends more than this is not playing a card game. */
 const LIMITS = Object.freeze({
   cards: 32,
@@ -73,6 +117,12 @@ const LIMITS = Object.freeze({
   nameChars: 60,
   reasonChars: 200,
   variants: 16,
+  // A wild takes ONE attribute value (a rank, a suit, a colour). Four is
+  // already generous for a card game and small enough to be uninteresting.
+  wildAttrs: 4,
+  // Any other integer in a choice — a meld index, a contract number. Bounded
+  // so an index cannot arrive as 1e9 and be handed to an allocator.
+  index: 1000,
 });
 
 export function isSafeId(value) {
@@ -107,13 +157,18 @@ function cleanMove(raw, seats) {
 
   if (raw.cards !== undefined) {
     if (!Array.isArray(raw.cards) || raw.cards.length > LIMITS.cards) return null;
-    if (!raw.cards.every(isSafeId)) return null;
+    if (!raw.cards.every(isSafeCardId)) return null;
     move.cards = raw.cards.slice();
   }
-  for (const key of ['from', 'to', 'id']) {
+  for (const key of ['from', 'to']) {
     if (raw[key] === undefined) continue;
-    if (!isSafeId(raw[key])) return null;
+    if (!isSafeAddress(raw[key])) return null;
     move[key] = raw[key];
+  }
+  if (raw.id !== undefined) {
+    // A meld id, a contract id — a name, never an address.
+    if (!isSafeId(raw.id)) return null;
+    move.id = raw.id;
   }
   if (raw.target !== undefined) {
     if (!isSeatIndex(raw.target, seats)) return null;
@@ -132,8 +187,67 @@ function cleanMove(raw, seats) {
 }
 
 /**
- * A move's answered Ask. Shallow by design: today's choices are a suit, a
- * colour, a target seat, or a list of melds, and a structure deeper than that
+ * WHAT A PLAYER SAYS THEIR WILDS TOOK: `{ [cardId]: { [attribute]: value } }`.
+ *
+ * A wild has no rank until somebody gives it one, and a run of "3, wild, wild,
+ * 6" is only a run if the two wilds are a 4 and a 5. So the assignment travels
+ * with the move (src/templates/melds.js) and the host re-derives it against the
+ * real cards — this layer only decides that the shape is a shape.
+ */
+function cleanWilds(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const entries = Object.entries(raw);
+  if (entries.length > LIMITS.cards) return null;
+  const out = {};
+  for (const [cardId, assignment] of entries) {
+    if (!isSafeCardId(cardId)) return null;
+    if (!assignment || typeof assignment !== 'object' || Array.isArray(assignment)) return null;
+    const pairs = Object.entries(assignment);
+    if (pairs.length > LIMITS.wildAttrs) return null;
+    const clean = {};
+    for (const [attribute, value] of pairs) {
+      if (!isSafeId(attribute)) return null;
+      if (typeof value === 'string') {
+        if (!isSafeId(value)) return null;
+        clean[attribute] = value;
+      } else if (Number.isInteger(value) && value >= 0 && value < LIMITS.index) {
+        clean[attribute] = value;
+      } else return null;
+    }
+    out[cardId] = clean;
+  }
+  return out;
+}
+
+/**
+ * ONE LAID-DOWN GROUP: which contract item it satisfies, which cards are in it,
+ * and what its wilds became. This is contract rummy's actual vocabulary, and
+ * until it was written down here Milestones could not be played over the wire
+ * at all — every `layDown` and every `hit` was refused as a malformed choice,
+ * on a validator whose comment claimed to handle "a list of melds".
+ */
+function cleanMeldGroup(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  if (typeof raw.item !== 'string' || !SAFE_ITEM.test(raw.item)) return null;
+  if (!Array.isArray(raw.cards) || raw.cards.length > LIMITS.cards) return null;
+  if (!raw.cards.every(isSafeCardId)) return null;
+  const group = { item: raw.item, cards: raw.cards.slice() };
+  if (raw.wilds !== undefined) {
+    const wilds = cleanWilds(raw.wilds);
+    if (!wilds) return null;
+    group.wilds = wilds;
+  }
+  return group;
+}
+
+/**
+ * A move's answered Ask.
+ *
+ * BOUNDED RATHER THAN SHALLOW. The vocabulary is small and closed — a suit, a
+ * colour, a target seat, a meld index, a list of laid-down groups, and the
+ * values a meld's wilds took — and every branch below names one of those. What
+ * it is not is a general object cleaner: there is no recursion, every key and
+ * every leaf is charset-checked, and anything that is not one of these shapes
  * is a peer probing rather than playing.
  */
 function cleanChoice(raw, seats) {
@@ -141,19 +255,35 @@ function cleanChoice(raw, seats) {
   const out = {};
   for (const [key, value] of Object.entries(raw)) {
     if (!isSafeId(key)) return null;
-    if (typeof value === 'string') {
-      if (!isSafeId(value)) return null;
+    if (key === 'wilds') {
+      const wilds = cleanWilds(value);
+      if (!wilds) return null;
+      out[key] = wilds;
+    } else if (typeof value === 'string') {
+      // A suit, a colour, a contract name — or a card. The card-id charset is
+      // the union of all of them and is no less bounded, so one check serves
+      // rather than a per-key table that goes stale the first time a template
+      // asks a new question.
+      if (!isSafeCardId(value)) return null;
       out[key] = value;
     } else if (Number.isInteger(value)) {
-      if (!isSeatIndex(value, seats) && key === 'target') return null;
+      if ((key === 'target' || key === 'seat') && !isSeatIndex(value, seats)) return null;
+      if (value < 0 || value >= LIMITS.index) return null;
       out[key] = value;
     } else if (Array.isArray(value)) {
       if (value.length > LIMITS.melds) return null;
       const groups = [];
       for (const group of value) {
-        if (!Array.isArray(group) || group.length > LIMITS.cards) return null;
-        if (!group.every(isSafeId)) return null;
-        groups.push(group.slice());
+        if (Array.isArray(group)) {
+          // The bare form: a group of card ids and nothing else.
+          if (group.length > LIMITS.cards) return null;
+          if (!group.every(isSafeCardId)) return null;
+          groups.push(group.slice());
+        } else {
+          const meld = cleanMeldGroup(group);
+          if (!meld) return null;
+          groups.push(meld);
+        }
       }
       out[key] = groups;
     } else {

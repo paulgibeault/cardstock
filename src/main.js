@@ -23,6 +23,9 @@ import {
 import {
   initLobby, renderLobby, showLobby, hideLobby, reportLobbyError,
 } from './ui/lobby.js';
+import {
+  initParty, refreshEntry as refreshPartyEntry, hidePartyScreen,
+} from './ui/party.js';
 import { initInspector, hideInspector } from './ui/inspector.js';
 
 /* ------------------------------------------------------------------ *
@@ -32,9 +35,14 @@ import { initInspector, hideInspector } from './ui/inspector.js';
 async function goToLobby() {
   closeTable();
   hideInspector();
+  hidePartyScreen();
   document.getElementById('table-screen').hidden = true;
   Arcade.ui.setTitle('Cardstock');
   showLobby();
+  // Asked again on every arrival rather than remembered: a party can be formed
+  // while the player is sitting on this screen, and a door drawn once at boot
+  // is a door that never opens (src/match/peerPort.js).
+  refreshPartyEntry();
   try {
     await renderLobby();
   } catch (err) {
@@ -46,17 +54,35 @@ async function goToLobby() {
 async function goToTable(packId, setup) {
   hideLobby();
   hideInspector();
+  hidePartyScreen();
   document.getElementById('table-screen').hidden = false;
   try {
     // `setup` is the new-game sheet's answer (variants + seat count), absent
     // for a resume or a deep link — openTable treats a stored match as
     // authoritative over it either way.
     await openTable(packId, setup);
+    // The host's door is on the TABLE, because the table is the only thing
+    // there is to host — going back to the lobby closes the match.
+    refreshPartyEntry();
   } catch (err) {
     console.error(err);
     reportTableError(`Could not start that game: ${err.message}`);
     Arcade.ui.toast('Could not start the game.', { kind: 'error', duration: 4000 });
   }
+}
+
+/**
+ * The joiner's door onto the felt.
+ *
+ * `goToTable` opens a pack by id and deals or resumes; a joiner does neither.
+ * Its table already exists on somebody else's device and arrived as a view, so
+ * all this has to do is put the right screen in front of it.
+ */
+function showSharedTable() {
+  hideLobby();
+  hideInspector();
+  hidePartyScreen();
+  document.getElementById('table-screen').hidden = false;
 }
 
 /**
@@ -120,6 +146,12 @@ async function boot() {
   initInspector();
   initTable({ onExit: () => { goToLobby().catch(reportBootFailure); } });
   initLobby({ onOpenTable: (packId, setup) => { goToTable(packId, setup).catch(reportBootFailure); } });
+  // A JOINER OPENS THE TABLE WITHOUT A PACK ID: it is handed a view, not asked
+  // for a game, so it goes through showSharedTable rather than goToTable.
+  initParty({
+    onShowTable: () => showSharedTable(),
+    onShowLobby: () => { goToLobby().catch(reportBootFailure); },
+  });
 
   await route();
 }

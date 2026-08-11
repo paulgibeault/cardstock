@@ -27,16 +27,16 @@ import { createTableHost, seatStatus, needsHostDecision } from '../src/match/hos
 import { createTableClient } from '../src/match/client.js';
 import { peerAvailability, REQUIRED_CAPS } from '../src/match/peerPort.js';
 import {
-  validateFrame, isAuthentic, FRAME, PROTOCOL_VERSION, EMOTES,
+  validateFrame, isAuthentic, isSafeCardId, isSafeAddress, FRAME, PROTOCOL_VERSION, EMOTES,
 } from '../src/match/protocol.js';
 import { createPeerNetwork } from '../tools/peer-stub.mjs';
-import { loadPackFromDisk } from '../tools/pack-test.mjs';
+import { loadPackFromDisk, listPackIds } from '../tools/pack-test.mjs';
 
 /* ------------------------------------------------------------------ *
  * A three-device table
  * ------------------------------------------------------------------ */
 
-async function threeSeatTable({ packId = 'crazy-eights' } = {}) {
+async function threeSeatTable({ packId = 'crazy-eights', now } = {}) {
   const pack = await loadPackFromDisk(packId);
   const state = createState({ pack, seats: 3, seed: 20260810 });
   pack.template.setup(makeCtx(state));
@@ -60,6 +60,7 @@ async function threeSeatTable({ packId = 'crazy-eights' } = {}) {
       variants: pack.activeVariants ?? [],
     }),
     nameFor: (seat) => `Seat ${seat}`,
+    ...(now ? { now } : {}),
     hooks: { onError: (e) => errors.host.push(e) },
   });
 
@@ -128,6 +129,62 @@ test('wire ids are charset-checked before anything can use them as a selector', 
       `${id} should be refused`,
     );
   }
+});
+
+/**
+ * THE VALIDATOR HAS TO ACCEPT WHAT THE ENGINE ACTUALLY MINTS, and for a long
+ * while it did not.
+ *
+ * Every card after the first copy is `base#N` (src/engine/cards.js) and every
+ * per-seat zone is `name.N` (`hand.1`, `discard.4.3`). Neither matched the wire
+ * charset, so a `propose` carrying a real Wildfire or Stockpile card was
+ * refused as malformed before it reached a single rule — while Crazy Eights'
+ * opening `draw`, a move with no cards and no addresses, sailed through. One
+ * pack looked fine and four could not play at all.
+ *
+ * So the pin is against the REAL vocabulary rather than a handful of examples:
+ * every id and every address every pack mints, at every seat count it offers.
+ */
+test('every card id and zone address the engine mints survives the wire validator', async () => {
+  for (const packId of listPackIds()) {
+    const pack = await loadPackFromDisk(packId);
+    const { min, max } = pack.manifest.players;
+    for (const seats of new Set([min, max])) {
+      const state = createState({ pack, seats, seed: `charset:${packId}:${seats}` });
+      pack.template.setup(makeCtx(state));
+
+      const cards = [...pack.cardsById.keys()];
+      for (const id of cards) {
+        assert.ok(isSafeCardId(id), `${packId}: the wire refuses its own card id ${id}`);
+      }
+      for (const address of state.zones.allAddresses()) {
+        assert.ok(isSafeAddress(address), `${packId}: the wire refuses its own zone address ${address}`);
+      }
+
+      // And end to end, as a frame: a real move from a real enumeration.
+      for (let seat = 0; seat < seats; seat++) {
+        for (const move of enumerateLegalMoves(state, seat)) {
+          const verdict = validateFrame({ k: FRAME.PROPOSE, pid: 'p1', move });
+          assert.ok(verdict.ok, `${packId}: the wire refuses a legal move — ${JSON.stringify(move)}`);
+          assert.deepEqual(verdict.frame.move, move,
+            `${packId}: the validator dropped a field off a legal move — ${JSON.stringify(move)}`);
+        }
+      }
+    }
+  }
+});
+
+test('the widened charsets are still charsets — a dot is not a path', () => {
+  assert.equal(isSafeAddress('../../hand.0'), false);
+  assert.equal(isSafeAddress('hand.constructor'), false);
+  assert.equal(isSafeAddress('hand.'), false);
+  assert.equal(isSafeAddress('hand.0.1.2.3.4'), false);
+  assert.equal(isSafeCardId('red-1#'), false);
+  assert.equal(isSafeCardId('red-1#x'), false);
+  assert.equal(isSafeCardId('red#1#2'), false);
+  assert.equal(isSafeCardId('#hand > *'), false);
+  assert.ok(isSafeCardId('red-1#2'));
+  assert.ok(isSafeAddress('discard.4.3'));
 });
 
 test('a move is bounded — a peer cannot propose a thousand cards', () => {
@@ -319,6 +376,33 @@ test('a card id that names nothing in the deck is refused before it reaches the 
   t.state.turn.seat = 1;
   t.a.propose({ actor: 1, type: 'playCard', cards: ['not-a-real-card'] });
   assert.equal(t.seen.a.rejects.at(-1)?.rule, 'unknown-card');
+});
+
+test('a flooding client is cut off, and the table is told rather than left guessing', async () => {
+  let clock = 0;
+  const t = await threeSeatTable({ now: () => clock });
+  seatAll(t);
+  t.state.turn.seat = 1;
+  t.errors.host.length = 0;
+
+  // Well past PROPOSE_BUDGET inside one window. The refusal itself is the
+  // design; what must not happen is that it is invisible — from Ada's side a
+  // dropped proposal and a dead host look exactly the same.
+  const foreign = t.state.zones.cards('hand.2')[0];
+  for (let i = 0; i < 60; i++) {
+    t.a.propose({ actor: 1, type: 'playCard', cards: [foreign] });
+  }
+  assert.ok(t.errors.host.some((e) => e.kind === 'rate-limited'),
+    'the host dropped frames for budget without saying so');
+
+  // And the window is a WINDOW: move the clock past it and the same client is
+  // read again. A limiter that never forgives is a ban.
+  t.errors.host.length = 0;
+  clock += 60_000;
+  const before = t.state.log.length;
+  t.a.propose(enumerateLegalMoves(t.state, 1)[0]);
+  assert.equal(t.state.log.length, before + 1, 'a client the budget forgave was still being ignored');
+  assert.equal(t.errors.host.filter((e) => e.kind === 'rate-limited').length, 0);
 });
 
 /* ------------------------------------------------------------------ *

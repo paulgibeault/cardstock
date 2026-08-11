@@ -71,6 +71,13 @@ export function needsHostDecision(status) {
  * @param liveState () => the engine state, or null between matches
  * @param packInfo  () => ({ packId, packVersion, variants })
  * @param nameFor   (seat) => display name for the lobby roster
+ * @param now       the clock the rate-limit window is measured against. Injected
+ *                  for the same reason the peer port is: tools/simulate.mjs
+ *                  plays a whole hand in a millisecond, so on the wall clock
+ *                  every proposal of a long game lands inside one window and
+ *                  the budget starts refusing legal moves. A simulation that
+ *                  had to work around its own rate limiter would be measuring
+ *                  the limiter.
  * @param hooks     { onSeatsChanged, onApplied, onEmote, onError, onBye }
  */
 export function createTableHost({
@@ -79,6 +86,7 @@ export function createTableHost({
   liveState,
   packInfo,
   nameFor = () => '',
+  now = Date.now,
   hooks = {},
 }) {
   const unsubscribes = [];
@@ -213,10 +221,10 @@ export function createTableHost({
    * ---------------------------------------------------------------- */
 
   /** Rate limit per sender, so a misbehaving client cannot spin the validator. */
-  function withinBudget(deviceId, now) {
+  function withinBudget(deviceId, at) {
     const entry = budgets.get(deviceId);
-    if (!entry || now > entry.until) {
-      budgets.set(deviceId, { count: 1, until: now + PROPOSE_WINDOW_MS });
+    if (!entry || at > entry.until) {
+      budgets.set(deviceId, { count: 1, until: at + PROPOSE_WINDOW_MS });
       return true;
     }
     entry.count += 1;
@@ -250,10 +258,18 @@ export function createTableHost({
     if (took && liveState()) sendViewTo(frame.seat, fromDeviceId, { kind: FRAME.SNAPSHOT });
   }
 
-  function handlePropose(fromDeviceId, frame, now) {
+  function handlePropose(fromDeviceId, frame, at) {
     const state = liveState();
     if (!state) return;
-    if (!withinBudget(fromDeviceId, now)) return;
+    if (!withinBudget(fromDeviceId, at)) {
+      // SAID OUT LOUD, even though nothing is sent back. A budget that drops
+      // frames in complete silence looks identical, from the client's side, to
+      // a host that crashed — it proposes and waits forever — and identical,
+      // from ours, to a bug. Telling the table costs one hook call and turns an
+      // invisible refusal into a diagnosable one.
+      hooks.onError?.({ kind: 'rate-limited', deviceId: fromDeviceId, frame: frame.k });
+      return;
+    }
 
     const move = frame.move;
     const held = seats.seatsOfDevice(fromDeviceId);
@@ -305,11 +321,10 @@ export function createTableHost({
       return;
     }
     const frame = verdict.frame;
-    const now = Date.now();
 
     switch (frame.k) {
       case FRAME.CLAIM_SEAT: return handleClaim(fromDeviceId, frame);
-      case FRAME.PROPOSE: return handlePropose(fromDeviceId, frame, now);
+      case FRAME.PROPOSE: return handlePropose(fromDeviceId, frame, now());
       case FRAME.SNAPSHOT_REQ: return handleSnapshotReq(fromDeviceId);
       case FRAME.EMOTE: return void hooks.onEmote?.({
         deviceId: fromDeviceId, emote: EMOTES[frame.i], seat: seats.seatsOfDevice(fromDeviceId)[0] ?? null,
@@ -345,11 +360,32 @@ export function createTableHost({
     const check = validateMove(state, move);
     if (!check.legal) return check;
     applyMove(state, move);
-    seq += 1;
     const events = state.events.slice();
-    fanOut(events);
+    publish(events);
     hooks.onApplied?.(state, move, events);
     return { legal: true };
+  }
+
+  /**
+   * A move became a fact — bump the sequence and send everybody the result.
+   *
+   * TWO WAYS IN, ONE WAY OUT, and the second caller is why this is its own
+   * function. `applyLocal` is for a move the host module decides on: an
+   * accepted proposal. But the TABLE applies its own moves — a tap, a bot's
+   * turn, a timeout, an announcement — through a pipeline that predates
+   * multiplayer and that solo play depends on being exactly as it is. Making
+   * the felt route those through `applyLocal` would mean re-validating a move
+   * the table has already applied, and rewriting the one code path with no unit
+   * coverage in the repo. So the table applies, then says so
+   * (`setLocalMoveListener` in src/ui/table.js), and both roads arrive here.
+   *
+   * THE SEQ BUMP IS THE POINT. Views are whole and a client trusts `seq` to
+   * tell it whether it missed one; publishing a new view under an old sequence
+   * number is how a client silently keeps a stale table.
+   */
+  function publish(events = []) {
+    seq += 1;
+    fanOut(events);
   }
 
   /* ---------------------------------------------------------------- *
@@ -382,8 +418,10 @@ export function createTableHost({
     start,
     stop,
     applyLocal,
+    publish,
     broadcastLobby,
     fanOut,
+    seatStatusFor: (seat) => statusForSeat(seats.ownerOf(seat)),
     seq: () => seq,
     /** For the table: publish a fresh view without a move (a rename, a re-seat). */
     republish: () => fanOut([]),

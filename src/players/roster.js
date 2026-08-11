@@ -157,7 +157,7 @@ export function opponentKey(identity) {
 }
 
 /** Two initials, for a face that has no emoji (an unknown bot, or the human). */
-function initialsOf(name) {
+export function initialsOf(name) {
   const cleaned = String(name || '').replace(/[^A-Za-z0-9 ]/g, ' ').trim();
   if (!cleaned) return '??';
   const words = cleaned.split(/\s+/);
