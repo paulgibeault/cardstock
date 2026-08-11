@@ -48,22 +48,29 @@
     <div id="lobby-grid" class="lobby__grid"></div>
   </main>
 
-  <!-- The party screen: who is at the table, and what this device may do about
-       it. The host sees bot/open toggles, a joiner sees claim buttons, and both
-       see the same presence chips — drawn from the roster the HOST publishes,
-       because on a joiner `peers()` holds only the host and a fellow joiner's
-       silence is not absence. -->
-  <div id="party-screen" hidden>
-    <div id="party-bar">
-      <button id="party-back" class="ghost-button" aria-label="Back to the lobby">
-        <span aria-hidden="true">←</span> Lobby
-      </button>
-      <span id="party-heading"></span>
+  <!-- The party: who is at the table, and what this device may do about it. The
+       host sees bot/open toggles, a joiner sees claim buttons, and both see the
+       same presence chips — drawn from the roster the HOST publishes, because on
+       a joiner `peers()` holds only the host and a fellow joiner's silence is
+       not absence.
+
+       AN OVERLAY, NOT A THIRD SCREEN. It was a screen, and being a screen made
+       it invisible: the router owns `hidden` on exactly two elements, so this
+       one unhid itself BELOW the lobby grid and the only way to find it was to
+       scroll past five game tiles. It is also the wrong shape for the job — the
+       thing underneath is the context ("who is joining WHAT"), and a table you
+       are hosting must not be torn down to look at the seats. -->
+  <div id="party-overlay" hidden>
+    <div class="panel panel--wide">
+      <div id="party-heading" class="panel__title"></div>
+      <p id="party-summary" class="party__summary"></p>
+      <p id="party-note" class="party__note" hidden></p>
+      <div id="party-seats" class="party__seats"></div>
+      <div id="party-actions" class="party__actions"></div>
+      <div class="panel__actions">
+        <button type="button" id="party-back" class="ghost-button">Close</button>
+      </div>
     </div>
-    <p id="party-summary" class="party__summary"></p>
-    <p id="party-note" class="party__note" hidden></p>
-    <div id="party-seats" class="party__seats"></div>
-    <div id="party-actions" class="party__actions"></div>
   </div>
 
   <!-- The host's answer to a seat that dropped for good. Not shown for an

@@ -2713,6 +2713,7 @@ body.is-dragging .card-face { cursor: grabbing; }
 #game-over-overlay,
 #rules-overlay,
 #party-decision,
+#party-overlay,
 #new-game-overlay {
   position: fixed;
   inset: 0;
@@ -2731,6 +2732,7 @@ body.is-dragging .card-face { cursor: grabbing; }
 #game-over-overlay[hidden],
 #rules-overlay[hidden],
 #party-decision[hidden],
+#party-overlay[hidden],
 #new-game-overlay[hidden] { display: none; }
 
 #choice-modal .panel,
@@ -2740,6 +2742,7 @@ body.is-dragging .card-face { cursor: grabbing; }
 #game-over-overlay .panel,
 #rules-overlay .panel,
 #party-decision .panel,
+#party-overlay .panel,
 #new-game-overlay .panel {
   background: var(--panel-bg);
   color: var(--panel-text);
@@ -3531,32 +3534,16 @@ body.is-dragging .card-face { cursor: grabbing; }
  * into the first rather than deleting it.
  * ------------------------------------------------------------------ */
 
-#party-screen {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-  padding: 1rem;
-  max-width: 34rem;
-  margin: 0 auto;
-}
-#party-screen[hidden] { display: none; }
+/* The panel is centred and chromed by the overlay family above; everything
+   here is only what goes INSIDE it. Left-aligned against that panel's centred
+   default, because a seat grid is a list of people and a centred list of names
+   is unreadable. */
+#party-overlay .panel { text-align: left; }
+#party-overlay .panel__title { text-align: center; }
 
-#party-bar {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  min-height: 2.25rem;
-}
-#party-heading {
-  font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.party__summary { opacity: 0.85; margin: 0; }
+.party__summary { opacity: 0.85; margin: 0 0 0.75rem; text-align: center; }
 .party__note {
-  margin: 0;
+  margin: 0 0 0.75rem;
   padding: 0.6rem 0.75rem;
   border-radius: 10px;
   background: var(--chip-bg);
@@ -3564,8 +3551,22 @@ body.is-dragging .card-face { cursor: grabbing; }
 }
 .party__note[hidden] { display: none; }
 
-.party__seats { display: flex; flex-direction: column; gap: 0.4rem; }
-.party__actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+.party__seats {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  /* A table can seat eight. The panel must not grow past the viewport on a
+     phone, so the grid is what scrolls — never the page behind it. */
+  max-height: min(50vh, 22rem);
+  overflow-y: auto;
+}
+.party__actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  justify-content: center;
+  margin-top: 0.75rem;
+}
 
 .party-seat {
   display: flex;

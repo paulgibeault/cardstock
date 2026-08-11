@@ -191,43 +191,74 @@ const privacy = {
     // output passes for exactly as long as the bug is consistent.
     await frames.B.evaluate(() => {
       window.__wire = [];
-      window.Arcade.peer.onMessage((payload) => { window.__wire.push(JSON.stringify(payload)); });
+      // Counted as it arrives rather than read off __wire, which is cleared
+      // every step: a joiner→joiner proposal is a containment failure whenever
+      // it happens, not only in the step somebody happened to be looking.
+      window.__seenPropose = 0;
+      window.Arcade.peer.onMessage((payload) => {
+        if (payload && payload.k === 'propose') window.__seenPropose++;
+        window.__wire.push(JSON.stringify(payload));
+      });
     });
 
-    const a = await viewCards(frames.A);
-    check('joiner A holds a view of its own', !!a && a.seat === 1, JSON.stringify(a?.seat));
-    const handBefore = a?.zones[`hand.${a.seat}`] || [];
-    check('joiner A can see its own hand', handBefore.length > 0, `${handBefore.length} cards`);
+    const first = await viewCards(frames.A);
+    check('joiner A holds a view of its own', !!first && first.seat === 1, JSON.stringify(first?.seat));
+    check('joiner A can see its own hand',
+      (first?.zones[`hand.${first.seat}`] || []).length > 0,
+      `${(first?.zones[`hand.${first.seat}`] || []).length} cards`);
 
-    // A move each, so there is traffic to examine.
-    for (let i = 0; i < 12; i++) {
+    // MOVE BY MOVE, because "is this card private" is a question with a
+    // different answer every move and a whole-window comparison cannot ask it.
+    // A card A plays becomes the face-up discard, at which point B is ENTITLED
+    // to it; a recycle can deal that same public card back into a hand. So each
+    // step pairs the hand A held AT THAT MOMENT with the frames B was handed in
+    // that same moment, and nothing is compared across the boundary.
+    const leaked = [];
+    let observed = 0;
+    let watched = 0;
+    for (let step = 0; step < 14; step++) {
+      const before = await viewCards(frames.A);
+      const hand = before?.zones[`hand.${before?.seat}`] || [];
+      await frames.B.evaluate(() => { window.__wire.length = 0; });
+
       for (const label of ['H', 'A', 'B']) {
         try { await party(frames[label], 'takeTurn'); } catch { /* not our turn */ }
       }
       await new Promise((r) => setTimeout(r, 60));
+
+      const wire = await frames.B.evaluate(() => window.__wire.slice());
+      if (!wire.length) continue;
+      observed += wire.length;
+
+      // BOTH ENDS OF THE STEP, and that is what makes the comparison exact.
+      // The card A plays during a step is in the hand this step opened with and
+      // is the face-up discard by the time B's view is built — B is entitled to
+      // it, and grading against the opening snapshot alone would call that a
+      // leak every single hand. A card still in A's hand when the step CLOSES
+      // was private for the whole step, so those are the ids that can prove
+      // something, and B must not have been handed one.
+      const after = await viewCards(frames.A);
+      const still = new Set(after?.zones[`hand.${after?.seat}`] || []);
+      const private_ = hand.filter((id) => still.has(id));
+      if (!private_.length) continue;
+      watched++;
+      for (const id of private_) {
+        if (wire.some((frame) => frame.includes(`"${id}"`))) leaked.push(`${id} @${step}`);
+      }
     }
 
-    // THE COMPARISON IS AGAINST CARDS THAT NEVER LEFT A'S HAND, and the reason
-    // is a false positive that would otherwise be guaranteed: a card A plays
-    // becomes the face-up discard, at which point B is ENTITLED to it — and a
-    // recycle can later deal that same public card back into a hand. Only the
-    // ids A held for the whole window are unambiguously private for the whole
-    // window, so only those can prove anything.
-    const wire = await frames.B.evaluate(() => window.__wire.slice());
-    const after = await viewCards(frames.A);
-    const handAfter = new Set(after?.zones[`hand.${after?.seat}`] || []);
-    const held = handBefore.filter((id) => handAfter.has(id));
-    const leaked = held.filter((id) => wire.some((frame) => frame.includes(`"${id}"`)));
-    check('joiner B was never handed a card that stayed in joiner A\'s hand',
-      leaked.length === 0 && held.length > 0,
-      leaked.length ? leaked.slice(0, 3).join(', ') : `${held.length} cards held throughout`);
+    check('joiner B was never handed a card that was in joiner A\'s hand at the time',
+      leaked.length === 0 && watched > 0,
+      leaked.length ? leaked.slice(0, 3).join(', ')
+        : `${watched} steps with cards in hand, ${observed} frames to B`);
 
-    const proposals = wire.filter((frame) => frame.includes('"k":"propose"'));
-    check('joiner B never saw another joiner\'s proposal', proposals.length === 0,
-      `${proposals.length} propose frames reached B`);
+    const proposals = await frames.B.evaluate(() => window.__seenPropose || 0);
+    check('joiner B never saw another joiner\'s proposal', proposals === 0,
+      `${proposals} propose frames reached B`);
 
     const b = await viewCards(frames.B);
-    const foreign = Object.keys(b?.zones || {}).filter((address) => /^hand\.\d+$/.test(address) && address !== `hand.${b.seat}`);
+    const foreign = Object.keys(b?.zones || {})
+      .filter((address) => /^hand\.\d+$/.test(address) && address !== `hand.${b.seat}`);
     check('joiner B\'s view carries no card list for anybody else\'s hand',
       foreign.length === 0, foreign.join(', '));
   },

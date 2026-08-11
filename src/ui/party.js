@@ -38,7 +38,7 @@ import { enumerateLegalMoves } from '../engine/movePipeline.js';
 import { createTableClient } from '../match/client.js';
 import { FRAME, EMOTES, validateFrame, isAuthentic } from '../match/protocol.js';
 import { botById, initialsOf, pickBotIds } from '../players/roster.js';
-import { fetchPack } from './packSource.js';
+import { fetchPack, fetchPackManifest } from './packSource.js';
 import {
   adoptSharedView, leaveSharedTable, tableContext, rebaseSeats,
   setLocalMoveListener, afterRemoteMove, setTablePaused, rerenderTable,
@@ -46,7 +46,7 @@ import {
 
 const el = {
   entry: document.getElementById('party-button'),
-  screen: document.getElementById('party-screen'),
+  screen: document.getElementById('party-overlay'),
   back: document.getElementById('party-back'),
   heading: document.getElementById('party-heading'),
   note: document.getElementById('party-note'),
@@ -82,8 +82,26 @@ let goToTable = () => {};
 let goToLobby = () => {};
 
 const selfId = () => port?.self()?.deviceId || null;
+
+/**
+ * What to call ourselves ON THIS SCREEN. Second person, because at our own
+ * table we are "You" — the same voice the status bar has always used.
+ */
 const myName = () => {
   try { return Arcade.player.name() || 'You'; } catch { return 'You'; }
+};
+
+/**
+ * What to call ourselves TO EVERYBODY ELSE, which is emphatically not the same
+ * string — and publishing the display name is how a joiner ended up looking at
+ * a seat grid whose host was called "You". Second person only works about the
+ * person reading it. With no name set, the device's own name is the next
+ * honest answer ("Paul's iPhone"), and a bare fallback after that.
+ */
+const publishedName = () => {
+  let chosen = '';
+  try { chosen = Arcade.player.name() || ''; } catch { chosen = ''; }
+  return String(chosen || port?.self()?.name || 'Host').slice(0, 60);
 };
 
 export function partyRole() {
@@ -121,7 +139,9 @@ function ensurePort() {
 /** A peer's display name, from the roster, clamped and never trusted. */
 function peerName(deviceId) {
   if (!deviceId) return 'Someone';
-  if (deviceId === selfId()) return myName();
+  // Our own seat, seen from outside: this feeds the roster we PUBLISH, and the
+  // local screen re-answers with `myName()` when it draws our own row.
+  if (deviceId === selfId()) return publishedName();
   const entry = (port?.peers() || []).find((p) => p.deviceId === deviceId);
   const name = entry?.name || '';
   return String(name).slice(0, 60) || 'Someone';
@@ -132,7 +152,9 @@ function nameForSeat(seat) {
   const ctx = tableContext();
   const owner = ctx?.seats?.ownerOf(seat);
   if (!owner || owner.kind === 'empty') return '';
-  if (owner.kind === 'bot') return botById(owner.botId).name;
+  // The felt's own name for this bot, so the roster a joiner receives says what
+  // the host is actually looking at.
+  if (owner.kind === 'bot') return ctx.seating?.[seat]?.name || botById(owner.botId).name;
   return peerName(owner.deviceId);
 }
 
@@ -151,15 +173,26 @@ function seatingFromRoster(frame) {
   const seatCount = frame?.seatCount || roster.length;
   const botSeats = roster.filter((s) => s.kind === 'bot').map((s) => s.seat);
   const botIds = pickBotIds(frame?.hostDeviceId || 'party', botSeats.length);
+  // THE HOST ALREADY HAS AN ANSWER, and it is the one on the felt. Deriving a
+  // second set of bot faces here put Cass and Nell in the seat grid while Otto
+  // and Bruno sat at the same two seats on the table behind it — the panel and
+  // the game disagreeing about who is playing. The derivation below is for a
+  // JOINER, which has no seed and no seating; the host defers to its own.
+  const own = host ? tableContext()?.seating : null;
 
   const out = [];
   for (let seat = 0; seat < seatCount; seat++) {
     const entry = roster.find((s) => s.seat === seat) || { seat, kind: 'empty' };
     if (entry.kind === 'bot') {
+      if (own?.[seat]?.isBot) { out.push(own[seat]); continue; }
       const bot = botById(botIds[botSeats.indexOf(seat)]);
+      // A joiner takes the NAME the host published when there is one — the host
+      // is looking at the real bot — and falls back to the shared derivation
+      // only for a roster that predates it.
+      const name = String(entry.name || bot.name).slice(0, 60);
       out.push(Object.freeze({
-        seat, name: bot.name, shortName: bot.name, icon: bot.icon,
-        initials: initialsOf(bot.name), color: bot.color,
+        seat, name, shortName: name, icon: bot.icon,
+        initials: initialsOf(name), color: bot.color,
         isBot: true, botId: bot.id, persona: null, tagline: '', opponentKey: `bot:${bot.id}`,
       }));
       continue;
@@ -390,6 +423,17 @@ function renderStrip() {
   el.strip.hidden = !el.strip.childElementCount;
 }
 
+/** packId -> the manifest's own name, fetched once per pack we are offered. */
+const packNames = new Map();
+
+function rememberPackName(packId) {
+  if (!packId || packNames.has(packId)) return;
+  packNames.set(packId, null); // in flight; never ask twice
+  fetchPackManifest(packId)
+    .then((manifest) => { packNames.set(packId, manifest?.name || packId); renderScreen(); })
+    .catch(() => { packNames.set(packId, packId); });
+}
+
 function renderScreen() {
   if (!el.screen) return;
   if (el.heading) el.heading.textContent = partyLabel();
@@ -398,7 +442,14 @@ function renderScreen() {
 
   if (el.summary) {
     const frame = lobbyFrame;
-    const packName = joinedPack?.manifest?.name || tableContext()?.pack?.manifest?.name || frame?.packId || '';
+    // A JOINER HAS NOT LOADED THE PACK YET — deciding whether to join is the
+    // whole point of this screen — so the slug is all the frame carries. The
+    // manifest is one small JSON and the lobby reads it for every tile anyway,
+    // so "crazy-eights" becomes "Crazy Eights" before anybody has to read it.
+    const packName = joinedPack?.manifest?.name
+      || tableContext()?.pack?.manifest?.name
+      || packNames.get(frame?.packId)
+      || frame?.packId || '';
     const variants = frame?.variants || [];
     el.summary.textContent = packName
       ? (variants.length ? `${packName} · ${variants.join(', ')}` : packName)
@@ -689,6 +740,7 @@ function startSniffing() {
     if (!isAuthentic(FRAME.LOBBY, { fromDeviceId, hostDeviceId, relayed: meta?.relayed })) return;
     invitation = verdict.frame;
     lobbyFrame = verdict.frame;
+    rememberPackName(verdict.frame.packId);
     refreshEntry();
     renderScreen();
   });
@@ -791,6 +843,17 @@ export function refreshEntry() {
   renderStrip();
 }
 
+/**
+ * Open the party panel OVER whatever is on screen.
+ *
+ * Over, not instead of, and that is the whole correction: this used to be a
+ * third screen, which the two-screen router in src/main.js does not know about
+ * — so it unhid itself underneath the lobby grid and could only be found by
+ * scrolling past every game tile. An overlay is also the right shape. What is
+ * underneath is the context (a joiner is deciding whether to join THAT game),
+ * and a host must be able to look at the seats without its table being torn
+ * down to do it.
+ */
 export function showPartyScreen() {
   if (!el.screen) return;
   el.screen.hidden = false;
@@ -800,6 +863,10 @@ export function showPartyScreen() {
 
 export function hidePartyScreen() {
   if (el.screen) el.screen.hidden = true;
+}
+
+export function isPartyScreenOpen() {
+  return !!el.screen && !el.screen.hidden;
 }
 
 export function initParty({ onShowTable, onShowLobby }) {
@@ -812,7 +879,17 @@ export function initParty({ onShowTable, onShowLobby }) {
     if (!gate.available) { announceGate(gate); return; }
     showPartyScreen();
   });
-  el.back?.addEventListener('click', () => { hidePartyScreen(); goToLobby(); });
+  // CLOSING IS NOT LEAVING. The panel is a look at the seats; dismissing it
+  // returns to whatever it was covering. Actually leaving a table is one of the
+  // buttons inside it, and says so.
+  el.back?.addEventListener('click', () => hidePartyScreen());
+  // The two dismissals every other overlay on this game already answers to.
+  el.screen?.addEventListener('click', (event) => {
+    if (event.target === el.screen) hidePartyScreen();
+  });
+  window.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && isPartyScreenOpen()) hidePartyScreen();
+  });
 
   // The party surface can appear at any moment: a game is often mounted before
   // anybody has paired. Both of these re-ask rather than remembering.
