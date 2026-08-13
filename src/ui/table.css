@@ -3416,6 +3416,28 @@ body.is-dragging .card-face { cursor: grabbing; }
 }
 .tile__rules:hover { opacity: 1; background: var(--ghost-hover); }
 
+/* The party door, in the same footer as the other two secondary actions — but
+   not as quiet as them. "Play together" is the only one of the three that is
+   ever the reason somebody opened the lobby, and at 0.65 opacity beneath a card
+   fan it reads as a footnote. It also only appears when there is a party to
+   play with, so it is never competing for attention it has not earned. */
+.tile__together {
+  display: block;
+  width: 100%;
+  padding: 0.5rem;
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: inherit;
+  background: none;
+  border: none;
+  border-top: 1px solid var(--tile-border);
+  cursor: pointer;
+}
+.tile__together::before { content: '\1F465\A0'; }
+.tile__together:hover { background: var(--ghost-hover); }
+.tile__together[hidden] { display: none; }
+
 /* ------------------------------------------------------------------ *
  * How to play
  * ------------------------------------------------------------------ */

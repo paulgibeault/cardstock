@@ -35,8 +35,11 @@ import { thinkTimeMs } from '../players/roster.js';
  *                      their phone.
  * @param currentEpoch  () => the table's epoch, read at fire time
  * @param botDelayMs    () => the player's bot-speed setting
- * @param me            the seat lens (src/players/seats.js); the driver never
- *                      plays a seat this device holds
+ * @param me            the seat lens (src/players/seats.js). The driver moves
+ *                      the seats it says the HOUSE plays — bots and empties.
+ *                      Not "every seat this device does not hold": at a shared
+ *                      table that includes the joiners, and the host would go
+ *                      on playing a chair somebody is sitting in.
  * @param identityOf    (seat) => roster identity (name, persona)
  * @param actingSeatsOf (state) => seats that may act right now
  * @param announcementsFor (state, seat) => what that seat may declare/call
@@ -75,7 +78,7 @@ export function createBotDriver({
     if (!session) return;
     const state = session.state;
     if (state.gameOver) return;
-    const seat = actingSeatsOf(state).find((s) => !me.holds(s));
+    const seat = actingSeatsOf(state).find((s) => me.plays(s));
     if (seat === undefined) return;
 
     session.botTimer = clock.after(thinkTimeMs(identityOf(seat), botDelayMs()), () => {
@@ -87,8 +90,8 @@ export function createBotDriver({
       // table freezes mid-turn, and the player is given no reason at all. A
       // caught one at least says so on the log line and leaves the felt usable.
       try {
-        const actingNow = actingSeatsOf(state).find((s) => !me.holds(s));
-        if (actingNow === undefined) return; // the human became the only one who may act
+        const actingNow = actingSeatsOf(state).find((s) => me.plays(s));
+        if (actingNow === undefined) return; // every acting seat now belongs to a person
         const move = chooseBotMove(state, actingNow, { persona: identityOf(actingNow).persona });
         if (!move) return;
         playMove(state, move, actingNow);
@@ -129,7 +132,12 @@ export function createBotDriver({
     };
 
     for (let seat = 0; seat < state.seats; seat++) {
-      if (me.holds(seat)) continue;
+      // Same question as the turn scheduler asks, for the same reason: without
+      // it the host declares "Last card!" on behalf of a seat a person is
+      // sitting in. (`persona` being null for a human would usually catch this
+      // one step later — but only if the seating has been refreshed, and one
+      // bug should not be load-bearing for another.)
+      if (!me.plays(seat)) continue;
       const identity = identityOf(seat);
       const persona = identity.persona;
       if (!persona) continue;

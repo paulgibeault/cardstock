@@ -40,9 +40,10 @@ import { FRAME, EMOTES, validateFrame, isAuthentic } from '../match/protocol.js'
 import { botById, initialsOf, pickBotIds } from '../players/roster.js';
 import { fetchPack, fetchPackManifest } from './packSource.js';
 import {
-  adoptSharedView, leaveSharedTable, tableContext, rebaseSeats,
+  adoptSharedView, leaveSharedTable, tableContext, setSeating, dealHostedTable,
   setLocalMoveListener, afterRemoteMove, setTablePaused, rerenderTable,
 } from './table.js';
+import { createSeatTable } from '../players/seats.js';
 
 const el = {
   entry: document.getElementById('party-button'),
@@ -69,6 +70,12 @@ const EMOTE_COOLDOWN_MS = 1500;
 
 let port = null;              // the peer port, or null when there is no surface
 let host = null;              // createTableHost, when we are hosting
+// THE TABLE, BEFORE THERE IS A TABLE. A host builds the seating in the lobby
+// and deals once, so these two outlive the moment of dealing: the same seat
+// table object is handed to `dealHostedTable`, which means the host module and
+// the felt are looking at one set of chairs rather than two that agree at first.
+let hostSeats = null;
+let hostPack = null;          // { packId, variants, name } chosen from the tile
 let client = null;            // createTableClient, when we are a joiner
 let joinedPack = null;        // the pack a joiner loaded to match the host's
 let lobbyFrame = null;        // the roster we are drawing: ours, or the host's
@@ -149,13 +156,24 @@ function peerName(deviceId) {
 
 /** The name the HOST publishes for a seat — read by the lobby roster it sends. */
 function nameForSeat(seat) {
-  const ctx = tableContext();
-  const owner = ctx?.seats?.ownerOf(seat);
+  const owner = (hostSeats || tableContext()?.seats)?.ownerOf(seat);
   if (!owner || owner.kind === 'empty') return '';
-  // The felt's own name for this bot, so the roster a joiner receives says what
-  // the host is actually looking at.
-  if (owner.kind === 'bot') return ctx.seating?.[seat]?.name || botById(owner.botId).name;
+  // The felt's own name for this bot when there is a felt, so the roster a
+  // joiner receives says what the host is actually looking at. Before the deal
+  // there is no felt and the shared derivation is the only answer either of us
+  // has — which is fine, because it is the answer we will both keep.
+  if (owner.kind === 'bot') return tableContext()?.seating?.[seat]?.name || derivedBotName(seat);
   return peerName(owner.deviceId);
+}
+
+/** The bot a seat gets before anybody has dealt — same input on every device. */
+function derivedBotName(seat) {
+  const table = hostSeats;
+  if (!table) return botById(null).name;
+  const botSeats = [];
+  for (let s = 0; s < table.count; s++) if (table.isBot(s) || table.isEmpty(s)) botSeats.push(s);
+  const ids = pickBotIds(selfId() || 'party', botSeats.length);
+  return botById(ids[botSeats.indexOf(seat)]).name;
 }
 
 /**
@@ -262,8 +280,10 @@ function seatStatuses() {
   const out = new Map();
   const frame = lobbyFrame;
   if (host) {
-    const ctx = tableContext();
-    for (let seat = 0; seat < (ctx?.seats?.count || 0); seat++) {
+    // `hostSeats` rather than the felt's: the host holds a seat table from the
+    // moment it opens a party, and the whole point of the lobby-first flow is
+    // that people are seated BEFORE there is a table to read seats off.
+    for (let seat = 0; seat < (hostSeats?.count || 0); seat++) {
       out.set(seat, host.seatStatusFor(seat));
     }
     return out;
@@ -379,28 +399,15 @@ function renderSeats() {
 }
 
 /**
- * The strip above the felt: presence while a party is live, and before that,
- * the host's own door into one.
+ * The strip above the felt: who is at this table and how they are doing.
  *
- * THE HOST STARTS HOSTING FROM THE TABLE, because that is the only place a
- * table exists. Going back to the lobby closes the match (src/main.js), so a
- * "host this game" control on the lobby screen would have nothing to host. It
- * lives here rather than in the status bar because that bar is three items on
- * one line and a fourth would push the felt down under the player's hand.
+ * PRESENCE ONLY. It briefly carried the host's "Play together" button, back
+ * when hosting started from the felt — that door is on the lobby tile now,
+ * because choosing the game is the first decision and the lobby is where games
+ * are chosen.
  */
 function renderStrip() {
   if (!el.strip) return;
-  if (partyRole() === 'idle') {
-    el.strip.replaceChildren();
-    const ctx = tableContext();
-    const gate = availability();
-    if (!ctx || ctx.state.isView || !gate.available) { el.strip.hidden = true; return; }
-    el.strip.append(button('Play together', () => {
-      if (startHosting()) showPartyScreen();
-    }));
-    el.strip.hidden = false;
-    return;
-  }
   if (!lobbyFrame) {
     el.strip.hidden = true;
     el.strip.replaceChildren();
@@ -466,12 +473,15 @@ function renderActions() {
   if (!el.actions) return;
   el.actions.replaceChildren();
   if (host) {
-    el.actions.append(button('Stop hosting', () => { stopHosting(); goToTable(); }));
+    // DEAL IS THE HOST'S ONE BUTTON, and it only exists before the cards are
+    // out. Afterwards the table is the table; there is nothing to start.
+    if (!tableContext()?.state) {
+      el.actions.append(button('Deal', () => { dealParty().catch(reportFailure); },
+        { className: '' }));
+    }
+    el.actions.append(button('Stop hosting', () => { stopHosting(); goToLobby(); }));
   } else if (client) {
     el.actions.append(button('Leave the table', () => { leaveTable(); goToLobby(); }));
-  } else if (invitation) {
-    el.actions.append(button('Join', () => { joinInvitation().catch(reportFailure); },
-      { className: 'primary-button' }));
   }
 }
 
@@ -562,20 +572,39 @@ function surfaceIncompatible(why) {
  * Hosting
  * ------------------------------------------------------------------ */
 
-function afterSeatChange() {
-  host?.broadcastLobby();
+/**
+ * A seat changed hands. Tell everybody, and re-answer who is sitting there.
+ *
+ * THE SEATING IS THE HALF THAT IS EASY TO FORGET, and forgetting it is what
+ * left a bot's name and face on a chair a person had just taken. `rerenderTable`
+ * alone redraws the same stale identities.
+ */
+/**
+ * Re-answer who is sitting where, everywhere it is drawn.
+ *
+ * THE SEATING IS THE HALF THAT IS EASY TO FORGET, and forgetting it is what
+ * left a bot's name and face on a chair a person had just taken. `rerenderTable`
+ * alone redraws the same stale identities.
+ */
+function refreshSeats() {
   lobbyFrame = ourLobbyFrame();
+  if (lobbyFrame) setSeating(seatingFromRoster(lobbyFrame));
   rerenderTable();
   renderScreen();
 }
 
+/** A seat WE changed: refresh, then tell everybody. */
+function afterSeatChange() {
+  host?.broadcastLobby();
+  refreshSeats();
+}
+
 /** The roster WE publish, read back so one renderer draws both roles. */
 function ourLobbyFrame() {
-  const ctx = tableContext();
-  if (!ctx || !host) return null;
+  if (!host || !hostSeats) return null;
   const seats = [];
-  for (let seat = 0; seat < ctx.seats.count; seat++) {
-    const owner = ctx.seats.ownerOf(seat);
+  for (let seat = 0; seat < hostSeats.count; seat++) {
+    const owner = hostSeats.ownerOf(seat);
     seats.push({
       seat,
       kind: owner.kind,
@@ -585,63 +614,99 @@ function ourLobbyFrame() {
     });
   }
   return {
-    packId: ctx.pack.id,
-    variants: ctx.pack.activeVariants ?? [],
+    packId: hostPack.packId,
+    variants: hostPack.variants,
     hostDeviceId: selfId(),
-    seatCount: ctx.seats.count,
+    seatCount: hostSeats.count,
     seats,
-    started: true,
+    // FALSE UNTIL THE CARDS ARE OUT, and a joiner reads it: before the deal it
+    // is waiting for the host, after it there is a hand to be caught up with.
+    started: !!tableContext()?.state,
   };
 }
 
 /**
- * Start publishing this table.
+ * HOST A GAME FROM THE LOBBY, before a single card is dealt.
  *
- * The table itself does not change: the host plays exactly as a solo player
- * does, through the same pipeline, and hosting is a listener on it rather than
- * an interception (see `setLocalMoveListener` in src/ui/table.js).
+ * This used to start from the felt: you dealt a solo hand and then invited
+ * people into it, which meant a joiner's only way in was to take a chair off a
+ * bot that was already holding cards — and "what happens to that hand" has no
+ * good answer. Building the table first makes seating a decision people make
+ * together, and dealing a thing that happens once, to everybody.
+ *
+ * THE SEAT TABLE OUTLIVES THIS FUNCTION and is handed to `dealHostedTable`
+ * unchanged, so the host module and the felt share one set of chairs. Two
+ * tables that agree at the moment of dealing would drift the first time
+ * somebody claimed a seat.
  */
-export function startHosting() {
+export async function hostGame(packId) {
   const gate = availability();
-  if (!gate.available) { announceGate(gate); return false; }
-  const ctx = tableContext();
-  if (!ctx || ctx.state.isView) return false;
-  if (host) return true;
-
+  if (!gate.available) { announceGate(gate); showPartyScreen(); return false; }
+  if (host || client) { showPartyScreen(); return false; }
   ensurePort();
   const me = selfId();
   if (!me) return false;
-  // The seat table has been calling us `@local`; the wire needs the name the
-  // transport knows.
-  rebaseSeats(me);
+
+  const manifest = await fetchPackManifest(packId);
+  const count = Math.max(2, manifest?.players?.best ?? manifest?.players?.min ?? 2);
+  packNames.set(packId, manifest?.name || packId);
+
+  hostPack = { packId, variants: [], name: manifest?.name || packId };
+  hostSeats = createSeatTable({ seats: count, localDeviceId: me });
+  hostSeats.claim(0, { deviceId: me });
+  // Bots in the rest, so the table is playable the moment it is dealt whether
+  // or not anybody turns up. A seat is opened by tapping it, not by default.
+  for (let seat = 1; seat < count; seat++) hostSeats.seatBot(seat);
 
   host = createTableHost({
     peer: port,
-    seats: tableContext().seats,
+    seats: hostSeats,
+    // NULL UNTIL THE DEAL, which the protocol already understands: a lobby
+    // frame with `started: false` is a table being built, and the host answers
+    // a claim with a roster rather than a view because there is no view yet.
     liveState: () => tableContext()?.state ?? null,
-    packInfo: () => {
-      const live = tableContext();
-      return {
-        packId: live.pack.id,
-        packVersion: live.pack.manifest?.version,
-        variants: live.pack.activeVariants ?? [],
-      };
-    },
+    packInfo: () => ({ packId: hostPack.packId, variants: hostPack.variants }),
     nameFor: nameForSeat,
     hooks: {
       onApplied: (_state, move) => afterRemoteMove(move),
-      onSeatsChanged: () => { lobbyFrame = ourLobbyFrame(); rerenderTable(); renderScreen(); },
+      // A remote claim arrives here, which is also the late-joiner path: the
+      // host must stop moving that seat and start calling it by its name. No
+      // re-broadcast — handleClaim already sends one, and this fires inside it.
+      onSeatsChanged: () => refreshSeats(),
       onEmote: ({ emote }) => burst(emote),
       onError: surfaceError,
-      onBye: () => { lobbyFrame = ourLobbyFrame(); renderScreen(); },
+      onBye: () => refreshSeats(),
     },
   });
   setLocalMoveListener((_state, _move, events) => host?.publish(events));
   host.start();
+  port.onPeersChange(() => { refreshSeats(); checkForDrops(); });
   lobbyFrame = ourLobbyFrame();
-  port.onPeersChange(() => { lobbyFrame = ourLobbyFrame(); checkForDrops(); renderScreen(); });
   refreshPartyLabel().then(renderScreen);
-  renderScreen();
+  showPartyScreen();
+  return true;
+}
+
+/**
+ * Deal the table the party built.
+ *
+ * One publish afterwards and everybody is playing: `publish` bumps the sequence
+ * and fans a fresh view out to every seated device, which is the same path a
+ * move takes. There is no separate "the game started" frame to get wrong.
+ */
+export async function dealParty() {
+  if (!host || !hostSeats || tableContext()?.state) return false;
+  goToTable();
+  await dealHostedTable({
+    packId: hostPack.packId,
+    variants: hostPack.variants,
+    seats: hostSeats,
+    seating: seatingFromRoster(ourLobbyFrame()),
+  });
+  host.broadcastLobby();
+  host.publish([]);
+  hidePartyScreen();
+  refreshSeats();
   return true;
 }
 
@@ -650,12 +715,19 @@ export function stopHosting() {
   port?.send({ k: FRAME.BYE, why: 'closed' });
   host.stop();
   host = null;
+  hostSeats = null;
+  hostPack = null;
   setLocalMoveListener(null);
   setTablePaused(false);
   lobbyFrame = null;
   decided = new Set();
   unreachable = new Set();
   renderScreen();
+}
+
+/** Can this device offer a party at all? The lobby tile asks before drawing. */
+export function canHost() {
+  return availability().available;
 }
 
 /* ------------------------------------------------------------------ *
@@ -741,6 +813,11 @@ function startSniffing() {
     invitation = verdict.frame;
     lobbyFrame = verdict.frame;
     rememberPackName(verdict.frame.packId);
+    // BECOME A CLIENT AS SOON AS WE ARE INVITED, rather than on a button.
+    // Loading the pack is the only thing "Join" ever did, and making it a
+    // separate tap meant the seat buttons were dead until you found it —
+    // two decisions where there is only one, and the second one is the seat.
+    joinInvitation().catch(reportFailure);
     refreshEntry();
     renderScreen();
   });
@@ -824,6 +901,7 @@ export function refreshEntry() {
   ensurePort();
   if (gate.reason === 'standalone' || gate.reason === 'no-peer-api') {
     el.entry.hidden = true;
+    for (const node of document.querySelectorAll('.tile__together')) node.hidden = true;
     return;
   }
   if (!gate.available) {
@@ -837,9 +915,16 @@ export function refreshEntry() {
   // player coming back to this screen deserves an answer that is current rather
   // than one that is waiting for the next transport event.
   checkForDrops();
+  // THE HEADER BUTTON IS THE JOINER'S DOOR AND ONLY THE JOINER'S. Hosting is
+  // offered on the game tiles, because a host picks a game first; there is
+  // nothing for this button to mean until somebody else has picked one.
+  // The tiles' own doors, toggled in place: a party can form while the player
+  // is sitting on the lobby, and the tiles were built before it did.
+  for (const node of document.querySelectorAll('.tile__together')) node.hidden = false;
+  const invited = !!invitation || !!client || !!host;
+  el.entry.hidden = !invited;
   el.entry.disabled = false;
-  el.entry.hidden = false;
-  el.entry.textContent = invitation && !client && !host ? 'Join the table' : 'Play together';
+  el.entry.textContent = host ? 'Your party' : (client ? 'Your table' : 'Join the table');
   renderStrip();
 }
 
@@ -956,8 +1041,11 @@ export function takeTurn() {
   for (const seat of mine) {
     const move = legalFor(ctx.state, seat);
     if (!move) continue;
+    // `applyLocal` publishes AND fires onApplied, which is what runs the felt's
+    // post-move ritual. Calling that ritual again here ran it twice per host
+    // move — two renders, two saves, and two round-summary timers.
     const verdict = host.applyLocal(move);
-    if (verdict?.legal) { afterRemoteMove(move); return move; }
+    if (verdict?.legal) return move;
   }
   return null;
 }

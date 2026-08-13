@@ -24,7 +24,7 @@ import {
   initLobby, renderLobby, showLobby, hideLobby, reportLobbyError,
 } from './ui/lobby.js';
 import {
-  initParty, refreshEntry as refreshPartyEntry, hidePartyScreen,
+  initParty, refreshEntry as refreshPartyEntry, hidePartyScreen, hostGame, canHost, stopHosting,
 } from './ui/party.js';
 import { initInspector, hideInspector } from './ui/inspector.js';
 
@@ -33,6 +33,11 @@ import { initInspector, hideInspector } from './ui/inspector.js';
  * ------------------------------------------------------------------ */
 
 async function goToLobby() {
+  // LEAVING THE TABLE ENDS THE PARTY, because the table IS what was being
+  // hosted — closeTable() drops the state, and a host publishing a lobby for a
+  // match that no longer exists is a table nobody can join. No-ops when this
+  // device is not hosting, which includes every boot.
+  stopHosting();
   closeTable();
   hideInspector();
   hidePartyScreen();
@@ -61,8 +66,6 @@ async function goToTable(packId, setup) {
     // for a resume or a deep link — openTable treats a stored match as
     // authoritative over it either way.
     await openTable(packId, setup);
-    // The host's door is on the TABLE, because the table is the only thing
-    // there is to host — going back to the lobby closes the match.
     refreshPartyEntry();
   } catch (err) {
     console.error(err);
@@ -145,7 +148,13 @@ async function boot() {
   // dismissals (scroll, resize, Escape). Created once — see src/ui/inspector.js.
   initInspector();
   initTable({ onExit: () => { goToLobby().catch(reportBootFailure); } });
-  initLobby({ onOpenTable: (packId, setup) => { goToTable(packId, setup).catch(reportBootFailure); } });
+  initLobby({
+    onOpenTable: (packId, setup) => { goToTable(packId, setup).catch(reportBootFailure); },
+    // The party door lives on each game tile: choosing the game is the first
+    // decision, and this is where games are chosen.
+    onHostParty: (packId) => { hostGame(packId).catch(reportBootFailure); },
+    canHost,
+  });
   // A JOINER OPENS THE TABLE WITHOUT A PACK ID: it is handed a view, not asked
   // for a game, so it goes through showSharedTable rather than goToTable.
   initParty({

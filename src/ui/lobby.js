@@ -33,6 +33,11 @@ const el = {
 const DEFAULT_ACCENT = '#3d7a5a';
 
 let openTable = () => {};   // (packId, setup?) — set by initLobby
+// Set by initLobby too. The lobby does not import src/ui/party.js: party.js
+// already imports the table, and the lobby's whole cost ceiling is that opening
+// it stays cheap (manifests only, no pack loading, no protocol).
+let canHostParty = () => false;
+let hostParty = () => {};
 
 /* ------------------------------------------------------------------ *
  * Formatting
@@ -174,6 +179,24 @@ function buildTile(manifest, summary, { featured }) {
   });
   tile.appendChild(how);
 
+  // THE PARTY DOOR, ON THE GAME. Hosting used to start from the felt — you
+  // dealt a solo hand and then invited people into it, which meant a joiner's
+  // only way in was to take a seat off a bot that was already holding cards.
+  // Choosing the game is the first decision either way, and this is where games
+  // are chosen, so the table is now built here and dealt once everybody is in.
+  //
+  // Hidden unless a party exists AND the launcher can carry the frames — the
+  // gate is asked at click time too, because a party can form while this
+  // screen is open (src/match/peerPort.js).
+  const together = document.createElement('button');
+  together.className = 'tile__together';
+  together.type = 'button';
+  together.textContent = 'Play together';
+  together.hidden = !canHostParty();
+  together.setAttribute('aria-label', `Play ${manifest.name} with your party`);
+  together.addEventListener('click', () => hostParty(manifest.id));
+  tile.appendChild(together);
+
   // A separate hit target rather than a long-press: long-press is
   // undiscoverable, and on iOS Safari it fights the OS text-selection gesture.
   if (summary) {
@@ -286,6 +309,8 @@ export function reportLobbyError(message) {
   el.note.textContent = message;
 }
 
-export function initLobby({ onOpenTable }) {
+export function initLobby({ onOpenTable, onHostParty, canHost }) {
+  if (typeof canHost === 'function') canHostParty = canHost;
+  if (typeof onHostParty === 'function') hostParty = onHostParty;
   openTable = onOpenTable;
 }

@@ -81,53 +81,79 @@ const skip = (name, why) => console.log(`  ⊘ ${name} — SKIPPED: ${why}`);
  * ------------------------------------------------------------------ */
 
 async function seatEverybody({ check, waitFor, frames }) {
-  // The host opens an ordinary solo table — nothing about dealing changes for
-  // a party — and then starts publishing it.
-  await frames.H.evaluate(async (packId) => {
-    const table = await window.__mod('src/ui/table.js');
-    document.getElementById('lobby').hidden = true;
-    document.getElementById('table-screen').hidden = false;
-    await table.openTable(packId);
+  // THE TABLE IS BUILT BEFORE IT IS DEALT. The host picks a game from a lobby
+  // tile, everybody takes a chair, and the cards come out once — which is why
+  // there is no bot holding a hand for a joiner to take it off.
+  const hosted = await frames.H.evaluate(async (packId) => {
+    const p = await window.__mod('src/ui/party.js');
+    return p.hostGame(packId);
   }, PACK);
-  await frames.H.waitForFunction("!!document.querySelector('#table .hand')  || !!document.getElementById('center-piles').childElementCount");
-
-  const hosted = await party(frames.H, 'startHosting');
-  check('host: publishing an ordinary table turns it into a shared one', hosted === true);
-  const role = await party(frames.H, 'partyRole');
-  check('host: role is host', role === 'host', role);
+  check('host: a lobby tile opens a party for that game', hosted === true);
+  check('host: role is host before a single card is dealt',
+    (await party(frames.H, 'partyRole')) === 'host');
+  const preDeal = await hostState(frames.H);
+  check('host: and there is genuinely no table yet', preDeal === null, JSON.stringify(preDeal));
 
   // The joiners have been listening the whole time: the invitation is a lobby
-  // frame, believed only from the direct link and never when relayed.
-  for (const label of ['A', 'B']) {
-    const sighted = await waitFor(async () => {
-      await party(frames[label], 'refreshEntry');
-      return frames[label].evaluate(() => document.getElementById('party-button')?.textContent === 'Join the table');
-    }, 20000);
-    check(`joiner ${label}: sees an invitation to the table`, sighted);
-  }
-
-  // From here on it is the real UI: the entry button, the Join action, and the
-  // seat's own claim button.
+  // frame, believed only from the direct link and never when relayed. Sighting
+  // one IS joining — the pack loads, the client starts, the seats go live.
   const seatOf = { A: 1, B: 2 };
   for (const label of ['A', 'B']) {
+    const ready = await waitFor(async () => {
+      await party(frames[label], 'refreshEntry');
+      return (await party(frames[label], 'partyRole')) === 'joiner';
+    }, 20000);
+    check(`joiner ${label}: an invitation makes it a client, with no second tap`, ready);
+  }
+
+  // From here it is the real UI: the header button, then the seat's own claim.
+  for (const label of ['A', 'B']) {
     await frames[label].evaluate(() => document.getElementById('party-button').click());
-    await frames[label].waitForFunction("!!document.querySelector('#party-actions button')", null, { timeout: 10000 });
-    await frames[label].evaluate(() => document.querySelector('#party-actions button').click());
     const seat = seatOf[label];
-    const ready = await waitFor(() => frames[label].evaluate(
+    const offered = await waitFor(() => frames[label].evaluate(
       (s) => !!document.querySelector(`.party-seat[data-seat="${s}"] .party-seat__actions button`), seat), 20000);
-    check(`joiner ${label}: the seat grid offers seat ${seat}`, ready);
+    check(`joiner ${label}: the seat grid offers seat ${seat}`, offered);
     await frames[label].evaluate(
       (s) => document.querySelector(`.party-seat[data-seat="${s}"] .party-seat__actions button`).click(), seat);
   }
 
+  // The host sees both claims land on the table it is about to deal.
+  const filled = await waitFor(async () => {
+    const seats = (await party(frames.H, 'partySnapshot')).seats;
+    return seats.filter((s) => s.status === 'connected').length === 3;
+  }, 20000);
+  check('host: both joiners are seated before the deal', filled,
+    JSON.stringify((await party(frames.H, 'partySnapshot')).seats));
+
+  await frames.H.evaluate(async () => {
+    const p = await window.__mod('src/ui/party.js');
+    await p.dealParty();
+  });
+
   for (const label of ['A', 'B']) {
     const seated = await waitFor(async () => (await party(frames[label], 'partySnapshot')).seat === seatOf[label], 20000);
     const snap = await party(frames[label], 'partySnapshot');
-    check(`joiner ${label}: is seated at ${seatOf[label]} and holds a view`, seated, `seat ${snap.seat}, seq ${snap.seq}`);
+    check(`joiner ${label}: the deal arrives as a view of seat ${seatOf[label]}`, seated,
+      `seat ${snap.seat}, seq ${snap.seq}`);
     const onTable = await frames[label].evaluate(() => !document.getElementById('table-screen').hidden);
     check(`joiner ${label}: the felt is on screen`, onTable);
   }
+
+  // THE BUG THIS FLOW WAS BUILT AROUND: the host's bot driver used to move
+  // every seat it did not itself hold, which at a shared table means the
+  // joiners' seats. A seat somebody is sitting in must belong to them.
+  const houseSeats = await frames.H.evaluate(async () => {
+    const table = await window.__mod('src/ui/table.js');
+    const ctx = table.tableContext();
+    const out = [];
+    for (let seat = 0; seat < ctx.seats.count; seat++) {
+      if (ctx.seats.isBot(seat) || ctx.seats.isEmpty(seat)) out.push(seat);
+    }
+    return out;
+  });
+  check('the host plays no seat a person is sitting in',
+    !houseSeats.includes(1) && !houseSeats.includes(2), `house plays ${houseSeats.join(',') || 'nothing'}`);
+
   return seatOf;
 }
 
@@ -143,9 +169,15 @@ const scriptedHand = {
     // Every device is asked, every round of the loop; only the seat whose turn
     // it is has anything to do. The host's own bot seats move on their own
     // clock, which is why this waits between passes rather than driving them.
+    // PATIENCE IS LOAD-BEARING HERE. Only the seat whose turn it is has
+    // anything to do, and when that seat is a BOT the answer arrives on the
+    // bot's own think time — the better part of a second, deliberately, so a
+    // table does not feel like a spreadsheet. An idle tolerance shorter than
+    // one think time reads a thinking bot as a stalled table, which is exactly
+    // what it did while there was no bot at the table to notice it with.
     let last = before.moves;
     let idle = 0;
-    for (let i = 0; i < 400 && idle < 12; i++) {
+    for (let i = 0; i < 600 && idle < 40; i++) {
       for (const label of ['H', 'A', 'B']) {
         try { await party(frames[label], 'takeTurn'); } catch { /* a frame mid-render */ }
       }
@@ -153,13 +185,30 @@ const scriptedHand = {
       if (!now) break;
       if (now.moves === last) idle++; else { idle = 0; last = now.moves; }
       if (now.round > before.round || now.over) break;
-      await new Promise((r) => setTimeout(r, 60));
+      await new Promise((r) => setTimeout(r, 100));
     }
 
     const after = await hostState(frames.H);
+    // Where the loop left the table. On a pass this is just trivia; on a
+    // failure it is the whole diagnosis — whose turn it was, and whether that
+    // seat is one the house was supposed to be moving.
+    const restingOn = await frames.H.evaluate(async () => {
+      const table = await window.__mod('src/ui/table.js');
+      const ctx = table.tableContext();
+      if (!ctx) return null;
+      const seat = ctx.state.turn.seat;
+      return {
+        seat,
+        phase: ctx.state.turn.phase,
+        owner: ctx.seats.ownerOf(seat).kind,
+        house: ctx.seats.isBot(seat) || ctx.seats.isEmpty(seat),
+        panels: [...document.querySelectorAll('#round-overlay, #game-over-overlay, #choice-modal')]
+          .filter((n) => !n.hidden).map((n) => n.id),
+      };
+    });
     check('the hand played out to the end of a round',
       !!after && (after.round > before.round || after.over),
-      `${after?.moves} moves, round ${before.round} → ${after?.round}`);
+      `${after?.moves} moves, round ${before.round} → ${after?.round}; left on ${JSON.stringify(restingOn)}`);
 
     // A joiner that fell behind would be holding a stale view, and the only
     // honest check of that is against the host's own numbers.

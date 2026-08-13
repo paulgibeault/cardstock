@@ -2716,21 +2716,23 @@ function scheduleAnnouncementBeats() { if (bots) bots.scheduleAnnouncementBeats(
  * the ritual (closeTable) forgot, so a persona's "did they remember to declare?"
  * roll could survive into a match that had not been dealt when it was made.
  */
-function adoptMatch(pack, state, message, { dealing = false } = {}) {
+function adoptMatch(pack, state, message, { dealing = false, seats = null, seating = null } = {}) {
   epoch += 1;
   stopSession(session);
   if (drag) drag.cancel();
   session = createSession({
     pack,
     state,
-    // WHO OWNS EACH SEAT, before who they are: this is a solo table, so one
-    // human on this device and bots in the rest. A shared table builds the
-    // same structure from the host's lobby frame instead, which is the whole
-    // reason ownership is a table rather than the number zero.
-    seats: soloSeatTable(state.seats, { humanSeat: SOLO_HUMAN_SEAT }),
+    // WHO OWNS EACH SEAT, before who they are. Solo is one human on this device
+    // and bots in the rest — which is the whole reason ownership is a table
+    // rather than the number zero, because a HOSTED deal arrives with its
+    // seats already decided in the party panel and passes them in.
+    seats: seats || soloSeatTable(state.seats, { humanSeat: SOLO_HUMAN_SEAT }),
     // Who is at this table — derived from the match SEED, so a resumed game
-    // re-seats the same opponents and a fresh deal brings new ones.
-    seating: buildSeating(state.seed, state.seats, { humanSeat: SOLO_HUMAN_SEAT, humanName: humanName() }),
+    // re-seats the same opponents and a fresh deal brings new ones. A hosted
+    // deal overrides it: some of those chairs hold people, and a seed knows
+    // nothing about people.
+    seating: seating || buildSeating(state.seed, state.seats, { humanSeat: SOLO_HUMAN_SEAT, humanName: humanName() }),
     // From the PACK rather than the manifest alone: the deck is what tells a
     // style which colours it actually has to draw. Built once per match rather
     // than per render — resolving a theme walks the whole deck.
@@ -2750,6 +2752,39 @@ function adoptMatch(pack, state, message, { dealing = false } = {}) {
   persistMatch();
   scheduleNextTurn();
   scheduleAnnouncementBeats();
+}
+
+/**
+ * DEAL A TABLE THAT WAS BUILT BEFORE IT WAS DEALT — the host's half of the
+ * party flow.
+ *
+ * The difference from `openTable` is entirely in what it refuses to do. It
+ * does not consult storage, because a party deal is a new hand by definition
+ * and resuming somebody's solo save into a room full of people is nonsense. It
+ * does not derive the seating, because the seats were decided in the party
+ * panel by the people sitting in them.
+ *
+ * @param seats    the seat table the party agreed on (src/players/seats.js)
+ * @param seating  who those seats are, from the host's own lobby roster
+ */
+export async function dealHostedTable({ packId, variants, seats, seating, message = '' }) {
+  const myToken = ++openToken;
+  cancelBotTurn();
+  cancelAnnouncementBeats();
+  closeChoiceDialog();
+
+  const pack = await fetchPack(packId, variants);
+  if (myToken !== openToken) return null;
+
+  rememberPack(packId);
+  Arcade.ui.setTitle(pack.manifest.name);
+  hideAllPanels();
+
+  const state = createState({ pack, seats: seats.count, seed: Date.now() });
+  pack.template.setup(makeCtx(state));
+  playDeal(seats.count);
+  adoptMatch(pack, state, message || `Playing ${pack.manifest.name}.`, { dealing: true, seats, seating });
+  return state;
 }
 
 /**
@@ -2848,6 +2883,21 @@ export function afterRemoteMove(move) {
   else if (move.type !== 'pass') playCardPlayed({ far: true });
   soundReactions(state);
   afterMove(state, move, seatRect(move.actor), '', { publish: false });
+}
+
+/**
+ * Replace who the felt believes is at each seat.
+ *
+ * A SEATING IS BUILT ONCE AT DEAL TIME AND FROZEN, which is right for solo —
+ * the opponents come from the seed and cannot change — and wrong the moment a
+ * person can sit down mid-hand. Without this, a joiner who took a bot's seat
+ * kept the bot's name, face and colour on every surface that names players:
+ * the opponent row, the scoreboard, the round summary.
+ */
+export function setSeating(seating) {
+  if (!session || !Array.isArray(seating)) return;
+  session.seating = seating;
+  if (liveState()) render(liveState());
 }
 
 /**
