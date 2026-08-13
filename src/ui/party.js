@@ -98,6 +98,7 @@ let joinedPack = null;        // the pack a joiner loaded to match the host's
 let lobbyFrame = null;        // the roster we are drawing: ours, or the host's
 let invitation = null;        // a lobby frame sighted while we are still idle
 let sniffOff = null;
+let joining = false;          // one join at a time; see joinInvitation
 let lastEmoteAt = 0;
 let decided = new Set();      // seats whose terminal drop the host has answered
 let unreachable = new Set();  // seats a targeted send was refused for
@@ -411,10 +412,16 @@ function renderSeats() {
           ? button('Open', () => { hostSeats.release(seat); afterSeatChange(); })
           : button('Bot', () => { hostSeats.seatBot(seat); afterSeatChange(); }));
       }
-    } else if (client) {
+    } else if (client || invitation) {
       const mine = entry.kind === 'device' && entry.deviceId === me;
       if (!mine && entry.kind !== 'device') {
-        actions.append(button('Take this seat', () => client.claimSeat(seat)));
+        // AN INVITATION IS ENOUGH TO TAP. Being a client is an implementation
+        // detail of having been invited, and it is one that can lapse — a host
+        // that closed and reopened, a frame that arrived in the wrong order.
+        // Making the button depend on it turned every one of those into a
+        // table you could see, could count the free chairs of, and could not
+        // sit down at. Claiming re-establishes the client if it has to.
+        actions.append(button('Take this seat', () => claimSeat(seat).catch(reportFailure)));
       }
     }
     row.append(actions);
@@ -956,6 +963,13 @@ function startSniffing() {
     const direct = port.peers().filter((p) => p.direct);
     const hostDeviceId = direct.length === 1 ? direct[0].deviceId : null;
     if (!isAuthentic(FRAME.LOBBY, { fromDeviceId, hostDeviceId, relayed: meta?.relayed })) return;
+    // A FRESH INVITATION CLEARS THE LAST ONE'S EPITAPH. "The host closed the
+    // table" is true and worth saying — right up until the host opens another
+    // one, at which point it is a sign on an open door saying CLOSED.
+    if (notice && (!invitation || invitation.hostDeviceId !== verdict.frame.hostDeviceId
+      || invitation.packId !== verdict.frame.packId || !invitation.started !== !verdict.frame.started)) {
+      notice = '';
+    }
     invitation = verdict.frame;
     lobbyFrame = verdict.frame;
     rememberPackName(verdict.frame.packId);
@@ -969,11 +983,29 @@ function startSniffing() {
   });
 }
 
-/** Load the host's pack, then become a real client of its table. */
+/**
+ * Load the host's pack, then become a real client of its table.
+ *
+ * ONE AT A TIME, AND THE GUARD IS NOT PARANOIA. A host broadcasts its lobby on
+ * start, on every seat change and on every `onReady` — several frames inside a
+ * few milliseconds is ordinary — and this function AWAITS a pack fetch in the
+ * middle. Without the flag, every one of those frames sees `client` still null,
+ * and each starts a client of its own. Only the last is kept in the variable;
+ * the rest stay subscribed to the transport, invisible and still live. One of
+ * those ghosts receiving a `bye` calls `leaveTable`, which nulls the client the
+ * UI is actually using — and the seat grid stops offering seats at a table that
+ * is plainly advertising three of them.
+ */
 async function joinInvitation() {
-  if (!invitation || client) return;
+  if (!invitation || client || joining) return;
+  joining = true;
   const frame = invitation;
-  joinedPack = await fetchPack(frame.packId, frame.variants);
+  try {
+    joinedPack = await fetchPack(frame.packId, frame.variants);
+  } catch (err) {
+    joining = false;
+    throw err;
+  }
 
   client = createTableClient({
     peer: port,
@@ -1016,8 +1048,17 @@ async function joinInvitation() {
     },
   });
   client.start();
+  joining = false;
+  // The last table's parting words are not this table's news.
+  if (notice) setNotice('');
   refreshPartyLabel().then(renderScreen);
   renderScreen();
+}
+
+/** Sit down, becoming a client first if this device is not one yet. */
+async function claimSeat(seat) {
+  if (!client) await joinInvitation();
+  client?.claimSeat(seat);
 }
 
 export function leaveTable() {
@@ -1026,6 +1067,7 @@ export function leaveTable() {
     client.stop();
   }
   client = null;
+  joining = false;
   joinedPack = null;
   if (tick) { clearInterval(tick); tick = null; }
   lobbyFrame = invitation;

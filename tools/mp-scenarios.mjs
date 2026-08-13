@@ -522,6 +522,76 @@ const namesAndChips = {
   },
 };
 
+/* ------------------------------------------------------------------ *
+ * 8. Leaving, and coming back
+ * ------------------------------------------------------------------ */
+
+const rejoining = {
+  title: 'a player who leaves can come back, and so can one whose host did',
+  async run({ check, waitFor, frames }) {
+    // A. THE JOINER LEAVES UNDER ITS OWN POWER and comes back to the same table.
+    await party(frames.A, 'leaveTable');
+    check('joiner A: leaving makes it idle', (await party(frames.A, 'partyRole')) === 'idle');
+
+    await party(frames.A, 'refreshEntry');
+    const backAsClient = await waitFor(async () => (await party(frames.A, 'partyRole')) === 'joiner', 15000);
+    check('joiner A: the table it just left is still an invitation', backAsClient,
+      `role ${await party(frames.A, 'partyRole')}`);
+
+    await frames.A.evaluate(async () => (await window.__mod('src/ui/party.js')).showPartyScreen());
+    const offered = await waitFor(() => frames.A.evaluate(
+      () => [...document.querySelectorAll('.party-seat__actions button')].map((b) => b.textContent)), 15000)
+      && await frames.A.evaluate(() => document.querySelectorAll('.party-seat__actions button').length > 0);
+    check('joiner A: is offered a seat to come back to', offered,
+      await frames.A.evaluate(() => document.querySelector('#party-seats')?.textContent?.trim()?.slice(0, 120)));
+    check('joiner A: and is not still being told the table closed',
+      !(await party(frames.A, 'partySnapshot')).notice,
+      (await party(frames.A, 'partySnapshot')).notice);
+
+    // B. THE HOST LEAVES AND COMES BACK, which ends the table for everybody —
+    //    and the people it ended it for must be able to sit down at the next one.
+    await party(frames.H, 'stopHosting');
+    await party(frames.H, 'hostGame', PACK);
+    check('host: can open a fresh table after closing one',
+      (await party(frames.H, 'partyRole')) === 'host');
+
+    for (const label of ['A', 'B']) {
+      const invited = await waitFor(async () => {
+        await party(frames[label], 'refreshEntry');
+        return (await party(frames[label], 'partyRole')) === 'joiner';
+      }, 20000);
+      check(`joiner ${label}: sees the host's new table`, invited,
+        `role ${await party(frames[label], 'partyRole')}`);
+
+      await frames[label].evaluate(async () => (await window.__mod('src/ui/party.js')).showPartyScreen());
+      const seats = await frames[label].evaluate(
+        () => document.querySelectorAll('.party-seat__actions button').length);
+      check(`joiner ${label}: is offered a seat at it`, seats > 0, `${seats} claimable seats`);
+      const snap = await party(frames[label], 'partySnapshot');
+      check(`joiner ${label}: is not still reading a notice about the old table`, !snap.notice, snap.notice);
+    }
+
+    // AND THE BUTTON HAS TO WORK, not merely exist. A seat you can see, can
+    // count, and cannot sit down at is the failure this scenario was written
+    // for; asserting on the affordance alone would have missed it entirely.
+    for (const [label, seat] of [['A', 1], ['B', 2]]) {
+      await frames[label].evaluate(
+        (s) => document.querySelector(`.party-seat[data-seat="${s}"] .party-seat__actions button`).click(), seat);
+    }
+    for (const [label, seat] of [['A', 1], ['B', 2]]) {
+      const took = await waitFor(async () => {
+        const roster = await frames.H.evaluate(async () => {
+          const p = await window.__mod('src/ui/party.js');
+          return p.partySnapshot().seats;
+        });
+        return roster.find((r) => r.seat === seat)?.status === 'connected';
+      }, 20000);
+      check(`joiner ${label}: sat back down at seat ${seat}, and the host agrees`, took);
+    }
+  },
+};
+
 export const SCENARIOS = [
   scriptedHand, privacy, unknownTarget, interruption, overflow, capsStripped, namesAndChips,
+  rejoining,
 ];
