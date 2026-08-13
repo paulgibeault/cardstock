@@ -3416,6 +3416,20 @@ body.is-dragging .card-face { cursor: grabbing; }
 }
 .tile__rules:hover { opacity: 1; background: var(--ghost-hover); }
 
+/* Somebody is playing this one right now. Sits where the in-progress ribbon
+   sits and reads as its sibling — the ribbon is your own saved game, this is a
+   table with a chair in it. */
+.tile__party {
+  display: block;
+  padding: 0.3rem 0.5rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-align: center;
+  background: var(--chip-bg);
+  border-bottom: 1px solid var(--tile-border);
+}
+.tile__party[hidden] { display: none; }
+
 /* The party door, in the same footer as the other two secondary actions — but
    not as quiet as them. "Play together" is the only one of the three that is
    ever the reason somebody opened the lobby, and at 0.65 opacity beneath a card
@@ -3658,6 +3672,13 @@ body.is-dragging .card-face { cursor: grabbing; }
   background: var(--chip-bg);
 }
 .party-strip__seat--unreachable { outline: 1px solid rgba(196, 78, 78, 0.6); }
+/* The last twenty seconds of somebody's turn. Tabular figures so the number
+   does not jitter its neighbours as it counts down. */
+.party-strip__clock {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  opacity: 0.85;
+}
 
 .emote-bar { display: flex; gap: 0.3rem; justify-content: center; flex-wrap: wrap; }
 .emote-bar[hidden] { display: none; }

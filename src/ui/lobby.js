@@ -111,6 +111,18 @@ function buildTile(manifest, summary, { featured }) {
   const preview = !genre.playable;
   const tile = document.createElement('div');
   tile.className = `tile ${summary ? 'tile--in-progress' : ''} ${featured ? 'tile--featured' : ''} ${preview ? 'tile--preview' : ''}`;
+  // Named so src/ui/party.js can find this tile when a party forms on it. The
+  // lobby does not know about parties and should not have to: it publishes an
+  // anchor and a slot, and something else fills them in.
+  tile.dataset.packId = manifest.id;
+
+  // A LIVE PARTY, said where "in progress" is already said. The ribbon above
+  // means "you have a saved game here"; this means "somebody is playing this
+  // one right now, and there is a chair". Empty and hidden until there is.
+  const party = document.createElement('span');
+  party.className = 'tile__party';
+  party.hidden = true;
+  tile.appendChild(party);
   // §7b: a manifest value reaching an inline style. safeAccent takes a
   // six-digit hex and nothing else — no url(), no var(), no stray semicolon.
   tile.style.setProperty('--tile-accent', safeAccent(manifest.accent, DEFAULT_ACCENT));

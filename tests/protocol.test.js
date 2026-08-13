@@ -24,6 +24,9 @@ import { makeCtx } from '../src/engine/context.js';
 import { enumerateLegalMoves } from '../src/engine/movePipeline.js';
 import { createSeatTable } from '../src/players/seats.js';
 import { createTableHost, seatStatus, needsHostDecision } from '../src/match/host.js';
+import { createTurnTimer } from '../src/match/turnTimer.js';
+import { wallClock } from '../src/match/clock.js';
+import { chooseBotMove } from '../src/engine/bot.js';
 import { createTableClient } from '../src/match/client.js';
 import { peerAvailability, REQUIRED_CAPS } from '../src/match/peerPort.js';
 import {
@@ -628,4 +631,97 @@ test('the host itself is always connected, whatever the roster says', () => {
   assert.equal(seatStatus({ kind: 'device', deviceId: 'host' }, { peers: [], selfDeviceId: 'host' }), 'connected');
   assert.equal(seatStatus({ kind: 'bot' }, {}), 'bot');
   assert.equal(seatStatus({ kind: 'empty' }, {}), 'empty');
+});
+
+/* ------------------------------------------------------------------ *
+ * Turn timers
+ * ------------------------------------------------------------------ */
+
+/** A clock a test can shove forward, so "a minute passed" costs no seconds. */
+function fakeClock() {
+  let now = 1_000_000;
+  const pending = [];
+  return {
+    clock: wallClock({
+      now: () => now,
+      schedule: (fn, ms) => { const entry = { fn, at: now + ms }; pending.push(entry); return entry; },
+      unschedule: (entry) => { const i = pending.indexOf(entry); if (i >= 0) pending.splice(i, 1); },
+    }),
+    advance(ms) {
+      now += ms;
+      // Fire whatever is due, in order, letting each rescheduled wake re-queue.
+      for (let guard = 0; guard < 1000; guard++) {
+        const due = pending.filter((e) => e.at <= now).sort((a, b) => a.at - b.at)[0];
+        if (!due) return;
+        pending.splice(pending.indexOf(due), 1);
+        due.fn();
+      }
+    },
+  };
+}
+
+/**
+ * A TIMEOUT IS A MOVE, and that is the whole property worth pinning.
+ *
+ * The tempting implementation greys the seat out and carries on, which
+ * desynchronises the table on the very first one: the host's state and every
+ * client's now differ by a fact that appears nowhere in the log, so a resync, a
+ * resume, or a replay all rebuild a game in which that seat never ran out of
+ * time. So the assertion is on the LOG — and on the clients having been told.
+ */
+test('a seat that runs out of time is played for, through the ordinary pipeline', async () => {
+  const t = await threeSeatTable();
+  seatAll(t);
+  t.state.turn.seat = 1; // Ada's turn, and Ada has gone to make tea.
+
+  const { clock, advance } = fakeClock();
+  const timer = createTurnTimer({
+    clock,
+    timeoutMs: 60_000,
+    actingSeatsOf: (state) => [state.turn.seat],
+    // Only other people's seats: the host's own turn waits for the host, and a
+    // bot needs no encouragement.
+    waitsOn: (seat) => seat !== 0,
+    onExpire: (state, seat) => {
+      const move = chooseBotMove(state, seat);
+      if (move) t.host.applyLocal(move);
+    },
+  });
+
+  timer.arm(t.state);
+  assert.deepEqual(timer.deadlines().map((d) => d.seat), [1], 'the seat being waited on is the one on a clock');
+
+  const before = t.state.log.length;
+  const seqBefore = t.host.seq();
+  advance(30_000);
+  assert.equal(t.state.log.length, before, 'half a minute is not a timeout');
+
+  advance(31_000);
+  assert.equal(t.state.log.length, before + 1, 'the turn that ran out produced a move');
+  assert.equal(t.state.log.at(-1).actor, 1, 'and it was that seat that moved');
+  assert.ok(t.host.seq() > seqBefore, 'so every client was sent the result');
+  assert.ok(t.seen.a.views.length > 0 && t.seen.b.views.length > 0);
+
+  // THE SEAT IS STILL THEIRS. A timeout costs one turn, never the chair —
+  // the same answer an interrupted link already gets.
+  assert.equal(t.seats.ownerOf(1).kind, 'device');
+  assert.equal(t.seats.ownerOf(1).deviceId, 'a');
+});
+
+test('a seat nobody is waiting on is never on a clock', async () => {
+  const t = await threeSeatTable();
+  seatAll(t);
+  const { clock, advance } = fakeClock();
+  const fired = [];
+  const timer = createTurnTimer({
+    clock,
+    timeoutMs: 1000,
+    actingSeatsOf: (state) => [state.turn.seat],
+    waitsOn: () => false, // solo, or a table where nobody has opted into a clock
+    onExpire: (_state, seat) => fired.push(seat),
+  });
+  timer.arm(t.state);
+  assert.deepEqual(timer.deadlines(), []);
+  advance(10_000);
+  assert.deepEqual(fired, [], 'a clock nobody asked for expired anyway');
 });

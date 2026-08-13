@@ -71,6 +71,7 @@ export function needsHostDecision(status) {
  * @param liveState () => the engine state, or null between matches
  * @param packInfo  () => ({ packId, packVersion, variants })
  * @param nameFor   (seat) => display name for the lobby roster
+ * @param deadlines () => the live turn deadlines to ship with each view
  * @param now       the clock the rate-limit window is measured against. Injected
  *                  for the same reason the peer port is: tools/simulate.mjs
  *                  plays a whole hand in a millisecond, so on the wall clock
@@ -86,6 +87,7 @@ export function createTableHost({
   liveState,
   packInfo,
   nameFor = () => '',
+  deadlines = () => [],
   now = Date.now,
   hooks = {},
 }) {
@@ -177,6 +179,11 @@ export function createTableHost({
       view: viewFor(state, seat, {
         moves: acting ? enumerateLegalMoves(state, seat) : [],
         announcements: acting ? announcementsFor(state, seat) : [],
+        // A CLIENT RENDERS A COUNTDOWN; IT NEVER OWNS ONE. These are absolute
+        // host-clock instants, so a client can show the time left without ever
+        // being in a position to decide that it ran out — which would be a
+        // client that can time its opponents out by running its clock fast.
+        deadlines: deadlines(),
         seq,
       }),
       events: eventsFor(state, seat, events),

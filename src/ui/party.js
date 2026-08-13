@@ -34,11 +34,16 @@ import {
   peerAvailability, arcadePeerPort, REQUIRED_CAPS,
 } from '../match/peerPort.js';
 import { createTableHost, needsHostDecision } from '../match/host.js';
+import { createTurnTimer } from '../match/turnTimer.js';
+import { wallClock } from '../match/clock.js';
+import { makeCtx } from '../engine/context.js';
+import { chooseBotMove } from '../engine/bot.js';
 import { enumerateLegalMoves } from '../engine/movePipeline.js';
 import { createTableClient } from '../match/client.js';
 import { FRAME, EMOTES, validateFrame, isAuthentic } from '../match/protocol.js';
 import { botById, initialsOf, pickBotIds } from '../players/roster.js';
 import { fetchPack, fetchPackManifest } from './packSource.js';
+import { confirmAction } from './confirm.js';
 import {
   adoptSharedView, leaveSharedTable, tableContext, setSeating, dealHostedTable,
   setLocalMoveListener, afterRemoteMove, setTablePaused, rerenderTable,
@@ -64,6 +69,16 @@ const el = {
 /** One emote per this many ms, per device. A burst is a wave, not a channel. */
 const EMOTE_COOLDOWN_MS = 1500;
 
+/**
+ * How long a remote seat may sit there before the house takes one turn for it.
+ *
+ * GENEROUS ON PURPOSE. This is not a chess clock; it exists so that one person
+ * putting their phone down does not stop the game for everybody else. A minute
+ * is long enough that nobody thinking about a real decision ever meets it, and
+ * short enough that a table does not die of one distraction.
+ */
+const TURN_TIMEOUT_MS = 60_000;
+
 /* ------------------------------------------------------------------ *
  * State
  * ------------------------------------------------------------------ */
@@ -76,6 +91,8 @@ let host = null;              // createTableHost, when we are hosting
 // the felt are looking at one set of chairs rather than two that agree at first.
 let hostSeats = null;
 let hostPack = null;          // { packId, variants, name } chosen from the tile
+let turnTimer = null;         // host-side only; a client renders, never decides
+let tick = null;              // the countdown's own repaint
 let client = null;            // createTableClient, when we are a joiner
 let joinedPack = null;        // the pack a joiner loaded to match the host's
 let lobbyFrame = null;        // the roster we are drawing: ours, or the host's
@@ -381,11 +398,18 @@ function renderSeats() {
     const actions = document.createElement('span');
     actions.className = 'party-seat__actions';
     if (host) {
-      const ctx = tableContext();
-      if (entry.kind !== 'device' || entry.deviceId !== me) {
+      const held = entry.kind === 'device' && entry.deviceId !== me;
+      if (held) {
+        // REMOVING SOMEBODY IS ITS OWN VERB. The seat toggles used to apply to
+        // a person's chair too, so "Bot" quietly evicted them — and their table
+        // did not stop, or say anything; it simply stopped answering. If the
+        // host may do this at all it has to be named, confirmed, and TOLD to
+        // the person it happens to.
+        actions.append(button('Remove', () => { removeSeat(seat).catch(reportFailure); }));
+      } else if (entry.kind !== 'device') {
         actions.append(entry.kind === 'bot'
-          ? button('Open', () => { ctx.seats.release(seat); afterSeatChange(); })
-          : button('Bot', () => { ctx.seats.seatBot(seat); afterSeatChange(); }));
+          ? button('Open', () => { hostSeats.release(seat); afterSeatChange(); })
+          : button('Bot', () => { hostSeats.seatBot(seat); afterSeatChange(); }));
       }
     } else if (client) {
       const mine = entry.kind === 'device' && entry.deviceId === me;
@@ -398,6 +422,42 @@ function renderSeats() {
   }
 }
 
+/**
+ * Seconds left on a seat's turn, from whichever end of the wire we are on.
+ *
+ * The host reads its own timer; a client reads the deadlines the host SHIPPED
+ * with the view. Both are the same absolute instant, which is the entire point
+ * of sending an instant rather than a duration — a countdown drawn from
+ * "60 seconds from when this arrived" drifts by however long it took to arrive.
+ */
+function liveDeadlines() {
+  if (turnTimer) return turnTimer.deadlines();
+  // `modelFromView` copies them straight onto the model (src/ui/tableModel.js).
+  return tableContext()?.state?.deadlines || [];
+}
+
+function secondsLeft(seat) {
+  const entry = liveDeadlines().find((d) => d.seat === seat);
+  if (!entry) return null;
+  return Math.max(0, Math.round((entry.expiresAt - Date.now()) / 1000));
+}
+
+/**
+ * Keep the countdown counting.
+ *
+ * A view arrives per MOVE and a countdown ticks per SECOND, so without this a
+ * client would show whatever number happened to be true when the last card was
+ * played. Runs only while there is a deadline to draw, and stops itself the
+ * moment there is not — a permanent one-second interval on a card table is a
+ * permanent one-second wakeup.
+ */
+function pulse() {
+  const live = liveDeadlines().length > 0;
+  if (live && !tick) tick = setInterval(renderStrip, 1000);
+  if (!live && tick) { clearInterval(tick); tick = null; }
+}
+
+/** The compact presence strip
 /**
  * The strip above the felt: who is at this table and how they are doing.
  *
@@ -424,6 +484,16 @@ function renderStrip() {
     const name = document.createElement('span');
     name.textContent = identity.shortName;
     pill.append(name, chip(status));
+    // Only on the seat actually being waited on, and only once it is worth
+    // saying: a number that is always there is furniture, and a table where
+    // everybody is always on a visible clock feels like an exam.
+    const left = secondsLeft(identity.seat);
+    if (left !== null && left <= 20) {
+      const clock = document.createElement('span');
+      clock.className = 'party-strip__clock';
+      clock.textContent = `0:${String(left).padStart(2, '0')}`;
+      pill.append(clock);
+    }
     if (unreachable.has(identity.seat)) pill.classList.add('party-strip__seat--unreachable');
     el.strip.append(pill);
   }
@@ -442,6 +512,7 @@ function rememberPackName(packId) {
 }
 
 function renderScreen() {
+  decorateTiles();
   if (!el.screen) return;
   if (el.heading) el.heading.textContent = partyLabel();
   if (el.note) el.note.textContent = notice;
@@ -643,6 +714,11 @@ export async function hostGame(packId) {
   const gate = availability();
   if (!gate.available) { announceGate(gate); showPartyScreen(); return false; }
   if (host || client) { showPartyScreen(); return false; }
+  // SOMEBODY IS ALREADY PLAYING THIS ONE. The tile's button is one door with
+  // two meanings, and which it means is not the player's to work out: with a
+  // live party on this pack, tapping it takes you to that table rather than
+  // starting a rival one nobody can see.
+  if (invitation && invitation.packId === packId) { showPartyScreen(); return false; }
   ensurePort();
   const me = selfId();
   if (!me) return false;
@@ -667,8 +743,9 @@ export async function hostGame(packId) {
     liveState: () => tableContext()?.state ?? null,
     packInfo: () => ({ packId: hostPack.packId, variants: hostPack.variants }),
     nameFor: nameForSeat,
+    deadlines: () => turnTimer?.deadlines() || [],
     hooks: {
-      onApplied: (_state, move) => afterRemoteMove(move),
+      onApplied: (_state, move) => { afterRemoteMove(move); armTimer(); },
       // A remote claim arrives here, which is also the late-joiner path: the
       // host must stop moving that seat and start calling it by its name. No
       // re-broadcast — handleClaim already sends one, and this fires inside it.
@@ -678,7 +755,36 @@ export async function hostGame(packId) {
       onBye: () => refreshSeats(),
     },
   });
-  setLocalMoveListener((_state, _move, events) => host?.publish(events));
+  // THE CLOCK IS THE HOST'S, AND ONLY THE HOST'S. A client that could time
+  // seats out would be a client that can force its opponents to pass by running
+  // its clock fast, so this is armed here and the deadlines travel outward in
+  // the view as absolute instants for clients to render.
+  turnTimer = createTurnTimer({
+    // The WALL clock, not the session one: a shared hand does not stop because
+    // one tab stopped painting, and a deadline has to survive a sleeping host.
+    clock: wallClock(),
+    timeoutMs: TURN_TIMEOUT_MS,
+    actingSeatsOf: (state) => {
+      const template = state.pack.template;
+      return template.actingSeats ? template.actingSeats(makeCtx(state)) : [state.turn.seat];
+    },
+    // ONLY OTHER PEOPLE'S SEATS. Our own turn is nobody's business but ours —
+    // a game has always waited for the player in front of it and should keep
+    // doing so — and a bot needs no encouragement.
+    waitsOn: (seat) => {
+      const owner = hostSeats?.ownerOf(seat);
+      return owner?.kind === 'device' && owner.deviceId !== selfId();
+    },
+    onExpire: (state, seat) => {
+      // A TURN THAT RAN OUT IS A MOVE. The house plays one for them and the
+      // seat stays theirs — they are back in control the moment they come
+      // back, which is the same answer an interrupted link already gets.
+      const move = chooseBotMove(state, seat);
+      if (!move) return;
+      host?.applyLocal(move);
+    },
+  });
+  setLocalMoveListener((_state, _move, events) => { host?.publish(events); armTimer(); });
   host.start();
   port.onPeersChange(() => { refreshSeats(); checkForDrops(); });
   lobbyFrame = ourLobbyFrame();
@@ -710,8 +816,26 @@ export async function dealParty() {
   return true;
 }
 
+/**
+ * Re-arm after every published move, and keep the countdown painting.
+ *
+ * `arm` is idempotent by design — a seat that has been waited on all along
+ * KEEPS its deadline rather than having its clock reset by somebody else's
+ * move, which is what stops a timeout being unreachable at a busy table.
+ */
+function armTimer() {
+  const state = tableContext()?.state;
+  if (!turnTimer || !state) return;
+  turnTimer.arm(state);
+  pulse();
+  renderStrip();
+}
+
 export function stopHosting() {
   if (!host) return;
+  turnTimer?.cancelAll();
+  turnTimer = null;
+  if (tick) { clearInterval(tick); tick = null; }
   port?.send({ k: FRAME.BYE, why: 'closed' });
   host.stop();
   host = null;
@@ -728,6 +852,28 @@ export function stopHosting() {
 /** Can this device offer a party at all? The lobby tile asks before drawing. */
 export function canHost() {
   return availability().available;
+}
+
+/**
+ * Take a seat back off the person in it.
+ *
+ * The seat becomes a bot rather than opening, because this happens mid-hand as
+ * often as not and an empty chair with cards in it is a table that stops. The
+ * `bye` is the half that matters: a client whose seat vanished with no word
+ * cannot tell being removed from the host crashing, and would sit there
+ * proposing into nothing.
+ */
+async function removeSeat(seat) {
+  const who = nameForSeat(seat) || `Seat ${seat + 1}`;
+  const ok = await confirmAction(`Remove ${who} from the table? A bot takes over their hand.`,
+    { okLabel: 'Remove them', cancelLabel: 'Keep them' });
+  if (!ok) return;
+  const owner = hostSeats.ownerOf(seat);
+  if (owner.kind === 'device' && owner.deviceId) {
+    port.send({ k: FRAME.BYE, why: 'replaced' }, { to: owner.deviceId });
+  }
+  hostSeats.seatBot(seat);
+  afterSeatChange();
 }
 
 /* ------------------------------------------------------------------ *
@@ -849,6 +995,7 @@ async function joinInvitation() {
           message: meta?.snapshot ? 'Caught up.' : '',
         });
         goToTable();
+        pulse();
         renderStrip();
       },
       onReject: (frame2) => Arcade.ui.toast(frame2.reason || 'That move is not legal.',
@@ -856,7 +1003,16 @@ async function joinInvitation() {
       onEmote: ({ emote }) => burst(emote),
       onIncompatible: surfaceIncompatible,
       onError: surfaceError,
-      onEnd: () => { setNotice('The host closed the table.'); leaveTable(); goToLobby(); },
+      // 'replaced' is the host taking this seat back; 'closed' is the whole
+      // table ending. Same exit, two different sentences, because "your game
+      // vanished" is not a thing to leave somebody guessing about.
+      onEnd: ({ why }) => {
+        setNotice(why === 'replaced'
+          ? 'The host gave your seat to a bot.'
+          : 'The host closed the table.');
+        leaveTable();
+        goToLobby();
+      },
     },
   });
   client.start();
@@ -871,6 +1027,7 @@ export function leaveTable() {
   }
   client = null;
   joinedPack = null;
+  if (tick) { clearInterval(tick); tick = null; }
   lobbyFrame = invitation;
   leaveSharedTable();
   renderScreen();
@@ -921,6 +1078,7 @@ export function refreshEntry() {
   // The tiles' own doors, toggled in place: a party can form while the player
   // is sitting on the lobby, and the tiles were built before it did.
   for (const node of document.querySelectorAll('.tile__together')) node.hidden = false;
+  decorateTiles();
   const invited = !!invitation || !!client || !!host;
   el.entry.hidden = !invited;
   el.entry.disabled = false;
@@ -939,6 +1097,48 @@ export function refreshEntry() {
  * and a host must be able to look at the seats without its table being torn
  * down to do it.
  */
+/**
+ * Say, on the tile, that this game has a table on it.
+ *
+ * WHICH GAME IS THE MISSING FACT. A party announces itself in the header, and
+ * the header cannot say what is being played — so a joiner was told a table
+ * existed and left to guess where. The lobby already has a vocabulary for
+ * "there is something here": the in-progress ribbon. This is the same sentence
+ * about somebody else's table, on the tile that game lives on.
+ */
+function decorateTiles() {
+  const frame = lobbyFrame;
+  const mine = host ? hostPack?.packId : null;
+  const theirs = frame && !host ? frame.packId : null;
+  const live = mine || theirs;
+
+  for (const tile of document.querySelectorAll('.tile[data-pack-id]')) {
+    const slot = tile.querySelector('.tile__party');
+    const door = tile.querySelector('.tile__together');
+    const isLive = tile.dataset.packId === live;
+    if (slot) {
+      slot.hidden = !isLive;
+      slot.textContent = isLive ? partyRibbon(frame) : '';
+    }
+    // The door's LABEL changes with its meaning. "Play together" starts a
+    // table; on the game somebody is already at, the only useful verb is the
+    // one that takes you there.
+    if (door && !door.hidden) {
+      door.textContent = isLive && !host ? 'Take a seat' : 'Play together';
+    }
+  }
+}
+
+/** "Ada's table · waiting to deal · 2 seats open" — one line, in that order. */
+function partyRibbon(frame) {
+  if (!frame) return 'Your party';
+  const whose = host ? 'Your party' : `${partyLabel.cached?.leaderName || 'A'}'s table`;
+  const stage = frame.started ? 'in progress' : 'waiting to deal';
+  const open = (frame.seats || []).filter((s) => s.kind !== 'device').length;
+  const seats = open === 0 ? 'table full' : `${open} ${open === 1 ? 'seat' : 'seats'} open`;
+  return `${whose} · ${stage} · ${seats}`;
+}
+
 export function showPartyScreen() {
   if (!el.screen) return;
   el.screen.hidden = false;
