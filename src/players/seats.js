@@ -238,6 +238,26 @@ export function createSeatLens(getTable, { fallbackSeat = 0 } = {}) {
       if (!table) return seat === fallbackSeat;
       return table.isLocal(seat);
     },
+    /**
+     * IS THIS A SEAT THE HOUSE MOVES? — which is emphatically not the same
+     * question as "is it not mine", and reading it as one is what kept the
+     * bots playing after a joiner sat down.
+     *
+     * In solo the two answers are identical, because every seat that is not
+     * yours IS a bot; that is exactly why the difference went unnoticed until
+     * a second device arrived. At a shared table a joiner's seat is neither
+     * yours nor a bot's, and the host must leave it alone.
+     *
+     * An EMPTY seat counts. A seat nobody holds still has cards in it and a
+     * turn that has to be taken, so the house plays it until somebody claims
+     * it — which is also what makes "Open" mean "claimable" rather than
+     * "stall the hand here".
+     */
+    plays(seat) {
+      const table = getTable();
+      if (!table) return seat !== fallbackSeat;
+      return table.isBot(seat) || table.isEmpty(seat);
+    },
   };
 }
 

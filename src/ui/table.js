@@ -57,7 +57,10 @@ import { line, svgNode, clearSvgCache } from './dom.js';
 import { promptChoice, closeChoiceDialog } from './choiceDialog.js';
 import { createCelebrations } from './celebrations.js';
 import { createContractLadder } from './contractLadder.js';
-import { createSeatLens, soloSeatTable, createSeatTable, LOCAL_DEVICE as LOCAL_VIEWER } from '../players/seats.js';
+import {
+  createSeatLens, soloSeatTable, createSeatTable, deserializeSeatTable,
+  LOCAL_DEVICE as LOCAL_VIEWER,
+} from '../players/seats.js';
 import { modelFromView } from './tableModel.js';
 import { sessionClock } from '../match/clock.js';
 import { createMatchRecord } from './matchRecord.js';
@@ -168,6 +171,17 @@ let epoch = 0;
 // the presence of this object — the state knows what it is, and one test for
 // it beats two that can disagree.
 let sharedTable = null;
+
+// THE HOST'S EAR ON THIS TABLE, when this device is publishing to a party.
+//
+// Set by src/ui/party.js and null the rest of the time. Every move this device
+// applies itself — a tap, a bot's turn, a timeout, an announcement — has to
+// become a new view for everybody else, and this is the one notification that
+// makes that happen. It is a LISTENER rather than a rerouted apply path on
+// purpose: solo is the overwhelming majority of play and the way to keep it
+// safe is to leave its pipeline exactly as it was, with hosting as something
+// that watches rather than something that intercepts.
+let onLocalMove = null;
 
 // The screen's own furniture, not the match's.
 let settings = null;
@@ -2373,8 +2387,15 @@ function soundReactions(state) {
 // render/persist/schedule trio in one place is what stops a new move type from
 // silently skipping the save — and it is where the move's event window
 // (state.events) becomes table moments: a trick gathered, a round scored.
-function afterMove(state, move, from, message) {
+function afterMove(state, move, from, message, { publish = true } = {}) {
   const events = state.events;
+
+  // FIRST, and before anything that can throw or animate. A remote seat
+  // waiting on this move should not be waiting on this device's render.
+  // `publish: false` is the remote path, where the move was already published
+  // by the host module that applied it — publishing again would burn a `seq`
+  // and make every client ask for a snapshot it does not need.
+  if (publish) onLocalMove?.(state, move, events.slice());
   const trick = events.find((e) => e.type === 'trickWon');
   const passed = events.find((e) => e.type === 'cardsPassed');
   const roundOver = events.find((e) => e.type === 'roundOver' && !e.over);
@@ -2605,6 +2626,12 @@ function performAnnouncement(state, move, myEpoch = epoch) {
   if (!check.legal) return;
 
   applyMove(state, move);
+  // An announcement IS a move — it has an actor, it goes through applyMove, it
+  // lands in the log — so a party has to be told about it too. This path
+  // deliberately does not re-enter afterMove (re-scheduling the turn would
+  // restart a bot's think time every time anybody spoke), which is exactly why
+  // it has to publish for itself.
+  onLocalMove?.(state, move, state.events.slice());
   soundReactions(state);
   const caught = state.events.find((e) => e.type === 'caught');
   const announced = state.events.find((e) => e.type === 'announced');
@@ -2654,6 +2681,7 @@ function performAnnouncement(state, move, myEpoch = epoch) {
  * ------------------------------------------------------------------ */
 
 let bots = null;
+let paused = false;
 
 function cancelBotTurn() { if (bots) bots.cancelTurn(session); }
 function cancelAnnouncementBeats() { if (bots) bots.cancelBeats(session); }
@@ -2661,7 +2689,18 @@ function scheduleNextTurn() {
   // Bots run HOST-SIDE, and only there: a joiner scheduling one would be a
   // second device trying to move the same seat.
   if (liveState()?.isView) return;
+  // PAUSED IS A REAL STATE, and it is the host player's answer to a seat that
+  // dropped for good: hold the hand exactly as it stands rather than let the
+  // bots play on around an empty chair. Nothing is torn down, so resuming is
+  // one call and the table picks up mid-turn.
+  if (paused) return;
   if (bots) bots.scheduleNextTurn(session, epoch);
+}
+
+/** Hold or release the table's own clock. The host's "wait for them" answer. */
+export function setTablePaused(on) {
+  paused = !!on;
+  if (!paused) scheduleNextTurn();
 }
 function scheduleAnnouncementBeats() { if (bots) bots.scheduleAnnouncementBeats(session, epoch); }
 
@@ -2677,21 +2716,23 @@ function scheduleAnnouncementBeats() { if (bots) bots.scheduleAnnouncementBeats(
  * the ritual (closeTable) forgot, so a persona's "did they remember to declare?"
  * roll could survive into a match that had not been dealt when it was made.
  */
-function adoptMatch(pack, state, message, { dealing = false } = {}) {
+function adoptMatch(pack, state, message, { dealing = false, seats = null, seating = null } = {}) {
   epoch += 1;
   stopSession(session);
   if (drag) drag.cancel();
   session = createSession({
     pack,
     state,
-    // WHO OWNS EACH SEAT, before who they are: this is a solo table, so one
-    // human on this device and bots in the rest. A shared table builds the
-    // same structure from the host's lobby frame instead, which is the whole
-    // reason ownership is a table rather than the number zero.
-    seats: soloSeatTable(state.seats, { humanSeat: SOLO_HUMAN_SEAT }),
+    // WHO OWNS EACH SEAT, before who they are. Solo is one human on this device
+    // and bots in the rest — which is the whole reason ownership is a table
+    // rather than the number zero, because a HOSTED deal arrives with its
+    // seats already decided in the party panel and passes them in.
+    seats: seats || soloSeatTable(state.seats, { humanSeat: SOLO_HUMAN_SEAT }),
     // Who is at this table — derived from the match SEED, so a resumed game
-    // re-seats the same opponents and a fresh deal brings new ones.
-    seating: buildSeating(state.seed, state.seats, { humanSeat: SOLO_HUMAN_SEAT, humanName: humanName() }),
+    // re-seats the same opponents and a fresh deal brings new ones. A hosted
+    // deal overrides it: some of those chairs hold people, and a seed knows
+    // nothing about people.
+    seating: seating || buildSeating(state.seed, state.seats, { humanSeat: SOLO_HUMAN_SEAT, humanName: humanName() }),
     // From the PACK rather than the manifest alone: the deck is what tells a
     // style which colours it actually has to draw. Built once per match rather
     // than per render — resolving a theme walks the whole deck.
@@ -2711,6 +2752,39 @@ function adoptMatch(pack, state, message, { dealing = false } = {}) {
   persistMatch();
   scheduleNextTurn();
   scheduleAnnouncementBeats();
+}
+
+/**
+ * DEAL A TABLE THAT WAS BUILT BEFORE IT WAS DEALT — the host's half of the
+ * party flow.
+ *
+ * The difference from `openTable` is entirely in what it refuses to do. It
+ * does not consult storage, because a party deal is a new hand by definition
+ * and resuming somebody's solo save into a room full of people is nonsense. It
+ * does not derive the seating, because the seats were decided in the party
+ * panel by the people sitting in them.
+ *
+ * @param seats    the seat table the party agreed on (src/players/seats.js)
+ * @param seating  who those seats are, from the host's own lobby roster
+ */
+export async function dealHostedTable({ packId, variants, seats, seating, message = '' }) {
+  const myToken = ++openToken;
+  cancelBotTurn();
+  cancelAnnouncementBeats();
+  closeChoiceDialog();
+
+  const pack = await fetchPack(packId, variants);
+  if (myToken !== openToken) return null;
+
+  rememberPack(packId);
+  Arcade.ui.setTitle(pack.manifest.name);
+  hideAllPanels();
+
+  const state = createState({ pack, seats: seats.count, seed: Date.now() });
+  pack.template.setup(makeCtx(state));
+  playDeal(seats.count);
+  adoptMatch(pack, state, message || `Playing ${pack.manifest.name}.`, { dealing: true, seats, seating });
+  return state;
 }
 
 /**
@@ -2763,6 +2837,89 @@ export function adoptSharedView({ view, pack, seating, client, message = '' }) {
 /** Stop being a joiner. The felt is torn down by the caller's ordinary exit. */
 export function leaveSharedTable() {
   sharedTable = null;
+}
+
+/* ------------------------------------------------------------------ *
+ * The host's seams — src/ui/party.js owns the protocol; these are the
+ * four places it touches the felt.
+ * ------------------------------------------------------------------ */
+
+/**
+ * Be told about every move this device applies. Pass null to stop.
+ *
+ * The listener is called with `(state, move, events)` AFTER the engine has
+ * applied it and BEFORE the render, which is the order a remote seat wants:
+ * the frame leaves while the animation is still starting here.
+ */
+export function setLocalMoveListener(fn) {
+  onLocalMove = typeof fn === 'function' ? fn : null;
+}
+
+/**
+ * What is on this felt right now — the host's half of the handshake.
+ *
+ * Returns live references on purpose. `createTableHost` takes `liveState` as a
+ * function and reads the seat table every time it publishes, because a table
+ * that handed over a snapshot would be publishing the game as it was when
+ * hosting started.
+ */
+export function tableContext() {
+  if (!session) return null;
+  return { state: session.state, seats: session.seats, pack: session.pack, seating: session.seating };
+}
+
+/**
+ * A move the HOST MODULE applied on our behalf — a joiner's accepted proposal.
+ *
+ * The state has already changed; what has not happened is everything the felt
+ * does about it. `publish: false` because the host published it as it applied
+ * it, and a second publish would burn a `seq` for a move nobody made.
+ */
+export function afterRemoteMove(move) {
+  const state = liveState();
+  if (!state || state.isView) return;
+  // `far` is unconditional: by definition this move was made on another device.
+  if (move.type === 'draw') playDraw();
+  else if (move.type !== 'pass') playCardPlayed({ far: true });
+  soundReactions(state);
+  afterMove(state, move, seatRect(move.actor), '', { publish: false });
+}
+
+/**
+ * Replace who the felt believes is at each seat.
+ *
+ * A SEATING IS BUILT ONCE AT DEAL TIME AND FROZEN, which is right for solo —
+ * the opponents come from the seed and cannot change — and wrong the moment a
+ * person can sit down mid-hand. Without this, a joiner who took a bot's seat
+ * kept the bot's name, face and colour on every surface that names players:
+ * the opponent row, the scoreboard, the round summary.
+ */
+export function setSeating(seating) {
+  if (!session || !Array.isArray(seating)) return;
+  session.seating = seating;
+  if (liveState()) render(liveState());
+}
+
+/**
+ * Re-answer "which of these seats is me" against a real device id.
+ *
+ * A SOLO SEAT TABLE CALLS ITSELF `@local` (src/players/seats.js), which is
+ * exactly right until the moment somebody else is at the table: the host
+ * publishes seat ownership by deviceId, and a roster claiming that seat 0
+ * belongs to "@local" names a device no joiner can address. So hosting rebases
+ * the table onto the id the transport actually knows us by — the ownership is
+ * unchanged, only the name we go by.
+ */
+export function rebaseSeats(localDeviceId) {
+  if (!session || !localDeviceId) return null;
+  const payload = session.seats.serialize();
+  for (const owner of payload.owners) {
+    if (owner.kind === 'device' && owner.deviceId === LOCAL_VIEWER) owner.deviceId = localDeviceId;
+  }
+  const rebased = deserializeSeatTable(payload, { localDeviceId });
+  if (!rebased) return null;
+  session.seats = rebased;
+  return rebased;
 }
 
 function startGame(pack, seats) {

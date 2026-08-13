@@ -40,9 +40,57 @@
            renderer uses. No webfont, and so no third-party asset. -->
       <p class="wordmark__rule" aria-hidden="true"><span>♠</span><span>♥</span><span>♦</span><span>♣</span></p>
       <p id="lobby-note" class="lobby__note"></p>
+      <!-- The multiplayer door. Hidden outside a party and DISABLED, with its
+           own label, on a launcher too old to carry the frames — the two are
+           different sentences and src/match/peerPort.js keeps them apart. -->
+      <button type="button" id="party-button" class="ghost-button party-button" hidden>Play together</button>
     </header>
     <div id="lobby-grid" class="lobby__grid"></div>
   </main>
+
+  <!-- The party: who is at the table, and what this device may do about it. The
+       host sees bot/open toggles, a joiner sees claim buttons, and both see the
+       same presence chips — drawn from the roster the HOST publishes, because on
+       a joiner `peers()` holds only the host and a fellow joiner's silence is
+       not absence.
+
+       AN OVERLAY, NOT A THIRD SCREEN. It was a screen, and being a screen made
+       it invisible: the router owns `hidden` on exactly two elements, so this
+       one unhid itself BELOW the lobby grid and the only way to find it was to
+       scroll past five game tiles. It is also the wrong shape for the job — the
+       thing underneath is the context ("who is joining WHAT"), and a table you
+       are hosting must not be torn down to look at the seats. -->
+  <div id="party-overlay" hidden>
+    <div class="panel panel--wide">
+      <div id="party-heading" class="panel__title"></div>
+      <p id="party-summary" class="party__summary"></p>
+      <p id="party-note" class="party__note" hidden></p>
+      <div id="party-seats" class="party__seats"></div>
+      <div id="party-actions" class="party__actions"></div>
+      <div class="panel__actions">
+        <button type="button" id="party-back" class="ghost-button">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- The host's answer to a seat that dropped for good. Not shown for an
+       INTERRUPTED seat: that one keeps playing, and asking about it would turn
+       a tunnel into a decision. -->
+  <div id="party-decision" hidden>
+    <div class="panel">
+      <div class="panel__title">Somebody left</div>
+      <p id="party-decision-text"></p>
+      <div class="panel__actions">
+        <button type="button" data-choice="bot">Fill with a bot</button>
+        <button type="button" data-choice="pause" class="ghost-button">Wait for them</button>
+        <button type="button" data-choice="end" class="ghost-button">End the table</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Where an emote lands and then stops existing. Never logged, never
+       persisted: an index on the wire, a glyph for a second and a half. -->
+  <div id="emote-layer" class="emote-layer" aria-hidden="true"></div>
 
   <div id="table-screen" hidden>
     <!-- Three items, one line, always. The bar sits above the felt in a
@@ -64,6 +112,12 @@
         <span id="score-chip-value"></span>
       </button>
     </div>
+
+    <!-- Presence, above the felt rather than on the seat faces: the opponent
+         row is the pack's own furniture and a chip on it would move with every
+         plate. One line, only while a party is live, and empty of bots and open
+         seats — a chip that always says the same thing is not a chip. -->
+    <div id="party-strip" class="party-strip" hidden></div>
 
     <div id="table">
       <div class="opponent-row" id="opponents-top"></div>
@@ -98,6 +152,12 @@
            because these are legal when it is NOT your turn, which is the whole
            point of them — and the labels come from the pack, not from here. -->
       <div id="announce-bar" hidden></div>
+
+      <!-- A fixed set of eight, indexed on the wire (src/match/protocol.js).
+           There is no free-text channel at this table on purpose: free text is
+           a moderation problem, a localisation problem and an XSS surface, and
+           the whole feature is "let them know you saw that". -->
+      <div id="emote-bar" class="emote-bar" hidden></div>
 
       <!-- Phase-contextual guidance and the one action that needs a button
            (passing, laying down). Carries the turn token when it is the

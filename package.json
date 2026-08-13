@@ -10,8 +10,10 @@
     "pack-test": "node tools/pack-test.mjs",
     "pack-test:all": "node tools/pack-test.mjs --all",
     "simulate": "node tools/simulate.mjs",
+    "simulate:protocol": "node tools/simulate.mjs --all --protocol",
     "serve": "node tools/serve.mjs",
-    "stage": "node tools/stage.mjs dist"
+    "stage": "node tools/stage.mjs dist",
+    "mp-acceptance": "node tools/mp-acceptance.mjs"
   },
   "engines": {
     "node": ">=24"

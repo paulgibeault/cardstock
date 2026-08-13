@@ -24,19 +24,22 @@ import { makeCtx } from '../src/engine/context.js';
 import { enumerateLegalMoves } from '../src/engine/movePipeline.js';
 import { createSeatTable } from '../src/players/seats.js';
 import { createTableHost, seatStatus, needsHostDecision } from '../src/match/host.js';
+import { createTurnTimer } from '../src/match/turnTimer.js';
+import { wallClock } from '../src/match/clock.js';
+import { chooseBotMove } from '../src/engine/bot.js';
 import { createTableClient } from '../src/match/client.js';
 import { peerAvailability, REQUIRED_CAPS } from '../src/match/peerPort.js';
 import {
-  validateFrame, isAuthentic, FRAME, PROTOCOL_VERSION, EMOTES,
+  validateFrame, isAuthentic, isSafeCardId, isSafeAddress, FRAME, PROTOCOL_VERSION, EMOTES,
 } from '../src/match/protocol.js';
 import { createPeerNetwork } from '../tools/peer-stub.mjs';
-import { loadPackFromDisk } from '../tools/pack-test.mjs';
+import { loadPackFromDisk, listPackIds } from '../tools/pack-test.mjs';
 
 /* ------------------------------------------------------------------ *
  * A three-device table
  * ------------------------------------------------------------------ */
 
-async function threeSeatTable({ packId = 'crazy-eights' } = {}) {
+async function threeSeatTable({ packId = 'crazy-eights', now } = {}) {
   const pack = await loadPackFromDisk(packId);
   const state = createState({ pack, seats: 3, seed: 20260810 });
   pack.template.setup(makeCtx(state));
@@ -60,6 +63,7 @@ async function threeSeatTable({ packId = 'crazy-eights' } = {}) {
       variants: pack.activeVariants ?? [],
     }),
     nameFor: (seat) => `Seat ${seat}`,
+    ...(now ? { now } : {}),
     hooks: { onError: (e) => errors.host.push(e) },
   });
 
@@ -128,6 +132,62 @@ test('wire ids are charset-checked before anything can use them as a selector', 
       `${id} should be refused`,
     );
   }
+});
+
+/**
+ * THE VALIDATOR HAS TO ACCEPT WHAT THE ENGINE ACTUALLY MINTS, and for a long
+ * while it did not.
+ *
+ * Every card after the first copy is `base#N` (src/engine/cards.js) and every
+ * per-seat zone is `name.N` (`hand.1`, `discard.4.3`). Neither matched the wire
+ * charset, so a `propose` carrying a real Wildfire or Stockpile card was
+ * refused as malformed before it reached a single rule — while Crazy Eights'
+ * opening `draw`, a move with no cards and no addresses, sailed through. One
+ * pack looked fine and four could not play at all.
+ *
+ * So the pin is against the REAL vocabulary rather than a handful of examples:
+ * every id and every address every pack mints, at every seat count it offers.
+ */
+test('every card id and zone address the engine mints survives the wire validator', async () => {
+  for (const packId of listPackIds()) {
+    const pack = await loadPackFromDisk(packId);
+    const { min, max } = pack.manifest.players;
+    for (const seats of new Set([min, max])) {
+      const state = createState({ pack, seats, seed: `charset:${packId}:${seats}` });
+      pack.template.setup(makeCtx(state));
+
+      const cards = [...pack.cardsById.keys()];
+      for (const id of cards) {
+        assert.ok(isSafeCardId(id), `${packId}: the wire refuses its own card id ${id}`);
+      }
+      for (const address of state.zones.allAddresses()) {
+        assert.ok(isSafeAddress(address), `${packId}: the wire refuses its own zone address ${address}`);
+      }
+
+      // And end to end, as a frame: a real move from a real enumeration.
+      for (let seat = 0; seat < seats; seat++) {
+        for (const move of enumerateLegalMoves(state, seat)) {
+          const verdict = validateFrame({ k: FRAME.PROPOSE, pid: 'p1', move });
+          assert.ok(verdict.ok, `${packId}: the wire refuses a legal move — ${JSON.stringify(move)}`);
+          assert.deepEqual(verdict.frame.move, move,
+            `${packId}: the validator dropped a field off a legal move — ${JSON.stringify(move)}`);
+        }
+      }
+    }
+  }
+});
+
+test('the widened charsets are still charsets — a dot is not a path', () => {
+  assert.equal(isSafeAddress('../../hand.0'), false);
+  assert.equal(isSafeAddress('hand.constructor'), false);
+  assert.equal(isSafeAddress('hand.'), false);
+  assert.equal(isSafeAddress('hand.0.1.2.3.4'), false);
+  assert.equal(isSafeCardId('red-1#'), false);
+  assert.equal(isSafeCardId('red-1#x'), false);
+  assert.equal(isSafeCardId('red#1#2'), false);
+  assert.equal(isSafeCardId('#hand > *'), false);
+  assert.ok(isSafeCardId('red-1#2'));
+  assert.ok(isSafeAddress('discard.4.3'));
 });
 
 test('a move is bounded — a peer cannot propose a thousand cards', () => {
@@ -319,6 +379,33 @@ test('a card id that names nothing in the deck is refused before it reaches the 
   t.state.turn.seat = 1;
   t.a.propose({ actor: 1, type: 'playCard', cards: ['not-a-real-card'] });
   assert.equal(t.seen.a.rejects.at(-1)?.rule, 'unknown-card');
+});
+
+test('a flooding client is cut off, and the table is told rather than left guessing', async () => {
+  let clock = 0;
+  const t = await threeSeatTable({ now: () => clock });
+  seatAll(t);
+  t.state.turn.seat = 1;
+  t.errors.host.length = 0;
+
+  // Well past PROPOSE_BUDGET inside one window. The refusal itself is the
+  // design; what must not happen is that it is invisible — from Ada's side a
+  // dropped proposal and a dead host look exactly the same.
+  const foreign = t.state.zones.cards('hand.2')[0];
+  for (let i = 0; i < 60; i++) {
+    t.a.propose({ actor: 1, type: 'playCard', cards: [foreign] });
+  }
+  assert.ok(t.errors.host.some((e) => e.kind === 'rate-limited'),
+    'the host dropped frames for budget without saying so');
+
+  // And the window is a WINDOW: move the clock past it and the same client is
+  // read again. A limiter that never forgives is a ban.
+  t.errors.host.length = 0;
+  clock += 60_000;
+  const before = t.state.log.length;
+  t.a.propose(enumerateLegalMoves(t.state, 1)[0]);
+  assert.equal(t.state.log.length, before + 1, 'a client the budget forgave was still being ignored');
+  assert.equal(t.errors.host.filter((e) => e.kind === 'rate-limited').length, 0);
 });
 
 /* ------------------------------------------------------------------ *
@@ -544,4 +631,97 @@ test('the host itself is always connected, whatever the roster says', () => {
   assert.equal(seatStatus({ kind: 'device', deviceId: 'host' }, { peers: [], selfDeviceId: 'host' }), 'connected');
   assert.equal(seatStatus({ kind: 'bot' }, {}), 'bot');
   assert.equal(seatStatus({ kind: 'empty' }, {}), 'empty');
+});
+
+/* ------------------------------------------------------------------ *
+ * Turn timers
+ * ------------------------------------------------------------------ */
+
+/** A clock a test can shove forward, so "a minute passed" costs no seconds. */
+function fakeClock() {
+  let now = 1_000_000;
+  const pending = [];
+  return {
+    clock: wallClock({
+      now: () => now,
+      schedule: (fn, ms) => { const entry = { fn, at: now + ms }; pending.push(entry); return entry; },
+      unschedule: (entry) => { const i = pending.indexOf(entry); if (i >= 0) pending.splice(i, 1); },
+    }),
+    advance(ms) {
+      now += ms;
+      // Fire whatever is due, in order, letting each rescheduled wake re-queue.
+      for (let guard = 0; guard < 1000; guard++) {
+        const due = pending.filter((e) => e.at <= now).sort((a, b) => a.at - b.at)[0];
+        if (!due) return;
+        pending.splice(pending.indexOf(due), 1);
+        due.fn();
+      }
+    },
+  };
+}
+
+/**
+ * A TIMEOUT IS A MOVE, and that is the whole property worth pinning.
+ *
+ * The tempting implementation greys the seat out and carries on, which
+ * desynchronises the table on the very first one: the host's state and every
+ * client's now differ by a fact that appears nowhere in the log, so a resync, a
+ * resume, or a replay all rebuild a game in which that seat never ran out of
+ * time. So the assertion is on the LOG — and on the clients having been told.
+ */
+test('a seat that runs out of time is played for, through the ordinary pipeline', async () => {
+  const t = await threeSeatTable();
+  seatAll(t);
+  t.state.turn.seat = 1; // Ada's turn, and Ada has gone to make tea.
+
+  const { clock, advance } = fakeClock();
+  const timer = createTurnTimer({
+    clock,
+    timeoutMs: 60_000,
+    actingSeatsOf: (state) => [state.turn.seat],
+    // Only other people's seats: the host's own turn waits for the host, and a
+    // bot needs no encouragement.
+    waitsOn: (seat) => seat !== 0,
+    onExpire: (state, seat) => {
+      const move = chooseBotMove(state, seat);
+      if (move) t.host.applyLocal(move);
+    },
+  });
+
+  timer.arm(t.state);
+  assert.deepEqual(timer.deadlines().map((d) => d.seat), [1], 'the seat being waited on is the one on a clock');
+
+  const before = t.state.log.length;
+  const seqBefore = t.host.seq();
+  advance(30_000);
+  assert.equal(t.state.log.length, before, 'half a minute is not a timeout');
+
+  advance(31_000);
+  assert.equal(t.state.log.length, before + 1, 'the turn that ran out produced a move');
+  assert.equal(t.state.log.at(-1).actor, 1, 'and it was that seat that moved');
+  assert.ok(t.host.seq() > seqBefore, 'so every client was sent the result');
+  assert.ok(t.seen.a.views.length > 0 && t.seen.b.views.length > 0);
+
+  // THE SEAT IS STILL THEIRS. A timeout costs one turn, never the chair —
+  // the same answer an interrupted link already gets.
+  assert.equal(t.seats.ownerOf(1).kind, 'device');
+  assert.equal(t.seats.ownerOf(1).deviceId, 'a');
+});
+
+test('a seat nobody is waiting on is never on a clock', async () => {
+  const t = await threeSeatTable();
+  seatAll(t);
+  const { clock, advance } = fakeClock();
+  const fired = [];
+  const timer = createTurnTimer({
+    clock,
+    timeoutMs: 1000,
+    actingSeatsOf: (state) => [state.turn.seat],
+    waitsOn: () => false, // solo, or a table where nobody has opted into a clock
+    onExpire: (_state, seat) => fired.push(seat),
+  });
+  timer.arm(t.state);
+  assert.deepEqual(timer.deadlines(), []);
+  advance(10_000);
+  assert.deepEqual(fired, [], 'a clock nobody asked for expired anyway');
 });

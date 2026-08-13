@@ -2712,6 +2712,8 @@ body.is-dragging .card-face { cursor: grabbing; }
 #scoreboard-overlay,
 #game-over-overlay,
 #rules-overlay,
+#party-decision,
+#party-overlay,
 #new-game-overlay {
   position: fixed;
   inset: 0;
@@ -2729,6 +2731,8 @@ body.is-dragging .card-face { cursor: grabbing; }
 #scoreboard-overlay[hidden],
 #game-over-overlay[hidden],
 #rules-overlay[hidden],
+#party-decision[hidden],
+#party-overlay[hidden],
 #new-game-overlay[hidden] { display: none; }
 
 #choice-modal .panel,
@@ -2737,6 +2741,8 @@ body.is-dragging .card-face { cursor: grabbing; }
 #scoreboard-overlay .panel,
 #game-over-overlay .panel,
 #rules-overlay .panel,
+#party-decision .panel,
+#party-overlay .panel,
 #new-game-overlay .panel {
   background: var(--panel-bg);
   color: var(--panel-text);
@@ -3410,6 +3416,42 @@ body.is-dragging .card-face { cursor: grabbing; }
 }
 .tile__rules:hover { opacity: 1; background: var(--ghost-hover); }
 
+/* Somebody is playing this one right now. Sits where the in-progress ribbon
+   sits and reads as its sibling — the ribbon is your own saved game, this is a
+   table with a chair in it. */
+.tile__party {
+  display: block;
+  padding: 0.3rem 0.5rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-align: center;
+  background: var(--chip-bg);
+  border-bottom: 1px solid var(--tile-border);
+}
+.tile__party[hidden] { display: none; }
+
+/* The party door, in the same footer as the other two secondary actions — but
+   not as quiet as them. "Play together" is the only one of the three that is
+   ever the reason somebody opened the lobby, and at 0.65 opacity beneath a card
+   fan it reads as a footnote. It also only appears when there is a party to
+   play with, so it is never competing for attention it has not earned. */
+.tile__together {
+  display: block;
+  width: 100%;
+  padding: 0.5rem;
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: inherit;
+  background: none;
+  border: none;
+  border-top: 1px solid var(--tile-border);
+  cursor: pointer;
+}
+.tile__together::before { content: '\1F465\A0'; }
+.tile__together:hover { background: var(--ghost-hover); }
+.tile__together[hidden] { display: none; }
+
 /* ------------------------------------------------------------------ *
  * How to play
  * ------------------------------------------------------------------ */
@@ -3518,3 +3560,160 @@ body.is-dragging .card-face { cursor: grabbing; }
 .new-game__text { display: flex; flex-direction: column; gap: 0.15rem; }
 .new-game__name { font-size: 0.92rem; font-weight: 600; }
 .new-game__desc { font-size: 0.8rem; opacity: 0.72; line-height: 1.4; }
+
+/* ------------------------------------------------------------------ *
+ * The party: the multiplayer screen, the presence strip and the emotes.
+ *
+ * Everything here is theme-token-driven and motion-optional, on the same
+ * terms as the rest of the felt (Phase 3): a chip is a colour and a word, a
+ * burst is a glyph that fades, and `prefers-reduced-motion` turns the second
+ * into the first rather than deleting it.
+ * ------------------------------------------------------------------ */
+
+/* The panel is centred and chromed by the overlay family above; everything
+   here is only what goes INSIDE it. Left-aligned against that panel's centred
+   default, because a seat grid is a list of people and a centred list of names
+   is unreadable. */
+#party-overlay .panel { text-align: left; }
+#party-overlay .panel__title { text-align: center; }
+
+.party__summary { opacity: 0.85; margin: 0 0 0.75rem; text-align: center; }
+.party__note {
+  margin: 0 0 0.75rem;
+  padding: 0.6rem 0.75rem;
+  border-radius: 10px;
+  background: var(--chip-bg);
+  border: 1px solid var(--panel-border);
+}
+.party__note[hidden] { display: none; }
+
+.party__seats {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  /* A table can seat eight. The panel must not grow past the viewport on a
+     phone, so the grid is what scrolls — never the page behind it. */
+  max-height: min(50vh, 22rem);
+  overflow-y: auto;
+}
+.party__actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  justify-content: center;
+  margin-top: 0.75rem;
+}
+
+.party-seat {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.5rem 0.7rem;
+  border-radius: 10px;
+  background: var(--chip-bg);
+  border: 1px solid var(--panel-border);
+}
+.party-seat__face {
+  width: 1.75rem;
+  height: 1.75rem;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--seat-color, #5b8def);
+  color: #fff;
+  flex: 0 0 auto;
+}
+.party-seat__name {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.party-seat__actions { display: flex; gap: 0.35rem; flex: 0 0 auto; }
+
+/* A chip that says nothing is a dot: "connected" is the state a player should
+   never have to read. Everything else gets a word. */
+.presence-chip {
+  font-size: 0.8rem;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  border: 1px solid var(--panel-border);
+  opacity: 0.9;
+  white-space: nowrap;
+}
+.presence-chip--connected {
+  width: 0.55rem;
+  height: 0.55rem;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: #3fae6a;
+}
+.presence-chip--interrupted { background: rgba(214, 158, 46, 0.22); }
+.presence-chip--gone,
+.presence-chip--unreachable { background: rgba(196, 78, 78, 0.24); }
+.presence-chip--bot,
+.presence-chip--empty { opacity: 0.6; }
+
+.party-strip {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  padding: 0.35rem 0.6rem;
+  font-size: 0.85rem;
+}
+.party-strip[hidden] { display: none; }
+.party-strip__seat {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  background: var(--chip-bg);
+}
+.party-strip__seat--unreachable { outline: 1px solid rgba(196, 78, 78, 0.6); }
+/* The last twenty seconds of somebody's turn. Tabular figures so the number
+   does not jitter its neighbours as it counts down. */
+.party-strip__clock {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  opacity: 0.85;
+}
+
+.emote-bar { display: flex; gap: 0.3rem; justify-content: center; flex-wrap: wrap; }
+.emote-bar[hidden] { display: none; }
+.emote-button {
+  font-size: 1.1rem;
+  line-height: 1;
+  padding: 0.3rem 0.45rem;
+  border-radius: 10px;
+  background: var(--chip-bg);
+  border: 1px solid var(--panel-border);
+  cursor: pointer;
+}
+
+.emote-layer {
+  position: fixed;
+  inset: auto 0 18% 0;
+  display: flex;
+  justify-content: center;
+  gap: 0.5rem;
+  pointer-events: none;
+  z-index: 20;
+}
+.emote-burst {
+  font-size: 2.5rem;
+  animation: emote-rise 1.5s ease-out forwards;
+}
+.emote-burst--still { animation: emote-hold 1.1s linear forwards; }
+
+@keyframes emote-rise {
+  0% { opacity: 0; transform: translateY(0.75rem) scale(0.7); }
+  25% { opacity: 1; transform: translateY(0) scale(1.15); }
+  100% { opacity: 0; transform: translateY(-2.5rem) scale(1); }
+}
+@keyframes emote-hold {
+  0% { opacity: 0; }
+  15% { opacity: 1; }
+  100% { opacity: 0; }
+}
