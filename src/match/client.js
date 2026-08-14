@@ -109,6 +109,20 @@ export function createTableClient({ peer, expects, host = null, tableId, hooks =
     return delivered;
   }
 
+  /**
+   * The same stamp, for the frames we say to the ROOM rather than to the host.
+   *
+   * `emote` and `bye` are announcements, not requests: an emote is for everyone
+   * at the table and a `bye` is heard by fellow joiners as well as the host, so
+   * neither takes a `{ to }`. What they still need is the table's name — and
+   * going straight to `peer.send` to skip the targeting skipped that too, which
+   * is what this exists to make impossible. Every outbound frame now leaves
+   * through one of these two functions.
+   */
+  function broadcast(frame) {
+    return peer.send({ ...frame, tableId });
+  }
+
   /* ---------------------------------------------------------------- *
    * Inbound
    * ---------------------------------------------------------------- */
@@ -228,11 +242,11 @@ export function createTableClient({ peer, expects, host = null, tableId, hooks =
 
   function emote(index) {
     if (!Number.isInteger(index) || index < 0 || index >= EMOTES.length) return false;
-    return peer.send({ k: FRAME.EMOTE, i: index });
+    return broadcast({ k: FRAME.EMOTE, i: index });
   }
 
   function sendBye(why = 'leave') {
-    return peer.send({ k: FRAME.BYE, why });
+    return broadcast({ k: FRAME.BYE, why });
   }
 
   /* ---------------------------------------------------------------- *
