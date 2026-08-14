@@ -20,6 +20,7 @@ import { soloSeatTable } from "../src/players/seats.js";
 import {
   KEYS, MATCH_KEY_PREFIX, matchKey, isMatchKey, saveMatch, loadMatch, clearMatch,
   saveHostMatch, loadHostMatch, clearHostMatch, hostMatches,
+  saveSeatStub, seatStubs, clearSeatStub, touchSeatStub, sweepStaleTables, TABLE_ROLL_OFF_MS,
   listMatchSummaries, lastPlayedPack, rememberPack,
 } from "../src/arcade/storage.js";
 
@@ -211,4 +212,104 @@ test('a table id that is not a SAFE_ID is refused a slot', () => {
   assert.equal(saveHostMatch('../../etc/passwd', state, soloSeatTable(3)), false);
   assert.equal(loadHostMatch('../../etc/passwd'), null);
   assert.deepEqual(hostMatches(), [], 'and nothing was written to the index either');
+});
+
+/* ------------------------------------------------------------------ *
+ * The joiner's seat stubs, and the weekly roll-off (T4)
+ * ------------------------------------------------------------------ */
+
+const HOST_A = 'dev-ada';
+const DAY = 24 * 60 * 60 * 1000;
+
+test('a seat stub round-trips, and holds no game state at all', () => {
+  saveSeatStub({ tableId: TABLE_A, hostDeviceId: HOST_A, packId: 'hearts', seat: 2 }, { at: 1000 });
+
+  const [stub] = seatStubs();
+  assert.equal(stub.tableId, TABLE_A);
+  assert.equal(stub.seat, 2);
+  assert.equal(stub.packId, 'hearts');
+  // THE ASYMMETRY IS THE POINT. A host stores seed + log; a joiner stores a
+  // note about a chair. Anything else here would be a client keeping cards it
+  // was never shown.
+  assert.deepEqual(Object.keys(stub).sort(),
+    ['hostDeviceId', 'lastSeenAt', 'packId', 'savedAt', 'seat', 'tableId']);
+
+  clearSeatStub(TABLE_A);
+  assert.deepEqual(seatStubs(), []);
+});
+
+test('seat zero is a seat', () => {
+  saveSeatStub({ tableId: TABLE_A, hostDeviceId: HOST_A, packId: 'hearts', seat: 0 });
+  assert.equal(seatStubs()[0].seat, 0);
+});
+
+test('a malformed stub is dropped on read, not rendered', () => {
+  Arcade.state.set('mpSeats', [
+    { tableId: TABLE_A, hostDeviceId: HOST_A, packId: 'hearts', seat: 1 },
+    { tableId: 'not a safe id!', hostDeviceId: HOST_A, packId: 'hearts', seat: 1 },
+    { tableId: TABLE_B, hostDeviceId: HOST_A, packId: 'hearts', seat: 'first' },
+    null,
+  ]);
+  assert.deepEqual(seatStubs().map((s) => s.tableId), [TABLE_A],
+    'one bad stub costs one tile, not the whole row');
+});
+
+test('re-confirming a seat refreshes the sighting but not when we sat down', () => {
+  saveSeatStub({ tableId: TABLE_A, hostDeviceId: HOST_A, packId: 'hearts', seat: 1 }, { at: 1000 });
+  saveSeatStub({ tableId: TABLE_A, hostDeviceId: HOST_A, packId: 'hearts', seat: 1 }, { at: 5000 });
+
+  const [stub] = seatStubs();
+  assert.equal(stub.savedAt, 1000, 'still when we first sat down');
+  assert.equal(stub.lastSeenAt, 5000);
+  assert.equal(seatStubs().length, 1, 'and there is still one of it');
+});
+
+test('touching a stub keeps it off the sweep; touching an unknown one does nothing', () => {
+  saveSeatStub({ tableId: TABLE_A, hostDeviceId: HOST_A, packId: 'hearts', seat: 1 }, { at: 1000 });
+
+  assert.equal(touchSeatStub(TABLE_A, { at: 9000 }), true);
+  assert.equal(seatStubs()[0].lastSeenAt, 9000);
+  assert.equal(touchSeatStub(TABLE_B, { at: 9000 }), false);
+});
+
+test('the sweep drops what nobody has touched for a week, and keeps the rest', () => {
+  const now = 100 * DAY;
+  saveSeatStub({ tableId: TABLE_A, hostDeviceId: HOST_A, packId: 'hearts', seat: 1 },
+    { at: now - (8 * DAY) });
+  saveSeatStub({ tableId: TABLE_B, hostDeviceId: HOST_A, packId: 'hearts', seat: 2 },
+    { at: now - (6 * DAY) });
+
+  const dropped = sweepStaleTables({ now });
+
+  assert.deepEqual(dropped.seats, [TABLE_A]);
+  assert.deepEqual(seatStubs().map((s) => s.tableId), [TABLE_B]);
+});
+
+test('the sweep is exact at the seven-day boundary', () => {
+  const now = 100 * DAY;
+  saveSeatStub({ tableId: TABLE_A, hostDeviceId: HOST_A, packId: 'hearts', seat: 1 },
+    { at: now - TABLE_ROLL_OFF_MS });          // exactly a week: gone
+  saveSeatStub({ tableId: TABLE_B, hostDeviceId: HOST_A, packId: 'hearts', seat: 2 },
+    { at: now - TABLE_ROLL_OFF_MS + 1 });      // a millisecond inside: kept
+
+  sweepStaleTables({ now });
+
+  assert.deepEqual(seatStubs().map((s) => s.tableId), [TABLE_B]);
+});
+
+test('the sweep ages a hosted table on its last move, and drops the slot with it', () => {
+  const pack = packFromDisk('crazy-eights');
+  const state = createState({ pack, seats: 3, seed: 7 });
+  pack.template.setup(makeCtx(state));
+  const now = 100 * DAY;
+
+  saveHostMatch(TABLE_A, state, soloSeatTable(3));
+  // Backdate the index entry the way a week of not playing would.
+  Arcade.state.set('mpTables', [{ tableId: TABLE_A, packId: 'crazy-eights', savedAt: now - (8 * DAY) }]);
+
+  const dropped = sweepStaleTables({ now });
+
+  assert.deepEqual(dropped.tables, [TABLE_A]);
+  assert.equal(loadHostMatch(TABLE_A), null, 'the slot goes, not just the index entry');
+  assert.deepEqual(hostMatches(), []);
 });
