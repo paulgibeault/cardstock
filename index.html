@@ -45,6 +45,17 @@
            different sentences and src/match/peerPort.js keeps them apart. -->
       <button type="button" id="party-button" class="ghost-button party-button" hidden>Play together</button>
     </header>
+    <!-- TABLES ARE NOT GAMES, and they go above them. A game tile is a thing
+         you could start; a table tile is a thing already happening, with people
+         at it. Filled by src/ui/party.js, which is the only module that knows a
+         table exists — the lobby publishes the anchor and something else fills
+         it, exactly as it does for the per-tile party ribbon below.
+
+         Hidden until there is one, so a solo player's lobby is unchanged. -->
+    <section id="tables-row" class="tables" hidden aria-labelledby="tables-heading">
+      <h2 id="tables-heading" class="tables__heading">Tables</h2>
+      <div id="tables-grid" class="tables__grid"></div>
+    </section>
     <div id="lobby-grid" class="lobby__grid"></div>
   </main>
 

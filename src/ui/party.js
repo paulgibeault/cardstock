@@ -65,6 +65,8 @@ const el = {
   burst: document.getElementById('emote-layer'),
   decision: document.getElementById('party-decision'),
   decisionText: document.getElementById('party-decision-text'),
+  tablesRow: document.getElementById('tables-row'),
+  tablesGrid: document.getElementById('tables-grid'),
 };
 
 /** One emote per this many ms, per device. A burst is a wave, not a channel. */
@@ -96,7 +98,13 @@ let turnTimer = null;         // host-side only; a client renders, never decides
 let tick = null;              // the countdown's own repaint
 let client = null;            // createTableClient, when we are a joiner
 let joinedPack = null;        // the pack a joiner loaded to match the host's
-let lobbyFrame = null;        // the roster we are drawing: ours, or the host's
+// THE TABLE WE ARE ATTACHED TO — ours when hosting, our host's when joined,
+// null when neither. NOT the same question as "what is the panel showing",
+// which is `activeKey` below, and keeping them apart is the whole of this
+// stage: browsing a neighbour's seats while playing at your own is ordinary
+// now, and a single `lobbyFrame` served to both would have drawn their roster
+// onto your felt.
+let lobbyFrame = null;
 // EVERY TABLE IN EARSHOT, which used to be a single `invitation` slot — see the
 // header of src/match/tableDirectory.js for what that one slot cost. `host` is
 // still at most one (ours) and `client` still at most one (the table we are
@@ -149,24 +157,60 @@ export function partyRole() {
  * Which table we are looking at
  * ------------------------------------------------------------------ */
 
-/** The sighted table the panel is currently about, or null. */
+/** The table the panel is currently about, or null. */
 function activeTable() {
   return activeKey ? tables.get(activeKey) : null;
 }
 
 /**
- * Look at a table: point the panel at it and draw its roster.
+ * The roster the PANEL is drawing.
  *
- * THIS IS THE WHOLE OF "SWITCHING" IN THIS STAGE, and it is deliberately not
- * the whole of joining. Focus is a question about what is on screen; being a
- * client is a question about which host we are exchanging frames with. Keeping
- * them separate is what lets a device see three tables while playing at one.
+ * Falls back to the table we are attached to, which is what an idle panel and
+ * a freshly-hosted one both want. Every seat grid, summary line and heading
+ * reads this; the strip above the FELT does not, because the felt is always
+ * about the table we are playing at whatever the panel happens to be showing.
+ */
+function shownFrame() {
+  return activeTable()?.frame || lobbyFrame;
+}
+
+/** Is the panel looking at the table this device is hosting? */
+function shownIsOurs() {
+  const frame = shownFrame();
+  return !!host && !!frame && frame.hostDeviceId === selfId();
+}
+
+/**
+ * Look at a table: point the panel at it.
+ *
+ * THIS IS THE WHOLE OF "SWITCHING", and it is deliberately not the whole of
+ * joining. Focus is a question about what is on screen; being a client is a
+ * question about which host we are exchanging frames with. Keeping them apart
+ * is what lets a device see three tables while playing at one — and, since
+ * this stage, look at a neighbour's seats without leaving its own.
  */
 function focusTable(key) {
   if (!key || !tables.has(key)) return false;
   activeKey = key;
-  if (!host) lobbyFrame = tables.get(key).frame;
   return true;
+}
+
+/**
+ * File our own table alongside everybody else's.
+ *
+ * OUR TABLE IS A TABLE. Keeping it outside the directory meant every surface
+ * that draws tables needed a special case for the one we are hosting — the
+ * tile row, the panel's subject, the focus pointer — and three special cases
+ * for one fact is how the single-slot design got where it did. The directory
+ * is "every table this device knows about", and we know about ours best.
+ *
+ * The sniffer still ignores our own frames off the wire; this is the deliberate
+ * way in, called wherever the roster changes.
+ */
+function publishOwnTable() {
+  if (!host || !hostSeats || !hostPack) return;
+  const frame = ourLobbyFrame();
+  if (frame) tables.sight(frame);
 }
 
 /** Are we actually sitting down at the table we are a client of? */
@@ -253,7 +297,11 @@ function seatingFromRoster(frame) {
   // and Bruno sat at the same two seats on the table behind it — the panel and
   // the game disagreeing about who is playing. The derivation below is for a
   // JOINER, which has no seed and no seating; the host defers to its own.
-  const own = host ? tableContext()?.seating : null;
+  //
+  // ONLY FOR OUR OWN TABLE, though. A host looking at a NEIGHBOUR'S roster must
+  // derive like any other joiner: our felt's seating describes our game, and
+  // borrowing it would put our own bots' faces on their chairs.
+  const own = host && frame?.hostDeviceId === selfId() ? tableContext()?.seating : null;
 
   const out = [];
   for (let seat = 0; seat < seatCount; seat++) {
@@ -285,7 +333,7 @@ function seatingFromRoster(frame) {
     // and stays current when somebody renames themselves. A joiner cannot: its
     // `peers()` contains only the host, so a fellow joiner's name exists
     // nowhere but the frame the host published.
-    const fromRoster = host ? peerName(entry.deviceId) : entry.name;
+    const fromRoster = own ? peerName(entry.deviceId) : entry.name;
     const name = mine ? myName() : String(fromRoster || peerName(entry.deviceId)).slice(0, 60);
     out.push(Object.freeze({
       seat,
@@ -333,10 +381,14 @@ const CHIP_TEXT = {
  * fires — deliberately written now so the upgrade is a one-line change rather
  * than a redesign.
  */
-function seatStatuses() {
+function seatStatuses(frame = shownFrame()) {
   const out = new Map();
-  const frame = lobbyFrame;
-  if (host) {
+  // OUR OWN TABLE IS THE ONLY ONE WE CAN ANSWER FROM THE TRANSPORT. Asking the
+  // host module about a seat at a NEIGHBOUR'S table would answer about our own
+  // seat of that index — a roster that looks plausible and belongs to a
+  // different felt. For anybody else's table the published frame is not merely
+  // the best source, it is the only honest one.
+  if (host && frame && frame.hostDeviceId === selfId()) {
     // `hostSeats` rather than the felt's: the host holds a seat table from the
     // moment it opens a party, and the whole point of the lobby-first flow is
     // that people are seated BEFORE there is a table to read seats off.
@@ -401,11 +453,16 @@ function button(label, onClick, { className = 'ghost-button' } = {}) {
 function renderSeats() {
   if (!el.seats) return;
   el.seats.replaceChildren();
-  const frame = lobbyFrame;
+  const frame = shownFrame();
   if (!frame) return;
-  const statuses = seatStatuses();
+  const statuses = seatStatuses(frame);
   const seating = seatingFromRoster(frame);
   const me = selfId();
+  // WHOSE SEATS THESE ARE decides what may be done to them, and it is no longer
+  // answerable from `host` alone: a host looking at a neighbour's table is
+  // still a host, and offering it the bot/open toggles would have applied our
+  // own seat table to their chairs.
+  const ours = shownIsOurs();
 
   for (const identity of seating) {
     const seat = identity.seat;
@@ -437,7 +494,7 @@ function renderSeats() {
 
     const actions = document.createElement('span');
     actions.className = 'party-seat__actions';
-    if (host) {
+    if (ours) {
       const held = entry.kind === 'device' && entry.deviceId !== me;
       if (held) {
         // REMOVING SOMEBODY IS ITS OWN VERB. The seat toggles used to apply to
@@ -451,7 +508,7 @@ function renderSeats() {
           ? button('Open', () => { hostSeats.release(seat); afterSeatChange(); })
           : button('Bot', () => { hostSeats.seatBot(seat); afterSeatChange(); }));
       }
-    } else if (client || activeTable()) {
+    } else if (!host && (client || activeTable())) {
       const mine = entry.kind === 'device' && entry.deviceId === me;
       if (!mine && entry.kind !== 'device') {
         // AN INVITATION IS ENOUGH TO TAP. Being a client is an implementation
@@ -511,6 +568,11 @@ function pulse() {
  * when hosting started from the felt — that door is on the lobby tile now,
  * because choosing the game is the first decision and the lobby is where games
  * are chosen.
+ *
+ * THE TABLE WE ARE PLAYING AT, never the one the panel happens to be showing.
+ * It sits above the FELT, and the felt is our own game — reading the panel's
+ * subject here would put a neighbour's names over our own cards the moment
+ * somebody tapped their tile.
  */
 function renderStrip() {
   if (!el.strip) return;
@@ -519,7 +581,7 @@ function renderStrip() {
     el.strip.replaceChildren();
     return;
   }
-  const statuses = seatStatuses();
+  const statuses = seatStatuses(lobbyFrame);
   const seating = seatingFromRoster(lobbyFrame);
   el.strip.replaceChildren();
   for (const identity of seating) {
@@ -557,21 +619,39 @@ function rememberPackName(packId) {
     .catch(() => { packNames.set(packId, packId); });
 }
 
-function renderScreen() {
+/**
+ * THE TWO THINGS THIS MODULE DRAWS ON THE LOBBY, always together.
+ *
+ * They are one fact — what tables exist — shown twice: as a row of their own,
+ * and as a ribbon on the game each is playing. Drawing them from separate call
+ * sites is how the row kept a tile for a host who had left the party while the
+ * ribbon for the same table had already, correctly, gone.
+ */
+function renderLobby() {
   decorateTiles();
+  renderTablesRow();
+}
+
+function renderScreen() {
+  renderLobby();
   if (!el.screen) return;
-  if (el.heading) el.heading.textContent = partyLabel();
+  if (el.heading) el.heading.textContent = panelHeading();
   if (el.note) el.note.textContent = notice;
   if (el.note) el.note.hidden = !notice;
 
   if (el.summary) {
-    const frame = lobbyFrame;
+    const frame = shownFrame();
     // A JOINER HAS NOT LOADED THE PACK YET — deciding whether to join is the
     // whole point of this screen — so the slug is all the frame carries. The
     // manifest is one small JSON and the lobby reads it for every tile anyway,
     // so "crazy-eights" becomes "Crazy Eights" before anybody has to read it.
-    const packName = joinedPack?.manifest?.name
-      || tableContext()?.pack?.manifest?.name
+    //
+    // ONLY THE TABLE ON SCREEN gets to name itself. The loaded packs — ours and
+    // the one we joined — answer for their own table and nobody else's, so a
+    // neighbour's tile no longer inherits our game's name.
+    const attached = !activeTable() || shownIsOurs()
+      || frame?.hostDeviceId === client?.hostDeviceId();
+    const packName = (attached && (joinedPack?.manifest?.name || tableContext()?.pack?.manifest?.name))
       || packNames.get(frame?.packId)
       || frame?.packId || '';
     const variants = frame?.variants || [];
@@ -586,10 +666,28 @@ function renderScreen() {
   renderEmotes();
 }
 
+/**
+ * What the panel calls itself.
+ *
+ * The party label was the whole answer when the panel could only ever be about
+ * one table. It still names the ROOM, which is worth saying — but with a tile
+ * row it is possible to be looking at a table that is not ours, and "Your
+ * party" over somebody else's seats is simply wrong.
+ */
+function panelHeading() {
+  const frame = shownFrame();
+  if (!frame) return partyLabel();
+  if (frame.hostDeviceId === selfId()) return 'Your party';
+  return `${peerName(frame.hostDeviceId)}'s table`;
+}
+
 function renderActions() {
   if (!el.actions) return;
   el.actions.replaceChildren();
-  if (host) {
+  // THE BUTTONS BELONG TO THE TABLE ON SCREEN, not to whatever role this device
+  // happens to hold. "Stop hosting" under a neighbour's roster would be a
+  // button that ends a different game than the one you are looking at.
+  if (shownIsOurs()) {
     // DEAL IS THE HOST'S ONE BUTTON, and it only exists before the cards are
     // out. Afterwards the table is the table; there is nothing to start.
     if (!tableContext()?.state) {
@@ -597,9 +695,92 @@ function renderActions() {
         { className: '' }));
     }
     el.actions.append(button('Stop hosting', () => { stopHosting(); goToLobby(); }));
-  } else if (client) {
+  } else if (client && shownFrame()?.hostDeviceId === client.hostDeviceId()) {
     el.actions.append(button('Leave the table', () => { leaveTable(); goToLobby(); }));
   }
+}
+
+/* ------------------------------------------------------------------ *
+ * The tables row
+ * ------------------------------------------------------------------ */
+
+/**
+ * A TABLE IS A DIFFERENT KIND OF THING FROM A GAME, and this is where that
+ * becomes visible. A game tile is a thing you could start; a table tile is a
+ * thing already happening, with people at it — so it says who is at it, what
+ * they are playing, how far along they are, and the one fact that is about you
+ * rather than about them: whether you hold a seat.
+ *
+ * NO PACK IS LOADED HERE. Everything comes from lobby frames already in memory
+ * plus the manifest names the panel caches anyway, which is what keeps the
+ * lobby's cost ceiling — manifests only, and opening it must not get slower as
+ * packs ship — exactly where it was.
+ */
+function renderTablesRow() {
+  if (!el.tablesRow || !el.tablesGrid) return;
+  const all = tables.all();
+  el.tablesRow.hidden = all.length === 0;
+  el.tablesGrid.replaceChildren();
+  if (!all.length) return;
+
+  const me = selfId();
+  for (const entry of all) {
+    const frame = entry.frame;
+    const mine = frame.hostDeviceId === me;
+    const tile = document.createElement('button');
+    tile.type = 'button';
+    tile.className = `table-tile${mine ? ' table-tile--mine' : ''}`;
+    tile.dataset.tableKey = entry.key;
+
+    const who = document.createElement('span');
+    who.className = 'table-tile__who';
+    // textContent, always — this is a name somebody else typed. The file
+    // header's rule is not relaxed because the element is new.
+    who.textContent = mine ? 'Your party' : `${peerName(frame.hostDeviceId)}'s table`;
+    tile.append(who);
+
+    const game = document.createElement('span');
+    game.className = 'table-tile__game';
+    game.textContent = packNames.get(frame.packId) || frame.packId || '';
+    tile.append(game);
+    rememberPackName(frame.packId);
+
+    const state = document.createElement('span');
+    state.className = 'table-tile__state';
+    state.textContent = tableState(frame);
+    tile.append(state);
+
+    // YOUR SEAT, AT SOMEBODY ELSE'S TABLE. On your own it says nothing — of
+    // course you have a seat at the table you dealt — and a badge that is
+    // always there stops being read at all, including on the tile where it is
+    // the entire reason to come back.
+    const seat = mine ? null : seatOfSelf(frame);
+    if (seat !== null) {
+      const badge = document.createElement('span');
+      badge.className = 'table-tile__seat';
+      badge.textContent = 'Your seat';
+      tile.append(badge);
+    }
+
+    tile.setAttribute('aria-label',
+      `${who.textContent}, ${game.textContent}. ${state.textContent}.${seat !== null ? ' You hold a seat.' : ''}`);
+    tile.addEventListener('click', () => showPartyScreen(entry.key));
+    el.tablesGrid.append(tile);
+  }
+}
+
+/** "waiting to deal · 2 seats open", or "in progress · table full". */
+function tableState(frame) {
+  const stage = frame.started ? 'in progress' : 'waiting to deal';
+  const open = (frame.seats || []).filter((s) => s.kind !== 'device').length;
+  return `${stage} · ${open === 0 ? 'table full' : `${open} ${open === 1 ? 'seat' : 'seats'} open`}`;
+}
+
+/** Which seat this device holds at a table, or null. */
+function seatOfSelf(frame) {
+  const me = selfId();
+  const mine = (frame?.seats || []).find((s) => s.kind === 'device' && s.deviceId === me);
+  return mine ? mine.seat : null;
 }
 
 /* ------------------------------------------------------------------ *
@@ -706,6 +887,8 @@ function surfaceIncompatible(why) {
 function refreshSeats() {
   lobbyFrame = ourLobbyFrame();
   if (lobbyFrame) setSeating(seatingFromRoster(lobbyFrame));
+  // Our own tile says what our own roster says, and it changed.
+  publishOwnTable();
   rerenderTable();
   renderScreen();
 }
@@ -855,10 +1038,10 @@ export async function hostGame(packId) {
   setLocalMoveListener((_state, _move, events) => { host?.publish(events); armTimer(); });
   host.start();
   port.onPeersChange(() => { refreshSeats(); checkForDrops(); });
-  // The panel is about OUR table now. Everything else in earshot stays in the
-  // directory and on its own tile; it simply is not what this screen is showing.
-  activeKey = null;
   lobbyFrame = ourLobbyFrame();
+  // Our table takes its place among the others, and the panel points at it.
+  publishOwnTable();
+  activeKey = me;
   refreshPartyLabel().then(renderScreen);
   showPartyScreen();
   return true;
@@ -917,6 +1100,10 @@ export function stopHosting() {
   lobbyFrame = null;
   decided = new Set();
   unreachable = new Set();
+  // Our table stops being a table the moment we stop hosting it, and its tile
+  // has to go with it — we already told everybody else the same thing by `bye`.
+  tables.forget(selfId());
+  activeKey = null;
   // Closing our table puts us back in the room, looking at whatever else is in
   // it — which for the host who was never told about the neighbours' tables
   // used to be nothing at all.
@@ -934,6 +1121,10 @@ export function stopHosting() {
  */
 function pruneDeadTables() {
   const live = (port?.peers() || []).map((p) => p.deviceId);
+  // OURSELVES, EXPLICITLY. A device is never in its own `peers()`, so a host
+  // that filed its own table would prune it on the next roster change and its
+  // tile would blink out while the game was still running.
+  if (host) live.push(selfId());
   const dropped = tables.retain(live);
   if (!dropped.length) return;
   if (activeKey && dropped.includes(activeKey)) {
@@ -1232,6 +1423,8 @@ async function joinTable(entry) {
 async function attachToActive() {
   const entry = activeTable();
   if (!entry) return false;
+  // Our own table needs no client; we are already as attached as it gets.
+  if (entry.hostDeviceId === selfId()) return !!host;
   if (client && client.hostDeviceId() === entry.hostDeviceId) return true;
   if (client) {
     if (seatedHere()) {
@@ -1295,6 +1488,9 @@ export function refreshEntry() {
   if (gate.reason === 'standalone' || gate.reason === 'no-peer-api') {
     el.entry.hidden = true;
     for (const node of document.querySelectorAll('.tile__together')) node.hidden = true;
+    // A LAUNCHER CAN GO AWAY. Leaving the row up after the party surface has
+    // gone would leave tiles pointing at tables nothing can reach.
+    if (el.tablesRow) el.tablesRow.hidden = true;
     return;
   }
   if (!gate.available) {
@@ -1315,7 +1511,7 @@ export function refreshEntry() {
   // The tiles' own doors, toggled in place: a party can form while the player
   // is sitting on the lobby, and the tiles were built before it did.
   for (const node of document.querySelectorAll('.tile__together')) node.hidden = false;
-  decorateTiles();
+  renderLobby();
   const invited = tables.size > 0 || !!client || !!host;
   el.entry.hidden = !invited;
   el.entry.disabled = false;
@@ -1349,11 +1545,13 @@ function decorateTiles() {
   // only ever draw one of them — the other game looked idle while somebody was
   // sitting at it.
   const live = new Map();
-  for (const entry of tables.all()) live.set(entry.packId, entry.frame);
-  // Ours last, so it wins the tile if we are hosting a pack somebody else is
-  // also hosting. "Your party" is the more useful of the two sentences to read
-  // on your own screen.
-  if (host && hostPack) live.set(hostPack.packId, ourLobbyFrame() || lobbyFrame);
+  for (const entry of tables.all()) {
+    // OURS WINS THE TILE when two hosts happen to run the same pack: "Your
+    // party" is the more useful of the two sentences to read on your own
+    // screen, whichever of them we heard about first.
+    if (live.has(entry.packId) && entry.hostDeviceId !== selfId()) continue;
+    live.set(entry.packId, entry.frame);
+  }
 
   for (const tile of document.querySelectorAll('.tile[data-pack-id]')) {
     const slot = tile.querySelector('.tile__party');
@@ -1393,8 +1591,17 @@ function partyRibbon(frame) {
   return `${whose} · ${stage} · ${seats}`;
 }
 
-export function showPartyScreen() {
+/**
+ * Open the panel, optionally ABOUT A PARTICULAR TABLE.
+ *
+ * The argument is the whole of this stage's change to the panel: it used to be
+ * a window onto the one table this module could hold, and it is now a window
+ * onto whichever one you tapped. With no argument it shows what it was already
+ * showing, which is what the header button and every internal caller want.
+ */
+export function showPartyScreen(key = null) {
   if (!el.screen) return;
+  if (key) focusTable(key);
   el.screen.hidden = false;
   refreshPartyLabel().then(renderScreen);
   renderScreen();
