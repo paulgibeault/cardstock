@@ -171,14 +171,14 @@ anything" holds exactly.
 
 Sequenced; each shippable alone. T1 fixes the reported annoyance by itself.
 
-| WP | Title | Depends on | Sections |
-|---|---|---|---|
-| T1 | Table directory: many tables known, one seat taken | — | §5 |
-| T2 | Tables as tiles; the party panel takes a table | T1 | §8 |
-| T3a | Stub-transport tests for two concurrent sessions | — | §10 |
-| T3 | Session inversion, frame router, protocol v2, host persistence wired | T1, T3a | §2–§4, §6 |
-| T4 | Long-lasting tables: seat stubs, dormant tiles, resume, grace config, roll-off | T2, T3 | §1, §6–§8 |
-| T5 | Rules injected, not imported: `src/match/` as a game-agnostic kit | T3 | §10 |
+| WP | Issue | Title | Depends on | Sections |
+|---|---|---|---|---|
+| T1 | #45 | Table directory: many tables known, one seat taken | — | §5 |
+| T2 | #46 | Tables as tiles; the party panel takes a table | T1 | §8 |
+| T3a | #47 | Stub-transport tests for two concurrent sessions | — (lands before T3) | §10 |
+| T3 | #48 | Session inversion, frame router, protocol v2, host persistence wired | T1, T3a | §2–§4, §6 |
+| T4 | #49 | Long-lasting tables: seat stubs, dormant tiles, resume, grace config, roll-off | T2, T3 | §1, §6–§8 |
+| T5 | #50 | Rules injected, not imported: `src/match/` as a game-agnostic kit | T3 | §10 |
 
 ---
 
