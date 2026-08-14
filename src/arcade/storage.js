@@ -314,6 +314,13 @@ function cleanSeatStub(raw) {
     hostDeviceId: raw.hostDeviceId,
     packId: raw.packId,
     seat: raw.seat,
+    // WHOSE TABLE IT WAS, learned while the host was still on the roster.
+    // A dormant tile has to name somebody — `peerName` answers "Someone" for a
+    // device that has gone, and "Your seat at Someone's Hearts" is a worse
+    // promise than none. Clamped and rendered as text like every other name
+    // somebody else typed. This is the only thing here that is not strictly
+    // about which chair: still no cards, no log, no sequence.
+    hostName: typeof raw.hostName === 'string' ? raw.hostName.slice(0, 60) : '',
     savedAt: Number.isFinite(raw.savedAt) ? raw.savedAt : 0,
     lastSeenAt: Number.isFinite(raw.lastSeenAt) ? raw.lastSeenAt : 0,
   };
@@ -339,8 +346,8 @@ export function seatStubs() {
  * Remember that we are sitting at `seat`. Written when the HOST CONFIRMS it —
  * its lobby roster naming our device in that chair — never when we ask.
  */
-export function saveSeatStub({ tableId, hostDeviceId, packId, seat }, { at = Date.now() } = {}) {
-  const stub = cleanSeatStub({ tableId, hostDeviceId, packId, seat, savedAt: at, lastSeenAt: at });
+export function saveSeatStub({ tableId, hostDeviceId, packId, seat, hostName = '' }, { at = Date.now() } = {}) {
+  const stub = cleanSeatStub({ tableId, hostDeviceId, packId, seat, hostName, savedAt: at, lastSeenAt: at });
   if (!stub) return false;
   const rest = seatStubs().filter((s) => s.tableId !== tableId);
   // `savedAt` is when we FIRST sat down, so re-confirming the same seat must

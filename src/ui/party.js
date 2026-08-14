@@ -48,7 +48,7 @@ import { botById, initialsOf, pickBotIds } from '../players/roster.js';
 import { createBotDriver } from './botDriver.js';
 import {
   loadSettings, saveHostMatch, clearHostMatch, hostMatches, loadHostMatch,
-  saveSeatStub, clearSeatStub, touchSeatStub, sweepStaleTables,
+  saveSeatStub, clearSeatStub, touchSeatStub, sweepStaleTables, seatStubs,
 } from '../arcade/storage.js';
 import { fetchPack, fetchPackManifest } from './packSource.js';
 import { confirmAction } from './confirm.js';
@@ -753,15 +753,78 @@ function renderActions() {
  * lobby's cost ceiling — manifests only, and opening it must not get slower as
  * packs ship — exactly where it was.
  */
+/**
+ * A seat at a table whose host is not here.
+ *
+ * NOT A BUTTON, because there is nobody to talk to: tapping would open a panel
+ * whose every action would fail, and a control that does nothing teaches the
+ * player to distrust the ones that work. It is a promise the tile keeps until
+ * the host reappears, at which point the ordinary live tile takes over and is
+ * tappable again — nothing here has to handle the waking, because waking is
+ * just the directory learning about the table again.
+ */
+function dormantTile(stub) {
+  const tile = document.createElement('div');
+  tile.className = 'table-tile table-tile--dormant';
+  tile.dataset.tableKey = stub.tableId;
+
+  const who = document.createElement('span');
+  who.className = 'table-tile__who';
+  // textContent, always — a name somebody else typed, read back from storage,
+  // which is if anything a better reason to be careful rather than a worse one.
+  who.textContent = stub.hostName ? `Your seat at ${stub.hostName}'s table` : 'Your seat';
+  tile.append(who);
+
+  const game = document.createElement('span');
+  game.className = 'table-tile__game';
+  game.textContent = packName(stub.packId);
+  tile.append(game);
+  rememberPackName(stub.packId);
+
+  const state = document.createElement('span');
+  state.className = 'table-tile__state';
+  // ONE WORD, and it is about the HOST rather than the game. "Paused" or
+  // "waiting" would be claims about a table we cannot see; offline is the only
+  // thing this device actually knows.
+  state.textContent = 'offline';
+  tile.append(state);
+
+  tile.setAttribute('aria-label',
+    `${who.textContent}, ${game.textContent}. Offline — waiting for the host to come back.`);
+  return tile;
+}
+
+/**
+ * The tables worth drawing: everything in earshot, plus the seats we hold at
+ * tables that are not.
+ *
+ * A DORMANT TABLE IS NOT IN THE DIRECTORY, and cannot be — the directory is
+ * built from frames, and a host that is asleep sends none. So the row is the
+ * union: live entries first, then a stub for every seat whose table nobody has
+ * advertised. Without this half, the promise T4a stores is one no screen ever
+ * makes, and a player who closes the tab has no way to know their seat is
+ * waiting.
+ */
+function tablesToDraw() {
+  const live = tables.all().map((entry) => ({ entry, stub: null }));
+  const known = new Set(live.map((row) => row.entry.key));
+  const dormant = seatStubs()
+    .filter((stub) => !known.has(stub.tableId))
+    .map((stub) => ({ entry: null, stub }));
+  return [...live, ...dormant];
+}
+
 function renderTablesRow() {
   if (!el.tablesRow || !el.tablesGrid) return;
-  const all = tables.all();
+  const all = tablesToDraw();
   el.tablesRow.hidden = all.length === 0;
   el.tablesGrid.replaceChildren();
   if (!all.length) return;
 
   const me = selfId();
-  for (const entry of all) {
+  for (const row of all) {
+    if (!row.entry) { el.tablesGrid.append(dormantTile(row.stub)); continue; }
+    const entry = row.entry;
     const frame = entry.frame;
     const mine = frame.hostDeviceId === me;
     const tile = document.createElement('button');
@@ -1202,6 +1265,44 @@ export async function dealParty() {
  * ------------------------------------------------------------------ */
 
 /**
+ * The same host, the same game, a DIFFERENT table.
+ *
+ * `(hostDeviceId, packId)` is the uniqueness rule for tables that are live, and
+ * the minted id is what tells two apart across time (plan §2) — so this pairing
+ * means exactly one thing: they ended the game we had a seat at and dealt
+ * another. The seat is not coming back, and a tile that went on promising it
+ * would be the "sign on an open door saying CLOSED" the sniffer already worries
+ * about elsewhere.
+ *
+ * Said ONCE without needing a flag to remember: clearing the stub removes the
+ * only thing that makes this true, so the next frame finds nothing to announce.
+ */
+function noteSupersededSeat(frame) {
+  if (!frame || frame.hostDeviceId === selfId()) return;
+
+  // THE OLD TILE GOES TOO, and this half is not about our seat at all. A host
+  // that ends a table politely sends `bye 'closed'` and the directory forgets
+  // it; one whose battery died and who came back to deal again sends nothing,
+  // and `pruneDeadTables` will not help because that host is plainly alive. The
+  // pair being unique among LIVE tables is what makes the older entry provably
+  // dead, so it is dropped here rather than left advertising open seats.
+  for (const entry of tables.all()) {
+    if (entry.hostDeviceId !== frame.hostDeviceId) continue;
+    if (entry.packId !== frame.packId) continue;
+    if (entry.key === frame.tableId) continue;
+    tables.forget(entry.key);
+    if (activeKey === entry.key) activeKey = null;
+  }
+
+  const superseded = seatStubs().find((stub) => stub.hostDeviceId === frame.hostDeviceId
+    && stub.packId === frame.packId
+    && stub.tableId !== frame.tableId);
+  if (!superseded) return;
+  clearSeatStub(superseded.tableId);
+  setNotice(`${peerName(frame.hostDeviceId)} started a new game — your old seat is gone.`);
+}
+
+/**
  * Record — or forget — our seat at the table this frame describes.
  *
  * THE HOST'S ROSTER IS WHAT MAKES IT TRUE. We write the stub when the host says
@@ -1221,6 +1322,10 @@ function noteSeatFrom(frame) {
       hostDeviceId: frame.hostDeviceId,
       packId: frame.packId,
       seat: mine.seat,
+      // Captured NOW, while they are still on the roster. Once they go quiet
+      // `peerName` can only answer "Someone", and that is the exact moment the
+      // tile needs to say whose table it was.
+      hostName: peerName(frame.hostDeviceId),
     });
     return;
   }
@@ -1641,6 +1746,7 @@ function startSniffing() {
     // table we are not currently a client of still ages on this, which is what
     // stops a week of watching from someone else's felt rolling it off.
     touchSeatStub(entry.key);
+    noteSupersededSeat(frame);
     noteSeatFrom(frame);
     // WHERE TO LOOK, and the rule is about attachment rather than recency: an
     // unattached device follows the latest table it hears about (which with one
