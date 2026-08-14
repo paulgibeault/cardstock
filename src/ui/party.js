@@ -175,8 +175,29 @@ const selfId = () => port?.self()?.deviceId || null;
  * how the old code came to believe there could only ever be one.
  * ------------------------------------------------------------------ */
 
-/** The table we host, or null. The registry's door keeps this at most one. */
-const ourTable = () => sessions.hosted()[0] || null;
+/**
+ * The hosted table this screen is ABOUT, or null.
+ *
+ * Resolved the same three ways as `theirTable()` below, and for the same
+ * reason: with a table per pack, "the table we host" needs a subject. The
+ * panel's table, else the one the felt is bound to, else the only one — and
+ * that last fallback is what keeps every single-table path answering exactly
+ * as it did.
+ *
+ * PANEL-FACING QUESTIONS ONLY. Anything a specific host asks about ITS OWN
+ * table — its roster, its drops, its seat names — takes the session, because
+ * the answer must not depend on what the player happens to be looking at.
+ */
+const ourTable = () => {
+  const hosted = sessions.hosted();
+  if (!hosted.length) return null;
+  if (activeKey) {
+    const shown = hosted.find((session) => session.tableId === activeKey);
+    if (shown) return shown;
+  }
+  const bound = hosted.find((session) => session.bound);
+  return bound || hosted[0];
+};
 /**
  * The joined table this screen is ABOUT, or null.
  *
@@ -308,9 +329,9 @@ function focusTable(key) {
  * The sniffer still ignores our own frames off the wire; this is the deliberate
  * way in, called wherever the roster changes.
  */
-function publishOwnTable() {
-  if (!host() || !hostSeats() || !hostPack()) return;
-  const frame = ourLobbyFrame();
+function publishOwnTable(session = ourTable()) {
+  if (!session?.host || !session.seats || !session.pack) return;
+  const frame = ourLobbyFrame(session);
   if (frame) tables.sight(frame);
 }
 
@@ -357,12 +378,16 @@ function peerName(deviceId) {
 }
 
 /** The name the HOST publishes for a seat — read by the lobby roster it sends. */
-function nameForSeat(seat) {
-  // THE FELT IS THE RIGHT ANSWER FOR THE SECOND HALF OF THIS. `hostSeats()` is
-  // the session's, and covers every host path; the fallback is a JOINER, whose
-  // only seat table is the one the felt built from the view it is showing.
-  // Deliberate, and one of the three reads left after the #64 sweep.
-  const owner = (hostSeats() || tableContext()?.seats)?.ownerOf(seat);
+function nameForSeat(seat, session = ourTable()) {
+  // THE SESSION IS PASSED IN because this is a host's `nameFor` seam: with two
+  // hosted tables it is asked by both, and answering about whichever one the
+  // panel happens to be showing would publish one table's names in the other's
+  // roster.
+  //
+  // The felt is still the right answer for the second half: the fallback is a
+  // JOINER, whose only seat table is the one the felt built from the view it is
+  // showing. Deliberate, and one of the three reads left after the #64 sweep.
+  const owner = (session?.seats || tableContext()?.seats)?.ownerOf(seat);
   if (!owner || owner.kind === 'empty') return '';
   // The felt's own name for this bot when there is a felt, so the roster a
   // joiner receives says what the host is actually looking at. Before the deal
@@ -372,13 +397,13 @@ function nameForSeat(seat) {
   // every joiner draws from, so reading it off the felt meant a host who
   // navigated to the lobby republished DIFFERENT bot names — the felt's while
   // it was on screen, the shared derivation once it was not.
-  if (owner.kind === 'bot') return ourTable()?.seating?.[seat]?.name || derivedBotName(seat);
+  if (owner.kind === 'bot') return session?.seating?.[seat]?.name || derivedBotName(seat);
   return peerName(owner.deviceId);
 }
 
 /** The bot a seat gets before anybody has dealt — same input on every device. */
-function derivedBotName(seat) {
-  const table = hostSeats();
+function derivedBotName(seat, session = ourTable()) {
+  const table = session?.seats || hostSeats();
   if (!table) return botById(null).name;
   const botSeats = [];
   for (let s = 0; s < table.count; s++) if (table.isBot(s) || table.isEmpty(s)) botSeats.push(s);
@@ -1123,17 +1148,19 @@ function reportFailure(err) {
 }
 
 /** The three error surfaces §10 asks for, each said in its own words. */
-function surfaceError(detail) {
+function surfaceError(detail, session = ourTable()) {
   if (detail?.kind === 'send-failed' && Number.isInteger(detail.seat)) {
-    unreachable().add(detail.seat);
+    (session?.unreachable || unreachable()).add(detail.seat);
     renderScreen();
     return;
   }
   if (detail?.kind === 'send-failed' && detail.deviceId) {
-    // Our own seat table: this error is the HOST's, and it arrives whether or
-    // not the felt is showing the table it came from.
-    const seats = hostSeats();
-    for (const seat of seats?.seatsOfDevice(detail.deviceId) || []) unreachable().add(seat);
+    // The seat table of the host this error came FROM — it arrives whether or
+    // not the felt is showing that table, and with two of them the focused one
+    // is not necessarily the one that failed to send.
+    for (const seat of session?.seats?.seatsOfDevice(detail.deviceId) || []) {
+      session?.unreachable?.add(seat);
+    }
     renderScreen();
   }
 }
@@ -1165,54 +1192,54 @@ function surfaceIncompatible(why) {
  * left a bot's name and face on a chair a person had just taken. `rerenderTable`
  * alone redraws the same stale identities.
  */
-function refreshSeats() {
-  // Host-side only, as it has always been: the one caller that is not a host
-  // hook is `port.onPeersChange`, which is subscribed in hostGame.
-  const session = ourTable();
-  if (session) session.lobbyFrame = ourLobbyFrame();
+function refreshSeats(session = ourTable()) {
+  // THE SESSION IS PASSED IN by every host hook, because each host must
+  // refresh ITS OWN roster: with two hosted tables, answering about whichever
+  // one the panel is showing would republish one table's seats as the other's.
+  if (session) session.lobbyFrame = ourLobbyFrame(session);
   if (lobbyFrame()) {
     const seating = seatingFromRoster(lobbyFrame());
     if (session) session.seating = seating;
     setSeating(seating);
   }
   // Our own tile says what our own roster says, and it changed.
-  publishOwnTable();
+  publishOwnTable(session);
   rerenderTable();
   renderScreen();
 }
 
 /** A seat WE changed: refresh, then tell everybody. */
-function afterSeatChange() {
-  host()?.broadcastLobby();
-  refreshSeats();
+function afterSeatChange(session = ourTable()) {
+  session?.host?.broadcastLobby();
+  refreshSeats(session);
 }
 
 /** The roster WE publish, read back so one renderer draws both roles. */
-function ourLobbyFrame() {
-  if (!host() || !hostSeats()) return null;
+function ourLobbyFrame(session = ourTable()) {
+  if (!session?.host || !session.seats) return null;
   const seats = [];
-  for (let seat = 0; seat < hostSeats().count; seat++) {
-    const owner = hostSeats().ownerOf(seat);
+  for (let seat = 0; seat < session.seats.count; seat++) {
+    const owner = session.seats.ownerOf(seat);
     seats.push({
       seat,
       kind: owner.kind,
       deviceId: owner.deviceId ?? undefined,
-      name: nameForSeat(seat),
-      status: host().seatStatusFor(seat),
+      name: nameForSeat(seat, session),
+      status: session.host.seatStatusFor(seat),
     });
   }
   return {
     // The same id the host module stamps on the frames it publishes, so the
     // tile we draw from this and the tile a joiner draws from the wire are the
     // same table rather than two that merely look alike.
-    tableId: hostTableId(),
-    packId: hostPack().packId,
-    variants: hostPack().variants,
+    tableId: session.tableId,
+    packId: session.pack.packId,
+    variants: session.pack.variants,
     hostDeviceId: selfId(),
-    seatCount: hostSeats().count,
+    seatCount: session.seats.count,
     seats,
     // The grace travels so a joiner's countdown is honest — see plan §7.
-    graceMs: graceOf(ourTable()),
+    graceMs: graceOf(session),
     // FALSE UNTIL THE CARDS ARE OUT, and a joiner reads it: before the deal it
     // is waiting for the host, after it there is a hand to be caught up with.
     //
@@ -1221,7 +1248,7 @@ function ourLobbyFrame() {
     // reading "waiting to deal" while the hand was mid-trick. The frame that
     // goes on the WIRE was always right — `host.js` asks `liveState()` — so
     // this was the local copy and the published one disagreeing.
-    started: !!ourTable()?.state,
+    started: !!session.state,
   };
 }
 
@@ -1286,10 +1313,10 @@ function openHostSession({ tableId, packId, packName: name, variants, seats }) {
       // A remote claim arrives here, which is also the late-joiner path: the
       // host must stop moving that seat and start calling it by its name. No
       // re-broadcast — handleClaim already sends one, and this fires inside it.
-      onSeatsChanged: () => refreshSeats(),
+      onSeatsChanged: () => refreshSeats(session),
       onEmote: ({ emote }) => burst(emote),
-      onError: surfaceError,
-      onBye: () => refreshSeats(),
+      onError: (detail) => surfaceError(detail, session),
+      onBye: () => refreshSeats(session),
     },
   }) });
   // THE CLOCK IS THE HOST'S, AND ONLY THE HOST'S. A client that could time
@@ -1334,6 +1361,13 @@ function openHostSession({ tableId, packId, packName: name, variants, seats }) {
     },
   }) });
   session.attach({ bots: headlessBotsFor(session) });
+  // EACH TABLE WATCHES THE ROSTER FOR ITSELF. This lived in `hostGame`, so a
+  // table restored at boot never subscribed at all — its drops went unnoticed
+  // until something else happened to ask. Here, both doors get it.
+  session.unsubscribePeers = port.onPeersChange(() => {
+    refreshSeats(session);
+    checkForDrops(session);
+  });
   setLocalMoveListener((_state, _move, events) => {
     session.host?.publish(events);
     armTimer(session);
@@ -1359,8 +1393,17 @@ function openHostSession({ tableId, packId, packName: name, variants, seats }) {
 export async function hostGame(packId) {
   const gate = availability();
   if (!gate.available) { announceGate(gate); showPartyScreen(); return false; }
-  // Our own table is already open; this is the door back to it.
-  if (host()) { showPartyScreen(); return false; }
+  // OUR OWN TABLE OF THIS GAME is already open; this is the door back to it.
+  // It used to be `if (host())` — any hosted table at all — which was the one
+  // thing actually stopping a second pack being hosted. The registry's rule was
+  // already per-pack underneath it; this guard was answering a broader question
+  // than the model ever asked.
+  const ours = sessions.hostedForPack(packId);
+  if (ours) {
+    focusTable(ours.tableId);
+    showPartyScreen();
+    return false;
+  }
   // SOMEBODY IS ALREADY PLAYING THIS ONE. The tile's button is one door with
   // two meanings, and which it means is not the player's to work out: with a
   // live table on this pack, tapping it takes you to that table rather than
@@ -1409,11 +1452,10 @@ export async function hostGame(packId) {
     seats: buildSeatTable(count, me),
   });
   session.host.start();
-  port.onPeersChange(() => { refreshSeats(); checkForDrops(); });
-  session.lobbyFrame = ourLobbyFrame();
+  session.lobbyFrame = ourLobbyFrame(session);
   // Our table takes its place among the others, and the panel points at it —
   // by its own name now, not by the device's.
-  publishOwnTable();
+  publishOwnTable(session);
   activeKey = session.tableId;
   refreshPartyLabel().then(renderScreen);
   showPartyScreen();
@@ -1637,9 +1679,9 @@ async function rehydrateOne(tableId) {
   // Restored before the first lobby frame goes out, so the grace the party
   // reconvenes on is the one they were playing with.
   if (Number.isInteger(snapshot.graceMs)) session.graceMs = snapshot.graceMs;
-  session.seating = seatingFromRoster(ourLobbyFrame());
-  session.lobbyFrame = ourLobbyFrame();
-  publishOwnTable();
+  session.seating = seatingFromRoster(ourLobbyFrame(session));
+  session.lobbyFrame = ourLobbyFrame(session);
+  publishOwnTable(session);
   // THE PARTY RECONVENES ON A LOBBY FRAME. Nothing else is needed: a joiner
   // that hears it re-claims its seat and the host answers with a snapshot,
   // which is exactly the path a late joiner already takes.
@@ -1843,25 +1885,24 @@ async function removeSeat(seat) {
  * has missed nothing, and bot-filling it would turn a recoverable blip into a
  * lost seat. Only when the grace has run out is there anything to ask.
  */
-function checkForDrops() {
-  const session = ourTable();
+function checkForDrops(session = ourTable()) {
   if (!session?.host || !session.seats) return;
   // OUR TABLE, NOT THE ONE ON SCREEN. Read from the felt, this returned early
   // for a backgrounded hosted table — so a player dropping out of a game the
   // host was not looking at was never noticed, and the seat was never offered
   // to a bot.
   for (let seat = 0; seat < session.seats.count; seat++) {
-    if (!needsHostDecision(host().seatStatusFor(seat))) { decided().delete(seat); continue; }
-    if (decided().has(seat)) continue;
-    decided().add(seat);
-    askAboutSeat(seat);
+    if (!needsHostDecision(session.host.seatStatusFor(seat))) { session.decided.delete(seat); continue; }
+    if (session.decided.has(seat)) continue;
+    session.decided.add(seat);
+    askAboutSeat(seat, session);
     return; // one at a time; the next is asked after this is answered
   }
 }
 
-function askAboutSeat(seat) {
+function askAboutSeat(seat, session = ourTable()) {
   if (!el.decision) return;
-  const who = nameForSeat(seat) || `Seat ${seat + 1}`;
+  const who = nameForSeat(seat, session) || `Seat ${seat + 1}`;
   el.decisionText.textContent = `${who} has left the table.`;
   el.decision.hidden = false;
 
@@ -1870,9 +1911,9 @@ function askAboutSeat(seat) {
     if (choice === 'bot') {
       // THE BINDING IS REPLACED, not merely covered: the seat is a bot now, and
       // the departed player rejoining takes a free seat rather than this one.
-      hostSeats()?.seatBot(seat);
+      session?.seats?.seatBot(seat);
       setTablePaused(false);
-      afterSeatChange();
+      afterSeatChange(session);
     } else if (choice === 'pause') {
       setTablePaused(true);
       setNotice(`Paused — waiting for ${who}.`);

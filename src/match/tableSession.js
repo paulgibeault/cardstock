@@ -67,6 +67,9 @@ export function createTableSession({ tableId, packId, role, packName = '', varia
     host: null,
     client: null,
     timer: null,
+    // The roster subscription this table holds for itself, so its drops are
+    // noticed whether or not it is the one on screen.
+    unsubscribePeers: null,
     // The headless bot driver (src/ui/botDriver.js), host-side only. Null on a
     // joiner, which never moves a seat it was not asked to.
     bots: null,
@@ -148,6 +151,8 @@ export function createTableSession({ tableId, packId, role, packName = '', varia
       session.epoch += 1;
       session.cancelBots();
       if (session.timer) session.timer.cancelAll?.();
+      session.unsubscribePeers?.();
+      session.unsubscribePeers = null;
       if (session.host) session.host.stop?.();
       if (session.client) session.client.stop?.();
       session.timer = null;
