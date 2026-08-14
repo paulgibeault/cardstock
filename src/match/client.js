@@ -34,12 +34,17 @@ import { VIEW_VERSION } from '../engine/view.js';
 /**
  * @param peer      the peer port (Arcade.peer or a stub)
  * @param expects   () => ({ packId, packVersion, variants }) this build has loaded
+ * @param host      WHICH table this is a client of, when the caller knows. See
+ *                  `discoverHost` — with two hosts in one party, "the device we
+ *                  hold a direct link to" is no longer a question with one
+ *                  answer, and the caller is the only one who knows which of
+ *                  them it meant to sit down with.
  * @param hooks     { onLobby, onView, onReject, onEmote, onIncompatible, onError, onEnd }
  */
-export function createTableClient({ peer, expects, hooks = {} }) {
+export function createTableClient({ peer, expects, host = null, hooks = {} }) {
   const unsubscribes = [];
   let started = false;
-  let hostDeviceId = null;
+  let hostDeviceId = host || null;
   let lobby = null;
   let view = null;
   let lastSeq = -1;
@@ -56,6 +61,16 @@ export function createTableClient({ peer, expects, hooks = {} }) {
    * whole answer and an unforgeable one. (A member's roster is direct-links
    * only — fellow joiners are reachable but never listed. That is the
    * transport's documented shape, not an accident of ours.)
+   *
+   * ONE DIRECT PEER IS NO LONGER THE ONLY SHAPE. A party can contain two hosts,
+   * and then this device holds two direct links and "the" host is a question
+   * with two answers — at which point this returned null and every frame from
+   * either of them was dropped as spoofed, which is a client that silently does
+   * not work rather than one that says why. So the CALLER names the table it
+   * joined (`host` above) and this is the fallback for the single-table case.
+   * The security property is untouched either way: authority is pinned to one
+   * device id that came from the transport, never from a payload claiming to be
+   * the host.
    */
   function discoverHost() {
     const direct = peer.peers().filter((p) => p.direct);
@@ -219,9 +234,16 @@ export function createTableClient({ peer, expects, hooks = {} }) {
   function start() {
     if (started) return;
     started = true;
-    hostDeviceId = discoverHost();
+    // A NAMED TABLE IS NEVER RE-DERIVED. Discovery is the fallback for a party
+    // with one host in it; when the caller said which table it sat down at,
+    // re-asking the roster can only do one of two harmful things — answer null
+    // (two hosts, and then every frame from our own host is refused as a spoof)
+    // or answer a DIFFERENT host, which would quietly move this client to a
+    // table nobody chose.
+    if (!host) hostDeviceId = discoverHost();
     unsubscribes.push(peer.onMessage(onMessage));
     unsubscribes.push(peer.onPeersChange(() => {
+      if (host) return;
       const found = discoverHost();
       if (found && found !== hostDeviceId) {
         hostDeviceId = found;

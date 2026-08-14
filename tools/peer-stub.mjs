@@ -24,19 +24,31 @@
 // the launcher's own suite, and re-implementing them here would mean testing
 // this file rather than the protocol.
 
-/** Create a network. Every device on it can reach the host; joiners cannot reach each other directly. */
-export function createPeerNetwork({ hostDeviceId = 'host' } = {}) {
+/**
+ * Create a network. Every device on it can reach the host; joiners cannot reach
+ * each other directly.
+ *
+ * TWO HUBS IS A REAL SHAPE, not an exotic one. A party can contain two people
+ * each hosting their own table, and then a third device holds TWO direct links
+ * — which is precisely the case that broke host discovery, because "the device
+ * we hold a direct link to" stopped having one answer. Pass `hostDeviceIds` to
+ * model it. The single-host default is unchanged, and so is every test that
+ * uses it.
+ */
+export function createPeerNetwork({ hostDeviceId = 'host', hostDeviceIds = null } = {}) {
   const devices = new Map(); // deviceId -> device
   const log = []; // every delivery, for privacy assertions
+  const hubs = new Set(hostDeviceIds?.length ? hostDeviceIds : [hostDeviceId]);
 
   function isHost(deviceId) {
-    return deviceId === hostDeviceId;
+    return hubs.has(deviceId);
   }
 
   function linksOf(deviceId) {
-    // The star. A joiner sees the host and nothing else.
-    if (isHost(deviceId)) return [...devices.keys()].filter((id) => id !== hostDeviceId);
-    return devices.has(hostDeviceId) ? [hostDeviceId] : [];
+    // The star. A joiner sees the hosts and nothing else; a host sees everyone,
+    // including a second host it shares the party with.
+    if (isHost(deviceId)) return [...devices.keys()].filter((id) => id !== deviceId);
+    return [...hubs].filter((id) => devices.has(id));
   }
 
   function deliver(toId, payload, fromId, { relayed }) {
@@ -89,8 +101,8 @@ export function createPeerNetwork({ hostDeviceId = 'host' } = {}) {
           }
           // The hub forwards a joiner's broadcast on to the other joiners.
           if (!isHost(deviceId)) {
-            for (const id of linksOf(hostDeviceId)) {
-              if (id === deviceId) continue;
+            for (const id of devices.keys()) {
+              if (id === deviceId || isHost(id)) continue;
               if (deliver(id, payload, deviceId, { relayed: true })) any = true;
             }
           }
