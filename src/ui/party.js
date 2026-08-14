@@ -358,13 +358,21 @@ function peerName(deviceId) {
 
 /** The name the HOST publishes for a seat — read by the lobby roster it sends. */
 function nameForSeat(seat) {
+  // THE FELT IS THE RIGHT ANSWER FOR THE SECOND HALF OF THIS. `hostSeats()` is
+  // the session's, and covers every host path; the fallback is a JOINER, whose
+  // only seat table is the one the felt built from the view it is showing.
+  // Deliberate, and one of the three reads left after the #64 sweep.
   const owner = (hostSeats() || tableContext()?.seats)?.ownerOf(seat);
   if (!owner || owner.kind === 'empty') return '';
   // The felt's own name for this bot when there is a felt, so the roster a
   // joiner receives says what the host is actually looking at. Before the deal
   // there is no felt and the shared derivation is the only answer either of us
   // has — which is fine, because it is the answer we will both keep.
-  if (owner.kind === 'bot') return tableContext()?.seating?.[seat]?.name || derivedBotName(seat);
+  // THE SESSION'S SEATING, NOT THE FELT'S. This name goes out in the roster
+  // every joiner draws from, so reading it off the felt meant a host who
+  // navigated to the lobby republished DIFFERENT bot names — the felt's while
+  // it was on screen, the shared derivation once it was not.
+  if (owner.kind === 'bot') return ourTable()?.seating?.[seat]?.name || derivedBotName(seat);
   return peerName(owner.deviceId);
 }
 
@@ -402,7 +410,7 @@ function seatingFromRoster(frame) {
   // ONLY FOR OUR OWN TABLE, though. A host looking at a NEIGHBOUR'S roster must
   // derive like any other joiner: our felt's seating describes our game, and
   // borrowing it would put our own bots' faces on their chairs.
-  const own = host() && frame?.hostDeviceId === selfId() ? tableContext()?.seating : null;
+  const own = host() && frame?.hostDeviceId === selfId() ? ourTable()?.seating : null;
 
   const out = [];
   for (let seat = 0; seat < seatCount; seat++) {
@@ -636,8 +644,11 @@ function renderSeats() {
  */
 function liveDeadlines() {
   if (turnTimer()) return turnTimer().deadlines();
+  // A JOINER'S DEADLINES COME FROM THE VIEW ITS HOST SENT, and with a seat at
+  // more than one table that has to be the view of the table being SHOWN. The
+  // felt is only right when it happens to be bound to the same one.
   // `modelFromView` copies them straight onto the model (src/ui/tableModel.js).
-  return tableContext()?.state?.deadlines || [];
+  return theirTable()?.state?.deadlines || tableContext()?.state?.deadlines || [];
 }
 
 function secondsLeft(seat) {
@@ -755,6 +766,8 @@ function renderScreen() {
     // neighbour's tile no longer inherits our game's name.
     const isOurs = !activeTable() || shownIsOurs()
       || frame?.hostDeviceId === client()?.hostDeviceId();
+    // The felt on purpose: this names the pack the SCREEN is showing, which is
+    // the question being asked. Left as-is by the #64 sweep.
     const packName = (isOurs && (joinedPack()?.manifest?.name || tableContext()?.pack?.manifest?.name))
       || packNames.get(frame?.packId)
       || frame?.packId || '';
@@ -1074,8 +1087,10 @@ function surfaceError(detail) {
     return;
   }
   if (detail?.kind === 'send-failed' && detail.deviceId) {
-    const ctx = tableContext();
-    for (const seat of ctx?.seats?.seatsOfDevice(detail.deviceId) || []) unreachable().add(seat);
+    // Our own seat table: this error is the HOST's, and it arrives whether or
+    // not the felt is showing the table it came from.
+    const seats = hostSeats();
+    for (const seat of seats?.seatsOfDevice(detail.deviceId) || []) unreachable().add(seat);
     renderScreen();
   }
 }
@@ -1112,7 +1127,11 @@ function refreshSeats() {
   // hook is `port.onPeersChange`, which is subscribed in hostGame.
   const session = ourTable();
   if (session) session.lobbyFrame = ourLobbyFrame();
-  if (lobbyFrame()) setSeating(seatingFromRoster(lobbyFrame()));
+  if (lobbyFrame()) {
+    const seating = seatingFromRoster(lobbyFrame());
+    if (session) session.seating = seating;
+    setSeating(seating);
+  }
   // Our own tile says what our own roster says, and it changed.
   publishOwnTable();
   rerenderTable();
@@ -1153,7 +1172,13 @@ function ourLobbyFrame() {
     graceMs: graceOf(ourTable()),
     // FALSE UNTIL THE CARDS ARE OUT, and a joiner reads it: before the deal it
     // is waiting for the host, after it there is a hand to be caught up with.
-    started: !!tableContext()?.state,
+    //
+    // ASKED OF THE SESSION. `tableContext()` is null whenever the felt shows
+    // something else, so a host who backgrounded a live game had their own tile
+    // reading "waiting to deal" while the hand was mid-trick. The frame that
+    // goes on the WIRE was always right — `host.js` asks `liveState()` — so
+    // this was the local copy and the published one disagreeing.
+    started: !!ourTable()?.state,
   };
 }
 
@@ -1366,11 +1391,16 @@ export async function dealParty() {
   // THE STATE COMES BACK AND STAYS HERE. The felt builds it — dealing is a
   // render as much as it is a shuffle — but the session is what holds it
   // afterwards, so closing the felt no longer closes the game.
+  // KEPT HERE TOO, not only handed to the felt. Who is in each chair is a fact
+  // about the table, and reading it back off `tableContext()` meant it vanished
+  // the moment the felt showed something else — see the notes at each of the
+  // sites this fixes.
+  session.seating = seatingFromRoster(ourLobbyFrame());
   session.state = await dealHostedTable({
     packId: session.pack.packId,
     variants: session.pack.variants,
     seats: session.seats,
-    seating: seatingFromRoster(ourLobbyFrame()),
+    seating: session.seating,
   });
   // THE FELT IS NOW SHOWING THIS ONE. Binding is about attention, not lifetime
   // — see src/match/tableSession.js. It is what tells a later background table
@@ -1771,10 +1801,13 @@ async function removeSeat(seat) {
  * lost seat. Only when the grace has run out is there anything to ask.
  */
 function checkForDrops() {
-  if (!host()) return;
-  const ctx = tableContext();
-  if (!ctx) return;
-  for (let seat = 0; seat < ctx.seats.count; seat++) {
+  const session = ourTable();
+  if (!session?.host || !session.seats) return;
+  // OUR TABLE, NOT THE ONE ON SCREEN. Read from the felt, this returned early
+  // for a backgrounded hosted table — so a player dropping out of a game the
+  // host was not looking at was never noticed, and the seat was never offered
+  // to a bot.
+  for (let seat = 0; seat < session.seats.count; seat++) {
     if (!needsHostDecision(host().seatStatusFor(seat))) { decided().delete(seat); continue; }
     if (decided().has(seat)) continue;
     decided().add(seat);
@@ -1791,11 +1824,10 @@ function askAboutSeat(seat) {
 
   const answer = (choice) => {
     el.decision.hidden = true;
-    const ctx = tableContext();
     if (choice === 'bot') {
       // THE BINDING IS REPLACED, not merely covered: the seat is a bot now, and
       // the departed player rejoining takes a free seat rather than this one.
-      ctx?.seats.seatBot(seat);
+      hostSeats()?.seatBot(seat);
       setTablePaused(false);
       afterSeatChange();
     } else if (choice === 'pause') {

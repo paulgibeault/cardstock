@@ -131,7 +131,15 @@ async function seatEverybody({ check, waitFor, frames }) {
   });
 
   for (const label of ['A', 'B']) {
-    const seated = await waitFor(async () => (await party(frames[label], 'partySnapshot')).seat === seatOf[label], 20000);
+    // WAIT FOR THE VIEW, WHICH IS WHAT THIS CHECK IS NAMED FOR. `seat` alone
+    // stopped meaning "the deal arrived" once a client learned its seat from
+    // the host's ROSTER (#49 part 4) — which is earlier, and correct: a seat
+    // claimed at a table still being built is a real seat. Waiting on it alone
+    // made the next line race the view it depends on.
+    const seated = await waitFor(async () => {
+      const snap = await party(frames[label], 'partySnapshot');
+      return snap.seat === seatOf[label] && snap.seq >= 1;
+    }, 20000);
     const snap = await party(frames[label], 'partySnapshot');
     check(`joiner ${label}: the deal arrives as a view of seat ${seatOf[label]}`, seated,
       `seat ${snap.seat}, seq ${snap.seq}`);
