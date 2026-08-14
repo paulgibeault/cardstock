@@ -100,7 +100,15 @@ function boundNames(code) {
     for (const p of m[1].split(",")) add(p);
   }
   // object-literal methods: `foo(a, b) {`
-  for (const m of code.matchAll(/(\w+)\s*\([^()]*\)\s*\{/g)) add(m[1]);
+  //
+  // ONE LEVEL OF NESTING, because a default that calls something is ordinary
+  // JS — `sight(frame, { at = now() } = {})`. With a parameter list the regex
+  // could not span, the method never entered the bound set and its own
+  // DEFINITION then read as a call in the pass below: a free-variable report
+  // for a name declared two characters to the left. Widening what counts as a
+  // binding is the safe direction for this file (see the header) — it can only
+  // ever make the check quieter, never louder.
+  for (const m of code.matchAll(/(\w+)\s*\((?:[^()]|\([^()]*\))*\)\s*\{/g)) add(m[1]);
   return names;
 }
 
