@@ -149,3 +149,42 @@ test("sw.js keeps the CI-owned APP_VERSION line shape", () => {
   if (!fs.existsSync(p)) return; // arrives in Phase 5
   assert.match(fs.readFileSync(p, "utf8"), /^const APP_VERSION = '\d+\.\d+\.\d+';$/m);
 });
+
+/**
+ * ONE DOOR OUT, PER MODULE (#63).
+ *
+ * Every frame the host or the client sends is completed on the way out —
+ * `stamp()` in host.js, the spread in client.js's `send`/`broadcast` — and
+ * protocol v2 makes that completion load-bearing: a frame without a `tableId`
+ * is refused by the other end's validator.
+ *
+ * #56 was exactly this. `emote` and `sendBye` reached for `peer.send` directly
+ * because they take no `{ to }`, skipped the stamp along with the targeting,
+ * and went out unaddressable. Every unit test passed; a joiner who left could
+ * never rejoin.
+ *
+ * So: `peer.send` may be named only inside the functions that complete a frame.
+ * Anywhere else is a frame leaving through a door nobody is watching.
+ */
+test("no frame leaves src/match without going through its stamping helper", () => {
+  const allowed = {
+    "src/match/host.js": 2,     // sendTo + broadcast, both via stamp()
+    "src/match/client.js": 2,   // send (targeted) + broadcast, both spreading tableId
+    // THE UI DOES NOT TOUCH THE WIRE. party.js sent three frames of its own —
+    // an emote and the two `bye`s — each stamping `tableId` by hand. Correct,
+    // and three more doors beside which a fourth could be added without anyone
+    // noticing it had skipped the stamp. They go through the host now.
+    "src/ui/party.js": 0,
+  };
+  for (const [file, budget] of Object.entries(allowed)) {
+    const src = fs.readFileSync(path.join(ROOT, file), "utf8");
+    // Comments talk about `peer.send` a great deal; only calls count.
+    const calls = src.split("\n")
+      .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l))
+      .filter((l) => /\b(peer|port)\??\.send\s*\(/.test(l)).length;
+    assert.strictEqual(calls, budget,
+      `${file} has ${calls} peer.send call(s), expected ${budget}. `
+      + "A new one means a frame that skips the stamp — give it to send()/broadcast() instead. "
+      + "If the door count genuinely changed, update this gate deliberately.");
+  }
+});
