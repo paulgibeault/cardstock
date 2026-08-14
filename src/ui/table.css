@@ -3328,6 +3328,26 @@ body.is-dragging .card-face { cursor: grabbing; }
   opacity: 0.7;
 }
 
+/* A TABLE WHOSE HOST IS NOT HERE. Greyed and flat: no pointer, no hover lift,
+   nothing that reads as tappable, because there is nobody on the other end of a
+   tap. It is still on the row rather than hidden — the whole point of the seat
+   stub is that the promise stays visible while the host is away, and a seat
+   that vanishes overnight is indistinguishable from one that was lost. */
+.table-tile--dormant {
+  cursor: default;
+  opacity: 0.55;
+  border-style: dashed;
+}
+
+.table-tile--dormant:hover { transform: none; border-color: var(--tile-border); }
+
+/* The one word that matters on a dormant tile, so it is not dimmed twice over
+   by the tile's own opacity. */
+.table-tile--dormant .table-tile__state {
+  opacity: 1;
+  font-weight: 600;
+}
+
 /* YOUR SEAT IS THE ONE FACT WORTH RAISING ITS VOICE FOR. Everything else on a
    table tile is about the table; this is about you, and it is the reason to
    come back to a game that has been sitting for a day. */

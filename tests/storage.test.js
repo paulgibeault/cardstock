@@ -231,8 +231,11 @@ test('a seat stub round-trips, and holds no game state at all', () => {
   // THE ASYMMETRY IS THE POINT. A host stores seed + log; a joiner stores a
   // note about a chair. Anything else here would be a client keeping cards it
   // was never shown.
+  // `hostName` is here so a dormant tile can name whose table it was; see the
+  // note on it in storage.js. Everything else is still about which chair —
+  // this assertion is the guard against game state creeping in.
   assert.deepEqual(Object.keys(stub).sort(),
-    ['hostDeviceId', 'lastSeenAt', 'packId', 'savedAt', 'seat', 'tableId']);
+    ['hostDeviceId', 'hostName', 'lastSeenAt', 'packId', 'savedAt', 'seat', 'tableId']);
 
   clearSeatStub(TABLE_A);
   assert.deepEqual(seatStubs(), []);
@@ -312,4 +315,15 @@ test('the sweep ages a hosted table on its last move, and drops the slot with it
   assert.deepEqual(dropped.tables, [TABLE_A]);
   assert.equal(loadHostMatch(TABLE_A), null, 'the slot goes, not just the index entry');
   assert.deepEqual(hostMatches(), []);
+});
+
+test('a stored host name is clamped, and a missing one is empty rather than absent', () => {
+  saveSeatStub({
+    tableId: TABLE_A, hostDeviceId: HOST_A, packId: 'hearts', seat: 1, hostName: 'x'.repeat(200),
+  });
+  assert.equal(seatStubs()[0].hostName.length, 60);
+
+  clearSeatStub(TABLE_A);
+  saveSeatStub({ tableId: TABLE_B, hostDeviceId: HOST_A, packId: 'hearts', seat: 1 });
+  assert.equal(seatStubs()[0].hostName, '', 'a tile can fall back, but never reads undefined');
 });
