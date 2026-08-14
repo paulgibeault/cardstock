@@ -254,6 +254,12 @@ wrong for a shared table. In multiplayer:
 
 ## 8. Persistence and recovery
 
+> **Superseded in part (2026-08, issue #43):** the one-live-match rule and the single
+> `mpMatch` slot below are superseded by `TABLES_PLAN.md` — multiple concurrent
+> tables, slots keyed `mpMatch.<tableId>`, and joiner-held seat stubs (`mpSeats`).
+> The recovery ladder, the host-only-save rule, and the lifecycle edges in this
+> section carry forward unchanged.
+
 **Host-only save.** The host persists `{formatVersion, packId, packVersion, variants,
 seed, log, seatBindings, savedAt}` after every applied move — the existing
 seed+log discipline plus the seat↔`(deviceId, localIndex)` map — under a new
