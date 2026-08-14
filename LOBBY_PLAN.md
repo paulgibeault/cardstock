@@ -122,6 +122,16 @@ boot ── ?pack= present ──────────────► TABLE (
 
 ### The "only the open table advances" invariant
 
+> **Superseded for shared tables (2026-08, issue #43).** The paragraph below
+> is still exactly right for SOLO play, and still how the router works. What
+> changed is that a hosted table is now the deliberate exception it predicted:
+> "Phase 8 will need the opposite for shared tables" arrived, and
+> `TABLES_PLAN.md` §3 is that design. A hosted game belongs to its
+> `TableSession` rather than to the felt, keeps its bots running on the host's
+> wall clock while unwatched, and is persisted per table under
+> `mpMatch.<tableId>`. The difference stayed deliberate, which is what this
+> section asked for.
+
 This is structural, not policed: there is exactly one hydrated `liveState`,
 bot turns are scheduled only by `scheduleNextTurn` against it, and both
 table-exit paths cancel the timer and bump the epoch. While the frame is
@@ -272,11 +282,17 @@ controller keeps its single-entry move funnel (`afterMove`), and the
 router comment records the solo-only timer assumption §8.2 will replace.
 
 **Confirmed.** `MULTIPLAYER_PLAN.md` §8 takes the reservation and names the
-slot: a multiplayer match persists host-only under
-`arcade.v1.cardstock.mpMatch`, deliberately outside the `match.<packId>`
-namespace, one live match at a time in v1. The per-pack keys therefore keep
-meaning exactly what they mean today — "only the open table advances" stays
-true on a client, and on the host the shared table *is* the open table.
+slot: a multiplayer match persists host-only, deliberately outside the
+`match.<packId>` namespace. The per-pack keys therefore keep meaning exactly
+what they mean today.
+
+> **Updated (2026-08, issue #43).** The slot is keyed per table —
+> `mpMatch.<tableId>` plus a small index — because a device can host one table
+> per pack and "one live match at a time" no longer holds. A joiner keeps a
+> seat note under `mpSeats` and no game state at all. And the last clause above
+> is now false in the useful direction: the shared table is **not** necessarily
+> the open one, which is the whole of `TABLES_PLAN.md` §3. A hosted game is
+> also no longer written to the solo slot (#67) — one copy, in its own place.
 
 ## Test impact summary
 

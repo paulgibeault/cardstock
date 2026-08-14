@@ -147,35 +147,48 @@ launcher SDK's documented capability list, alongside a later `peer.party`.
 implementation plan; its Appendix B keeps the E-labels resolvable for the
 design doc's references.
 
-## Known gap: multiplayer is designed, not built
+## Multiplayer, and then tables (2026-08)
 
-`ARCADE_ENHANCEMENTS.md` Phase 8 is the full work breakdown — caps boot
-gate, lobby over `onReady`, the frame/routing table, per-seat presence,
-`overflowed` → snapshot resync, the `relayed:true` spoof check, and the
-two- and three-launcher test scenarios. It is deliberately a later pass.
+Phase 8 shipped, and then #43 rebuilt what it assumed. Both are designed in
+full elsewhere — `MULTIPLAYER_PLAN.md` for the wire, `TABLES_PLAN.md` for
+concurrency and lifetime — so this records only what a reader of the code
+would otherwise get wrong.
 
-What this pass owed it, and delivered:
+**The host holds the only state.** Everything a client sends is a request; a
+`propose` that is structurally perfect and arrives from the right seat is
+still only a request, because legality is a question about a state the client
+does not have. The host answers with the new view or a targeted reject —
+there is no separate ack.
 
-- `activeMatch` persists as **seed + event log**, re-hydrated by replaying
-  the reducer — which is how a multiplayer *host* survives a reload and
-  rebuilds the table it is the authority for. It is emphatically not the
-  wire payload: seed + log is full information, so it never leaves the host,
-  and a `snapshot` frame carries that seat's view instead (MULTIPLAYER_PLAN.md
-  §6). `tests/replay.test.js` pins the save shape for all five packs, so a
-  regression to a bare state dump fails CI rather than quietly making
-  Phase 8 expensive.
-- The RNG is the platform's vendored `arcade-rng.js`, so every device
-  replays the same stream from the same seed.
-- The escaping/validation pass (`tests/security.test.js`) is the
-  peer-input hardening Phase 8 builds frame-shape validation on top of.
+**A table is no longer the thing on screen.** This is the inversion worth
+knowing about. `createTableHost` used to be handed
+`liveState: () => tableContext()?.state`, so a hosted game existed only while
+it was being drawn. It now belongs to a `TableSession`
+(`src/match/tableSession.js`) held in a registry, and the felt *binds* to
+whichever session is open and unbinds without ending it. A hosted table
+nobody is watching keeps arbitrating, keeps playing bots headlessly, and is
+persisted under `mpMatch.<tableId>`.
 
-Two seams are NOT yet in place and Phase 8 must add them: seat identity is
-still a bare index (`HUMAN_SEAT`/`SEAT_COUNT` in `src/ui/table.js` — they
-moved out of `src/main.js` with the lobby extraction, when `main.js` became
-boot plus the router and `table.js` took the one open match) rather than
-`(deviceId, localIndex)`, and bot turns run on `Arcade.session` timers,
-which freeze on suspend and must become host-wall-clock timeout events at a
-shared table.
+What the pre-Phase-8 version of this section listed as missing:
+
+- **Seat identity** is `(deviceId, localIndex)` now (`src/players/seats.js`),
+  not a bare index. `SOLO_HUMAN_SEAT` and `SEAT_COUNT` survive in
+  `src/ui/table.js` as *solo defaults* only.
+- **Bot timers**: partly. An **unbound** hosted table drives its bots on the
+  host's wall clock (`src/ui/party.js` → `createBotDriver`), which is what
+  lets a backgrounded table keep playing. The felt's own driver still uses
+  `Arcade.session` timers (`src/ui/table.js`), so a shared table the host is
+  *looking at* schedules its bots on a clock that freezes when the frame
+  suspends. The turn timer covers device-held seats either way — `waitsOn`
+  never waits on a bot — so a bot's turn at a bound table waits for the host
+  to come back. Filed as #71.
+
+**Where the coverage is, and is not.** `src/match/` is well covered headlessly
+(`tests/protocol.test.js`, `tests/twoSessions.test.js`, `tests/twoTables.test.js`).
+`src/ui/party.js`, `table.js` and `lobby.js` have **no unit coverage** — every
+bug the tables work turned up was found by driving the real thing, so changes
+there want `npm run mp-acceptance` (three real launchers, nine scenarios) or a
+browser probe against the live modules, not a green unit run.
 
 ## The preview packs became playable (2026-08)
 

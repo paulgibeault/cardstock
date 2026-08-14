@@ -211,3 +211,64 @@ timer, and seats modules stay import-clean of `src/engine` and `src/ui`. That ki
 is the launcher's parked WP-L2 (`arcade-table`). It gets built *here* first and
 vendored out when a second game wants it — extracting before a second consumer
 exists generalizes the wrong seams.
+
+---
+
+## 11. What shipped (2026-08)
+
+Everything except T5 is on `main`. The plan held up; this records where the
+build diverged from it, because a plan nobody reconciles is a plan that starts
+lying.
+
+| WP | Issue | PRs |
+|---|---|---|
+| T1 | #45 | #51 |
+| T2 | #46 | #52 |
+| T3a | #47 | #53 |
+| T3 | #48 | #54 (protocol v2), #55 (session inversion), #58 (headless bots, §3 timer rule), #59 (persistence) |
+| T4 | #49 | #60 (seat stubs, roll-off), #61 (dormant tiles), #62 (grace config), #65 (two seats, switching) |
+| — | #69 | #70 (hosting two packs from the UI) |
+| T5 | #50 | **deferred to a follow-up effort** |
+
+### Where the build differs from §2–§8
+
+- **The frame router (§4) is not a module.** Routing shipped as a guard inside
+  each host and client — `if (frame.tableId !== tableId) return`. With one
+  `onMessage` subscription per session and a handful of sessions, a dispatch
+  module added indirection without changing behaviour. The seam is three lines
+  and lifting it out stays easy.
+- **§3's "one hosted table per pack" needed one more change than the model.**
+  The registry enforced it from T3, but `hostGame` still opened with a blanket
+  `if (host())`, so a second pack was unreachable from the UI until #70.
+- **§1's "one held seat per pack" arrived in two halves.** The refusal was
+  written in T3, deleted rather than shipped uncalled (there was only ever one
+  joiner session to refuse), and restored in T4 when holding two seats became
+  possible.
+- **Bots at a bound table still use the session clock.** §3 gives an *unbound*
+  hosted table a driver on the host's wall clock, which is what ships. The
+  felt's own driver is unchanged, so a shared table the host is looking at
+  schedules bots on a clock that freezes when the frame suspends — the mirror
+  image of the bug #58 fixed. Filed as #71.
+
+### Beyond the plan
+
+Four bugs the work surfaced, none of which the plan anticipated, all fixed:
+a joiner who left could never rejoin (#56 — `emote` and `bye` skipped the
+client's stamping helper and protocol v2 refused them); nine `tableContext()`
+reads that belonged to the session (#64); a hosted game written to the solo
+save slot as well, so the lobby offered "Resume" on a private copy (#67); and
+no way back into your own hosted table once #58 let it outlive the felt.
+
+Two gates now guard the shapes that produced them: every published frame is
+round-tripped through the validator with its seams asserted, and `peer.send`
+may only be named inside the functions that complete a frame (#63).
+
+### Testing (§10)
+
+The net went under first, as planned. `npm run mp-acceptance` runs nine
+scenarios on three real launchers; scenario 9 is the two-table case §10
+promised — one device hosting two packs, a joiner seated at both, a move at
+one table reaching only that table.
+
+`src/ui/party.js`, `table.js` and `lobby.js` still have no unit coverage.
+Every bug listed above was found by driving the real thing.
