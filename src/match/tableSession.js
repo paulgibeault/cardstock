@@ -67,6 +67,9 @@ export function createTableSession({ tableId, packId, role, packName = '', varia
     host: null,
     client: null,
     timer: null,
+    // The headless bot driver (src/ui/botDriver.js), host-side only. Null on a
+    // joiner, which never moves a seat it was not asked to.
+    bots: null,
 
     // The last lobby frame this table published (host) or received (joiner).
     // Per-table because a device browsing a neighbour's seats while playing its
@@ -86,6 +89,25 @@ export function createTableSession({ tableId, packId, role, packName = '', varia
     // do not).
     bound: false,
 
+    // WHAT THE BOT DRIVER KEEPS ON A TABLE, in the shape `createBotDriver`
+    // already expects (src/ui/botDriver.js) — the pending turn, the
+    // announcement beats, and the two persona rolls behind them. They live here
+    // rather than on the felt's render session because a hosted table that
+    // nobody is looking at still has bots whose turn it is; the felt's copy
+    // drives the table it is bound to, and this copy drives the rest.
+    //
+    // The decision caches are per-vulnerability-window and must die with the
+    // match — see the driver's own note on why re-rolling would make
+    // `callReliability: 0.5` behave like 1.
+    botTimer: null,
+    announceTimers: [],
+    botCallDecision: new Map(),
+    botCatchDecision: new Map(),
+    // The driver's staleness guard, per table. "Play again" and leaving to the
+    // lobby are invisible to any clock, so a scheduled turn checks this at fire
+    // time and drops itself if the match it belonged to is gone.
+    epoch: 0,
+
     hosting() { return role === 'host'; },
 
     /** The engine state, or null before the deal. Live reference, on purpose. */
@@ -100,10 +122,11 @@ export function createTableSession({ tableId, packId, role, packName = '', varia
       return { state: session.state, seats: session.seats, pack: session.pack, seating: session.seating };
     },
 
-    attach({ host = null, client = null, timer = null } = {}) {
+    attach({ host = null, client = null, timer = null, bots = null } = {}) {
       if (host) session.host = host;
       if (client) session.client = client;
       if (timer) session.timer = timer;
+      if (bots) session.bots = bots;
       return session;
     },
 
@@ -115,17 +138,37 @@ export function createTableSession({ tableId, packId, role, packName = '', varia
      * registry's remove path and an explicit "stop hosting" can both reach it.
      */
     stop() {
+      // The epoch moves FIRST, so a bot turn already in flight drops itself
+      // when it fires rather than reaching for a state we are about to null.
+      session.epoch += 1;
+      session.cancelBots();
       if (session.timer) session.timer.cancelAll?.();
       if (session.host) session.host.stop?.();
       if (session.client) session.client.stop?.();
       session.timer = null;
       session.host = null;
       session.client = null;
+      session.bots = null;
       session.state = null;
       session.lobbyFrame = null;
       session.decided.clear();
       session.unreachable.clear();
       session.bound = false;
+    },
+
+    /**
+     * Drop every scheduled bot turn and beat, and the rolls behind them.
+     *
+     * Called by `stop`, and on its own whenever the felt takes this table over:
+     * two drivers scheduling against one state would move the same bot twice.
+     */
+    cancelBots() {
+      if (session.botTimer) session.botTimer.cancel?.();
+      session.botTimer = null;
+      for (const timer of session.announceTimers) timer.cancel?.();
+      session.announceTimers = [];
+      session.botCallDecision.clear();
+      session.botCatchDecision.clear();
     },
   };
 

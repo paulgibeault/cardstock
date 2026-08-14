@@ -109,23 +109,9 @@ test('a client that never sat down refuses nothing', () => {
   reg.add(sessionFor(ID.eights, 'eights', 'joiner', { seat: null }).session);
 
   assert.equal(reg.refusalToHost('eights'), null, 'speculative join is not a seat');
-  assert.equal(reg.refusalToSit('eights'), null);
 });
 
-test('seat zero is a held seat, not a falsy one', () => {
-  const reg = createSessionRegistry();
-  reg.add(sessionFor(ID.eights, 'eights', 'joiner', { seat: 0 }).session);
 
-  assert.match(reg.refusalToSit('eights'), /already seated/);
-});
-
-test('you cannot sit at a pack you are hosting', () => {
-  const reg = createSessionRegistry();
-  reg.add(sessionFor(ID.hearts, 'hearts', 'host').session);
-
-  assert.match(reg.refusalToSit('hearts'), /Stop hosting/);
-  assert.equal(reg.refusalToSit('eights'), null);
-});
 
 test('refusals name the game when given a name', () => {
   const reg = createSessionRegistry();
@@ -226,4 +212,71 @@ test('two tables of different packs can both be hosted — the #43 case', () => 
 
   assert.equal(reg.hosted().length, 2);
   assert.notEqual(reg.get(ID.hearts), reg.get(ID.eights));
+});
+
+test('seat zero is a held seat, not a falsy one', () => {
+  const reg = createSessionRegistry();
+  reg.add(sessionFor(ID.eights, 'eights', 'joiner', { seat: 0 }).session);
+
+  // `seat() === 0` is the whole reason heldSeat compares against undefined
+  // rather than testing truthiness: seat 0 is a chair like any other.
+  assert.match(reg.refusalToHost('eights'), /Leave it to host your own/);
+});
+
+/* ------------------------------------------------------------------ *
+ * Bots at a table nobody is looking at (T3 2b)
+ * ------------------------------------------------------------------ */
+
+/** A cancellable in the shape botDriver's clock hands back. */
+function fakeTimer() {
+  const t = { cancelled: false, cancel() { t.cancelled = true; } };
+  return t;
+}
+
+test('a session carries the bot driver’s scratch, so two tables never share it', () => {
+  const a = createTableSession({ tableId: ID.hearts, packId: 'hearts', role: 'host' });
+  const b = createTableSession({ tableId: ID.eights, packId: 'eights', role: 'host' });
+
+  a.botCallDecision.set(1, true);
+  a.announceTimers.push(fakeTimer());
+
+  assert.equal(b.botCallDecision.size, 0, 'a persona roll at one table is not a roll at the other');
+  assert.equal(b.announceTimers.length, 0);
+  assert.notStrictEqual(a.botCatchDecision, b.botCatchDecision);
+});
+
+test('cancelBots drops the pending turn and every beat, and forgets the rolls', () => {
+  const s = createTableSession({ tableId: ID.hearts, packId: 'hearts', role: 'host' });
+  const turn = fakeTimer();
+  const beat = fakeTimer();
+  s.botTimer = turn;
+  s.announceTimers.push(beat);
+  s.botCallDecision.set(1, true);
+  s.botCatchDecision.set('1>2', true);
+
+  s.cancelBots();
+
+  assert.equal(turn.cancelled, true);
+  assert.equal(beat.cancelled, true);
+  assert.equal(s.botTimer, null);
+  assert.deepEqual(s.announceTimers, []);
+  assert.equal(s.botCallDecision.size, 0, 'a stale roll must not outlive the window it was made for');
+  assert.equal(s.botCatchDecision.size, 0);
+});
+
+test('stop moves the epoch before it clears the state', () => {
+  const s = createTableSession({ tableId: ID.hearts, packId: 'hearts', role: 'host' });
+  s.state = { turn: { seat: 0 } };
+  const before = s.epoch;
+  const turn = fakeTimer();
+  s.botTimer = turn;
+
+  s.stop();
+
+  // A TURN ALREADY IN FLIGHT READS THE EPOCH AT FIRE TIME. Bumping it here is
+  // what makes that turn drop itself rather than reach for a null state.
+  assert.ok(s.epoch > before, 'the epoch moved');
+  assert.equal(turn.cancelled, true);
+  assert.equal(s.liveState(), null);
+  assert.equal(s.bots, null);
 });

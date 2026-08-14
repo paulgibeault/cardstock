@@ -44,13 +44,15 @@ import { createTableSession } from '../match/tableSession.js';
 import { createSessionRegistry } from '../match/sessionRegistry.js';
 import { FRAME, EMOTES, validateFrame, isAuthentic, mintTableId } from '../match/protocol.js';
 import { botById, initialsOf, pickBotIds } from '../players/roster.js';
+import { createBotDriver } from './botDriver.js';
+import { loadSettings } from '../arcade/storage.js';
 import { fetchPack, fetchPackManifest } from './packSource.js';
 import { confirmAction } from './confirm.js';
 import {
   adoptSharedView, leaveSharedTable, tableContext, setSeating, dealHostedTable,
   setLocalMoveListener, afterRemoteMove, setTablePaused, rerenderTable,
 } from './table.js';
-import { createSeatTable } from '../players/seats.js';
+import { createSeatTable, createSeatLens } from '../players/seats.js';
 import { createTableDirectory, tableKeyOf } from '../match/tableDirectory.js';
 
 const el = {
@@ -639,6 +641,9 @@ function renderStrip() {
 /** packId -> the manifest's own name, fetched once per pack we are offered. */
 const packNames = new Map();
 
+/** What to call a game in a sentence, before its manifest has landed. */
+const packName = (packId) => packNames.get(packId) || packId;
+
 function rememberPackName(packId) {
   if (!packId || packNames.has(packId)) return;
   packNames.set(packId, null); // in flight; never ask twice
@@ -990,21 +995,23 @@ export async function hostGame(packId) {
     showPartyScreen();
     return false;
   }
-  // BEING IN EARSHOT OF A TABLE IS NOT BEING AT ONE — and reading it as one is
-  // the bug this whole stage exists to remove. A device becomes a client the
-  // moment anybody advertises a lobby, so `if (client)` here meant that one
-  // neighbour hosting Hearts silently took away your ability to host anything
-  // at all. Only a seat you are actually SITTING IN is a reason to refuse, and
-  // then it is refused out loud rather than by a dead button.
-  if (client() && seatedHere()) {
-    const whose = peerName(client().hostDeviceId());
-    setNotice(`You are sitting at ${whose}'s table. Leave it to host your own.`);
+  // THE DOOR, AND IT IS THE REGISTRY'S TO ANSWER (plan §1). This used to be a
+  // truthy `client` check here and a different check in two other places; now
+  // there is one rule and it is per-PACK. Being in earshot of a table is not
+  // being at one, and being sat at somebody's Crazy Eights is not a reason you
+  // cannot deal Hearts — only another table of THIS game is, and it is refused
+  // out loud rather than by a dead button.
+  const refusal = sessions.refusalToHost(packId, { nameOf: packName });
+  if (refusal) {
+    setNotice(refusal);
     showPartyScreen();
     return false;
   }
   // A client we never sat down at is a pack we loaded speculatively. Nothing is
-  // lost by standing up, and the table stays in the directory to go back to.
-  if (client()) leaveTable();
+  // lost by standing up, and the table stays in the directory to go back to. A
+  // seat we ARE sitting in stays exactly where it is: the registry just said
+  // this is a different game, and one felt is not a reason to give up a chair.
+  if (client() && !seatedHere()) leaveTable();
   ensurePort();
   const me = selfId();
   if (!me) return false;
@@ -1048,7 +1055,16 @@ export async function hostGame(packId) {
     nameFor: nameForSeat,
     deadlines: () => session.timer?.deadlines() || [],
     hooks: {
-      onApplied: (_state, move) => { afterRemoteMove(move); armTimer(); },
+      // THE FELT ONLY ANIMATES THE TABLE IT IS SHOWING. `afterRemoteMove` draws
+      // on whatever `tableContext()` currently holds, so calling it for a
+      // backgrounded table would play another game's card onto the open one.
+      // Unbound, the move is applied and published and nothing is drawn — which
+      // is the whole of what "headless" means here.
+      onApplied: (_state, move) => {
+        if (session.bound) afterRemoteMove(move);
+        armTimer(session);
+        driveBots(session);
+      },
       // A remote claim arrives here, which is also the late-joiner path: the
       // host must stop moving that seat and start calling it by its name. No
       // re-broadcast — handleClaim already sends one, and this fires inside it.
@@ -1071,12 +1087,22 @@ export async function hostGame(packId) {
       const template = state.pack.template;
       return template.actingSeats ? template.actingSeats(makeCtx(state)) : [state.turn.seat];
     },
-    // ONLY OTHER PEOPLE'S SEATS. Our own turn is nobody's business but ours —
-    // a game has always waited for the player in front of it and should keep
-    // doing so — and a bot needs no encouragement.
+    // ANY DEVICE-HELD SEAT WHOSE DEVICE IS NOT WATCHING THIS TABLE (plan §3).
+    //
+    // It used to be "every seat but our own", which is right for the table in
+    // front of the player — a game has always waited for the person looking at
+    // it, and a bot needs no encouragement — and wrong the moment this device
+    // is playing a DIFFERENT table. There, our own seat is exactly as unwatched
+    // as an absent joiner's, and exempting it would stall the hand for everyone
+    // else until we happened to come back.
+    //
+    // So the exemption is about attention rather than identity: our seat is
+    // exempt only at the table the felt is bound to.
     waitsOn: (seat) => {
       const owner = session.seats?.ownerOf(seat);
-      return owner?.kind === 'device' && owner.deviceId !== selfId();
+      if (owner?.kind !== 'device') return false;
+      const isOurs = owner.deviceId === selfId();
+      return !(isOurs && session.bound);
     },
     onExpire: (state, seat) => {
       // A TURN THAT RAN OUT IS A MOVE. The house plays one for them and the
@@ -1087,7 +1113,11 @@ export async function hostGame(packId) {
       session.host?.applyLocal(move);
     },
   }) });
-  setLocalMoveListener((_state, _move, events) => { session.host?.publish(events); armTimer(); });
+  session.attach({ bots: headlessBotsFor(session) });
+  setLocalMoveListener((_state, _move, events) => {
+    session.host?.publish(events);
+    armTimer(session);
+  });
   session.host.start();
   port.onPeersChange(() => { refreshSeats(); checkForDrops(); });
   session.lobbyFrame = ourLobbyFrame();
@@ -1123,13 +1153,103 @@ export async function dealParty() {
   // THE FELT IS NOW SHOWING THIS ONE. Binding is about attention, not lifetime
   // — see src/match/tableSession.js. It is what tells a later background table
   // apart from the one in front of the player.
-  sessions.bind(session.tableId);
+  bindFelt(session.tableId);
   session.host.broadcastLobby();
   session.host.publish([]);
   hidePartyScreen();
   refreshSeats();
   return true;
 }
+
+/* ------------------------------------------------------------------ *
+ * Bots at a table nobody is looking at
+ *
+ * The felt drives the session it is bound to, exactly as it always has —
+ * `scheduleNextTurn` in src/ui/table.js, through the animation pipeline. What
+ * is new is that an UNBOUND hosted table has bots too, and they have to keep
+ * playing while a different table is on screen.
+ *
+ * `createBotDriver` was built to be driven from anywhere: it takes its clock,
+ * its seat lens and its "how a move lands" seam by injection and never touches
+ * the DOM. So the headless driver is the same module with `playMove` pointed at
+ * `host.applyLocal` instead of at the felt — no second implementation of whose
+ * turn it is, which is what keeps the two from drifting.
+ * ------------------------------------------------------------------ */
+
+function headlessBotsFor(session) {
+  const seatLens = createSeatLens(() => session.seats);
+  return createBotDriver({
+    // The WALL clock, for the same reason the turn timer takes it: a shared
+    // hand does not stop because this tab stopped painting. The felt's driver
+    // takes the SESSION clock, which freezes with a suspended frame — right for
+    // solo, wrong for a table other people are sitting at.
+    clock: wallClock(),
+    currentEpoch: () => session.epoch,
+    botDelayMs: () => loadSettings().botDelayMs,
+    me: seatLens,
+    identityOf: (seat) => session.seating?.[seat]
+      || { seat, name: nameForSeat(seat) || `Seat ${seat}`, icon: '', color: '#6b7280', isBot: true },
+    actingSeatsOf: (state) => {
+      if (state.gameOver) return [];
+      const template = state.pack.template;
+      return template.actingSeats ? template.actingSeats(makeCtx(state)) : [state.turn.seat];
+    },
+    announcementsFor: (state, seat) => {
+      const template = state.pack.template;
+      if (!template.enumerateAnnouncements) return [];
+      return template.enumerateAnnouncements(makeCtx(state), seat) || [];
+    },
+    // THE ONLY REAL DIFFERENCE FROM THE FELT'S DRIVER. No animation, no log
+    // line, no sound — `applyLocal` applies the move and publishes it, which is
+    // the same door every other move at this table goes through.
+    playMove: (_state, move) => { session.host?.applyLocal(move); },
+    playAnnouncement: (_state, move) => { session.host?.applyLocal(move); },
+    onError: (message) => setNotice(message),
+  });
+}
+
+/**
+ * Keep an unbound hosted table playing itself.
+ *
+ * A no-op while the felt is bound, because then the felt is already doing it
+ * and two drivers scheduling against one state would move the same bot twice.
+ */
+function driveBots(session) {
+  if (!session?.hosting() || !session.bots || !session.state) return;
+  if (session.bound || session.paused) return;
+  session.bots.scheduleNextTurn(session, session.epoch);
+  session.bots.scheduleAnnouncementBeats(session, session.epoch);
+}
+
+/**
+ * Hand the table over between the felt and the headless driver.
+ *
+ * Binding cancels the headless timers first: the felt picks the turn up through
+ * its own scheduler, and a pending headless turn would otherwise fire into an
+ * animation pipeline that had just taken responsibility for the same seat.
+ */
+function bindFelt(tableId) {
+  for (const other of sessions.hosted()) other.cancelBots();
+  const bound = sessions.bind(tableId);
+  for (const other of sessions.hosted()) if (other !== bound) driveBots(other);
+  return bound;
+}
+
+/**
+ * The felt stopped showing whatever it was showing.
+ *
+ * EXPORTED, because the felt's own "Lobby" button does not come through this
+ * module — src/main.js wires it straight to `initTable({ onExit })`. That path
+ * used to call `stopHosting()`, on the reasoning that leaving the table ended
+ * the party because the table WAS what was being hosted. After the session
+ * inversion that reasoning no longer holds: the match outlives the felt, so
+ * leaving is a change of attention and nothing more.
+ */
+export function leaveFelt() {
+  sessions.unbind();
+  for (const session of sessions.hosted()) driveBots(session);
+}
+
 
 /**
  * Re-arm after every published move, and keep the countdown painting.
@@ -1138,8 +1258,7 @@ export async function dealParty() {
  * KEEPS its deadline rather than having its clock reset by somebody else's
  * move, which is what stops a timeout being unreachable at a busy table.
  */
-function armTimer() {
-  const session = ourTable();
+function armTimer(session = ourTable()) {
   const state = session?.state;
   if (!session?.timer || !state) return;
   session.timer.arm(state);
@@ -1455,7 +1574,7 @@ async function joinTable(entry) {
         // THE VIEW IS THIS TABLE'S, and it is kept on this table's session — so
         // a second table's view can arrive without overwriting it.
         session.state = view;
-        sessions.bind(session.tableId);
+        bindFelt(session.tableId);
         adoptSharedView({
           view,
           pack: session.pack,
@@ -1702,14 +1821,11 @@ export function isPartyScreenOpen() {
 
 export function initParty({ onShowTable, onShowLobby }) {
   goToTable = onShowTable || (() => {});
-  // LEAVING THE FELT UNBINDS; IT DOES NOT END ANYTHING. Wrapped here rather
-  // than at each of the six call sites, because "the felt stopped showing this
-  // table" and "go back to the lobby" are the same event and always were — the
-  // difference is that it used to also be "the table stopped existing".
-  goToLobby = (...args) => {
-    sessions.unbind();
-    return (onShowLobby || (() => {}))(...args);
-  };
+  // NOT WRAPPED TO UNBIND ANY MORE. `leaveFelt` is exported and src/main.js's
+  // `goToLobby` calls it directly, which is the only way the felt's own Lobby
+  // button — wired straight to initTable, never through this module — can
+  // unbind too. Doing it in both places would just unbind twice.
+  goToLobby = onShowLobby || (() => {});
   ensurePort();
 
   el.entry?.addEventListener('click', () => {
@@ -1796,12 +1912,16 @@ export function takeTurn() {
     client().propose(move);
     return move;
   }
-  if (!host()) return null;
-  const ctx = tableContext();
-  if (!ctx || ctx.state.isView) return null;
-  const mine = ctx.seats.seatsOfDevice(selfId());
+  const session = ourTable();
+  if (!session?.host) return null;
+  // THE SESSION'S STATE, NOT THE FELT'S. This read `tableContext()`, which is
+  // null the moment the felt is showing something else — so the one call that
+  // plays this device's seat stopped working at exactly the table that needs it
+  // most, a hosted game running in the background.
+  if (!session.state || session.state.isView || !session.seats) return null;
+  const mine = session.seats.seatsOfDevice(selfId());
   for (const seat of mine) {
-    const move = legalFor(ctx.state, seat);
+    const move = legalFor(session.state, seat);
     if (!move) continue;
     // `applyLocal` publishes AND fires onApplied, which is what runs the felt's
     // post-move ritual. Calling that ritual again here ran it twice per host

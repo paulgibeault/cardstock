@@ -12,9 +12,11 @@
 // exception is `?pack=`, which still lands straight on a table — it is how the
 // dev server, the §13 acceptance run, and hand-shared links open a game.
 //
-// Only ONE match is ever live: entering a table opens it, leaving closes it,
-// and src/ui/table.js's header explains why that is enough to guarantee a
-// game nobody is looking at never advances.
+// ONE FELT, BUT NO LONGER ONE MATCH. Entering a table binds the felt to it and
+// leaving unbinds; the match itself belongs to a TableSession
+// (src/match/tableSession.js) and outlives both. A hosted table nobody is
+// looking at keeps arbitrating and keeps playing its bots — which is the whole
+// of #43, and the reason `goToLobby` below no longer stops hosting.
 
 import { registerStorageErrorHandler, packOverride } from './arcade/storage.js';
 import {
@@ -24,7 +26,7 @@ import {
   initLobby, renderLobby, showLobby, hideLobby, reportLobbyError,
 } from './ui/lobby.js';
 import {
-  initParty, refreshEntry as refreshPartyEntry, hidePartyScreen, hostGame, canHost, stopHosting,
+  initParty, refreshEntry as refreshPartyEntry, hidePartyScreen, hostGame, canHost, leaveFelt,
 } from './ui/party.js';
 import { initInspector, hideInspector } from './ui/inspector.js';
 
@@ -33,11 +35,15 @@ import { initInspector, hideInspector } from './ui/inspector.js';
  * ------------------------------------------------------------------ */
 
 async function goToLobby() {
-  // LEAVING THE TABLE ENDS THE PARTY, because the table IS what was being
-  // hosted — closeTable() drops the state, and a host publishing a lobby for a
-  // match that no longer exists is a table nobody can join. No-ops when this
-  // device is not hosting, which includes every boot.
-  stopHosting();
+  // LEAVING THE TABLE NO LONGER ENDS THE PARTY. It used to have to: the felt
+  // owned the engine state, so closing it dropped the match, and a host still
+  // publishing a lobby for a match that no longer existed was a table nobody
+  // could join. The session inversion (#48) moved the state into the session,
+  // so the match survives the felt and the honest thing to do on the way out is
+  // stop LOOKING at it — which is what `leaveFelt` means. Bots at a table
+  // nobody is watching keep playing; ending it is the "Stop hosting" button,
+  // which says so.
+  leaveFelt();
   closeTable();
   hideInspector();
   hidePartyScreen();
