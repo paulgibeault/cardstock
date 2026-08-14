@@ -256,7 +256,14 @@ wrong for a shared table. In multiplayer:
 
 > **Superseded in part (2026-08, issue #43):** the one-live-match rule and the single
 > `mpMatch` slot below are superseded by `TABLES_PLAN.md` — multiple concurrent
-> tables, slots keyed `mpMatch.<tableId>`, and joiner-held seat stubs (`mpSeats`).
+> tables, slots keyed `mpMatch.<tableId>` plus a small index, and joiner-held seat
+> stubs (`mpSeats`). Two further clauses below no longer hold: **"on the host the
+> shared table *is* the open table"** (a hosted table outlives the felt and keeps
+> playing unwatched — §3 there), and the host's grace is no longer a constant, but
+> chosen per table and carried on the `lobby` frame so a joiner counts down against
+> the host's rule (§7 there). Deadlines are still never persisted; a resumed table
+> arms fresh.
+>
 > The recovery ladder, the host-only-save rule, and the lifecycle edges in this
 > section carry forward unchanged.
 
@@ -358,6 +365,15 @@ On top of Phase 4's hardening (`tests/security.test.js`), all peer input is host
   5. Force `overflowed`: assert `snapshot-req` → `snapshot` restores an identical
      view + seq.
   6. Caps-stripped harness shows the "launcher update required" notice.
+
+  > **Grown since (2026-08).** The suite runs nine scenarios, not six: 7 adds
+  > hostile peer names and scripted presence transitions, 8 leaving and coming
+  > back, and 9 the two-table case `TABLES_PLAN.md` §10 asked for — one device
+  > hosting two packs, a joiner seated at both, a move at one table reaching
+  > only that table. Items 4 and 5 remain SKIP with a stated reason: cutting a
+  > live data channel and forcing `overflowed` need a transport hook neither the
+  > SDK nor the launcher harness exposes, and both behaviours are covered
+  > headlessly in `tests/protocol.test.js`.
 - **Simulation:** `tools/simulate.mjs` gains a mode that runs host + N scripted
   clients over the stub transport for all five packs (bot-vs-bot through the full
   protocol), keeping the completion-rate bars.

@@ -21,12 +21,15 @@ catalog entry ships with `inDevelopment: true`.
 
 **The lobby is the front door.** Every pack gets a tile; a game you walk
 away from keeps its place and is waiting when you come back, and **every
-pack can have its own game in flight at once**. Only the open table
-advances — a match nobody is looking at is a seed and a log in storage,
-not a process, so no bot plays a card in a game you closed. See
-[LOBBY_PLAN.md](LOBBY_PLAN.md) for the design and
-[src/ui/table.js](src/ui/table.js) for why that invariant is structural
-rather than policed.
+pack can have its own game in flight at once**. A *solo* match nobody is
+looking at is a seed and a log in storage, not a process, so no bot plays
+a card in a game you closed. A **hosted** table is the deliberate
+exception — other people are sitting at it, so it keeps arbitrating and
+keeps playing its bots whether or not it is the table on your screen
+(see [TABLES_PLAN.md](TABLES_PLAN.md) §3). See
+[LOBBY_PLAN.md](LOBBY_PLAN.md) for the lobby design and
+[src/ui/table.js](src/ui/table.js) for how the solo invariant is
+structural rather than policed.
 
 **All five packs play from deal to game over.** The table renders piles
 from the packs' own zone definitions (Stockpile's four build piles and four
@@ -45,15 +48,22 @@ marks whoever may act, in every game. `FULLY_PLAYABLE_TEMPLATES` in
 fifth template starts life outside it and earns its way in the same way —
 by teaching the table its moves.
 
-**Not yet built: multiplayer.** It is a primary feature and is planned in
-full — see [ARCADE_ENHANCEMENTS.md](ARCADE_ENHANCEMENTS.md) Phase 8 —
-but it is deliberately a later pass. What exists today is the seam it
-needs: a match persists as **seed + event log** and re-hydrates by
-replaying the reducer ([src/engine/replay.js](src/engine/replay.js)) —
-which is exactly how a multiplayer *host* will survive a reload. It is not
-what goes on the wire: the seed reconstructs the whole shuffle, so it never
-leaves the host, and a joiner receives a per-seat view instead
-(MULTIPLAYER_PLAN.md).
+**Multiplayer is built.** Serverless and peer-to-peer over the launcher's
+transport: one device hosts, holds the only engine state, and arbitrates —
+every other device sends *requests* and receives a per-seat view. The seed
+reconstructs the whole shuffle, so it never leaves the host; a joiner is
+told only its own hand ([src/engine/view.js](src/engine/view.js)).
+[MULTIPLAYER_PLAN.md](MULTIPLAYER_PLAN.md) is the design.
+
+**Tables outlive the screen.** A device can host one table per pack and
+hold a seat at one table per pack, at the same time. A hosted game belongs
+to its `TableSession` ([src/match/tableSession.js](src/match/tableSession.js))
+rather than to the felt, so it survives leaving the table, keeps playing
+its bots unwatched, and comes back after a reload from seed + log under
+`mpMatch.<tableId>`. A seat you hold at a table whose host is away shows
+as **offline** and wakes on its own when they return.
+[TABLES_PLAN.md](TABLES_PLAN.md) is the design; the three-launcher suite
+(`npm run mp-acceptance`) drives it on the real transport.
 
 See **[IMPLEMENTATION_NOTES.md](IMPLEMENTATION_NOTES.md)** for what
 simulation caught and fixed, and known limitations.

@@ -1,5 +1,8 @@
 // The Definition-of-Done checklist for multiplayer (MULTIPLAYER_PLAN.md §11),
-// one exported scenario per numbered item.
+// one exported scenario per numbered item — plus the ones the checklist grew.
+// 7 and 8 came from the hardening and rejoin work; 9 is the two-table case
+// TABLES_PLAN.md §10 asked for, and is the only automated evidence that a
+// device can host two packs at once.
 //
 // Separated from tools/mp-acceptance.mjs on purpose: that file is the harness —
 // three devices, three launchers, the game mounted and the caps gate satisfied
