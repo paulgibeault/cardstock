@@ -913,3 +913,146 @@ test('a client lets go of a seat the host reassigns', async () => {
 
   assert.equal(t.a.seat(), null, 'the roster is what makes it true, both ways');
 });
+
+/* ------------------------------------------------------------------ *
+ * The published-frame gate (#63)
+ *
+ * Two bugs in the tables work shared one shape and both passed every test:
+ * a frame that left without a field the other end requires (#56's `bye`), and
+ * a field added to the copy used for rendering but not to the copy actually
+ * sent (#62's `graceMs`). Neither was a validator bug — the validator was
+ * never asked. So: drive a whole exchange, take what genuinely reached a
+ * device, and put every frame of it back through the door it will arrive at.
+ * ------------------------------------------------------------------ */
+
+/** Every frame kind either end emits, so a kind that stops being sent is loud. */
+const HOST_FRAMES = [FRAME.LOBBY, FRAME.VIEW, FRAME.SNAPSHOT, FRAME.REJECT, FRAME.EMOTE, FRAME.BYE];
+const CLIENT_FRAMES_SENT = [FRAME.CLAIM_SEAT, FRAME.PROPOSE, FRAME.SNAPSHOT_REQ, FRAME.EMOTE, FRAME.BYE];
+
+/** Drive one table hard enough to emit every kind above. */
+async function exerciseEveryFrame() {
+  const t = await threeSeatTable();
+  seatAll(t);
+
+  // A legal move, so a view fans out.
+  const legal = enumerateLegalMoves(t.state, t.state.turn.seat)[0];
+  if (legal) t.host.applyLocal(legal);
+
+  // An illegal proposal, so a reject comes back. Seat 1 is Ada's; proposing
+  // out of turn is refused rather than corrected.
+  t.a.propose({ type: 'pass', actor: 1 });
+
+  // A snapshot request, and the snapshot answering it.
+  t.a.requestSnapshot();
+
+  // Both ends say something to the room, and both say goodbye.
+  t.host.emote(0);
+  t.a.emote(1);
+  t.host.sendBye('closed');
+  t.a.sendBye('leave');
+
+  return t;
+}
+
+test('every frame that reaches a device is one the validator accepts', async () => {
+  const t = await exerciseEveryFrame();
+
+  const delivered = [...t.net.deliveredTo('a'), ...t.net.deliveredTo('b'), ...t.net.deliveredTo('host')];
+  assert.ok(delivered.length > 0, 'the exchange produced frames at all');
+
+  for (const payload of delivered) {
+    const verdict = validateFrame(payload);
+    assert.equal(verdict.ok, true,
+      `a ${payload?.k} frame was sent that the receiving end refuses: ${verdict.reason}`);
+    // THE FIELD #56 LOST. Protocol v2 drops any frame that does not name its
+    // table, so a sender that skips the stamp is a sender nobody hears.
+    assert.equal(verdict.frame.tableId, TID, `a ${payload.k} frame did not name its table`);
+  }
+});
+
+test('the gate actually sees every frame kind either end sends', async () => {
+  const t = await exerciseEveryFrame();
+
+  // BY SENDER, NOT BY RECIPIENT. Reading it off `deliveredTo` looked right and
+  // was not: an emote is a BROADCAST, so Ada's reached Bo, and "somebody sent
+  // an emote" was true even with the host's own emote deleted. The stub logs
+  // who sent each frame; that is the question being asked.
+  const kindsFrom = (id) => new Set(t.net.log.filter((e) => e.from === id).map((e) => e.payload.k));
+  const fromHost = kindsFrom('host');
+  const fromClient = kindsFrom('a');
+
+  // COVERAGE IS PART OF THE GATE. Without this a frame kind that quietly
+  // stopped being emitted would make the test above pass by having nothing
+  // left to check.
+  for (const kind of HOST_FRAMES) {
+    assert.ok(fromHost.has(kind), `no ${kind} frame was exercised — the gate is not watching it`);
+  }
+  for (const kind of CLIENT_FRAMES_SENT) {
+    assert.ok(fromClient.has(kind), `no ${kind} frame was exercised — the gate is not watching it`);
+  }
+});
+
+test('a lobby frame carries every seam the host was built with', async () => {
+  // THE BUG THIS HALF IS FOR. #62 added `graceMs` to the copy party.js renders
+  // from and not to the one host.js publishes. Round-tripping through the
+  // validator cannot catch that — the frame was structurally perfect, it just
+  // said nothing. So the seams are asserted to reach the wire.
+  const net = createPeerNetwork({ hostDeviceId: 'host' });
+  const hostPort = net.createDevice('host', { name: 'Host' });
+  const aPort = net.createDevice('a', { name: 'Ada' });
+  const seats = createSeatTable({ seats: 3, localDeviceId: 'host' });
+  seats.claim(0, { deviceId: 'host' });
+  const pack = await loadPackFromDisk('crazy-eights');
+
+  const host = createTableHost({
+    tableId: TID, peer: hostPort, seats,
+    liveState: () => null,
+    packInfo: () => ({ packId: pack.id, packVersion: pack.manifest?.version, variants: ['a-variant'] }),
+    nameFor: (seat) => `Seat ${seat}`,
+    graceMs: () => 30_000,
+  });
+  host.start();
+  net.ready('host', 'a');
+
+  const lobby = net.deliveredTo('a').filter((p) => p.k === FRAME.LOBBY).pop();
+  assert.ok(lobby, 'a lobby frame was published');
+  assert.equal(lobby.graceMs, 30_000, 'the grace seam reached the wire');
+  assert.equal(lobby.packId, pack.id);
+  assert.equal(lobby.packVersion, pack.manifest?.version);
+  assert.deepEqual(lobby.variants, ['a-variant'], 'packInfo’s variants reached the wire');
+  assert.equal(lobby.seats[0].name, 'Seat 0', 'the nameFor seam reached the wire');
+  assert.equal(lobby.started, false, 'liveState reached the wire');
+  assert.equal(validateFrame(lobby).frame.graceMs, 30_000, 'and survives the validator');
+});
+
+test('a view frame carries the deadlines seam', async () => {
+  // The other half of the same idea: `deadlines` is a seam, and a client's
+  // countdown is drawn from what arrives on the view. If it stopped reaching
+  // the wire the clock would simply never appear, silently.
+  const net = createPeerNetwork({ hostDeviceId: 'host' });
+  const hostPort = net.createDevice('host', { name: 'Host' });
+  const aPort = net.createDevice('a', { name: 'Ada' });
+  const seats = createSeatTable({ seats: 3, localDeviceId: 'host' });
+  seats.claim(0, { deviceId: 'host' });
+  seats.claim(1, { deviceId: 'a' });
+  const pack = await loadPackFromDisk('crazy-eights');
+  const state = createState({ pack, seats: 3, seed: 11 });
+  pack.template.setup(makeCtx(state));
+
+  const DEADLINES = [{ seat: 1, expiresAt: 1_700_000_000_000 }];
+  const host = createTableHost({
+    tableId: TID, peer: hostPort, seats,
+    liveState: () => state,
+    packInfo: () => ({ packId: pack.id, packVersion: pack.manifest?.version, variants: [] }),
+    nameFor: (seat) => `Seat ${seat}`,
+    deadlines: () => DEADLINES,
+  });
+  host.start();
+  net.ready('host', 'a');
+  host.publish([]);
+
+  const view = net.deliveredTo('a').filter((p) => p.k === FRAME.VIEW).pop();
+  assert.ok(view, 'a view was published');
+  assert.deepEqual(view.view.deadlines, DEADLINES, 'the deadlines seam reached the wire');
+  assert.equal(validateFrame(view).ok, true, 'and the frame it rode on validates');
+});

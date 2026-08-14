@@ -186,6 +186,31 @@ export function createTableHost({
     });
   }
 
+  /**
+   * The host's own announcements to the room.
+   *
+   * These exist so `src/ui/party.js` does not have to reach past the host and
+   * call `peer.send` itself. It did, for three frames — an emote, and the two
+   * `bye`s that end a table or take a seat back — each stamping `tableId` by
+   * hand. They were correct, and they were three more doors that a fourth
+   * could be added beside without anybody noticing it had skipped the stamp.
+   * That is #56's shape, and #63's whole point: one door out.
+   */
+  function emote(index) {
+    if (!Number.isInteger(index) || index < 0 || index >= EMOTES.length) return false;
+    return broadcast({ k: FRAME.EMOTE, i: index });
+  }
+
+  /**
+   * `closed` ends the table for everybody; `replaced` is aimed at one device
+   * whose seat has been taken back. Same frame, two audiences, and the caller
+   * says which by passing `to` or not.
+   */
+  function sendBye(why, { to = null } = {}) {
+    const frame = { k: FRAME.BYE, why };
+    return to ? sendTo(to, frame) : broadcast(frame);
+  }
+
   /** One seat's view, addressed to the device holding it. */
   function sendViewTo(seat, deviceId, { kind = FRAME.VIEW, events = [] } = {}) {
     const state = liveState();
@@ -447,6 +472,8 @@ export function createTableHost({
   return {
     start,
     stop,
+    emote,
+    sendBye,
     applyLocal,
     publish,
     broadcastLobby,

@@ -1089,7 +1089,7 @@ function sendEmote(index) {
   if (now - lastEmoteAt < EMOTE_COOLDOWN_MS) return;
   lastEmoteAt = now;
   if (client()) client().emote(index);
-  else if (host()) port.send({ k: FRAME.EMOTE, i: index, tableId: hostTableId() });
+  else if (host()) host().emote(index);
   burst(EMOTES[index]);
 }
 
@@ -1760,7 +1760,7 @@ export function stopHosting() {
   if (!session?.host) return;
   const tableId = session.tableId;
   if (tick) { clearInterval(tick); tick = null; }
-  port?.send({ k: FRAME.BYE, why: 'closed', tableId });
+  session.host.sendBye('closed');
   setLocalMoveListener(null);
   setTablePaused(false);
   // ONE TEARDOWN POINT NOW. The timer, the host, the seat table, the two
@@ -1825,7 +1825,7 @@ async function removeSeat(seat) {
   if (!ok) return;
   const owner = hostSeats().ownerOf(seat);
   if (owner.kind === 'device' && owner.deviceId) {
-    port.send({ k: FRAME.BYE, why: 'replaced', tableId: hostTableId() }, { to: owner.deviceId });
+    host().sendBye('replaced', { to: owner.deviceId });
   }
   hostSeats().seatBot(seat);
   afterSeatChange();
