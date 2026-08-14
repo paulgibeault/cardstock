@@ -17,6 +17,10 @@
 // which is exactly what the stub below is reserved for.
 
 import { serializeMatch, isReplayableMatch } from '../engine/replay.js';
+// A table id is a SAFE_ID and the key it becomes goes to the launcher, so it is
+// held to the same rule as everything else on the wire — a key is not a place
+// to relax a validator.
+import { isSafeId } from '../match/protocol.js';
 
 // Keys, unprefixed — the SDK adds `arcade.v1.cardstock.`. Named here so the
 // set is greppable and nothing invents a key inline.
@@ -35,8 +39,32 @@ export const KEYS = {
   // hand at the table. A joiner never writes it and is never sent it (see
   // src/engine/view.js) — a client keeps nothing across a reload and re-asks
   // for a snapshot instead.
-  mpMatch: 'mpMatch',
+  //
+  // ONE SLOT PER TABLE, keyed by the minted `tableId` — `mpMatch.<tableId>`.
+  // A single `mpMatch` slot was right while a device could host one table and
+  // is wrong the moment it can host two: the second deal would silently
+  // overwrite the first, which is the same mistake `activeMatch` made about
+  // packs and which `match.<packId>` fixed.
+  //
+  // THE INDEX EXISTS BECAUSE THERE IS NO WAY TO LIST KEYS. `Arcade.state` has
+  // get/set/remove and nothing that enumerates, so a boot with no index would
+  // have no way to discover which tables it had saved. It stays deliberately
+  // small — enough to find and name a slot, never a copy of what is in one.
+  mpTables: 'mpTables',
 };
+
+// See KEYS.mpTables. `match.` and `mpMatch.` are kept distinct on purpose: a
+// solo save and a hosted table are not the same kind of thing, and the lobby
+// offers only the first.
+export const MP_MATCH_KEY_PREFIX = 'mpMatch.';
+
+export function mpMatchKey(tableId) {
+  return `${MP_MATCH_KEY_PREFIX}${tableId}`;
+}
+
+export function isMpMatchKey(key) {
+  return typeof key === 'string' && key.startsWith(MP_MATCH_KEY_PREFIX);
+}
 // The pre-lobby single-match key (`activeMatch`) and its boot-time migration
 // are GONE. They said "delete one release after the lobby ships"; the lobby
 // shipped in v0.1.2 and this is v0.1.15, so the migration had been running at
@@ -193,22 +221,62 @@ export function saveMatch(state) {
  * reproduces the cards whoever is holding them, and a seat changing hands
  * mid-match (a drop, a bot filling in) must not make the log unreplayable.
  */
-export function saveHostMatch(state, seatTable) {
-  return Arcade.state.set(KEYS.mpMatch, {
+export function saveHostMatch(tableId, state, seatTable) {
+  if (!isSafeId(tableId)) return false;
+  const written = Arcade.state.set(mpMatchKey(tableId), {
     ...serializeMatch(state),
+    tableId,
     seatBindings: seatTable.serialize(),
   });
+  rememberHostTable(tableId, state.pack.id);
+  return written;
 }
 
 /** The stored shared table, or null when there is none this build can replay. */
-export function loadHostMatch() {
-  const stored = Arcade.state.get(KEYS.mpMatch);
+export function loadHostMatch(tableId) {
+  if (!isSafeId(tableId)) return null;
+  const stored = Arcade.state.get(mpMatchKey(tableId));
   if (!isReplayableMatch(stored)) return null;
+  // The slot's own id re-checked against the key it was found under, for the
+  // same reason `loadMatch` re-checks packId: they can only disagree if a save
+  // bundle was hand-edited, and rehydrating into the wrong table is worse than
+  // not rehydrating at all.
+  if (stored.tableId && stored.tableId !== tableId) return null;
   return stored;
 }
 
-export function clearHostMatch() {
-  return Arcade.state.set(KEYS.mpMatch, null);
+export function clearHostMatch(tableId) {
+  if (!isSafeId(tableId)) return false;
+  forgetHostTable(tableId);
+  return Arcade.state.remove(mpMatchKey(tableId));
+}
+
+/**
+ * Every hosted table this device has saved — `[{ tableId, packId, savedAt }]`,
+ * newest first.
+ *
+ * Entries whose slot has gone are dropped on the way out rather than returned
+ * for a caller to trip over: an index is a hint about where to look, and a
+ * stale hint should cost nothing more than a lookup that finds nothing.
+ */
+export function hostMatches() {
+  const index = Arcade.state.get(KEYS.mpTables);
+  if (!Array.isArray(index)) return [];
+  return index
+    .filter((entry) => entry && isSafeId(entry.tableId) && Arcade.state.get(mpMatchKey(entry.tableId)))
+    .sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0));
+}
+
+function rememberHostTable(tableId, packId, { at = Date.now() } = {}) {
+  const index = Arcade.state.get(KEYS.mpTables);
+  const rest = (Array.isArray(index) ? index : []).filter((e) => e?.tableId !== tableId);
+  return Arcade.state.set(KEYS.mpTables, [...rest, { tableId, packId, savedAt: at }]);
+}
+
+function forgetHostTable(tableId) {
+  const index = Arcade.state.get(KEYS.mpTables);
+  if (!Array.isArray(index)) return false;
+  return Arcade.state.set(KEYS.mpTables, index.filter((e) => e?.tableId !== tableId));
 }
 
 export function loadMatch(packId) {
