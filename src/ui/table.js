@@ -2268,6 +2268,12 @@ function persistMatch() {
   // the host's, and a rejoin re-asks for a snapshot rather than resuming from
   // whatever it happened to be holding (src/match/client.js).
   if (state.isView) return;
+  // NEITHER DOES A HOST, HERE. Its match is persisted by src/ui/party.js under
+  // `mpMatch.<tableId>`, which is the copy the party comes back to. Writing the
+  // solo slot as well made a second, diverging copy of the same game — and gave
+  // the lobby tile a "Start over" that dealt a private hand beside a table
+  // other people were still sitting at.
+  if (session?.shared) return;
   const ok = saveMatch(state);
   if (ok !== false || saveFailureReported) return;
   saveFailureReported = true;
@@ -2716,7 +2722,7 @@ function scheduleAnnouncementBeats() { if (bots) bots.scheduleAnnouncementBeats(
  * the ritual (closeTable) forgot, so a persona's "did they remember to declare?"
  * roll could survive into a match that had not been dealt when it was made.
  */
-function adoptMatch(pack, state, message, { dealing = false, seats = null, seating = null } = {}) {
+function adoptMatch(pack, state, message, { dealing = false, seats = null, seating = null, shared = false } = {}) {
   epoch += 1;
   stopSession(session);
   if (drag) drag.cancel();
@@ -2738,6 +2744,7 @@ function adoptMatch(pack, state, message, { dealing = false, seats = null, seati
     // than per render — resolving a theme walks the whole deck.
     cardArt: makeCardRenderer(pack.manifest, pack.cardsById),
     handPrefs: loadHandPrefs(pack.id),
+    shared,
   });
   // Set on the NEW session, not before it exists: a fresh deal staggers its
   // cards in, a resumed match must not (the cards have been there all along).
@@ -2783,7 +2790,8 @@ export async function dealHostedTable({ packId, variants, seats, seating, messag
   const state = createState({ pack, seats: seats.count, seed: Date.now() });
   pack.template.setup(makeCtx(state));
   playDeal(seats.count);
-  adoptMatch(pack, state, message || `Playing ${pack.manifest.name}.`, { dealing: true, seats, seating });
+  adoptMatch(pack, state, message || `Playing ${pack.manifest.name}.`,
+    { dealing: true, seats, seating, shared: true });
   return state;
 }
 
@@ -2812,7 +2820,7 @@ export async function resumeHostedTable({ packId, variants, state, seats, seatin
   Arcade.ui.setTitle(pack.manifest.name);
   hideAllPanels();
 
-  adoptMatch(pack, state, message || `Back at ${pack.manifest.name}.`, { seats, seating });
+  adoptMatch(pack, state, message || `Back at ${pack.manifest.name}.`, { seats, seating, shared: true });
   return state;
 }
 

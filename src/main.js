@@ -27,7 +27,7 @@ import {
 } from './ui/lobby.js';
 import {
   initParty, refreshEntry as refreshPartyEntry, hidePartyScreen, hostGame, canHost, leaveFelt,
-  rehydrateHostedTables,
+  rehydrateHostedTables, partyStateForPack, enterPartyTable,
 } from './ui/party.js';
 import { initInspector, hideInspector } from './ui/inspector.js';
 
@@ -161,6 +161,11 @@ async function boot() {
     // decision, and this is where games are chosen.
     onHostParty: (packId) => { hostGame(packId).catch(reportBootFailure); },
     canHost,
+    // WHAT THIS PACK'S TILE SHOULD ACTUALLY SAY. A live table takes the tile's
+    // face from the solo save, because "what is happening in Hearts" is a
+    // question about the game and not about one save slot.
+    partyState: partyStateForPack,
+    onEnterParty: enterPartyTable,
   });
   // A JOINER OPENS THE TABLE WITHOUT A PACK ID: it is handed a view, not asked
   // for a game, so it goes through showSharedTable rather than goToTable.

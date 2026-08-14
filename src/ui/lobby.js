@@ -33,6 +33,10 @@ const el = {
 const DEFAULT_ACCENT = '#3d7a5a';
 
 let openTable = () => {};   // (packId, setup?) — set by initLobby
+// What this pack's PARTY situation is, and the door into it. Both set by
+// initLobby; both no-ops before src/ui/party.js has wired itself up.
+let partyStateFor = () => null;
+let enterParty = () => false;
 // Set by initLobby too. The lobby does not import src/ui/party.js: party.js
 // already imports the table, and the lobby's whole cost ceiling is that opening
 // it stays cheap (manifests only, no pack loading, no protocol).
@@ -152,10 +156,17 @@ function buildTile(manifest, summary, { featured }) {
 
   open.appendChild(line('tile__tagline', manifest.tagline || ''));
 
+  // THE PARTY WINS THE HEADLINE. A table with other people at it and a clock
+  // running is what "what is happening in this game" means; a solo save is
+  // still reachable below, demoted rather than hidden.
+  const atTable = partyStateFor(manifest.id);
+
   const foot = document.createElement('span');
   foot.className = 'tile__foot';
-  foot.appendChild(line('tile__record', recordText(manifest.id)));
-  foot.appendChild(line('tile__cta', summary ? 'Resume' : (preview ? 'Take a look' : 'Deal me in')));
+  foot.appendChild(line('tile__record', atTable ? partyRecordText(atTable) : recordText(manifest.id)));
+  foot.appendChild(line('tile__cta', atTable
+    ? (atTable.kind === 'hosting' ? 'Back to the table' : 'Back to your seat')
+    : (summary ? 'Resume' : (preview ? 'Take a look' : 'Deal me in'))));
   open.appendChild(foot);
 
   // A game already in progress is resumed under the rules it was dealt with —
@@ -163,6 +174,8 @@ function buildTile(manifest, summary, { featured }) {
   // something it cannot. Only a NEW game gets the sheet, and only when the
   // pack actually offers a choice.
   open.addEventListener('click', async () => {
+    // Into the party table, not into a private copy of it.
+    if (atTable && enterParty(atTable.tableId)) return;
     if (summary || !hasChoices(manifest)) {
       openTable(manifest.id);
       return;
@@ -211,7 +224,24 @@ function buildTile(manifest, summary, { featured }) {
 
   // A separate hit target rather than a long-press: long-press is
   // undiscoverable, and on iOS Safari it fights the OS text-selection gesture.
-  if (summary) {
+  // BOTH AT ONCE IS A REAL CASE: an old solo Hearts save and a Hearts table you
+  // are sitting at. The table takes the tile's face; the solo game keeps a door
+  // of its own rather than becoming unreachable.
+  if (atTable && summary) {
+    const solo = document.createElement('button');
+    solo.className = 'tile__solo';
+    solo.type = 'button';
+    solo.textContent = 'Your solo game';
+    solo.setAttribute('aria-label', `Open your solo ${manifest.name} game`);
+    solo.addEventListener('click', () => openTable(manifest.id));
+    tile.appendChild(solo);
+  }
+
+  // NOT WHILE A PARTY TABLE EXISTS FOR THIS PACK. Two destructive controls on
+  // one tile pointing at two different games is the confusion this whole change
+  // is removing — and the one that surprised somebody was this one, dealing a
+  // private hand beside a table other people were still playing at.
+  if (summary && !atTable) {
     const restart = document.createElement('button');
     restart.className = 'tile__restart';
     restart.type = 'button';
@@ -321,8 +351,21 @@ export function reportLobbyError(message) {
   el.note.textContent = message;
 }
 
-export function initLobby({ onOpenTable, onHostParty, canHost }) {
+
+/** What a tile says about a table, in the place a solo record would go. */
+function partyRecordText(party) {
+  if (party.kind === 'hosting') {
+    if (!party.seatsOpen) return 'At your table · table full';
+    return `At your table · ${party.seatsOpen} ${party.seatsOpen === 1 ? 'seat' : 'seats'} open`;
+  }
+  return `Your seat at ${party.hostName}'s table`;
+}
+
+
+export function initLobby({ onOpenTable, onHostParty, canHost, partyState, onEnterParty }) {
   if (typeof canHost === 'function') canHostParty = canHost;
   if (typeof onHostParty === 'function') hostParty = onHostParty;
+  if (typeof partyState === 'function') partyStateFor = partyState;
+  if (typeof onEnterParty === 'function') enterParty = onEnterParty;
   openTable = onOpenTable;
 }

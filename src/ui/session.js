@@ -28,10 +28,17 @@
  * @param cardArt  this pack's renderer (src/ui/cardStyles)
  * @param handPrefs the human's saved fan arrangement for this pack
  */
-export function createSession({ pack, state, seats, seating, cardArt, handPrefs }) {
+export function createSession({ pack, state, seats, seating, cardArt, handPrefs, shared = false }) {
   return {
     pack,
     state,
+    // IS THIS A TABLE OTHER PEOPLE ARE AT? A shared match belongs to its
+    // TableSession (src/match/tableSession.js) and is persisted there, under
+    // `mpMatch.<tableId>`. The felt must not ALSO write it to the solo slot:
+    // that produced two copies of one game which diverged from the first move,
+    // and put "Resume"/"Start over" on the lobby tile for a hand three people
+    // were sitting at.
+    shared,
     // Ownership (which device plays which chair) and identity (what that seat
     // is called) are two different facts, and a shared table can change the
     // first without touching the second — so they are two fields, not one.

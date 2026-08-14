@@ -2225,6 +2225,52 @@ export function leaveTable() {
 }
 
 /* ------------------------------------------------------------------ *
+ * What the LOBBY TILE should say about a pack
+ *
+ * A game tile answers "what is happening in Hearts", and for a while it
+ * answered it from the solo save alone — which was wrong twice over once a
+ * party table could outlive the felt: it said "not played yet" for a hand three
+ * people were sitting at, and its Resume/Start over acted on a private copy.
+ *
+ * ONLY A LIVE TABLE TAKES THE TILE OVER. A seat whose host has gone quiet stays
+ * in the Tables row, where "offline" is already said properly and where a
+ * control that cannot work is already drawn as not a control.
+ * ------------------------------------------------------------------ */
+
+export function partyStateForPack(packId) {
+  const hosted = sessions.hosted().find((session) => session.packId === packId && session.state);
+  if (hosted) {
+    const frame = hosted.lobbyFrame;
+    const open = (frame?.seats || []).filter((seat) => seat.kind !== 'device').length;
+    return { kind: 'hosting', tableId: hosted.tableId, seatsOpen: open };
+  }
+  const seated = sessions.joined().find((session) => session.packId === packId
+    && session.client?.seat?.() != null);
+  // `tables.has` is the "is anybody there" test: a seat we hold at a table
+  // nobody is advertising is dormant, and belongs to the Tables row.
+  if (seated && tables.has(seated.tableId)) {
+    return {
+      kind: 'seated',
+      tableId: seated.tableId,
+      seat: seated.client.seat(),
+      hostName: peerName(seated.client.hostDeviceId()),
+    };
+  }
+  return null;
+}
+
+/** The door the tile opens: back to our table, or across to our seat. */
+export function enterPartyTable(tableId) {
+  const session = sessions.get(tableId);
+  if (!session) return false;
+  if (session.hosting()) {
+    returnToOurTable().catch(reportFailure);
+    return true;
+  }
+  return switchToSeat(tableId);
+}
+
+/* ------------------------------------------------------------------ *
  * The entry point
  * ------------------------------------------------------------------ */
 
