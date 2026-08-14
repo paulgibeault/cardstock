@@ -26,12 +26,14 @@
 /**
  * The key a frame files under.
  *
- * ONE FUNCTION, SO THERE IS ONE PLACE TO CHANGE. Protocol v2 mints a real
- * `tableId` and this becomes `frame.tableId ?? frame.hostDeviceId` — a
- * one-line edit rather than a hunt through every caller.
+ * ONE FUNCTION, SO THERE IS ONE PLACE TO CHANGE — and this is the change it was
+ * written for. Protocol v2 puts a minted `tableId` on every frame, so a table
+ * is now named by itself rather than by the device running it, which is what
+ * lets one device run two. `hostDeviceId` remains the fallback so a directory
+ * built from something that predates the id still keys on something stable.
  */
 export function tableKeyOf(frame) {
-  const key = frame?.hostDeviceId;
+  const key = frame?.tableId || frame?.hostDeviceId;
   return typeof key === 'string' && key ? key : null;
 }
 

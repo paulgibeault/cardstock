@@ -40,7 +40,7 @@ import { makeCtx } from '../engine/context.js';
 import { chooseBotMove } from '../engine/bot.js';
 import { enumerateLegalMoves } from '../engine/movePipeline.js';
 import { createTableClient } from '../match/client.js';
-import { FRAME, EMOTES, validateFrame, isAuthentic } from '../match/protocol.js';
+import { FRAME, EMOTES, validateFrame, isAuthentic, mintTableId } from '../match/protocol.js';
 import { botById, initialsOf, pickBotIds } from '../players/roster.js';
 import { fetchPack, fetchPackManifest } from './packSource.js';
 import { confirmAction } from './confirm.js';
@@ -94,6 +94,11 @@ let host = null;              // createTableHost, when we are hosting
 // the felt are looking at one set of chairs rather than two that agree at first.
 let hostSeats = null;
 let hostPack = null;          // { packId, variants, name } chosen from the tile
+// OUR TABLE'S NAME ON THE WIRE, minted when we open it (protocol v2). Not
+// derived from our device id: a host who ends one game and deals another is
+// running a DIFFERENT table, and a joiner's memory of the old one must not
+// quietly attach to the new.
+let hostTableId = null;
 let turnTimer = null;         // host-side only; a client renders, never decides
 let tick = null;              // the countdown's own repaint
 let client = null;            // createTableClient, when we are a joiner
@@ -810,7 +815,7 @@ function sendEmote(index) {
   if (now - lastEmoteAt < EMOTE_COOLDOWN_MS) return;
   lastEmoteAt = now;
   if (client) client.emote(index);
-  else if (host) port.send({ k: FRAME.EMOTE, i: index });
+  else if (host) port.send({ k: FRAME.EMOTE, i: index, tableId: hostTableId });
   burst(EMOTES[index]);
 }
 
@@ -914,6 +919,10 @@ function ourLobbyFrame() {
     });
   }
   return {
+    // The same id the host module stamps on the frames it publishes, so the
+    // tile we draw from this and the tile a joiner draws from the wire are the
+    // same table rather than two that merely look alike.
+    tableId: hostTableId,
     packId: hostPack.packId,
     variants: hostPack.variants,
     hostDeviceId: selfId(),
@@ -979,6 +988,7 @@ export async function hostGame(packId) {
   packNames.set(packId, manifest?.name || packId);
 
   hostPack = { packId, variants: [], name: manifest?.name || packId };
+  hostTableId = mintTableId();
   hostSeats = createSeatTable({ seats: count, localDeviceId: me });
   hostSeats.claim(0, { deviceId: me });
   // Bots in the rest, so the table is playable the moment it is dealt whether
@@ -988,6 +998,7 @@ export async function hostGame(packId) {
   host = createTableHost({
     peer: port,
     seats: hostSeats,
+    tableId: hostTableId,
     // NULL UNTIL THE DEAL, which the protocol already understands: a lobby
     // frame with `started: false` is a table being built, and the host answers
     // a claim with a roster rather than a view because there is no view yet.
@@ -1039,9 +1050,10 @@ export async function hostGame(packId) {
   host.start();
   port.onPeersChange(() => { refreshSeats(); checkForDrops(); });
   lobbyFrame = ourLobbyFrame();
-  // Our table takes its place among the others, and the panel points at it.
+  // Our table takes its place among the others, and the panel points at it —
+  // by its own name now, not by the device's.
   publishOwnTable();
-  activeKey = me;
+  activeKey = hostTableId;
   refreshPartyLabel().then(renderScreen);
   showPartyScreen();
   return true;
@@ -1090,7 +1102,7 @@ export function stopHosting() {
   turnTimer?.cancelAll();
   turnTimer = null;
   if (tick) { clearInterval(tick); tick = null; }
-  port?.send({ k: FRAME.BYE, why: 'closed' });
+  port?.send({ k: FRAME.BYE, why: 'closed', tableId: hostTableId });
   host.stop();
   host = null;
   hostSeats = null;
@@ -1102,7 +1114,8 @@ export function stopHosting() {
   unreachable = new Set();
   // Our table stops being a table the moment we stop hosting it, and its tile
   // has to go with it — we already told everybody else the same thing by `bye`.
-  tables.forget(selfId());
+  tables.forget(hostTableId);
+  hostTableId = null;
   activeKey = null;
   // Closing our table puts us back in the room, looking at whatever else is in
   // it — which for the host who was never told about the neighbours' tables
@@ -1155,7 +1168,7 @@ async function removeSeat(seat) {
   if (!ok) return;
   const owner = hostSeats.ownerOf(seat);
   if (owner.kind === 'device' && owner.deviceId) {
-    port.send({ k: FRAME.BYE, why: 'replaced' }, { to: owner.deviceId });
+    port.send({ k: FRAME.BYE, why: 'replaced', tableId: hostTableId }, { to: owner.deviceId });
   }
   hostSeats.seatBot(seat);
   afterSeatChange();
@@ -1312,9 +1325,14 @@ function startSniffing() {
 function noteBye(fromDeviceId, frame, meta) {
   if (meta?.relayed) return;
   if (frame.why !== 'closed') return;
-  if (!tables.has(fromDeviceId)) return;
-  tables.forget(fromDeviceId);
-  if (activeKey === fromDeviceId) {
+  // WHICH TABLE CLOSED, said by the frame itself. Under v1 this had to be
+  // inferred from the sender, which was right only because a device could host
+  // just one — the assumption this whole stage exists to remove.
+  const key = frame.tableId;
+  const entry = tables.get(key);
+  if (!entry || entry.hostDeviceId !== fromDeviceId) return;
+  tables.forget(key);
+  if (activeKey === key) {
     activeKey = null;
     if (!client) lobbyFrame = null;
     focusTable(tables.latest()?.key);
@@ -1349,10 +1367,12 @@ async function joinTable(entry) {
 
   client = createTableClient({
     peer: port,
-    // WHICH TABLE WE SAT DOWN AT, said rather than inferred. The client can
-    // work it out on its own when there is one host in the party; with two it
+    // WHICH TABLE WE SAT DOWN AT, said rather than inferred — the device to
+    // trust, and now the table on that device to listen for. The client can
+    // work the host out on its own when there is one in the party; with two it
     // cannot, and guessing would be the wrong kind of clever about authority.
     host: entry.hostDeviceId,
+    tableId: entry.key,
     expects: () => ({
       packId: joinedPack.id,
       packVersion: joinedPack.manifest?.version,

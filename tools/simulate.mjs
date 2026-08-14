@@ -306,6 +306,8 @@ function playOneOverProtocol(pack, seatCount, seed) {
   let clock = 0;
   const faults = [];
   const host = createTableHost({
+    // One table per simulated run (protocol v2 names every frame's table).
+    tableId: 'tbl-sim',
     peer: hostPort,
     seats,
     liveState: () => state,
@@ -321,6 +323,7 @@ function playOneOverProtocol(pack, seatCount, seed) {
     const deviceId = `d${seat}`;
     const port = net.createDevice(deviceId, { name: `Player ${seat}` });
     const client = createTableClient({
+      tableId: 'tbl-sim',
       peer: port,
       expects: packInfo,
       hooks: {

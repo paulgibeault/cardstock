@@ -14,10 +14,12 @@
 //   2. REGRESSION — single-table behaviours T3 must preserve. They are not
 //      about two tables at all; they are here because they are the properties
 //      most likely to be quietly lost when the state moves house.
-//   3. TODO — the case that genuinely CANNOT work until the frame router
-//      exists: two hosts sharing one device's port. It is marked `todo` rather
-//      than omitted, with the assertion spelled out, so T3 has a target that
-//      says exactly what "done" means.
+//   3. ROUTING — two hosts sharing one device's port. This one shipped here as
+//      a `todo`, because it could not pass until every frame named its table:
+//      each `createTableHost` subscribes to the same `onMessage`, and with
+//      nothing to tell two tables apart a `claim-seat` meant for Hearts also
+//      seated that device at Crazy Eights. Protocol v2 (#48) is what turned it
+//      green, which is exactly the job it was written to define.
 
 import { test } from 'node:test';
 import assert from 'node:assert';
@@ -78,7 +80,7 @@ function testClock() {
  * different hands — otherwise a cross-contamination test would pass by
  * coincidence, comparing two identical shuffles and calling them isolated.
  */
-async function buildTable({ packId = 'crazy-eights', seed, hostDeviceId, port, joinerId }) {
+async function buildTable({ packId = 'crazy-eights', seed, hostDeviceId, port, joinerId, tableId }) {
   const pack = await loadPackFromDisk(packId);
   const state = createState({ pack, seats: 3, seed });
   pack.template.setup(makeCtx(state));
@@ -92,22 +94,24 @@ async function buildTable({ packId = 'crazy-eights', seed, hostDeviceId, port, j
   const host = createTableHost({
     peer: port,
     seats,
+    tableId,
     liveState: () => state,
     packInfo: () => ({ packId: pack.id, packVersion: pack.manifest?.version, variants: pack.activeVariants ?? [] }),
     nameFor: (seat) => `Seat ${seat}`,
     hooks: { onError: (e) => errors.push(e) },
   });
-  return { pack, state, seats, host, errors, expects: () => ({
+  return { pack, state, seats, host, errors, tableId, expects: () => ({
     packId: pack.id, packVersion: pack.manifest?.version, variants: pack.activeVariants ?? [],
   }) };
 }
 
 /** A client with everything it said recorded, so nothing has to be inferred. */
-function watchedClient(port, hostDeviceId, expects) {
+function watchedClient(port, hostDeviceId, expects, tableId) {
   const seen = { views: [], lobbies: [], ends: [], problems: [] };
   const client = createTableClient({
     peer: port,
     host: hostDeviceId,
+    tableId,
     expects,
     hooks: {
       onLobby: (frame) => seen.lobbies.push(frame),
@@ -132,11 +136,11 @@ test('a device seated at two tables keeps two views, and never crosses them', as
 
   // THE SAME PACK ON BOTH TABLES, deliberately. Different packs would make
   // every id disjoint by construction and the isolation would prove itself.
-  const ada = await buildTable({ seed: 'ada-seed', hostDeviceId: 'ada', port: adaPort, joinerId: 'kit' });
-  const dana = await buildTable({ seed: 'dana-seed', hostDeviceId: 'dana', port: danaPort, joinerId: 'kit' });
+  const ada = await buildTable({ seed: 'ada-seed', hostDeviceId: 'ada', port: adaPort, joinerId: 'kit', tableId: 'tbl-ada' });
+  const dana = await buildTable({ seed: 'dana-seed', hostDeviceId: 'dana', port: danaPort, joinerId: 'kit', tableId: 'tbl-dana' });
 
-  const atAda = watchedClient(kitPort, 'ada', ada.expects);
-  const atDana = watchedClient(kitPort, 'dana', dana.expects);
+  const atAda = watchedClient(kitPort, 'ada', ada.expects, 'tbl-ada');
+  const atDana = watchedClient(kitPort, 'dana', dana.expects, 'tbl-dana');
   atAda.client.start();
   atDana.client.start();
 
@@ -164,10 +168,13 @@ test('a device seated at two tables keeps two views, and never crosses them', as
   assert.notDeepStrictEqual(ids(adaOwn.zones), ids(danaOwn.zones),
     'the two tables really did deal different hands — otherwise this proves nothing');
 
-  // And each client said so about the other: a host-role frame from the wrong
-  // host is refused by name, not silently dropped.
-  assert.ok(atAda.seen.problems.some((p) => p.kind === 'spoofed-authority' && p.deviceId === 'dana'));
-  assert.ok(atDana.seen.problems.some((p) => p.kind === 'spoofed-authority' && p.deviceId === 'ada'));
+  // NEITHER CLIENT COMPLAINED ABOUT THE OTHER. Before every frame named its
+  // table, the only tool for this was the authority check, so an honest frame
+  // from the neighbouring host came back as `spoofed-authority` — an accusation
+  // against somebody who had merely dealt a different game. Each client now
+  // sees the id is not its own and ignores it without comment.
+  assert.deepStrictEqual(atAda.seen.problems, [], 'Dana’s table is not an incident');
+  assert.deepStrictEqual(atDana.seen.problems, [], 'nor is Ada’s');
 });
 
 test('one host closing ends one client, and leaves the other playing', async () => {
@@ -176,16 +183,16 @@ test('one host closing ends one client, and leaves the other playing', async () 
   const danaPort = net.createDevice('dana', { name: 'Dana' });
   const kitPort = net.createDevice('kit', { name: 'Kit' });
 
-  const ada = await buildTable({ seed: 'a', hostDeviceId: 'ada', port: adaPort, joinerId: 'kit' });
-  const dana = await buildTable({ seed: 'd', hostDeviceId: 'dana', port: danaPort, joinerId: 'kit' });
-  const atAda = watchedClient(kitPort, 'ada', ada.expects);
-  const atDana = watchedClient(kitPort, 'dana', dana.expects);
+  const ada = await buildTable({ seed: 'a', hostDeviceId: 'ada', port: adaPort, joinerId: 'kit', tableId: 'tbl-ada' });
+  const dana = await buildTable({ seed: 'd', hostDeviceId: 'dana', port: danaPort, joinerId: 'kit', tableId: 'tbl-dana' });
+  const atAda = watchedClient(kitPort, 'ada', ada.expects, 'tbl-ada');
+  const atDana = watchedClient(kitPort, 'dana', dana.expects, 'tbl-dana');
   atAda.client.start();
   atDana.client.start();
   ada.host.start();
   dana.host.start();
 
-  adaPort.send({ k: FRAME.BYE, why: 'closed' });
+  adaPort.send({ k: FRAME.BYE, why: 'closed', tableId: 'tbl-ada' });
 
   assert.deepStrictEqual(atAda.seen.ends.map((e) => e.why), ['closed'],
     'the client of the table that closed was told');
@@ -244,11 +251,11 @@ test('a re-claim is a rebind, not a refusal', async () => {
   const net = createPeerNetwork({ hostDeviceId: 'ada' });
   const adaPort = net.createDevice('ada', { name: 'Ada' });
   const kitPort = net.createDevice('kit', { name: 'Kit' });
-  const ada = await buildTable({ seed: 'rebind', hostDeviceId: 'ada', port: adaPort, joinerId: 'kit' });
+  const ada = await buildTable({ seed: 'rebind', hostDeviceId: 'ada', port: adaPort, joinerId: 'kit', tableId: 'tbl-ada' });
   ada.host.start();
 
   // The whole of a returning player: ask again for the seat you already hold.
-  kitPort.send({ k: FRAME.CLAIM_SEAT, seat: 1, localIndex: 0 }, { to: 'ada' });
+  kitPort.send({ k: FRAME.CLAIM_SEAT, seat: 1, localIndex: 0, tableId: 'tbl-ada' }, { to: 'ada' });
 
   assert.strictEqual(ada.seats.seatOf('kit', 0), 1, 'the seat is still theirs');
   const snapshots = net.deliveredTo('kit').filter((f) => f.k === FRAME.SNAPSHOT);
@@ -259,8 +266,8 @@ test('a gap in seq asks for a snapshot rather than guessing', async () => {
   const net = createPeerNetwork({ hostDeviceId: 'ada' });
   const adaPort = net.createDevice('ada', { name: 'Ada' });
   const kitPort = net.createDevice('kit', { name: 'Kit' });
-  const ada = await buildTable({ seed: 'gap', hostDeviceId: 'ada', port: adaPort, joinerId: 'kit' });
-  const atAda = watchedClient(kitPort, 'ada', ada.expects);
+  const ada = await buildTable({ seed: 'gap', hostDeviceId: 'ada', port: adaPort, joinerId: 'kit', tableId: 'tbl-ada' });
+  const atAda = watchedClient(kitPort, 'ada', ada.expects, 'tbl-ada');
   atAda.client.start();
   ada.host.start();
   ada.host.publish([]);            // seq 1, accepted
@@ -268,7 +275,7 @@ test('a gap in seq asks for a snapshot rather than guessing', async () => {
   net.clearLog();
   // A view from the future: the client missed one and must not interpolate.
   adaPort.send({
-    k: FRAME.VIEW, seq: 99,
+    tableId: 'tbl-ada', k: FRAME.VIEW, seq: 99,
     view: viewFor(ada.state, 1, { moves: [], announcements: [], deadlines: [], seq: 99 }),
     events: [],
   }, { to: 'kit' });
@@ -281,46 +288,48 @@ test('the propose budget is per device, and says so when it bites', async () => 
   const net = createPeerNetwork({ hostDeviceId: 'ada' });
   const adaPort = net.createDevice('ada', { name: 'Ada' });
   const kitPort = net.createDevice('kit', { name: 'Kit' });
-  const ada = await buildTable({ seed: 'budget', hostDeviceId: 'ada', port: adaPort, joinerId: 'kit' });
+  const ada = await buildTable({ seed: 'budget', hostDeviceId: 'ada', port: adaPort, joinerId: 'kit', tableId: 'tbl-ada' });
   ada.host.start();
 
   const move = enumerateLegalMoves(ada.state, ada.state.turn.seat)[0];
   for (let i = 0; i < 60; i++) {
-    kitPort.send({ k: FRAME.PROPOSE, pid: `p${i}`, move: { ...move, actor: 1 } }, { to: 'ada' });
+    kitPort.send({ k: FRAME.PROPOSE, pid: `p${i}`, move: { ...move, actor: 1 }, tableId: 'tbl-ada' }, { to: 'ada' });
   }
   assert.ok(ada.errors.some((e) => e.kind === 'rate-limited' && e.deviceId === 'kit'),
     'a refusal nobody is told about is indistinguishable from a crashed host');
 });
 
 /* ------------------------------------------------------------------ *
- * 3. What only the frame router can fix (T3, #48)
+ * 3. Routing: what protocol v2 fixed (#48)
  * ------------------------------------------------------------------ */
 
 /**
  * TWO HOSTS ON ONE DEVICE, sharing one port.
  *
- * Every `createTableHost` subscribes to `peer.onMessage` and there is nothing
- * in a frame today that says WHICH table it is for — `hostDeviceId` identifies
- * the device, and here both tables have the same one. So a `claim-seat` meant
- * for the Hearts table is also handed to the Crazy Eights host, which seats
- * that device at Crazy Eights too. Nobody asked to sit down there.
+ * Every `createTableHost` subscribes to `peer.onMessage`, so both of them see
+ * every frame this device is handed. Under protocol v1 there was nothing in a
+ * frame that said WHICH table it was for — `hostDeviceId` names the device, and
+ * here both tables have the same one — so a `claim-seat` meant for Hearts was
+ * also applied by the Crazy Eights host, seating that device at a table nobody
+ * asked to sit down at, holding cards nobody dealt them.
  *
- * This is exactly what T3's `tableId` (protocol v2) and frame router are for.
- * Marked `todo` rather than deleted so the target is written down: when T3
- * lands, this should pass unchanged and the marker comes off.
+ * This test shipped `todo` for exactly one commit: it is the sentence protocol
+ * v2 was written to make true, and the guard that makes it true is three lines
+ * in `onMessage`. Left here as the routing regression, because a future frame
+ * kind that forgets to carry its table breaks this and nothing else.
  */
-test('two hosts on one device do not answer each other’s frames', { todo: 'needs tableId + the frame router (T3, #48)' }, async () => {
+test('two hosts on one device do not answer each other’s frames', async () => {
   const net = createPeerNetwork({ hostDeviceId: 'hub' });
   const hubPort = net.createDevice('hub', { name: 'Hub' });
   const kitPort = net.createDevice('kit', { name: 'Kit' });
 
-  const eights = await buildTable({ packId: 'crazy-eights', seed: 'one', hostDeviceId: 'hub', port: hubPort });
-  const hearts = await buildTable({ packId: 'hearts', seed: 'two', hostDeviceId: 'hub', port: hubPort });
+  const eights = await buildTable({ packId: 'crazy-eights', seed: 'one', hostDeviceId: 'hub', port: hubPort, tableId: 'tbl-eights' });
+  const hearts = await buildTable({ packId: 'hearts', seed: 'two', hostDeviceId: 'hub', port: hubPort, tableId: 'tbl-hearts' });
   eights.host.start();
   hearts.host.start();
 
   // Kit sits down at ONE table.
-  kitPort.send({ k: FRAME.CLAIM_SEAT, seat: 1, localIndex: 0 }, { to: 'hub' });
+  kitPort.send({ k: FRAME.CLAIM_SEAT, seat: 1, localIndex: 0, tableId: 'tbl-hearts' }, { to: 'hub' });
 
   assert.strictEqual(hearts.seats.seatOf('kit', 0), 1, 'the table they asked for seated them');
   assert.strictEqual(eights.seats.seatOf('kit', 0), null,

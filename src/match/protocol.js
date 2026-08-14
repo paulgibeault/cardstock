@@ -34,7 +34,7 @@
  * so the honest move is to wait for that rather than to keep a mismatched
  * client at a table where it can desync a hand nobody can replay.
  */
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 
 export const FRAME = Object.freeze({
   LOBBY: 'lobby',
@@ -330,11 +330,50 @@ function cleanSeatRoster(raw) {
  * object that came off the wire, so nothing downstream can be handed a field
  * this function did not look at.
  */
+/**
+ * EVERY FRAME NAMES ITS TABLE, and that is the protocol v2 change.
+ *
+ * v1 got away with `hostDeviceId` because a device hosted at most one table, so
+ * the host's identity WAS the table's. The moment one device can run two, that
+ * stops being true, and the frames with no room to say which are the ones where
+ * it matters most: a `claim-seat` arriving at a device with two tables open was
+ * applied to BOTH of them, and "the host closed the table" could not say which
+ * table had closed.
+ *
+ * Checked once here rather than in nine cases, because a frame kind added later
+ * must not be able to forget it.
+ */
 export function validateFrame(raw) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return fail('not an object');
   const kind = raw.k;
   if (typeof kind !== 'string') return fail('no kind');
+  if (!isSafeId(raw.tableId)) return fail('no tableId');
+  const verdict = validateBody(raw, kind);
+  // Attached after the body rather than inside every case: one place to change,
+  // and no case can ship without it.
+  if (verdict.ok) verdict.frame.tableId = raw.tableId;
+  return verdict;
+}
 
+/**
+ * Mint a table's name.
+ *
+ * RANDOM RATHER THAN DERIVED, and the difference shows up exactly once: a host
+ * ends Tuesday's Hearts and deals a fresh one. Same host, same pack — a derived
+ * id would be identical and a joiner's saved seat would silently re-claim into
+ * a game that is not the one they were playing. `(hostDeviceId, packId)` stays
+ * the uniqueness rule for LIVE tables; this is the name that tells two of them
+ * apart across time.
+ */
+export function mintTableId() {
+  const bytes = new Uint8Array(9);
+  (globalThis.crypto ?? {}).getRandomValues?.(bytes);
+  let out = 't';
+  for (const byte of bytes) out += byte.toString(36).padStart(2, '0');
+  return out.slice(0, 19);
+}
+
+function validateBody(raw, kind) {
   switch (kind) {
     case FRAME.LOBBY: {
       if (!Number.isInteger(raw.protocol)) return fail('lobby: no protocol version');

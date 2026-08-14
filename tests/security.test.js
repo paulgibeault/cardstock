@@ -230,6 +230,7 @@ test("no chooser tile can be talked into a colour the repo did not generate", ()
 test("the wire carries a hostile peer name through, bounded and unmangled", async () => {
   const { validateFrame, FRAME, PROTOCOL_VERSION } = await import("../src/match/protocol.js");
   const verdict = validateFrame({
+    tableId: "tbl-hostile-name",
     k: FRAME.LOBBY,
     protocol: PROTOCOL_VERSION,
     packId: "crazy-eights",
@@ -243,6 +244,7 @@ test("the wire carries a hostile peer name through, bounded and unmangled", asyn
     "the validator rewrote a name — escaping is the DOM's job and doing it here hides the payload");
 
   const long = validateFrame({
+    tableId: "tbl-hostile-name",
     k: FRAME.LOBBY,
     protocol: PROTOCOL_VERSION,
     packId: "crazy-eights",
