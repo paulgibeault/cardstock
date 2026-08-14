@@ -177,8 +177,35 @@ const selfId = () => port?.self()?.deviceId || null;
 
 /** The table we host, or null. The registry's door keeps this at most one. */
 const ourTable = () => sessions.hosted()[0] || null;
-/** The table we joined, or null. */
-const theirTable = () => sessions.joined()[0] || null;
+/**
+ * The joined table this screen is ABOUT, or null.
+ *
+ * ONE SEAT USED TO MEAN ONE ANSWER. Now that a device can sit at Dana's Hearts
+ * and Bo's Crazy Eights at once, "the table we joined" is a question that needs
+ * a subject, and the three ways of asking it resolve in this order:
+ *
+ *   the table the PANEL is showing   — tapping a tile is asking about that one
+ *   the table the FELT is bound to   — what we are actually playing
+ *   the only one there is            — which is every case before this stage,
+ *                                      so single-seat behaviour is unchanged
+ *
+ * The fallbacks matter as much as the first answer: `partyRole`, `sendEmote`
+ * and `leaveTable` are asked while the panel is closed, and must still find the
+ * table in front of the player.
+ */
+const theirTable = () => {
+  const joined = sessions.joined();
+  if (!joined.length) return null;
+  if (activeKey) {
+    const shown = joined.find((session) => session.tableId === activeKey);
+    if (shown) return shown;
+  }
+  const bound = joined.find((session) => session.bound);
+  return bound || joined[0];
+};
+
+/** Every seat we hold, live — the sessions behind the "switch tables" path. */
+const seatedTables = () => sessions.joined().filter((session) => session.client?.seat?.() != null);
 /**
  * THE TABLE WE ARE ATTACHED TO — ours when hosting, our host's when joined,
  * null when neither. NOT the same question as "what is the panel showing",
@@ -951,9 +978,16 @@ function renderTablesRow() {
       tile.append(badge);
     }
 
+    // A SEAT WE ALREADY HOLD IS A GAME, NOT A LOBBY. Tapping it takes us to the
+    // felt rather than to the panel — the panel is for deciding where to sit,
+    // and that decision was made. Any other tile still opens the seats.
+    const held = seat !== null && sessions.get(entry.key)?.client?.seat?.() != null;
     tile.setAttribute('aria-label',
       `${who.textContent}, ${game.textContent}. ${state.textContent}.${seat !== null ? ' You hold a seat.' : ''}`);
-    tile.addEventListener('click', () => showPartyScreen(entry.key));
+    tile.addEventListener('click', () => {
+      if (held && switchToSeat(entry.key)) return;
+      showPartyScreen(entry.key);
+    });
     el.tablesGrid.append(tile);
   }
 }
@@ -1914,7 +1948,15 @@ function noteBye(fromDeviceId, frame, meta) {
  * is plainly advertising three of them.
  */
 async function joinTable(entry) {
-  if (!entry || client() || joining) return;
+  if (!entry || joining) return;
+  // ALREADY AT THIS ONE. The guard used to be `client()` — any client at all —
+  // which was right while there could be one and is now the thing that stopped
+  // a second seat existing.
+  if (sessions.get(entry.key)) return;
+  // THE DOOR, per pack (plan §1). Sitting at Dana's Hearts is a reason to
+  // refuse Bo's Hearts and no reason at all to refuse Bo's Crazy Eights.
+  const refusal = sessions.refusalToSit(entry.packId, { nameOf: packName });
+  if (refusal) { setNotice(refusal); return; }
   joining = true;
   const frame = entry.frame;
   let pack;
@@ -2006,6 +2048,47 @@ async function joinTable(entry) {
   renderScreen();
 }
 
+
+/**
+ * Show a table we already hold a seat at.
+ *
+ * A REBIND, NOT A REJOIN — which is the dividend of T3's inversion. The session
+ * never stopped existing while we were looking elsewhere: it kept its client,
+ * its lobby frame and the last ViewState the host sent. So this draws that view
+ * immediately, with no round trip and no blank felt, and only then asks for a
+ * fresh one.
+ *
+ * `snapshot-req` rather than trusting what we have: the view is as old as the
+ * last frame that reached us, and everything after it happened while we were
+ * not watching. The stale view is what the player sees for the ~one frame it
+ * takes to be replaced, and seeing the hand they left is much better than
+ * seeing nothing.
+ */
+function switchToSeat(tableId) {
+  const session = sessions.get(tableId);
+  if (!session || session.hosting() || !session.client) return false;
+
+  focusTable(tableId);
+  bindFelt(tableId);
+
+  if (session.state && session.pack) {
+    adoptSharedView({
+      view: session.state,
+      pack: session.pack,
+      seating: seatingFromRoster(session.lobbyFrame),
+      client: session.client,
+      message: '',
+    });
+    goToTable();
+  }
+  // Freshen. The answer arrives through the ordinary onView path, which
+  // re-adopts and repaints — the same door a late joiner's snapshot comes in.
+  session.client.requestSnapshot();
+  hidePartyScreen();
+  renderScreen();
+  return true;
+}
+
 /**
  * Make our client the client OF THE TABLE ON SCREEN.
  *
@@ -2024,17 +2107,17 @@ async function attachToActive() {
   if (!entry) return false;
   // Our own table needs no client; we are already as attached as it gets.
   if (entry.hostDeviceId === selfId()) return !!host();
-  if (client() && client().hostDeviceId() === entry.hostDeviceId) return true;
-  if (client()) {
-    if (seatedHere()) {
-      setNotice(`You are sitting at ${peerName(client().hostDeviceId())}'s table. Leave it to sit here.`);
-      return false;
-    }
-    // Never sat down at that one; it stays in the directory to go back to.
-    leaveTable();
-  }
+  // BY TABLE, NOT BY HOST. This compared `hostDeviceId`, which was the same
+  // question while one device could run one table and is the wrong one now:
+  // Bo's Hearts and Bo's Crazy Eights are two tables and a client of the first
+  // is not a client of the second.
+  const existing = sessions.get(entry.key);
+  if (existing && !existing.hosting()) return true;
+  // The per-pack door does the refusing now, out loud and with a sentence.
+  // A speculative client at ANOTHER pack is left exactly where it is — one
+  // felt was never a reason to give up a chair.
   await joinTable(entry);
-  return !!client();
+  return !!sessions.get(entry.key);
 }
 
 /** Sit down, becoming a client of the table on screen first. */

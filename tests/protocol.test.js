@@ -862,3 +862,54 @@ test('the turn timer still accepts a plain number', () => {
   timer.arm({});
   assert.equal(timer.deadlines()[0].expiresAt, 45_000);
 });
+
+/** A host with NO state — a party still being built, which is the whole case. */
+async function undealtTable() {
+  const net = createPeerNetwork({ hostDeviceId: 'host' });
+  const hostPort = net.createDevice('host', { name: 'Host' });
+  const aPort = net.createDevice('a', { name: 'Ada' });
+  const seats = createSeatTable({ seats: 3, localDeviceId: 'host' });
+  seats.claim(0, { deviceId: 'host' });
+  const pack = await loadPackFromDisk('crazy-eights');
+
+  const host = createTableHost({
+    tableId: TID, peer: hostPort, seats,
+    liveState: () => null,                       // nothing dealt
+    packInfo: () => ({ packId: pack.id, packVersion: pack.manifest?.version, variants: [] }),
+    nameFor: (seat) => `Seat ${seat}`,
+  });
+  const a = createTableClient({
+    tableId: TID, peer: aPort,
+    expects: () => ({ packId: pack.id, packVersion: pack.manifest?.version, variants: [] }),
+    hooks: {},
+  });
+  host.start();
+  a.start();
+  net.ready('host', 'a');
+  return { host, a, seats };
+}
+
+test('a client knows it is seated from the roster, before any deal', async () => {
+  const t = await undealtTable();
+
+  t.a.claimSeat(1);
+
+  // NO VIEW EXISTS — the table has not been dealt. The seat is still real: the
+  // host bound it and said so in the roster it broadcast back. Before this,
+  // `seat()` answered null for the whole lobby phase, so the one-seat-per-pack
+  // door read a player who was plainly sitting down as merely watching.
+  assert.equal(t.a.view(), undefined, 'nothing dealt yet');
+  assert.equal(t.a.seat(), 1, 'and yet the client knows where it is sitting');
+});
+
+test('a client lets go of a seat the host reassigns', async () => {
+  const t = await undealtTable();
+  t.a.claimSeat(1);
+  assert.equal(t.a.seat(), 1);
+
+  // The host gives that chair to a bot and re-broadcasts.
+  t.seats.seatBot(1);
+  t.host.broadcastLobby();
+
+  assert.equal(t.a.seat(), null, 'the roster is what makes it true, both ways');
+});

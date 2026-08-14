@@ -158,10 +158,21 @@ export function createTableClient({ peer, expects, host = null, tableId, hooks =
       return;
     }
     lobby = frame;
+    // THE ROSTER IS THE HOST'S OWN STATEMENT ABOUT WHO HOLDS WHAT, and it is
+    // the earliest one there is: a seat claimed at a table that has not dealt
+    // yet has no view to learn it from, so `seat()` answered null and this
+    // client read as "watching" while it was plainly sitting down. Anything
+    // asking "am I seated" — the one-seat-per-pack door most of all — was
+    // getting the wrong answer for the whole of the lobby phase.
+    //
+    // It also handles losing the seat: a roster that stops naming us is the
+    // host giving the chair to somebody else, and `bye 'replaced'` is the
+    // courtesy rather than the mechanism.
+    seatedAt = seatOfSelf(frame);
     hooks.onLobby?.(frame);
     // A lobby while we hold a seat and no view means the host restarted, or we
     // reconnected into a match already in progress. Either way, ask.
-    if (frame.started && !view && seatOfSelf(frame) !== null) requestSnapshot();
+    if (frame.started && !view && seatedAt !== null) requestSnapshot();
   }
 
   function seatOfSelf(frame) {
