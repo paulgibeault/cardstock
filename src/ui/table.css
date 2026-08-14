@@ -3328,6 +3328,24 @@ body.is-dragging .card-face { cursor: grabbing; }
   opacity: 0.7;
 }
 
+/* THE DEMOTED SOLO DOOR. Present when a pack holds both a party table and an
+   older solo save: the table takes the tile's face, and this keeps the solo
+   game one tap away rather than unreachable. Quiet on purpose — it is the
+   second thing on the tile, not a rival to the first. */
+.tile__solo {
+  font: inherit;
+  font-size: 0.72rem;
+  opacity: 0.75;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0.2rem 0.35rem;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.tile__solo:hover { opacity: 1; }
+
 /* HOW LONG A SEAT GETS, set before the cards are out. A row of three rather
    than a field: see the note on GRACE_CHOICES in src/ui/party.js for why this
    is a choice and not a number somebody types. */
