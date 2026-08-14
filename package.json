@@ -1,6 +1,6 @@
 {
   "name": "cardstock",
-  "version": "0.1.30",
+  "version": "0.1.31",
   "private": true,
   "type": "module",
   "description": "Card-pack driven multi-game platform engine.",
