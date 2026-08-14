@@ -67,6 +67,16 @@ the felt shows a different one.
 two §1 invariants at the door: one hosted table per pack, one held seat per pack.
 All policy in one place, and it should stay about twenty lines.
 
+**Bots are the part that is easy to miss.** A background hosted table has to keep
+*playing* — its bots take their turns whether or not anybody is looking at the
+felt — and `scheduleNextTurn` lives in `src/ui/table.js`, bound to the visible
+session. `createBotDriver` is already instance-shaped and takes its seams by
+injection, so a background session can hold a driver of its own whose `playMove`
+is `host.applyLocal` rather than the felt's animation pipeline. The felt keeps
+driving the session it is bound to, exactly as it does today; only an *unbound*
+hosted table runs headless. That split is what keeps solo play — the
+overwhelming majority — on a pipeline this work never touches.
+
 **The felt becomes a renderer.** It binds to whichever session is open and unbinds
 without destroying it. `host.js`, `client.js`, `turnTimer.js`, and `seats.js` are
 already instance-shaped factories with no module state; the singletons live entirely
@@ -176,7 +186,8 @@ Sequenced; each shippable alone. T1 fixes the reported annoyance by itself.
 | T1 | #45 | Table directory: many tables known, one seat taken | — | §5 |
 | T2 | #46 | Tables as tiles; the party panel takes a table | T1 | §8 |
 | T3a | #47 | Stub-transport tests for two concurrent sessions | — (lands before T3) | §10 |
-| T3 | #48 | Session inversion, frame router, protocol v2, host persistence wired | T1, T3a | §2–§4, §6 |
+| T3·1 | #48 | Protocol v2: `tableId` on every frame, minted per table | T1, T3a | §2, §4 |
+| T3·2 | #48 | Session inversion, headless bots and timers, host persistence | T3·1 | §3, §6 |
 | T4 | #49 | Long-lasting tables: seat stubs, dormant tiles, resume, grace config, roll-off | T2, T3 | §1, §6–§8 |
 | T5 | #50 | Rules injected, not imported: `src/match/` as a game-agnostic kit | T3 | §10 |
 
