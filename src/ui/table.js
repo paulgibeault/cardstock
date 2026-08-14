@@ -2788,6 +2788,35 @@ export async function dealHostedTable({ packId, variants, seats, seating, messag
 }
 
 /**
+ * Put an ALREADY RUNNING hosted table back on the felt.
+ *
+ * The counterpart to `dealHostedTable`, and the door that was missing: since
+ * the session inversion (#48) a hosted game outlives the felt, so there has to
+ * be a way back to one. It deals nothing and consults no storage — the state is
+ * handed in, because the session has been holding it the whole time.
+ *
+ * @param state    the host's live engine state, from its TableSession
+ * @param seats    that table's seat table, likewise
+ * @param seating  who those seats are, from the host's own roster
+ */
+export async function resumeHostedTable({ packId, variants, state, seats, seating, message = '' }) {
+  const myToken = ++openToken;
+  cancelBotTurn();
+  cancelAnnouncementBeats();
+  closeChoiceDialog();
+
+  const pack = await fetchPack(packId, variants);
+  if (myToken !== openToken) return null;
+
+  rememberPack(packId);
+  Arcade.ui.setTitle(pack.manifest.name);
+  hideAllPanels();
+
+  adoptMatch(pack, state, message || `Back at ${pack.manifest.name}.`, { seats, seating });
+  return state;
+}
+
+/**
  * Draw the table from a view the host sent us.
  *
  * The joiner's counterpart to adoptMatch. It builds a state-shaped model

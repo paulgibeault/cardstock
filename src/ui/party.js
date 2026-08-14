@@ -53,7 +53,7 @@ import {
 import { fetchPack, fetchPackManifest } from './packSource.js';
 import { confirmAction } from './confirm.js';
 import {
-  adoptSharedView, leaveSharedTable, tableContext, setSeating, dealHostedTable,
+  adoptSharedView, leaveSharedTable, tableContext, setSeating, dealHostedTable, resumeHostedTable,
   setLocalMoveListener, afterRemoteMove, setTablePaused, rerenderTable,
 } from './table.js';
 import { createSeatTable, createSeatLens, deserializeSeatTable } from '../players/seats.js';
@@ -827,6 +827,39 @@ function graceChooser() {
   return wrap;
 }
 
+
+/**
+ * Go back to our own table.
+ *
+ * THE DOOR THAT WAS MISSING. Before the session inversion, leaving the felt
+ * ended the party, so "return to it" was not a thing that could be asked. Since
+ * #48 a hosted game keeps running while the player is elsewhere — and until
+ * now the only button the panel offered them was "Stop hosting", which is the
+ * one thing they did not want. A table you cannot get back into is not much
+ * better than one that ended.
+ *
+ * A rebind, like `switchToSeat`: the state has been on the session the whole
+ * time, so nothing is dealt and nothing is fetched but the pack.
+ */
+async function returnToOurTable() {
+  const session = ourTable();
+  if (!session?.state) return false;
+  await resumeHostedTable({
+    packId: session.pack.packId,
+    variants: session.pack.variants,
+    state: session.state,
+    seats: session.seats,
+    seating: session.seating || seatingFromRoster(ourLobbyFrame()),
+  });
+  bindFelt(session.tableId);
+  // The felt drives the bots again, so the headless driver must let go.
+  session.cancelBots();
+  goToTable();
+  hidePartyScreen();
+  renderScreen();
+  return true;
+}
+
 /**
  * What the panel calls itself.
  *
@@ -859,6 +892,12 @@ function renderActions() {
       el.actions.append(graceChooser());
       el.actions.append(button('Deal', () => { dealParty().catch(reportFailure); },
         { className: '' }));
+    } else if (!ourTable().bound) {
+      // OUR OWN GAME, RUNNING, AND NOT ON SCREEN. Without this the panel's only
+      // offer was "Stop hosting" — which ends the very thing the player came
+      // here to get back to.
+      el.actions.append(button('Back to the table',
+        () => { returnToOurTable().catch(reportFailure); }, { className: '' }));
     }
     el.actions.append(button('Stop hosting', () => { stopHosting(); goToLobby(); }));
   } else if (client() && shownFrame()?.hostDeviceId === client().hostDeviceId()) {
@@ -995,10 +1034,14 @@ function renderTablesRow() {
     // felt rather than to the panel — the panel is for deciding where to sit,
     // and that decision was made. Any other tile still opens the seats.
     const held = seat !== null && sessions.get(entry.key)?.client?.seat?.() != null;
+    // OUR OWN RUNNING TABLE IS ALSO A GAME TO GO BACK TO, not a lobby to open.
+    // A host's session has no client, so the `held` test above cannot see it.
+    const oursAndRunning = mine && !!ourTable()?.state && !ourTable().bound;
     tile.setAttribute('aria-label',
       `${who.textContent}, ${game.textContent}. ${state.textContent}.${seat !== null ? ' You hold a seat.' : ''}`);
     tile.addEventListener('click', () => {
       if (held && switchToSeat(entry.key)) return;
+      if (oursAndRunning) { returnToOurTable().catch(reportFailure); return; }
       showPartyScreen(entry.key);
     });
     el.tablesGrid.append(tile);
