@@ -51,7 +51,26 @@ export const KEYS = {
   // have no way to discover which tables it had saved. It stays deliberately
   // small — enough to find and name a slot, never a copy of what is in one.
   mpTables: 'mpTables',
+  // WHERE A JOINER SITS, AND NOTHING ELSE ABOUT THE GAME. The asymmetry with
+  // `mpMatch.<tableId>` above is the point: a host stores seed + log, which is
+  // full information; a joiner stores a note saying which chair was theirs.
+  // Restoring it re-claims and asks for a snapshot, so a client still keeps no
+  // game state across a reload and still cannot see a hand it was not shown.
+  //
+  // One slot holding an array rather than a key each: these are small, always
+  // read together (the Tables row merges all of them against the directory),
+  // and there are at most a handful.
+  mpSeats: 'mpSeats',
 };
+
+/**
+ * How long a table nobody has touched stays worth keeping (plan §1, §6).
+ *
+ * ONE CONSTANT, read by both sweeps. A host slot ages on `savedAt` — the last
+ * move anybody made — and a joiner stub on `lastSeenAt`, the last time we heard
+ * its host at all, because a joiner has no moves of its own to date.
+ */
+export const TABLE_ROLL_OFF_MS = 7 * 24 * 60 * 60 * 1000;
 
 // See KEYS.mpTables. `match.` and `mpMatch.` are kept distinct on purpose: a
 // solo save and a hosted table are not the same kind of thing, and the lobby
@@ -277,6 +296,98 @@ function forgetHostTable(tableId) {
   const index = Arcade.state.get(KEYS.mpTables);
   if (!Array.isArray(index)) return false;
   return Arcade.state.set(KEYS.mpTables, index.filter((e) => e?.tableId !== tableId));
+}
+
+/* ------------------------------------------------------------------ *
+ * The joiner's half: which chair was mine
+ * ------------------------------------------------------------------ */
+
+/** A stored seat, or null. Structural, because storage can be imported. */
+function cleanSeatStub(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  if (!isSafeId(raw.tableId)) return null;
+  if (!isSafeId(raw.hostDeviceId)) return null;
+  if (!isValidPackId(raw.packId)) return null;
+  if (!Number.isInteger(raw.seat) || raw.seat < 0) return null;
+  return {
+    tableId: raw.tableId,
+    hostDeviceId: raw.hostDeviceId,
+    packId: raw.packId,
+    seat: raw.seat,
+    savedAt: Number.isFinite(raw.savedAt) ? raw.savedAt : 0,
+    lastSeenAt: Number.isFinite(raw.lastSeenAt) ? raw.lastSeenAt : 0,
+  };
+}
+
+/**
+ * Every seat this device holds somewhere, newest sighting first.
+ *
+ * Validated on the way out like every other slot — a save bundle can be
+ * imported from anywhere, and a malformed stub should cost one dropped tile
+ * rather than a Tables row that throws while rendering.
+ */
+export function seatStubs() {
+  const stored = Arcade.state.get(KEYS.mpSeats);
+  if (!Array.isArray(stored)) return [];
+  return stored
+    .map(cleanSeatStub)
+    .filter(Boolean)
+    .sort((a, b) => b.lastSeenAt - a.lastSeenAt);
+}
+
+/**
+ * Remember that we are sitting at `seat`. Written when the HOST CONFIRMS it —
+ * its lobby roster naming our device in that chair — never when we ask.
+ */
+export function saveSeatStub({ tableId, hostDeviceId, packId, seat }, { at = Date.now() } = {}) {
+  const stub = cleanSeatStub({ tableId, hostDeviceId, packId, seat, savedAt: at, lastSeenAt: at });
+  if (!stub) return false;
+  const rest = seatStubs().filter((s) => s.tableId !== tableId);
+  // `savedAt` is when we FIRST sat down, so re-confirming the same seat must
+  // not reset it — it is what a "you have been here a while" reading would use.
+  const previous = seatStubs().find((s) => s.tableId === tableId);
+  if (previous) stub.savedAt = previous.savedAt || at;
+  return Arcade.state.set(KEYS.mpSeats, [...rest, stub]);
+}
+
+/** We heard this table's host just now. Keeps the stub off the roll-off sweep. */
+export function touchSeatStub(tableId, { at = Date.now() } = {}) {
+  const stubs = seatStubs();
+  const found = stubs.find((s) => s.tableId === tableId);
+  if (!found) return false;
+  found.lastSeenAt = at;
+  return Arcade.state.set(KEYS.mpSeats, stubs);
+}
+
+export function clearSeatStub(tableId) {
+  const stubs = seatStubs();
+  if (!stubs.some((s) => s.tableId === tableId)) return false;
+  return Arcade.state.set(KEYS.mpSeats, stubs.filter((s) => s.tableId !== tableId));
+}
+
+/**
+ * Drop everything nobody has touched for a week (plan §1, §6).
+ *
+ * SILENT BY DESIGN. A table a week old is not news; announcing it would mean
+ * explaining, at boot, a game the player has already stopped thinking about.
+ * Returns what it dropped so a caller can log it, not so it can say it.
+ */
+export function sweepStaleTables({ now = Date.now(), maxAgeMs = TABLE_ROLL_OFF_MS } = {}) {
+  const dropped = { tables: [], seats: [] };
+
+  for (const entry of hostMatches()) {
+    if (now - (entry.savedAt || 0) < maxAgeMs) continue;
+    clearHostMatch(entry.tableId);
+    dropped.tables.push(entry.tableId);
+  }
+
+  const stubs = seatStubs();
+  const live = stubs.filter((s) => now - s.lastSeenAt < maxAgeMs);
+  if (live.length !== stubs.length) {
+    dropped.seats = stubs.filter((s) => now - s.lastSeenAt >= maxAgeMs).map((s) => s.tableId);
+    Arcade.state.set(KEYS.mpSeats, live);
+  }
+  return dropped;
 }
 
 export function loadMatch(packId) {

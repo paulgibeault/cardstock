@@ -46,7 +46,10 @@ import { createSessionRegistry } from '../match/sessionRegistry.js';
 import { FRAME, EMOTES, validateFrame, isAuthentic, mintTableId } from '../match/protocol.js';
 import { botById, initialsOf, pickBotIds } from '../players/roster.js';
 import { createBotDriver } from './botDriver.js';
-import { loadSettings, saveHostMatch, clearHostMatch, hostMatches, loadHostMatch } from '../arcade/storage.js';
+import {
+  loadSettings, saveHostMatch, clearHostMatch, hostMatches, loadHostMatch,
+  saveSeatStub, clearSeatStub, touchSeatStub, sweepStaleTables,
+} from '../arcade/storage.js';
 import { fetchPack, fetchPackManifest } from './packSource.js';
 import { confirmAction } from './confirm.js';
 import {
@@ -1190,6 +1193,45 @@ export async function dealParty() {
 }
 
 /* ------------------------------------------------------------------ *
+ * The seat we keep when we are not the host
+ *
+ * Plan §6. A host stores seed + log; a joiner stores a note saying which chair
+ * was theirs, so a tile can promise it back. Nothing about the game persists
+ * here — coming back re-claims and asks for a snapshot, which is the path a
+ * late joiner already takes.
+ * ------------------------------------------------------------------ */
+
+/**
+ * Record — or forget — our seat at the table this frame describes.
+ *
+ * THE HOST'S ROSTER IS WHAT MAKES IT TRUE. We write the stub when the host says
+ * we are in the chair, never when we ask for it: a claim that was refused, or
+ * one still in flight, would otherwise leave a tile promising a seat nobody
+ * gave us. It is read off the LOBBY rather than a view because a seat is real
+ * before the deal, and a table waiting to start is exactly one worth coming
+ * back to.
+ */
+function noteSeatFrom(frame) {
+  if (!frame || frame.hostDeviceId === selfId()) return;
+  const me = selfId();
+  const mine = (frame.seats || []).find((s) => s.kind === 'device' && s.deviceId === me);
+  if (mine) {
+    saveSeatStub({
+      tableId: frame.tableId,
+      hostDeviceId: frame.hostDeviceId,
+      packId: frame.packId,
+      seat: mine.seat,
+    });
+    return;
+  }
+  // NOT IN THE ROSTER ANY MORE. The host gave the seat to a bot, or somebody
+  // else took it — either way the promise is void and the tile must stop
+  // making it. `bye 'replaced'` says the same thing; this catches the case
+  // where we simply were not listening when it did.
+  clearSeatStub(frame.tableId);
+}
+
+/* ------------------------------------------------------------------ *
  * A table that survives the tab
  *
  * Plan §6. `saveHostMatch`/`loadHostMatch`/`clearHostMatch` were built and
@@ -1237,6 +1279,12 @@ function persist(session) {
  * by the path it already uses.
  */
 export async function rehydrateHostedTables() {
+  // THE SWEEP RUNS FIRST, so a table a week past caring about is dropped rather
+  // than restored and then swept. Silent by design — see storage.js.
+  const swept = sweepStaleTables();
+  if (swept.tables.length || swept.seats.length) {
+    console.info(`[cardstock] rolled off ${swept.tables.length} table(s) and ${swept.seats.length} seat(s)`);
+  }
   const stored = hostMatches();
   if (!stored.length) return 0;
   ensurePort();
@@ -1589,6 +1637,11 @@ function startSniffing() {
     const entry = tables.sight(frame);
     if (!entry) return;
     rememberPackName(frame.packId);
+    // HEARING THE HOST IS ENOUGH TO KEEP THE PROMISE ALIVE. A seat we hold at a
+    // table we are not currently a client of still ages on this, which is what
+    // stops a week of watching from someone else's felt rolling it off.
+    touchSeatStub(entry.key);
+    noteSeatFrom(frame);
     // WHERE TO LOOK, and the rule is about attachment rather than recency: an
     // unattached device follows the latest table it hears about (which with one
     // table in earshot is exactly the old behaviour), and a device already at a
@@ -1704,6 +1757,7 @@ async function joinTable(entry) {
         const seen = tables.sight(next);
         if (seen && !activeKey) focusTable(seen.key);
         session.lobbyFrame = next;
+        noteSeatFrom(next);
         renderScreen();
       },
       onView: (view, _events, meta) => {
@@ -1792,7 +1846,14 @@ export function leaveTable() {
   joining = false;
   if (tick) { clearInterval(tick); tick = null; }
   // `remove` stops the client for us — the one teardown point, as in stopHosting.
-  if (session) sessions.remove(session.tableId);
+  if (session) {
+    // STANDING UP IS GIVING THE SEAT BACK. The stub is a promise that a chair
+    // is still ours; leaving is the one move that says it is not, so the tile
+    // must stop offering it. A host that goes quiet is the opposite case — the
+    // promise holds, and the tile says "offline" instead.
+    clearSeatStub(session.tableId);
+    sessions.remove(session.tableId);
+  }
   // BACK TO WATCHING, NOT BACK TO NOTHING. Leaving a table does not unhear the
   // room: whatever else is out there — including the table we just left, if its
   // host is still advertising it — is still on the lobby, and the panel falls
