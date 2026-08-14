@@ -17,12 +17,11 @@
 //   one held seat per pack      you cannot sit at two Hearts games at once.
 //                               You can host Hearts and sit at Crazy Eights,
 //                               and that is the case the old `if (client)`
-//                               refusal got wrong. HALF OF THIS RULE IS NOT
-//                               ENFORCED HERE YET: holding two seats at once
-//                               needs two joiner sessions, and src/ui/party.js
-//                               can hold one (`joinTable` refuses a second).
-//                               The seat half arrives with T4's seat stubs,
-//                               where there is something for it to refuse.
+//                               refusal got wrong. You can also sit at Dana's
+//                               Hearts AND Bo's Crazy Eights, which is what
+//                               made this half worth enforcing at last: until
+//                               #49 there was only ever one joiner session, so
+//                               the rule had nothing to refuse.
 //
 // Both refusals return a SENTENCE rather than false. A dead button that will
 // not say why is the thing #43 called out, so the notice travels with the
@@ -108,6 +107,13 @@ export function createSessionRegistry() {
       if (hostedForPack(packId)) return `You are already hosting ${nameOf(packId)}.`;
       const seated = seatedForPack(packId);
       if (seated) return `You are sitting at another ${nameOf(packId)} table. Leave it to host your own.`;
+      return null;
+    },
+
+    /** May we take a seat at this table? Same contract as refusalToHost. */
+    refusalToSit(packId, { nameOf = (id) => id } = {}) {
+      if (hostedForPack(packId)) return `You are hosting ${nameOf(packId)}. Stop hosting to sit at another one.`;
+      if (seatedForPack(packId)) return `You are already sitting at a ${nameOf(packId)} table.`;
       return null;
     },
 

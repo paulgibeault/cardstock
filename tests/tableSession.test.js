@@ -280,3 +280,30 @@ test('stop moves the epoch before it clears the state', () => {
   assert.equal(s.liveState(), null);
   assert.equal(s.bots, null);
 });
+
+/* ------------------------------------------------------------------ *
+ * The seat half of the door (T4d)
+ * ------------------------------------------------------------------ */
+
+test('you may sit at two tables of different packs, but not two of the same', () => {
+  const reg = createSessionRegistry();
+  reg.add(sessionFor(ID.hearts, 'hearts', 'joiner', { seat: 1 }).session);
+
+  assert.equal(reg.refusalToSit('eights'), null, 'Dana’s Hearts and Bo’s Crazy Eights are two evenings');
+  assert.match(reg.refusalToSit('hearts'), /already sitting/);
+});
+
+test('you cannot sit at a pack you are hosting', () => {
+  const reg = createSessionRegistry();
+  reg.add(sessionFor(ID.hearts, 'hearts', 'host').session);
+
+  assert.match(reg.refusalToSit('hearts'), /Stop hosting/);
+  assert.equal(reg.refusalToSit('eights'), null);
+});
+
+test('a client that never sat down does not refuse a seat', () => {
+  const reg = createSessionRegistry();
+  reg.add(sessionFor(ID.hearts, 'hearts', 'joiner', { seat: null }).session);
+
+  assert.equal(reg.refusalToSit('hearts'), null, 'watching is not sitting');
+});
