@@ -89,6 +89,10 @@ export function createTableHost({
   packInfo,
   nameFor = () => '',
   deadlines = () => [],
+  // HOW LONG A SEAT GETS AT THIS TABLE, as a seam rather than a constant: it is
+  // the host's choice (plan §7) and it has to travel, or a joiner's countdown
+  // is a number compiled into the joiner's own build and right by coincidence.
+  graceMs = () => undefined,
   now = Date.now,
   hooks = {},
 }) {
@@ -178,6 +182,7 @@ export function createTableHost({
       seatCount: seats.count,
       seats: seatRoster(),
       started: !!liveState(),
+      graceMs: graceMs(),
     });
   }
 

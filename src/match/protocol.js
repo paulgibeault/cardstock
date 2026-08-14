@@ -110,6 +110,16 @@ export function isSafeAddress(value) {
 const SAFE_ITEM = /^\w{1,20}\(\d{1,2}\)$/;
 
 /** Bounds. A peer that sends more than this is not playing a card game. */
+/**
+ * The window a host may give a seat, in ms.
+ *
+ * BOUNDED ON BOTH SIDES because it arrives over the wire. A zero would time
+ * every seat out on arrival and a very large one is indistinguishable from no
+ * timer at all — neither is a table anybody meant to sit at, and both are
+ * cheaper to refuse here than to reason about at the clock.
+ */
+export const GRACE_LIMITS = Object.freeze({ min: 5_000, max: 24 * 60 * 60 * 1000 });
+
 const LIMITS = Object.freeze({
   cards: 32,
   seats: 8,
@@ -390,6 +400,14 @@ function validateBody(raw, kind) {
         return fail('lobby: bad seatCount');
       }
       if (raw.started !== undefined && typeof raw.started !== 'boolean') return fail('lobby: bad started');
+      // HOW LONG A SEAT GETS, so a joiner's countdown is the host's rule rather
+      // than a constant compiled into the joiner's build (plan §7). Optional:
+      // a host that never chose sends nothing and the joiner falls back to the
+      // default, which is also what a v2 build from before this shipped does.
+      if (raw.graceMs !== undefined
+        && (!Number.isInteger(raw.graceMs) || raw.graceMs < GRACE_LIMITS.min || raw.graceMs > GRACE_LIMITS.max)) {
+        return fail('lobby: bad graceMs');
+      }
       return ok({
         k: kind,
         protocol: raw.protocol,
@@ -400,6 +418,7 @@ function validateBody(raw, kind) {
         seatCount: raw.seatCount,
         seats,
         started: !!raw.started,
+        graceMs: raw.graceMs,
       });
     }
 

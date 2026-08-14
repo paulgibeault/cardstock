@@ -90,6 +90,46 @@ const EMOTE_COOLDOWN_MS = 1500;
  */
 const TURN_TIMEOUT_MS = 60_000;
 
+/**
+ * What a host may choose instead (plan §7).
+ *
+ * A SHORT LIST, NOT A FIELD. "How many seconds should a turn get" is a question
+ * with no good answer typed into a box: too small a number breaks the table for
+ * everyone and too large one turns the timer off without saying so. Three
+ * choices cover the three real situations — people in a room together, people
+ * across an evening, people across a week — and the default is unchanged, so a
+ * host who never opens this gets exactly what they got before.
+ */
+const GRACE_CHOICES = Object.freeze([
+  { ms: 30_000, label: '30 seconds', hint: 'everyone here, playing fast' },
+  { ms: TURN_TIMEOUT_MS, label: '1 minute', hint: 'the usual' },
+  { ms: 300_000, label: '5 minutes', hint: 'a game across the evening' },
+]);
+
+/** The grace a table runs on, falling back for a host who never chose. */
+function graceOf(session) {
+  return session?.graceMs || TURN_TIMEOUT_MS;
+}
+
+/**
+ * The grace the SHOWN table runs on — ours from the session, somebody else's
+ * from the frame they published, because a joiner's countdown has to be the
+ * host's rule rather than a constant compiled into our own build.
+ */
+function shownGraceMs() {
+  const frame = shownFrame();
+  if (frame && frame.hostDeviceId !== selfId()) return frame.graceMs || TURN_TIMEOUT_MS;
+  return graceOf(ourTable());
+}
+
+/** "1 minute", for a grace that may not be one of the three we offer. */
+function graceLabel(ms) {
+  const known = GRACE_CHOICES.find((choice) => choice.ms === ms);
+  if (known) return known.label;
+  const seconds = Math.round(ms / 1000);
+  return seconds < 60 ? `${seconds} seconds` : `${Math.round(seconds / 60)} minutes`;
+}
+
 /* ------------------------------------------------------------------ *
  * State
  * ------------------------------------------------------------------ */
@@ -692,15 +732,59 @@ function renderScreen() {
       || packNames.get(frame?.packId)
       || frame?.packId || '';
     const variants = frame?.variants || [];
-    el.summary.textContent = packName
-      ? (variants.length ? `${packName} · ${variants.join(', ')}` : packName)
-      : '';
+    // THE HOST'S RULE, NOT OURS. A joiner used to have no way of knowing how
+    // long a turn was until one ran out — the number was a constant in its own
+    // build, which was only ever right by coincidence. Now the frame says.
+    const turn = `${graceLabel(shownGraceMs())} a turn`;
+    const parts = [packName, variants.length ? variants.join(', ') : '', turn].filter(Boolean);
+    el.summary.textContent = packName ? parts.join(' · ') : '';
   }
 
   renderSeats();
   renderActions();
   renderStrip();
   renderEmotes();
+}
+
+
+/**
+ * How long a seat gets, chosen before the cards are out.
+ *
+ * BEFORE THE DEAL ONLY. Changing the grace mid-hand would move a deadline
+ * somebody is already playing against — the honest version of that is a
+ * different feature, and this one is about setting the table.
+ *
+ * The choice is published in the lobby frame the moment it changes, so a joiner
+ * looking at the seats sees the new answer without being dealt into anything.
+ */
+function graceChooser() {
+  const session = ourTable();
+  const wrap = document.createElement('div');
+  wrap.className = 'party-grace';
+
+  const label = document.createElement('span');
+  label.className = 'party-grace__label';
+  label.textContent = 'Give each turn';
+  wrap.append(label);
+
+  const current = graceOf(session);
+  for (const choice of GRACE_CHOICES) {
+    const picked = choice.ms === current;
+    const option = button(choice.label, () => {
+      if (!session) return;
+      session.graceMs = choice.ms;
+      // Everybody who can see this table is told at once; the timer reads it at
+      // arm time, so nothing has to be rebuilt.
+      session.lobbyFrame = ourLobbyFrame();
+      publishOwnTable();
+      session.host?.broadcastLobby();
+      renderScreen();
+    }, { className: `party-grace__option${picked ? ' party-grace__option--on' : ''}` });
+    option.setAttribute('aria-pressed', picked ? 'true' : 'false');
+    option.title = choice.hint;
+    wrap.append(option);
+  }
+  return wrap;
 }
 
 /**
@@ -727,7 +811,12 @@ function renderActions() {
   if (shownIsOurs()) {
     // DEAL IS THE HOST'S ONE BUTTON, and it only exists before the cards are
     // out. Afterwards the table is the table; there is nothing to start.
-    if (!tableContext()?.state) {
+    //
+    // ASKED OF THE SESSION, not the felt. `tableContext()` is null whenever the
+    // felt is showing something else, so this offered "Deal" at a table that
+    // had been dealt an hour ago and was still running in the background.
+    if (!ourTable()?.state) {
+      el.actions.append(graceChooser());
       el.actions.append(button('Deal', () => { dealParty().catch(reportFailure); },
         { className: '' }));
     }
@@ -1026,6 +1115,8 @@ function ourLobbyFrame() {
     hostDeviceId: selfId(),
     seatCount: hostSeats().count,
     seats,
+    // The grace travels so a joiner's countdown is honest — see plan §7.
+    graceMs: graceOf(ourTable()),
     // FALSE UNTIL THE CARDS ARE OUT, and a joiner reads it: before the deal it
     // is waiting for the host, after it there is a hand to be caught up with.
     started: !!tableContext()?.state,
@@ -1077,6 +1168,7 @@ function openHostSession({ tableId, packId, packName: name, variants, seats }) {
     packInfo: () => ({ packId: session.pack.packId, variants: session.pack.variants }),
     nameFor: nameForSeat,
     deadlines: () => session.timer?.deadlines() || [],
+    graceMs: () => graceOf(session),
     hooks: {
       // THE FELT ONLY ANIMATES THE TABLE IT IS SHOWING. `afterRemoteMove` draws
       // on whatever `tableContext()` currently holds, so calling it for a
@@ -1106,7 +1198,9 @@ function openHostSession({ tableId, packId, packName: name, variants, seats }) {
     // The WALL clock, not the session one: a shared hand does not stop because
     // one tab stopped painting, and a deadline has to survive a sleeping host.
     clock: wallClock(),
-    timeoutMs: TURN_TIMEOUT_MS,
+    // Resolved at arm time, so changing it before the deal takes effect
+    // without rebuilding the timer.
+    timeoutMs: () => graceOf(session),
     actingSeatsOf: (state) => {
       const template = state.pack.template;
       return template.actingSeats ? template.actingSeats(makeCtx(state)) : [state.turn.seat];
@@ -1366,7 +1460,7 @@ function persist(session) {
     // finished game does not come back to it — the same rule solo play follows
     // when a match ends.
     if (session.state.gameOver) clearHostMatch(session.tableId);
-    else saveHostMatch(session.tableId, session.state, session.seats);
+    else saveHostMatch(session.tableId, session.state, session.seats, { graceMs: session.graceMs });
   } catch (err) {
     // A save that fails is not a reason to stop the game. The launcher's own
     // quota handler (registerStorageErrorHandler) is what tells the player.
@@ -1433,6 +1527,9 @@ async function rehydrateOne(tableId) {
     seats,
   });
   session.state = state;
+  // Restored before the first lobby frame goes out, so the grace the party
+  // reconvenes on is the one they were playing with.
+  if (Number.isInteger(snapshot.graceMs)) session.graceMs = snapshot.graceMs;
   session.seating = seatingFromRoster(ourLobbyFrame());
   session.lobbyFrame = ourLobbyFrame();
   publishOwnTable();

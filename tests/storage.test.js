@@ -327,3 +327,17 @@ test('a stored host name is clamped, and a missing one is empty rather than abse
   saveSeatStub({ tableId: TABLE_B, hostDeviceId: HOST_A, packId: 'hearts', seat: 1 });
   assert.equal(seatStubs()[0].hostName, '', 'a tile can fall back, but never reads undefined');
 });
+
+test('a host slot carries the grace, and a slot without one says nothing', () => {
+  const pack = packFromDisk('crazy-eights');
+  const state = createState({ pack, seats: 3, seed: 7 });
+  pack.template.setup(makeCtx(state));
+
+  saveHostMatch(TABLE_A, state, soloSeatTable(3), { graceMs: 30_000 });
+  assert.equal(loadHostMatch(TABLE_A).graceMs, 30_000);
+
+  // A HOST WHO NEVER CHOSE STORES NOTHING, so a resume falls back to the
+  // default rather than to a zero that would time every seat out on arrival.
+  saveHostMatch(TABLE_B, state, soloSeatTable(3));
+  assert.equal(loadHostMatch(TABLE_B).graceMs, undefined);
+});

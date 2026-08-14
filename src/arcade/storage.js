@@ -240,12 +240,17 @@ export function saveMatch(state) {
  * reproduces the cards whoever is holding them, and a seat changing hands
  * mid-match (a drop, a bot filling in) must not make the log unreplayable.
  */
-export function saveHostMatch(tableId, state, seatTable) {
+export function saveHostMatch(tableId, state, seatTable, { graceMs = null } = {}) {
   if (!isSafeId(tableId)) return false;
   const written = Arcade.state.set(mpMatchKey(tableId), {
     ...serializeMatch(state),
     tableId,
     seatBindings: seatTable.serialize(),
+    // THE HOST'S RULE SURVIVES THE RELOAD, but the deadlines it produced do
+    // not — a stored deadline is a promise about a clock that stopped existing.
+    // Restoring the grace and arming fresh is what gives every seat a full
+    // window on resume (plan §7).
+    graceMs: Number.isInteger(graceMs) ? graceMs : undefined,
   });
   rememberHostTable(tableId, state.pack.id);
   return written;
