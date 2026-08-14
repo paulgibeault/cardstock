@@ -28,7 +28,11 @@ import { deadline } from './clock.js';
 
 /**
  * @param clock         a clock from src/match/clock.js (the host's wall clock)
- * @param timeoutMs     how long a seat may sit there, in ms
+ * @param timeoutMs     how long a seat may sit there, in ms. A NUMBER OR A
+ *                      FUNCTION, resolved at arm time: the grace is per-table
+ *                      and host-settable (plan §7), and a value captured when
+ *                      the timer was built would go on using the old one after
+ *                      the host changed their mind.
  * @param actingSeatsOf (state) => seats that may act right now
  * @param waitsOn       (seat) => is this a seat we time? (bots and our own
  *                      seats are not — a bot is scheduled by the bot driver,
@@ -48,6 +52,8 @@ export function createTurnTimer({
 }) {
   /** seat -> { expiresAt, timer } */
   const live = new Map();
+
+  const graceMs = () => (typeof timeoutMs === 'function' ? timeoutMs() : timeoutMs);
 
   function clear(seat) {
     const entry = live.get(seat);
@@ -77,7 +83,7 @@ export function createTurnTimer({
     for (const seat of acting) {
       if (live.has(seat)) continue; // already on the clock — do not restart it
       const myEpoch = currentEpoch();
-      const expiresAt = clock.now() + timeoutMs;
+      const expiresAt = clock.now() + graceMs();
       // REGISTERED BEFORE IT IS SCHEDULED. `clock.at` fires SYNCHRONOUSLY for a
       // deadline already past (a zero or negative timeout), and if the entry
       // were installed after that call returned, the callback's own

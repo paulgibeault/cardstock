@@ -3328,6 +3328,43 @@ body.is-dragging .card-face { cursor: grabbing; }
   opacity: 0.7;
 }
 
+/* HOW LONG A SEAT GETS, set before the cards are out. A row of three rather
+   than a field: see the note on GRACE_CHOICES in src/ui/party.js for why this
+   is a choice and not a number somebody types. */
+.party-grace {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  width: 100%;
+  margin-bottom: 0.4rem;
+}
+
+.party-grace__label {
+  font-size: 0.76rem;
+  opacity: 0.7;
+  margin-right: 0.15rem;
+}
+
+.party-grace__option {
+  font: inherit;
+  font-size: 0.76rem;
+  padding: 0.25rem 0.55rem;
+  color: inherit;
+  background: var(--chip-bg);
+  border: 1px solid var(--tile-border);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+/* The one that is chosen reads as chosen, in the accent every other surface
+   uses for "this one is yours". */
+.party-grace__option--on {
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
 /* A TABLE WHOSE HOST IS NOT HERE. Greyed and flat: no pointer, no hover lift,
    nothing that reads as tappable, because there is nobody on the other end of a
    tap. It is still on the row rather than hidden — the whole point of the seat

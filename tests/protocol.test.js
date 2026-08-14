@@ -793,3 +793,72 @@ test('a host acts on a joiner’s bye by re-publishing its lobby', async () => {
   assert.ok(t.seen.a.lobbies.length > before,
     `expected a fresh lobby after the bye, saw ${t.seen.a.lobbies.length - before}`);
 });
+
+/* ------------------------------------------------------------------ *
+ * The grace a host chooses (#49 §7)
+ * ------------------------------------------------------------------ */
+
+test('a lobby frame may carry the host’s grace, and may leave it out', () => {
+  const base = {
+    tableId: TID, k: FRAME.LOBBY, protocol: PROTOCOL_VERSION, packId: 'crazy-eights',
+    variants: [], hostDeviceId: 'host', seatCount: 3, started: false,
+    seats: [{ seat: 0, kind: 'device', deviceId: 'host', name: 'Host', status: 'connected' }],
+  };
+  assert.equal(validateFrame({ ...base, graceMs: 30_000 }).frame.graceMs, 30_000);
+  // A host that never chose sends nothing; so does a build from before this
+  // shipped, and both mean "use the default" rather than "no timer".
+  assert.equal(validateFrame(base).frame.graceMs, undefined);
+});
+
+test('a grace outside the bounds is refused rather than clamped', () => {
+  const base = {
+    tableId: TID, k: FRAME.LOBBY, protocol: PROTOCOL_VERSION, packId: 'crazy-eights',
+    variants: [], hostDeviceId: 'host', seatCount: 3, started: false,
+    seats: [{ seat: 0, kind: 'device', deviceId: 'host', name: 'Host', status: 'connected' }],
+  };
+  // ZERO WOULD TIME EVERY SEAT OUT ON ARRIVAL, and a year is a timer that is
+  // off without saying so. Neither is a table anybody meant to sit at.
+  assert.equal(validateFrame({ ...base, graceMs: 0 }).ok, false);
+  assert.equal(validateFrame({ ...base, graceMs: -1 }).ok, false);
+  assert.equal(validateFrame({ ...base, graceMs: 365 * 24 * 60 * 60 * 1000 }).ok, false);
+  assert.equal(validateFrame({ ...base, graceMs: 1.5 }).ok, false);
+  assert.equal(validateFrame({ ...base, graceMs: '60000' }).ok, false);
+});
+
+test('the turn timer reads its grace at arm time, not at build time', () => {
+  let now = 0;
+  const timers = [];
+  const clock = {
+    now: () => now,
+    at: (when, fn) => { const t = { when, fn, cancel() { t.cancelled = true; } }; timers.push(t); return t; },
+  };
+  let grace = 60_000;
+  const timer = createTurnTimer({
+    clock,
+    // A FUNCTION, which is the whole point: the host may change the grace in
+    // the party panel after this timer exists, and a value captured here would
+    // go on using the old one for the life of the table.
+    timeoutMs: () => grace,
+    actingSeatsOf: () => [1],
+    waitsOn: () => true,
+    onExpire: () => {},
+  });
+
+  timer.arm({});
+  assert.equal(timer.deadlines()[0].expiresAt, 60_000);
+
+  timer.cancelAll();
+  grace = 30_000;
+  timer.arm({});
+  assert.equal(timer.deadlines()[0].expiresAt, 30_000, 'the new choice, not the old one');
+});
+
+test('the turn timer still accepts a plain number', () => {
+  let now = 0;
+  const clock = { now: () => now, at: (when, fn) => ({ when, fn, cancel() {} }) };
+  const timer = createTurnTimer({
+    clock, timeoutMs: 45_000, actingSeatsOf: () => [1], waitsOn: () => true, onExpire: () => {},
+  });
+  timer.arm({});
+  assert.equal(timer.deadlines()[0].expiresAt, 45_000);
+});

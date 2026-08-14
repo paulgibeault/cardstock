@@ -81,6 +81,11 @@ export function createTableSession({ tableId, packId, role, packName = '', varia
     decided: new Set(),      // seats whose terminal drop the host has answered
     unreachable: new Set(),  // seats a targeted send was refused for
     paused: false,
+    // HOW LONG A SEAT GETS AT THIS TABLE (plan §7). Per-table because the right
+    // answer differs between a game played in one room and one played across a
+    // week, and the host is the only one who knows which this is. Null until
+    // they choose; the caller falls back to the default.
+    graceMs: null,
 
     // IS THE FELT SHOWING THIS ONE. Not a question about whether the table is
     // running — see the header. It is read by the timer rule (a host's own seat
