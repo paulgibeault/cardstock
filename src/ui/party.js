@@ -1515,7 +1515,7 @@ async function attachToActive() {
   if (client() && client().hostDeviceId() === entry.hostDeviceId) return true;
   if (client()) {
     if (seatedHere()) {
-      setNotice(`You are sitting at ${peerName(client.hostDeviceId())}'s table. Leave it to sit here.`);
+      setNotice(`You are sitting at ${peerName(client().hostDeviceId())}'s table. Leave it to sit here.`);
       return false;
     }
     // Never sat down at that one; it stays in the directory to go back to.
