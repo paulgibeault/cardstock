@@ -84,6 +84,7 @@ export function needsHostDecision(status) {
 export function createTableHost({
   peer,
   seats,
+  tableId,
   liveState,
   packInfo,
   nameFor = () => '',
@@ -91,6 +92,7 @@ export function createTableHost({
   now = Date.now,
   hooks = {},
 }) {
+  if (!isSafeId(tableId)) throw new Error('createTableHost: a table needs an id');
   const unsubscribes = [];
   const budgets = new Map(); // deviceId -> {count, until}
   let started = false;
@@ -113,7 +115,7 @@ export function createTableHost({
    * private frame public, which is the one failure this design cannot have.
    */
   function sendTo(deviceId, frame) {
-    const delivered = peer.send(frame, { to: deviceId });
+    const delivered = peer.send(stamp(frame), { to: deviceId });
     if (!delivered) {
       hooks.onError?.({ kind: 'send-failed', deviceId, frame: frame.k });
     }
@@ -121,7 +123,18 @@ export function createTableHost({
   }
 
   function broadcast(frame) {
-    return peer.send(frame);
+    return peer.send(stamp(frame));
+  }
+
+  /**
+   * Every frame leaves saying which table it is from.
+   *
+   * ONE CHOKE POINT, so a new frame kind cannot forget. This is the outbound
+   * half of protocol v2; the inbound half is the guard in `onMessage`, and the
+   * two together are what let one device run two tables through one port.
+   */
+  function stamp(frame) {
+    return { ...frame, tableId };
   }
 
   function seatRoster() {
@@ -328,6 +341,11 @@ export function createTableHost({
       return;
     }
     const frame = verdict.frame;
+    // NOT OUR TABLE, NOT OUR BUSINESS. Every host on this device subscribes to
+    // the same `onMessage`, so without this a `claim-seat` meant for the Hearts
+    // table also seated that device at the Crazy Eights one — at a table nobody
+    // asked to sit down at, holding cards nobody dealt them.
+    if (frame.tableId !== tableId) return;
 
     switch (frame.k) {
       case FRAME.CLAIM_SEAT: return handleClaim(fromDeviceId, frame);

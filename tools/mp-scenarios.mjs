@@ -328,7 +328,7 @@ const unknownTarget = {
     // for a real reason — no live connection, or the `peer.sendTo` capability
     // missing — and this is the honest record of which is which.
     const unknown = await frames.H.evaluate(() =>
-      window.Arcade.peer.send({ k: 'bye', why: 'leave' }, { to: 'no-such-device' }));
+      window.Arcade.peer.send({ k: 'bye', why: 'leave', tableId: 'tbl-unreachable' }, { to: 'no-such-device' }));
     check('an unknown target is accepted by the transport, not refused',
       unknown === true,
       `send(to: unknown) → ${unknown}. If this ever returns false, the launcher `
@@ -347,6 +347,7 @@ const unknownTarget = {
       const seen = [];
       const sent = [];
       const host = createTableHost({
+        tableId: 'tbl-unreachable',
         peer: {
           self: () => ({ deviceId: 'host' }),
           peers: () => [],

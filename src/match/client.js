@@ -27,7 +27,7 @@
 // converges versions on its own.
 
 import {
-  FRAME, PROTOCOL_VERSION, validateFrame, isAuthentic, EMOTES,
+  FRAME, PROTOCOL_VERSION, validateFrame, isAuthentic, isSafeId, EMOTES,
 } from './protocol.js';
 import { VIEW_VERSION } from '../engine/view.js';
 
@@ -41,7 +41,8 @@ import { VIEW_VERSION } from '../engine/view.js';
  *                  them it meant to sit down with.
  * @param hooks     { onLobby, onView, onReject, onEmote, onIncompatible, onError, onEnd }
  */
-export function createTableClient({ peer, expects, host = null, hooks = {} }) {
+export function createTableClient({ peer, expects, host = null, tableId, hooks = {} }) {
+  if (!isSafeId(tableId)) throw new Error('createTableClient: a table needs an id');
   const unsubscribes = [];
   let started = false;
   let hostDeviceId = host || null;
@@ -101,7 +102,9 @@ export function createTableClient({ peer, expects, host = null, hooks = {} }) {
 
   function send(frame) {
     if (!hostDeviceId) return false;
-    const delivered = peer.send(frame, { to: hostDeviceId });
+    // Which table we are talking about, on every frame — see protocol.js. A
+    // host running two tables reads this to know which of them we mean.
+    const delivered = peer.send({ ...frame, tableId }, { to: hostDeviceId });
     if (!delivered) hooks.onError?.({ kind: 'send-failed', frame: frame.k });
     return delivered;
   }
@@ -161,6 +164,11 @@ export function createTableClient({ peer, expects, host = null, hooks = {} }) {
       return;
     }
     const frame = verdict.frame;
+    // A DIFFERENT TABLE IS NOT NEWS. This device may sit at several, each with
+    // a client of its own on the same port; without this every one of them
+    // would try to interpret every other one's views, and the seq checks would
+    // read a neighbour's move as a gap in our own.
+    if (frame.tableId !== tableId) return;
 
     // An emote is the one frame that legitimately comes from a fellow joiner,
     // so it is checked for authenticity as a NON-host frame and simply passed on.

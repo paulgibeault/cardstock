@@ -35,6 +35,15 @@ import {
 import { createPeerNetwork } from '../tools/peer-stub.mjs';
 import { loadPackFromDisk, listPackIds } from '../tools/pack-test.mjs';
 
+/**
+ * THE TABLE EVERY FRAME IN THIS FILE BELONGS TO.
+ *
+ * Protocol v2 puts a `tableId` on every frame, so a fixture without one is
+ * refused before the check it was written for ever runs — and a test that fails
+ * for the wrong reason is a test that stops meaning anything.
+ */
+const TID = 'tbl-protocol';
+
 /* ------------------------------------------------------------------ *
  * A three-device table
  * ------------------------------------------------------------------ */
@@ -53,7 +62,7 @@ async function threeSeatTable({ packId = 'crazy-eights', now } = {}) {
   seats.claim(0, { deviceId: 'host' });
 
   const errors = { host: [], a: [], b: [] };
-  const host = createTableHost({
+  const host = createTableHost({ tableId: TID,
     peer: hostPort,
     seats,
     liveState: () => state,
@@ -74,7 +83,7 @@ async function threeSeatTable({ packId = 'crazy-eights', now } = {}) {
   });
 
   const seen = { a: { views: [], rejects: [], lobbies: [], bad: [] }, b: { views: [], rejects: [], lobbies: [], bad: [] } };
-  const mkClient = (port, key) => createTableClient({
+  const mkClient = (port, key) => createTableClient({ tableId: TID,
     peer: port,
     expects,
     hooks: {
@@ -107,27 +116,29 @@ function seatAll(t) {
  * ------------------------------------------------------------------ */
 
 test('an unknown frame kind is refused, not guessed at', () => {
-  assert.equal(validateFrame({ k: 'take-over' }).ok, false);
-  assert.equal(validateFrame({ k: '__proto__' }).ok, false);
+  assert.equal(validateFrame({ tableId: TID, k: 'take-over' }).ok, false);
+  assert.equal(validateFrame({ tableId: TID, k: '__proto__' }).ok, false);
   assert.equal(validateFrame(null).ok, false);
   assert.equal(validateFrame('propose').ok, false);
   assert.equal(validateFrame([]).ok, false);
 });
 
 test('a validated frame is a CLEANED COPY — unknown fields never survive', () => {
-  const verdict = validateFrame({
+  const verdict = validateFrame({ tableId: TID,
     k: FRAME.PROPOSE, pid: 'p1', move: { actor: 1, type: 'draw' }, sneaky: 'payload',
   });
   assert.ok(verdict.ok);
   assert.equal(verdict.frame.sneaky, undefined);
-  assert.deepEqual(Object.keys(verdict.frame).sort(), ['k', 'move', 'pid']);
+  // `tableId` is part of the cleaned copy from protocol v2 on: every frame
+  // names its table, so every validated frame carries it back out.
+  assert.deepEqual(Object.keys(verdict.frame).sort(), ['k', 'move', 'pid', 'tableId']);
 });
 
 test('wire ids are charset-checked before anything can use them as a selector', () => {
   const bad = ['<img src=x>', 'a b', "'; DROP", '../../etc', '__proto__.x', 'x'.repeat(65)];
   for (const id of bad) {
     assert.equal(
-      validateFrame({ k: FRAME.PROPOSE, pid: 'p1', move: { actor: 0, type: 'playCard', cards: [id] } }).ok,
+      validateFrame({ tableId: TID, k: FRAME.PROPOSE, pid: 'p1', move: { actor: 0, type: 'playCard', cards: [id] } }).ok,
       false,
       `${id} should be refused`,
     );
@@ -167,7 +178,7 @@ test('every card id and zone address the engine mints survives the wire validato
       // And end to end, as a frame: a real move from a real enumeration.
       for (let seat = 0; seat < seats; seat++) {
         for (const move of enumerateLegalMoves(state, seat)) {
-          const verdict = validateFrame({ k: FRAME.PROPOSE, pid: 'p1', move });
+          const verdict = validateFrame({ tableId: TID, k: FRAME.PROPOSE, pid: 'p1', move });
           assert.ok(verdict.ok, `${packId}: the wire refuses a legal move — ${JSON.stringify(move)}`);
           assert.deepEqual(verdict.frame.move, move,
             `${packId}: the validator dropped a field off a legal move — ${JSON.stringify(move)}`);
@@ -192,23 +203,23 @@ test('the widened charsets are still charsets — a dot is not a path', () => {
 
 test('a move is bounded — a peer cannot propose a thousand cards', () => {
   const cards = Array.from({ length: 40 }, (_, i) => `c${i}`);
-  assert.equal(validateFrame({ k: FRAME.PROPOSE, pid: 'p', move: { actor: 0, type: 'x', cards } }).ok, false);
+  assert.equal(validateFrame({ tableId: TID, k: FRAME.PROPOSE, pid: 'p', move: { actor: 0, type: 'x', cards } }).ok, false);
 });
 
 test('a seat index outside the table is refused', () => {
-  assert.equal(validateFrame({ k: FRAME.CLAIM_SEAT, seat: 99 }).ok, false);
-  assert.equal(validateFrame({ k: FRAME.CLAIM_SEAT, seat: -1 }).ok, false);
-  assert.equal(validateFrame({ k: FRAME.CLAIM_SEAT, seat: 1.5 }).ok, false);
+  assert.equal(validateFrame({ tableId: TID, k: FRAME.CLAIM_SEAT, seat: 99 }).ok, false);
+  assert.equal(validateFrame({ tableId: TID, k: FRAME.CLAIM_SEAT, seat: -1 }).ok, false);
+  assert.equal(validateFrame({ tableId: TID, k: FRAME.CLAIM_SEAT, seat: 1.5 }).ok, false);
 });
 
 test('an emote is an index into a fixed set — there is no free-text channel', () => {
-  assert.ok(validateFrame({ k: FRAME.EMOTE, i: 0 }).ok);
-  assert.equal(validateFrame({ k: FRAME.EMOTE, i: EMOTES.length }).ok, false);
-  assert.equal(validateFrame({ k: FRAME.EMOTE, i: 'nice try' }).ok, false);
+  assert.ok(validateFrame({ tableId: TID, k: FRAME.EMOTE, i: 0 }).ok);
+  assert.equal(validateFrame({ tableId: TID, k: FRAME.EMOTE, i: EMOTES.length }).ok, false);
+  assert.equal(validateFrame({ tableId: TID, k: FRAME.EMOTE, i: 'nice try' }).ok, false);
 });
 
 test('a long peer name is clamped, not rejected — rudeness is not an attack', () => {
-  const verdict = validateFrame({
+  const verdict = validateFrame({ tableId: TID,
     k: FRAME.LOBBY, protocol: 1, packId: 'crazy-eights', variants: [], hostDeviceId: 'host',
     seatCount: 3, seats: [{ seat: 0, kind: 'device', deviceId: 'host', name: 'x'.repeat(500) }],
   });
@@ -242,6 +253,12 @@ test('A JOINER CANNOT IMPERSONATE THE HOST', async () => {
   // signal the spoof check reads, and precisely what a payload cannot fake.
   const forged = {
     k: FRAME.VIEW,
+    // THE RIGHT TABLE, because a table id is not a secret — it rides in every
+    // broadcast lobby frame, and an attacker who could not copy one would be a
+    // very poor attacker. The forgery is well-formed and correctly addressed;
+    // what refuses it is that it arrived relayed, from somebody who is not the
+    // host. That is the check, and it does not depend on the forger being lazy.
+    tableId: TID,
     seq: 999,
     view: {
       v: 1, seat: 1, seats: 3, zones: {},
@@ -520,7 +537,7 @@ test('a client on the wrong pack version refuses to seat itself', async () => {
   const aPort = net.createDevice('a', { name: 'Ada' });
 
   const bad = [];
-  const client = createTableClient({
+  const client = createTableClient({ tableId: TID,
     peer: aPort,
     expects: () => ({ packId: pack.id, packVersion: '9.9.9', variants: [] }),
     hooks: { onIncompatible: (why) => bad.push(why) },
@@ -528,7 +545,7 @@ test('a client on the wrong pack version refuses to seat itself', async () => {
   client.start();
 
   net.createDevice('host').send({
-    k: FRAME.LOBBY, protocol: PROTOCOL_VERSION, packId: pack.id, packVersion: '0.1.0',
+    tableId: TID, k: FRAME.LOBBY, protocol: PROTOCOL_VERSION, packId: pack.id, packVersion: '0.1.0',
     variants: [], hostDeviceId: 'host', seatCount: 3,
     seats: [{ seat: 0, kind: 'device', deviceId: 'host' }],
   }, { to: 'a' });
@@ -543,7 +560,7 @@ test('a different variant set is a different rule set, and is refused', async ()
   const aPort = net.createDevice('a', { name: 'Ada' });
 
   const bad = [];
-  const client = createTableClient({
+  const client = createTableClient({ tableId: TID,
     peer: aPort,
     expects: () => ({ packId: pack.id, packVersion: undefined, variants: [] }),
     hooks: { onIncompatible: (why) => bad.push(why) },
@@ -551,7 +568,7 @@ test('a different variant set is a different rule set, and is refused', async ()
   client.start();
 
   net.createDevice('host').send({
-    k: FRAME.LOBBY, protocol: PROTOCOL_VERSION, packId: pack.id,
+    tableId: TID, k: FRAME.LOBBY, protocol: PROTOCOL_VERSION, packId: pack.id,
     variants: ['house-rule'], hostDeviceId: 'host', seatCount: 3,
     seats: [{ seat: 0, kind: 'device', deviceId: 'host' }],
   }, { to: 'a' });

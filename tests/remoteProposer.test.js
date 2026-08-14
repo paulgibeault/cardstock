@@ -39,6 +39,9 @@ import { FRAME } from '../src/match/protocol.js';
 import { createPeerNetwork } from '../tools/peer-stub.mjs';
 import { loadPackFromDisk, listPackIds } from '../tools/pack-test.mjs';
 
+/** The table these hostile frames are aimed at (protocol v2). */
+const TID = 'tbl-hostile';
+
 /* ------------------------------------------------------------------ *
  * A host and one remote proposer, on any pack
  * ------------------------------------------------------------------ */
@@ -73,7 +76,7 @@ async function tableFor(packId) {
   seats.claim(0, { deviceId: 'host' });
 
   const hostErrors = [];
-  const host = createTableHost({
+  const host = createTableHost({ tableId: TID,
     peer: hostPort,
     seats,
     liveState: () => state,
@@ -87,7 +90,7 @@ async function tableFor(packId) {
   });
 
   const rejects = [];
-  const a = createTableClient({
+  const a = createTableClient({ tableId: TID,
     peer: aPort,
     expects: () => ({
       packId: pack.id,
@@ -170,52 +173,52 @@ function corpus({ state, seat }) {
   const cases = [
     {
       name: 'a move whose actor is a seat the sender does not hold',
-      frame: { k: FRAME.PROPOSE, pid: 'h1', move: { ...anyMove, actor: otherSeat } },
+      frame: { tableId: TID, k: FRAME.PROPOSE, pid: 'h1', move: { ...anyMove, actor: otherSeat } },
     },
     {
       name: 'a card id that names nothing in the deck',
-      frame: { k: FRAME.PROPOSE, pid: 'h3', move: { actor: seat, type: anyMove.type, cards: ['no-such-card'] } },
+      frame: { tableId: TID, k: FRAME.PROPOSE, pid: 'h3', move: { actor: seat, type: anyMove.type, cards: ['no-such-card'] } },
     },
     {
       name: 'a move type this pack has never heard of',
-      frame: { k: FRAME.PROPOSE, pid: 'h4', move: { actor: seat, type: 'summonDragon' } },
+      frame: { tableId: TID, k: FRAME.PROPOSE, pid: 'h4', move: { actor: seat, type: 'summonDragon' } },
     },
     {
       name: 'an actor outside the table',
-      frame: { k: FRAME.PROPOSE, pid: 'h5', move: { actor: seatCount + 40, type: anyMove.type } },
+      frame: { tableId: TID, k: FRAME.PROPOSE, pid: 'h5', move: { actor: seatCount + 40, type: anyMove.type } },
     },
     {
       name: 'a thousand cards',
       frame: {
-        k: FRAME.PROPOSE, pid: 'h6',
+        tableId: TID, k: FRAME.PROPOSE, pid: 'h6',
         move: { actor: seat, type: anyMove.type, cards: Array.from({ length: 1000 }, () => foreignCard) },
       },
     },
     {
       name: 'a card id shaped like a selector',
-      frame: { k: FRAME.PROPOSE, pid: 'h7', move: { actor: seat, type: anyMove.type, cards: ['#hand > *'] } },
+      frame: { tableId: TID, k: FRAME.PROPOSE, pid: 'h7', move: { actor: seat, type: anyMove.type, cards: ['#hand > *'] } },
     },
     {
       name: 'a zone address shaped like a path traversal',
       frame: {
-        k: FRAME.PROPOSE, pid: 'h8',
+        tableId: TID, k: FRAME.PROPOSE, pid: 'h8',
         move: { actor: seat, type: anyMove.type, from: '../../hand.0', to: 'discard' },
       },
     },
     {
       name: 'a choice whose values are objects',
       frame: {
-        k: FRAME.PROPOSE, pid: 'h9',
+        tableId: TID, k: FRAME.PROPOSE, pid: 'h9',
         move: { actor: seat, type: anyMove.type, choice: { suit: { toString: 'hearts' } } },
       },
     },
     {
       name: 'no move at all',
-      frame: { k: FRAME.PROPOSE, pid: 'h10' },
+      frame: { tableId: TID, k: FRAME.PROPOSE, pid: 'h10' },
     },
     {
       name: 'a proposal with no proposal id',
-      frame: { k: FRAME.PROPOSE, move: { ...anyMove } },
+      frame: { tableId: TID, k: FRAME.PROPOSE, move: { ...anyMove } },
     },
     {
       name: 'a prototype-polluting move',
@@ -230,7 +233,7 @@ function corpus({ state, seat }) {
     },
     {
       name: 'a host-only frame from a client',
-      frame: { k: FRAME.VIEW, seq: 0, view: { v: 1, seat: 0 } },
+      frame: { tableId: TID, k: FRAME.VIEW, seq: 0, view: { v: 1, seat: 0 } },
     },
   ];
 
@@ -240,13 +243,13 @@ function corpus({ state, seat }) {
   if (withCards) {
     cases.push({
       name: 'a real move played with a card out of somebody else\'s hand',
-      frame: { k: FRAME.PROPOSE, pid: 'h13', move: { ...withCards, cards: [foreignCard] } },
+      frame: { tableId: TID, k: FRAME.PROPOSE, pid: 'h13', move: { ...withCards, cards: [foreignCard] } },
     });
   }
   if (withFrom) {
     cases.push({
       name: 'a real move sourced from another seat\'s hand',
-      frame: { k: FRAME.PROPOSE, pid: 'h14', move: { ...withFrom, from: otherHand } },
+      frame: { tableId: TID, k: FRAME.PROPOSE, pid: 'h14', move: { ...withFrom, from: otherHand } },
     });
   }
   return { cases, expressible: { withCards: !!withCards, withFrom: !!withFrom } };
@@ -301,7 +304,7 @@ test('the rate limit stops reading a flood without ever letting one through', as
   // still reads.
   for (let i = 0; i < 200; i++) {
     t.aPort.send({
-      k: FRAME.PROPOSE, pid: `flood${i}`,
+      tableId: TID, k: FRAME.PROPOSE, pid: `flood${i}`,
       move: { actor: t.seat, type: 'playCard', cards: [foreign] },
     }, { to: 'host' });
   }

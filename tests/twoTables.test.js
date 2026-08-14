@@ -54,6 +54,7 @@ async function twoHostParty() {
       host: createTableHost({
         peer,
         seats,
+        tableId: `tbl-${deviceId}`,
         liveState: () => null,
         packInfo: () => ({ packId, packVersion: '1.0.0', variants: [] }),
         nameFor: (seat) => `Seat ${seat}`,
@@ -108,8 +109,8 @@ test('both hosts’ tables are sighted — the case that used to yield none', as
   party.dana.host.start();
 
   assert.strictEqual(directory.size, 2, 'two hosts advertising, two tables known');
-  assert.strictEqual(directory.get('ada').packId, 'crazy-eights');
-  assert.strictEqual(directory.get('dana').packId, 'hearts');
+  assert.strictEqual(directory.get('tbl-ada').packId, 'crazy-eights');
+  assert.strictEqual(directory.get('tbl-dana').packId, 'hearts');
 });
 
 test('a relayed lobby frame is still refused — widening the host is not widening trust', async () => {
@@ -121,8 +122,9 @@ test('a relayed lobby frame is still refused — widening the host is not wideni
   // itself a host. It reaches Kit through the hub, so it arrives relayed.
   const impostorPort = party.net.createDevice('mal', { name: 'Mal' });
   impostorPort.send({
+    tableId: 'tbl-mal',
     k: FRAME.LOBBY,
-    protocol: 1,
+    protocol: 2,
     packId: 'crazy-eights',
     packVersion: '1.0.0',
     variants: [],
@@ -134,7 +136,7 @@ test('a relayed lobby frame is still refused — widening the host is not wideni
   });
 
   assert.strictEqual(directory.size, 0, 'a relayed host-role frame advertises nothing');
-  assert.ok(!directory.has('mal'));
+  assert.ok(!directory.has('tbl-mal'));
 });
 
 test('a client of one table is unmoved by the other table’s frames', async () => {
@@ -145,6 +147,7 @@ test('a client of one table is unmoved by the other table’s frames', async () 
   const problems = [];
   const client = createTableClient({
     peer: party.ports.kit,
+    tableId: 'tbl-ada',
     // The table Kit sat down at, NAMED. Without this the client falls back to
     // discovery, finds two direct peers, and refuses both.
     host: 'ada',
@@ -163,13 +166,49 @@ test('a client of one table is unmoved by the other table’s frames', async () 
   assert.ok(lobbies.length >= 1, 'Ada’s lobby reached her client');
   assert.ok(lobbies.every((f) => f.hostDeviceId === 'ada'),
     'Dana’s table never presented itself as Ada’s');
-  // Dana's frame is a host-role frame from a device that is not this client's
-  // host. It is dropped, and dropped LOUDLY — a silent drop and a correct
-  // filter look identical from here.
-  assert.ok(problems.some((p) => p.kind === 'spoofed-authority' && p.deviceId === 'dana'),
-    'the other host’s frame was refused by name');
+  // A NEIGHBOURING TABLE IS NOT AN ATTACK, and protocol v2 is what lets this be
+  // said properly. Under v1 the only tool was the authority check, so Dana's
+  // perfectly honest frame came back as `spoofed-authority` — an accusation
+  // aimed at somebody who had done nothing but deal a different game. Now the
+  // frame names its table, this client sees it is not the one it sat down at,
+  // and ignores it in silence. The spoof check still exists and still bites;
+  // it is simply no longer asked a question about somebody else's table.
+  assert.deepStrictEqual(problems, [],
+    'a frame for another table is not an error, it is just not ours');
   // And the refusal did not cost Kit the pack it actually loaded.
   assert.strictEqual(pack.id, 'crazy-eights');
+});
+
+test('a frame for OUR table from the wrong device is still a spoof', async () => {
+  const party = await twoHostParty();
+  const problems = [];
+  const client = createTableClient({
+    peer: party.ports.kit,
+    host: 'ada',
+    tableId: 'tbl-ada',
+    expects: () => ({ packId: 'crazy-eights', packVersion: '1.0.0', variants: [] }),
+    hooks: { onError: (err) => problems.push(err) },
+  });
+  client.start();
+
+  // Dana claims to be speaking FOR ADA'S TABLE. The table id is right, so the
+  // v2 filter lets it through to the check that was always the real defence.
+  party.ports.dana.send({
+    tableId: 'tbl-ada',
+    k: FRAME.LOBBY,
+    protocol: 2,
+    packId: 'crazy-eights',
+    packVersion: '1.0.0',
+    variants: [],
+    hostDeviceId: 'ada',
+    seatCount: 2,
+    seats: [{ seat: 0, kind: 'device', deviceId: 'ada', name: 'Ada', status: 'connected' },
+      { seat: 1, kind: 'empty', name: '', status: 'empty' }],
+    started: false,
+  }, { to: 'kit' });
+
+  assert.ok(problems.some((p) => p.kind === 'spoofed-authority' && p.deviceId === 'dana'),
+    'naming the right table does not make you its host');
 });
 
 test('a host sees a neighbour’s table without joining it', async () => {
@@ -182,7 +221,7 @@ test('a host sees a neighbour’s table without joining it', async () => {
   party.ada.host.start();
   party.dana.host.start();
 
-  assert.deepStrictEqual(directory.all().map((e) => e.key), ['dana'],
+  assert.deepStrictEqual(directory.all().map((e) => e.key), ['tbl-dana'],
     'the neighbour’s table is known; our own broadcast is not a discovery');
 });
 
@@ -196,6 +235,6 @@ test('the directory keys on the frame’s own host id', async () => {
   party.ada.host.start();
   party.dana.host.start();
 
-  assert.deepStrictEqual(frames.map(tableKeyOf).sort(), ['ada', 'dana'],
+  assert.deepStrictEqual(frames.map(tableKeyOf).sort(), ['tbl-ada', 'tbl-dana'],
     'hostDeviceId is already on the wire — which is why this stage needs no protocol change');
 });
