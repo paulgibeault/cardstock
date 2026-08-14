@@ -742,3 +742,54 @@ test('a seat nobody is waiting on is never on a clock', async () => {
   advance(10_000);
   assert.deepEqual(fired, [], 'a clock nobody asked for expired anyway');
 });
+
+/* ------------------------------------------------------------------ *
+ * Every outbound frame names its table — including the ones that are
+ * announcements rather than requests. See #56.
+ * ------------------------------------------------------------------ */
+
+test('a joiner’s bye names its table, so the host can act on it', async () => {
+  const t = await threeSeatTable();
+  seatAll(t);
+
+  const seen = [];
+  t.ports.host.onMessage((payload) => { if (payload?.k === FRAME.BYE) seen.push(payload); });
+
+  t.a.sendBye('leave');
+
+  assert.equal(seen.length, 1, 'the bye reached the host at all');
+  // WITHOUT THIS the host's `validateFrame` refuses the frame and `handleBye`
+  // never runs — no seat notification and, because handleBye is what
+  // re-broadcasts the lobby, no invitation back for the player who just left.
+  assert.equal(seen[0].tableId, TID);
+  assert.equal(validateFrame(seen[0]).ok, true, 'and it is a frame v2 accepts');
+});
+
+test('a joiner’s emote names its table too', async () => {
+  const t = await threeSeatTable();
+  seatAll(t);
+
+  const seen = [];
+  t.ports.host.onMessage((payload) => { if (payload?.k === FRAME.EMOTE) seen.push(payload); });
+
+  t.a.emote(0);
+
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].tableId, TID);
+  assert.equal(validateFrame(seen[0]).ok, true);
+});
+
+test('a host acts on a joiner’s bye by re-publishing its lobby', async () => {
+  const t = await threeSeatTable();
+  seatAll(t);
+
+  const before = t.seen.a.lobbies.length;
+
+  t.a.sendBye('leave');
+
+  // THE INVITATION BACK. `handleBye` broadcasts, which is the only reason a
+  // player who leaves is ever offered the table again (#56) — the panel picks
+  // that frame up as a sighting and becomes a client of it a second time.
+  assert.ok(t.seen.a.lobbies.length > before,
+    `expected a fresh lobby after the bye, saw ${t.seen.a.lobbies.length - before}`);
+});
