@@ -39,20 +39,21 @@ import { wallClock } from '../match/clock.js';
 import { makeCtx } from '../engine/context.js';
 import { chooseBotMove } from '../engine/bot.js';
 import { enumerateLegalMoves } from '../engine/movePipeline.js';
+import { rehydrateMatch } from '../engine/replay.js';
 import { createTableClient } from '../match/client.js';
 import { createTableSession } from '../match/tableSession.js';
 import { createSessionRegistry } from '../match/sessionRegistry.js';
 import { FRAME, EMOTES, validateFrame, isAuthentic, mintTableId } from '../match/protocol.js';
 import { botById, initialsOf, pickBotIds } from '../players/roster.js';
 import { createBotDriver } from './botDriver.js';
-import { loadSettings } from '../arcade/storage.js';
+import { loadSettings, saveHostMatch, clearHostMatch, hostMatches, loadHostMatch } from '../arcade/storage.js';
 import { fetchPack, fetchPackManifest } from './packSource.js';
 import { confirmAction } from './confirm.js';
 import {
   adoptSharedView, leaveSharedTable, tableContext, setSeating, dealHostedTable,
   setLocalMoveListener, afterRemoteMove, setTablePaused, rerenderTable,
 } from './table.js';
-import { createSeatTable, createSeatLens } from '../players/seats.js';
+import { createSeatTable, createSeatLens, deserializeSeatTable } from '../players/seats.js';
 import { createTableDirectory, tableKeyOf } from '../match/tableDirectory.js';
 
 const el = {
@@ -966,6 +967,120 @@ function ourLobbyFrame() {
 }
 
 /**
+ * The chairs a brand-new party starts with: us in seat 0, bots in the rest.
+ *
+ * Bots by default so the table is playable the moment it is dealt whether or
+ * not anybody turns up. A seat is opened by tapping it, not by default.
+ */
+function buildSeatTable(count, me) {
+  const seats = createSeatTable({ seats: count, localDeviceId: me });
+  seats.claim(0, { deviceId: me });
+  for (let seat = 1; seat < count; seat++) seats.seatBot(seat);
+  return seats;
+}
+
+/**
+ * Build a live hosted table around a seat table, and register it.
+ *
+ * THE ONLY PLACE A HOST SESSION IS BORN — both doors come through here. A fresh
+ * deal arrives from `hostGame` with chairs it just built; a table coming back
+ * from storage arrives from `rehydrateOne` with chairs it just deserialized.
+ * Everything after that point is identical, and having written it twice for
+ * five minutes was enough to see why it should not be: the second copy is where
+ * a hook quietly goes missing and a restored table stops saving itself.
+ */
+function openHostSession({ tableId, packId, packName: name, variants, seats }) {
+  const session = createTableSession({ tableId, packId, role: 'host', packName: name });
+  session.pack = { packId, variants, name };
+  session.seats = seats;
+  sessions.add(session);
+
+  session.attach({ host: createTableHost({
+    peer: port,
+    seats: session.seats,
+    tableId: session.tableId,
+    // NULL UNTIL THE DEAL, which the protocol already understands: a lobby
+    // frame with `started: false` is a table being built, and the host answers
+    // a claim with a roster rather than a view because there is no view yet.
+    //
+    // READ FROM THE SESSION, NOT THE FELT. This one line is the inversion: it
+    // used to be `tableContext()?.state`, which meant the game the host
+    // arbitrated against was whichever one was on screen — and therefore that
+    // navigating away from a hosted table stopped it being a table at all.
+    liveState: () => session.state,
+    packInfo: () => ({ packId: session.pack.packId, variants: session.pack.variants }),
+    nameFor: nameForSeat,
+    deadlines: () => session.timer?.deadlines() || [],
+    hooks: {
+      // THE FELT ONLY ANIMATES THE TABLE IT IS SHOWING. `afterRemoteMove` draws
+      // on whatever `tableContext()` currently holds, so calling it for a
+      // backgrounded table would play another game's card onto the open one.
+      // Unbound, the move is applied and published and nothing is drawn — which
+      // is the whole of what "headless" means here.
+      onApplied: (_state, move) => {
+        if (session.bound) afterRemoteMove(move);
+        armTimer(session);
+        driveBots(session);
+        persist(session);
+      },
+      // A remote claim arrives here, which is also the late-joiner path: the
+      // host must stop moving that seat and start calling it by its name. No
+      // re-broadcast — handleClaim already sends one, and this fires inside it.
+      onSeatsChanged: () => refreshSeats(),
+      onEmote: ({ emote }) => burst(emote),
+      onError: surfaceError,
+      onBye: () => refreshSeats(),
+    },
+  }) });
+  // THE CLOCK IS THE HOST'S, AND ONLY THE HOST'S. A client that could time
+  // seats out would be a client that can force its opponents to pass by running
+  // its clock fast, so this is armed here and the deadlines travel outward in
+  // the view as absolute instants for clients to render.
+  session.attach({ timer: createTurnTimer({
+    // The WALL clock, not the session one: a shared hand does not stop because
+    // one tab stopped painting, and a deadline has to survive a sleeping host.
+    clock: wallClock(),
+    timeoutMs: TURN_TIMEOUT_MS,
+    actingSeatsOf: (state) => {
+      const template = state.pack.template;
+      return template.actingSeats ? template.actingSeats(makeCtx(state)) : [state.turn.seat];
+    },
+    // ANY DEVICE-HELD SEAT WHOSE DEVICE IS NOT WATCHING THIS TABLE (plan §3).
+    //
+    // It used to be "every seat but our own", which is right for the table in
+    // front of the player — a game has always waited for the person looking at
+    // it, and a bot needs no encouragement — and wrong the moment this device
+    // is playing a DIFFERENT table. There, our own seat is exactly as unwatched
+    // as an absent joiner's, and exempting it would stall the hand for everyone
+    // else until we happened to come back.
+    //
+    // So the exemption is about attention rather than identity: our seat is
+    // exempt only at the table the felt is bound to.
+    waitsOn: (seat) => {
+      const owner = session.seats?.ownerOf(seat);
+      if (owner?.kind !== 'device') return false;
+      const isOurs = owner.deviceId === selfId();
+      return !(isOurs && session.bound);
+    },
+    onExpire: (state, seat) => {
+      // A TURN THAT RAN OUT IS A MOVE. The house plays one for them and the
+      // seat stays theirs — they are back in control the moment they come
+      // back, which is the same answer an interrupted link already gets.
+      const move = chooseBotMove(state, seat);
+      if (!move) return;
+      session.host?.applyLocal(move);
+    },
+  }) });
+  session.attach({ bots: headlessBotsFor(session) });
+  setLocalMoveListener((_state, _move, events) => {
+    session.host?.publish(events);
+    armTimer(session);
+    persist(session);
+  });
+  return session;
+}
+
+/**
  * HOST A GAME FROM THE LOBBY, before a single card is dealt.
  *
  * This used to start from the felt: you dealt a solo hand and then invited
@@ -1024,99 +1139,12 @@ export async function hostGame(packId) {
   // table, the pack, the minted id and (after the deal) the state all belong to
   // this object for as long as the table exists — not to this module, and not
   // to whatever the felt happens to be showing.
-  const session = createTableSession({
+  const session = openHostSession({
     tableId: mintTableId(),
     packId,
-    role: 'host',
     packName: manifest?.name || packId,
-  });
-  session.pack = { packId, variants: [], name: manifest?.name || packId };
-  session.seats = createSeatTable({ seats: count, localDeviceId: me });
-  session.seats.claim(0, { deviceId: me });
-  // Bots in the rest, so the table is playable the moment it is dealt whether
-  // or not anybody turns up. A seat is opened by tapping it, not by default.
-  for (let seat = 1; seat < count; seat++) session.seats.seatBot(seat);
-  sessions.add(session);
-
-  session.attach({ host: createTableHost({
-    peer: port,
-    seats: session.seats,
-    tableId: session.tableId,
-    // NULL UNTIL THE DEAL, which the protocol already understands: a lobby
-    // frame with `started: false` is a table being built, and the host answers
-    // a claim with a roster rather than a view because there is no view yet.
-    //
-    // READ FROM THE SESSION, NOT THE FELT. This one line is the inversion: it
-    // used to be `tableContext()?.state`, which meant the game the host
-    // arbitrated against was whichever one was on screen — and therefore that
-    // navigating away from a hosted table stopped it being a table at all.
-    liveState: () => session.state,
-    packInfo: () => ({ packId: session.pack.packId, variants: session.pack.variants }),
-    nameFor: nameForSeat,
-    deadlines: () => session.timer?.deadlines() || [],
-    hooks: {
-      // THE FELT ONLY ANIMATES THE TABLE IT IS SHOWING. `afterRemoteMove` draws
-      // on whatever `tableContext()` currently holds, so calling it for a
-      // backgrounded table would play another game's card onto the open one.
-      // Unbound, the move is applied and published and nothing is drawn — which
-      // is the whole of what "headless" means here.
-      onApplied: (_state, move) => {
-        if (session.bound) afterRemoteMove(move);
-        armTimer(session);
-        driveBots(session);
-      },
-      // A remote claim arrives here, which is also the late-joiner path: the
-      // host must stop moving that seat and start calling it by its name. No
-      // re-broadcast — handleClaim already sends one, and this fires inside it.
-      onSeatsChanged: () => refreshSeats(),
-      onEmote: ({ emote }) => burst(emote),
-      onError: surfaceError,
-      onBye: () => refreshSeats(),
-    },
-  }) });
-  // THE CLOCK IS THE HOST'S, AND ONLY THE HOST'S. A client that could time
-  // seats out would be a client that can force its opponents to pass by running
-  // its clock fast, so this is armed here and the deadlines travel outward in
-  // the view as absolute instants for clients to render.
-  session.attach({ timer: createTurnTimer({
-    // The WALL clock, not the session one: a shared hand does not stop because
-    // one tab stopped painting, and a deadline has to survive a sleeping host.
-    clock: wallClock(),
-    timeoutMs: TURN_TIMEOUT_MS,
-    actingSeatsOf: (state) => {
-      const template = state.pack.template;
-      return template.actingSeats ? template.actingSeats(makeCtx(state)) : [state.turn.seat];
-    },
-    // ANY DEVICE-HELD SEAT WHOSE DEVICE IS NOT WATCHING THIS TABLE (plan §3).
-    //
-    // It used to be "every seat but our own", which is right for the table in
-    // front of the player — a game has always waited for the person looking at
-    // it, and a bot needs no encouragement — and wrong the moment this device
-    // is playing a DIFFERENT table. There, our own seat is exactly as unwatched
-    // as an absent joiner's, and exempting it would stall the hand for everyone
-    // else until we happened to come back.
-    //
-    // So the exemption is about attention rather than identity: our seat is
-    // exempt only at the table the felt is bound to.
-    waitsOn: (seat) => {
-      const owner = session.seats?.ownerOf(seat);
-      if (owner?.kind !== 'device') return false;
-      const isOurs = owner.deviceId === selfId();
-      return !(isOurs && session.bound);
-    },
-    onExpire: (state, seat) => {
-      // A TURN THAT RAN OUT IS A MOVE. The house plays one for them and the
-      // seat stays theirs — they are back in control the moment they come
-      // back, which is the same answer an interrupted link already gets.
-      const move = chooseBotMove(state, seat);
-      if (!move) return;
-      session.host?.applyLocal(move);
-    },
-  }) });
-  session.attach({ bots: headlessBotsFor(session) });
-  setLocalMoveListener((_state, _move, events) => {
-    session.host?.publish(events);
-    armTimer(session);
+    variants: [],
+    seats: buildSeatTable(count, me),
   });
   session.host.start();
   port.onPeersChange(() => { refreshSeats(); checkForDrops(); });
@@ -1158,6 +1186,110 @@ export async function dealParty() {
   session.host.publish([]);
   hidePartyScreen();
   refreshSeats();
+  return true;
+}
+
+/* ------------------------------------------------------------------ *
+ * A table that survives the tab
+ *
+ * Plan §6. `saveHostMatch`/`loadHostMatch`/`clearHostMatch` were built and
+ * tested a long way back and never called once — there was no point while a
+ * hosted table died with the felt anyway. Now that it does not, a reload is the
+ * only thing left that can lose one.
+ *
+ * SEED + LOG, which is the same payload solo play stores, plus the seat
+ * bindings alongside it. The bindings are NOT part of the match: replaying the
+ * log reproduces the cards whoever is holding them, and a seat changing hands
+ * mid-match must not make the log unreplayable.
+ *
+ * DEADLINES ARE NEVER PERSISTED. A stored deadline is a promise about a clock
+ * that stopped existing when the tab closed; whoever rehydrates arms a fresh
+ * one, which is also the answer that is fair to a player whose host crashed.
+ * ------------------------------------------------------------------ */
+
+function persist(session) {
+  if (!session?.hosting() || !session.state || !session.seats) return;
+  // A VIEW IS NOT A MATCH. Only a host holds seed + log; a joiner keeps nothing
+  // across a reload and re-asks for a snapshot, which is what stops a client
+  // writing full information about hands it was never shown.
+  if (session.state.isView) return;
+  try {
+    // A FINISHED MATCH IS NOT A RESUMABLE ONE. Clearing on the last move rather
+    // than waiting for "Stop hosting" means a host who closes the tab on a
+    // finished game does not come back to it — the same rule solo play follows
+    // when a match ends.
+    if (session.state.gameOver) clearHostMatch(session.tableId);
+    else saveHostMatch(session.tableId, session.state, session.seats);
+  } catch (err) {
+    // A save that fails is not a reason to stop the game. The launcher's own
+    // quota handler (registerStorageErrorHandler) is what tells the player.
+    console.error('[cardstock] could not save the hosted table', err);
+  }
+}
+
+/**
+ * Put back every table this device was hosting when it closed.
+ *
+ * Called once at boot, after the port exists. Each stored table becomes a live
+ * session again — replayed through the full validator rather than trusted,
+ * seats rebuilt from their bindings — and then publishes a lobby, which is the
+ * whole of the reconvening: a joiner hears it, re-claims, and gets a snapshot
+ * by the path it already uses.
+ */
+export async function rehydrateHostedTables() {
+  const stored = hostMatches();
+  if (!stored.length) return 0;
+  ensurePort();
+  const me = selfId();
+  if (!me) return 0;
+
+  let restored = 0;
+  for (const entry of stored) {
+    try {
+      if (await rehydrateOne(entry.tableId)) restored += 1;
+    } catch (err) {
+      // ONE UNREADABLE TABLE IS NOT ALL OF THEM. A pack that no longer parses,
+      // or a log the current rules refuse, drops that table and leaves the
+      // others alone — and drops it for good rather than retrying every boot.
+      console.error('[cardstock] could not restore a hosted table', err);
+      clearHostMatch(entry.tableId);
+    }
+  }
+  if (restored) { refreshEntry(); renderScreen(); }
+  return restored;
+}
+
+async function rehydrateOne(tableId) {
+  const snapshot = loadHostMatch(tableId);
+  if (!snapshot) { clearHostMatch(tableId); return false; }
+
+  const pack = await fetchPack(snapshot.packId, snapshot.variants);
+  // THE FULL VALIDATOR, not a shortcut. `rehydrateMatch` replays every move
+  // through `applyMove`, so a log that the current rules would refuse throws
+  // here rather than producing a table in a state those rules could never have
+  // reached. That is the same door the payload went out of.
+  const state = rehydrateMatch(pack, snapshot);
+  const seats = deserializeSeatTable(snapshot.seatBindings, { localDeviceId: selfId() })
+    || createSeatTable({ seats: snapshot.seats, localDeviceId: selfId() });
+
+  const session = openHostSession({
+    tableId,
+    packId: snapshot.packId,
+    packName: packName(snapshot.packId),
+    variants: snapshot.variants || [],
+    seats,
+  });
+  session.state = state;
+  session.seating = seatingFromRoster(ourLobbyFrame());
+  session.lobbyFrame = ourLobbyFrame();
+  publishOwnTable();
+  // THE PARTY RECONVENES ON A LOBBY FRAME. Nothing else is needed: a joiner
+  // that hears it re-claims its seat and the host answers with a snapshot,
+  // which is exactly the path a late joiner already takes.
+  session.host.broadcastLobby();
+  // Armed fresh, never restored — see this section's header.
+  armTimer(session);
+  driveBots(session);
   return true;
 }
 
@@ -1278,6 +1410,10 @@ export function stopHosting() {
   // bookkeeping Sets and the state all go with the session, which is what stops
   // this list drifting out of step with the one in hostGame.
   sessions.remove(tableId);
+  // AND ITS SLOT. Stopping is the deliberate end of a table, so leaving the
+  // save behind would resurrect it on the next boot — a game the player closed
+  // on purpose, back on the lobby with everybody re-invited to it.
+  clearHostMatch(tableId);
   // Our table stops being a table the moment we stop hosting it, and its tile
   // has to go with it — we already told everybody else the same thing by `bye`.
   tables.forget(tableId);

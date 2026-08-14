@@ -27,6 +27,7 @@ import {
 } from './ui/lobby.js';
 import {
   initParty, refreshEntry as refreshPartyEntry, hidePartyScreen, hostGame, canHost, leaveFelt,
+  rehydrateHostedTables,
 } from './ui/party.js';
 import { initInspector, hideInspector } from './ui/inspector.js';
 
@@ -169,6 +170,12 @@ async function boot() {
   });
 
   await route();
+
+  // PUT BACK ANY TABLE THIS DEVICE WAS HOSTING (#48 §6). After `route`, so the
+  // player is looking at something before the party reconvenes behind it, and
+  // awaited only for its errors — a restored table publishes a lobby and waits
+  // to be re-claimed rather than taking over the screen.
+  rehydrateHostedTables().catch((err) => console.error('[cardstock] restore failed', err));
 }
 
 boot().catch(reportBootFailure);

@@ -19,7 +19,7 @@ import { ROOT } from "../tools/stage.mjs";
 import { soloSeatTable } from "../src/players/seats.js";
 import {
   KEYS, MATCH_KEY_PREFIX, matchKey, isMatchKey, saveMatch, loadMatch, clearMatch,
-  saveHostMatch, loadHostMatch, clearHostMatch,
+  saveHostMatch, loadHostMatch, clearHostMatch, hostMatches,
   listMatchSummaries, lastPlayedPack, rememberPack,
 } from "../src/arcade/storage.js";
 
@@ -136,6 +136,9 @@ test("the last pack played is a hint the lobby can trust or ignore", () => {
   assert.strictEqual(lastPlayedPack(), "stockpile");
 });
 
+const TABLE_A = 't1aaaaaaaaaaaaaaaaa';
+const TABLE_B = 't2bbbbbbbbbbbbbbbbb';
+
 test('the shared table is stored under its own key, not match.<packId>', () => {
   // LOBBY_PLAN.md reserved this: a multiplayer match belongs to a party rather
   // than to a pack, and "only the open table advances" is exactly the invariant
@@ -145,21 +148,67 @@ test('the shared table is stored under its own key, not match.<packId>', () => {
   pack.template.setup(makeCtx(state));
   const seats = soloSeatTable(3);
 
-  saveHostMatch(state, seats);
-  assert.ok(Arcade.state.get('mpMatch'), 'written under mpMatch');
+  saveHostMatch(TABLE_A, state, seats);
+  assert.ok(Arcade.state.get('mpMatch.' + TABLE_A), 'written under mpMatch.<tableId>');
   assert.equal(Arcade.state.get(matchKey('crazy-eights')), undefined,
     'and emphatically not over the solo save for this pack');
 
-  const loaded = loadHostMatch();
+  const loaded = loadHostMatch(TABLE_A);
   assert.equal(loaded.packId, 'crazy-eights');
   assert.equal(loaded.seed, 7);
   assert.ok(loaded.seatBindings, 'the seat bindings ride along, so a reload re-seats everyone');
 
-  clearHostMatch();
-  assert.equal(loadHostMatch(), null);
+  clearHostMatch(TABLE_A);
+  assert.equal(loadHostMatch(TABLE_A), null);
 });
 
 test('a malformed shared table is refused rather than half-resumed', () => {
-  Arcade.state.set('mpMatch', { formatVersion: 999, packId: 'crazy-eights' });
-  assert.equal(loadHostMatch(), null);
+  Arcade.state.set('mpMatch.' + TABLE_A, { formatVersion: 999, packId: 'crazy-eights' });
+  assert.equal(loadHostMatch(TABLE_A), null);
+});
+
+test('two hosted tables get a slot each — the case one mpMatch key could not hold', () => {
+  const pack = packFromDisk('crazy-eights');
+  const one = createState({ pack, seats: 3, seed: 7 });
+  pack.template.setup(makeCtx(one));
+  const two = createState({ pack, seats: 3, seed: 99 });
+  pack.template.setup(makeCtx(two));
+
+  saveHostMatch(TABLE_A, one, soloSeatTable(3));
+  saveHostMatch(TABLE_B, two, soloSeatTable(3));
+
+  // A SINGLE SLOT WOULD HAVE LOST THE FIRST ONE. Same pack, same device, two
+  // tables — which is exactly what #43 asks for.
+  assert.equal(loadHostMatch(TABLE_A).seed, 7);
+  assert.equal(loadHostMatch(TABLE_B).seed, 99);
+
+  assert.deepEqual(hostMatches().map((e) => e.tableId).sort(), [TABLE_A, TABLE_B].sort());
+
+  clearHostMatch(TABLE_A);
+  assert.equal(loadHostMatch(TABLE_A), null);
+  assert.equal(loadHostMatch(TABLE_B).seed, 99, 'clearing one leaves the other');
+  assert.deepEqual(hostMatches().map((e) => e.tableId), [TABLE_B]);
+});
+
+test('the index never advertises a slot that is gone', () => {
+  const pack = packFromDisk('crazy-eights');
+  const state = createState({ pack, seats: 3, seed: 7 });
+  pack.template.setup(makeCtx(state));
+  saveHostMatch(TABLE_A, state, soloSeatTable(3));
+
+  // The slot removed behind the index's back — a half-finished clear, or a
+  // launcher pruning storage. The index is a hint, so a stale one costs a
+  // lookup and nothing else.
+  Arcade.state.remove('mpMatch.' + TABLE_A);
+  assert.deepEqual(hostMatches(), []);
+});
+
+test('a table id that is not a SAFE_ID is refused a slot', () => {
+  const pack = packFromDisk('crazy-eights');
+  const state = createState({ pack, seats: 3, seed: 7 });
+  pack.template.setup(makeCtx(state));
+
+  assert.equal(saveHostMatch('../../etc/passwd', state, soloSeatTable(3)), false);
+  assert.equal(loadHostMatch('../../etc/passwd'), null);
+  assert.deepEqual(hostMatches(), [], 'and nothing was written to the index either');
 });
