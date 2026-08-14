@@ -600,7 +600,117 @@ const rejoining = {
   },
 };
 
+/* ------------------------------------------------------------------ *
+ * 9. Two packs at once
+ * ------------------------------------------------------------------ */
+
+const twoPacks = {
+  title: 'one device hosts two packs at once; a joiner sits at both, and no frame crosses',
+  async run({ check, waitFor, frames, devices }) {
+    const SECOND = 'hearts';
+
+    // WHAT #43 ASKED FOR AND NOTHING DROVE. Everything above this is one table;
+    // the model has held several since T3 and the only evidence was a browser
+    // probe. This is the real transport, three launchers, two tables.
+    const first = (await party(frames.H, 'partySnapshot')).tables.find((t) => t.active)
+      || (await party(frames.H, 'partySnapshot')).tables[0];
+
+    const opened = await party(frames.H, 'hostGame', SECOND);
+    check('host: a second pack opens a second table', opened === true, `hostGame → ${opened}`);
+
+    const tables = (await party(frames.H, 'partySnapshot')).tables;
+    const ours = tables.filter((t) => t.hostDeviceId === devices.H);
+    const packs = new Set(ours.map((t) => t.packId));
+    check('host: two tables of two different packs, under two ids',
+      ours.length >= 2 && packs.has(PACK) && packs.has(SECOND)
+        && new Set(ours.map((t) => t.key)).size === ours.length,
+      JSON.stringify(ours.map((t) => ({ pack: t.packId, key: t.key.slice(0, 6) }))));
+
+    const second = ours.find((t) => t.packId === SECOND);
+    check('host: the new table is a table nobody has dealt yet', second && !second.started,
+      JSON.stringify(second));
+
+    // A IS ALREADY SITTING AT THE FIRST ONE. Sighting the second is not joining
+    // it — with a seat already held, the sniffer stops following new tables, so
+    // this is the tap that #49 part 4 made possible.
+    const SEAT = 3;
+    const sawIt = await waitFor(async () => {
+      await party(frames.A, 'refreshEntry');
+      return (await party(frames.A, 'partySnapshot')).tables.some((t) => t.key === second.key);
+    }, 20000);
+    check('joiner A: hears the second table without being dragged off the first', sawIt);
+
+    await party(frames.A, 'showPartyScreen', second.key);
+    const offered = await waitFor(() => frames.A.evaluate(
+      (s) => !!document.querySelector(`.party-seat[data-seat="${s}"] .party-seat__actions button`), SEAT), 20000);
+    check(`joiner A: the second table offers seat ${SEAT}`, offered);
+    await frames.A.evaluate(
+      (s) => document.querySelector(`.party-seat[data-seat="${s}"] .party-seat__actions button`).click(), SEAT);
+
+    // TWO SEATS, AND THE PANEL ANSWERS ABOUT WHICHEVER TABLE IT IS SHOWING.
+    const seatAt = async (key) => {
+      await party(frames.A, 'showPartyScreen', key);
+      return (await party(frames.A, 'partySnapshot')).seat;
+    };
+    const bothHeld = await waitFor(async () => await seatAt(second.key) === SEAT, 20000);
+    check(`joiner A: holds seat ${SEAT} at the second table`, bothHeld,
+      `seat ${await seatAt(second.key)}`);
+    const firstSeat = await seatAt(first.key);
+    check('joiner A: and still holds its seat at the first', firstSeat !== null && firstSeat !== undefined,
+      `seat ${firstSeat}`);
+
+    // BOTH TABLES GET DEALT, because the interesting assertion needs both to
+    // have a view to compare. Dealing acts on the table the panel is showing,
+    // which is itself the thing being tested: `ourTable()` resolves by focus.
+    const seqOf = async (key) => {
+      await party(frames.A, 'showPartyScreen', key);
+      return (await party(frames.A, 'partySnapshot')).seq;
+    };
+    const dealAt = async (key) => {
+      await party(frames.H, 'showPartyScreen', key);
+      await frames.H.evaluate(async () => {
+        const p = await window.__mod('src/ui/party.js');
+        await p.dealParty();
+      });
+    };
+
+    await dealAt(first.key);
+    const firstDealt = await waitFor(async () => await seqOf(first.key) >= 1, 20000);
+    check('joiner A: the FIRST table deals into its own view', firstDealt,
+      `seq ${await seqOf(first.key)}`);
+    const firstSeqBefore = await seqOf(first.key);
+
+    await dealAt(second.key);
+    const secondDealt = await waitFor(async () => await seqOf(second.key) >= 1, 20000);
+    check('joiner A: the second table deals into its own view too', secondDealt,
+      `seq ${await seqOf(second.key)}`);
+
+    // THE ASSERTION THIS SCENARIO EXISTS FOR. Both tables now have a view, so
+    // "unchanged" means something: a deal that leaked would have advanced the
+    // other table's sequence as well.
+    check('no frame crossed: dealing one table left the other exactly where it was',
+      (await seqOf(first.key)) === firstSeqBefore,
+      `first ${firstSeqBefore} → ${await seqOf(first.key)}`);
+
+    // And once more with a MOVE rather than a deal, which is the path every
+    // frame after the first takes.
+    const beforeMove = { first: await seqOf(first.key), second: await seqOf(second.key) };
+    await party(frames.H, 'showPartyScreen', second.key);
+    await party(frames.H, 'takeTurn');
+    const moved = await waitFor(async () => await seqOf(second.key) > beforeMove.second, 20000);
+    check('a move at one table reaches that table', moved,
+      `second ${beforeMove.second} → ${await seqOf(second.key)}`);
+    check('and reaches only that table',
+      (await seqOf(first.key)) === beforeMove.first,
+      `first ${beforeMove.first} → ${await seqOf(first.key)}`);
+
+    check('host: is still the host of both', ours.length >= 2
+      && (await party(frames.H, 'partySnapshot')).role === 'host',
+      `${ours.length} table(s) of ours`);
+  },
+};
+
 export const SCENARIOS = [
   scriptedHand, privacy, unknownTarget, interruption, overflow, capsStripped, namesAndChips,
-  rejoining,
+  rejoining, twoPacks,
 ];
