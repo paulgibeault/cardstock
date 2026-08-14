@@ -3259,6 +3259,84 @@ body.is-dragging .card-face { cursor: grabbing; }
   margin: 0 auto;
 }
 
+/* ------------------------------------------------------------------ *
+ * Tables
+ * ------------------------------------------------------------------ */
+
+/* THE ROW ABOVE THE GAMES. Deliberately not a `.tile`: a game tile is a mat in
+   the pack's own colour, sized to be the thing you came here to tap, and a
+   table is smaller and busier — a line about people rather than an invitation
+   to a game. Making them look alike would be a lie about what tapping does.
+
+   `max-width` matches the grid below so the two rows share an edge. */
+.tables {
+  max-width: 62rem;
+  margin: 0 auto 1.5rem;
+}
+.tables[hidden] { display: none; }
+
+.tables__heading {
+  margin: 0 0 0.6rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  opacity: 0.65;
+}
+
+.tables__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  gap: 0.6rem;
+}
+
+.table-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.15rem;
+  padding: 0.7rem 0.85rem;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  background: var(--chip-bg);
+  border: 1px solid var(--tile-border);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: transform 0.18s ease, border-color 0.18s ease;
+}
+
+.table-tile:hover { transform: translateY(-2px); border-color: var(--accent); }
+
+/* OURS READS DIFFERENTLY FROM THEIRS, because "your party" and "a table you
+   could join" are two different offers and the accent is how every other
+   surface in this game says "this one is yours". */
+.table-tile--mine { border-color: var(--accent); }
+
+.table-tile__who {
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.table-tile__game {
+  font-size: 0.78rem;
+  opacity: 0.85;
+}
+
+.table-tile__state {
+  font-size: 0.72rem;
+  opacity: 0.7;
+}
+
+/* YOUR SEAT IS THE ONE FACT WORTH RAISING ITS VOICE FOR. Everything else on a
+   table tile is about the table; this is about you, and it is the reason to
+   come back to a game that has been sitting for a day. */
+.table-tile__seat {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--accent);
+}
+
 /* A tile is a mat on the felt in the pack's own colour — not a list row. The
    accent arrives from the manifest through safeAccent() (§7b) and everything
    else here is mixed from it, so one hex per pack dresses the whole tile.
