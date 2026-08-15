@@ -166,6 +166,42 @@ test("sw.js keeps the CI-owned APP_VERSION line shape", () => {
  * So: `peer.send` may be named only inside the functions that complete a frame.
  * Anywhere else is a frame leaving through a door nobody is watching.
  */
+/**
+ * NO IMPLICIT SUBJECT (#73).
+ *
+ * `function f(session = ourTable())` reads as a convenience and behaves as a
+ * trap: forget the argument and the call compiles, passes review, and answers
+ * about whichever table the panel happens to be pointed at. That bug shipped
+ * three times during the two-table work — #64, #69, and `takeTurn` in #58 —
+ * and every time the shape that admitted it was this default.
+ *
+ * So the session is a required parameter, and a caller that genuinely means
+ * "the table on screen" writes `ourTable()` at the call site, where the choice
+ * of subject is visible to whoever reads it next.
+ *
+ * THE PARAMETER SHAPE ONLY. `const session = ourTable()` inside a function is
+ * exactly the legibility this asks for, and the file talks about the pattern in
+ * prose — neither is what the gate is about.
+ */
+const OURTABLE_DEFAULT = /\([^()]*\b[A-Za-z_$][\w$]*\s*=\s*ourTable\(\)/;
+
+test("party.js takes its session, never defaults to the focused table", () => {
+  // The regex has to bite, or a green run means nothing (TABLES_PLAN.md §11).
+  assert.match("function refreshSeats(session = ourTable()) {", OURTABLE_DEFAULT);
+  assert.match("function askAboutSeat(seat, session = ourTable()) {", OURTABLE_DEFAULT);
+  assert.doesNotMatch("  const session = ourTable();", OURTABLE_DEFAULT);
+
+  const file = "src/ui/party.js";
+  const offenders = fs.readFileSync(path.join(ROOT, file), "utf8").split("\n")
+    .map((line, index) => ({ line, at: index + 1 }))
+    .filter(({ line }) => !/^\s*(\/\/|\*|\/\*)/.test(line))
+    .filter(({ line }) => OURTABLE_DEFAULT.test(line))
+    .map(({ line, at }) => `${file}:${at}  ${line.trim()}`);
+  assert.deepStrictEqual(offenders, [],
+    "a session defaulted to ourTable() answers about the focused table, not the one "
+    + "the caller meant. Make it a required parameter and write ourTable() at the call site.");
+});
+
 test("no frame leaves src/match without going through its stamping helper", () => {
   const allowed = {
     "src/match/host.js": 2,     // sendTo + broadcast, both via stamp()

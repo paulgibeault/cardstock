@@ -259,16 +259,39 @@ reads that belonged to the session (#64); a hosted game written to the solo
 save slot as well, so the lobby offered "Resume" on a private copy (#67); and
 no way back into your own hosted table once #58 let it outlive the felt.
 
-Two gates now guard the shapes that produced them: every published frame is
-round-tripped through the validator with its seams asserted, and `peer.send`
-may only be named inside the functions that complete a frame (#63).
+Three gates now guard the shapes that produced them: every published frame is
+round-tripped through the validator with its seams asserted, `peer.send` may
+only be named inside the functions that complete a frame (#63), and no function
+in `party.js` may default its session to `ourTable()` (#73).
+
+### The two seams the closing review left (#73)
+
+Both in `src/ui/party.js`, both behaviour-preserving, both done after the
+workstream closed:
+
+- **No implicit session.** Ten functions read `fn(session = ourTable())`, so a
+  caller who forgot the argument silently got the FOCUSED table rather than the
+  one it meant — the shape behind #64, #69 and `takeTurn` in #58. The default is
+  gone from all ten; a caller that means the table on screen writes `ourTable()`
+  at the call site, and the gate above keeps it that way. `nameForSeat` throws
+  on a missing session rather than falling through to its deliberate joiner
+  fallback, which is what makes forgetting loud instead of merely wrong.
+- **The sniffer moved out**, to `src/ui/tableSightings.js`: the `onMessage`
+  subscription and its two authenticity rules, the table directory, the `bye`
+  and dead-host retirements, and the seat-stub bookkeeping. It takes its seams
+  by injection in the style of `botDriver.js` and imports nothing from
+  `party.js`, so the dependency arrow points one way. What acts on a sighting —
+  focus, joining, rendering — stayed behind, because those need the felt and
+  the registry in view.
 
 ### Testing (§10)
 
 The net went under first, as planned. `npm run mp-acceptance` runs nine
 scenarios on three real launchers; scenario 9 is the two-table case §10
 promised — one device hosting two packs, a joiner seated at both, a move at
-one table reaching only that table.
+one table reaching only that table, and (since #73) the tile row itself read
+back out of the DOM, which is the visible end of the directory the sniffer
+fills.
 
 `src/ui/party.js`, `table.js` and `lobby.js` still have no unit coverage.
 Every bug listed above was found by driving the real thing.

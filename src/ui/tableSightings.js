@@ -1,0 +1,283 @@
+// WHAT IS IN EARSHOT — and nothing about what to do with it.
+//
+// A lobby frame arriving from a peer answers one question: there is a table
+// over there. Everything a device might do about that — point the panel at it,
+// load its pack, draw a tile, sit down — is a decision made somewhere else,
+// with the felt and the registry in view. This module is the layer underneath
+// those decisions: it listens, it refuses what it cannot authenticate, and it
+// keeps the directory and the seat stubs honest.
+//
+// EXTRACTED FROM src/ui/party.js (#73), which had grown to 2,584 lines and was
+// the whole of the multiplayer screen. This is the first bite, chosen because
+// it has the fewest tendrils: nothing here touches the DOM, the engine, the
+// felt or a session, so the only thing that had to be negotiated on the way out
+// was which callbacks the screen wanted back.
+//
+// THE ARROW POINTS ONE WAY. This module imports nothing from party.js — every
+// seam it needs is injected, in the style of src/ui/botDriver.js. That is what
+// makes it possible to read this file and know that the "is that table real"
+// rules are all of them, rather than most of them.
+//
+// TWO RULES ABOUT TRUST, and they are the reason the sniffing is worth its own
+// module rather than being inlined at the subscription:
+//
+//   a frame is believed only from a device we hold a DIRECT link to, and
+//   never when it arrives RELAYED.
+//
+// Together they say a fellow joiner cannot advertise a table through the hub,
+// or announce that somebody else's table has closed. Both tests live here, in
+// one place, applied to every frame before anything downstream sees it.
+
+import { FRAME, validateFrame, isAuthentic } from '../match/protocol.js';
+import { createTableDirectory, tableKeyOf } from '../match/tableDirectory.js';
+import {
+  saveSeatStub, clearSeatStub, touchSeatStub, seatStubs,
+} from '../arcade/storage.js';
+
+/**
+ * @param port        () => the peer port, or null when there is no surface.
+ *                    A THUNK, because the port is built lazily and can arrive
+ *                    long after this module does — a party surface appears
+ *                    whenever the launcher says so.
+ * @param selfId      () => this device's id, or null
+ * @param peerName    (deviceId) => a display name, clamped and never trusted
+ * @param hosting     () => are we hosting anything? `pruneDead` needs it: a
+ *                    device is never in its own `peers()`.
+ * @param clearStaleNotice (frame, known) => void, called BEFORE the sighting is
+ *                    filed, while the previous frame for that table is still
+ *                    the one on record. The panel's own rule about when an
+ *                    epitaph has stopped being true; this module only knows
+ *                    when to ask.
+ * @param setNotice   (text) => void, for the one thing a sighting says out loud
+ * @param onSighting  ({ entry, frame }) => void — an authenticated lobby frame,
+ *                    filed. Focus, joining and rendering all happen here, in
+ *                    the caller, deliberately.
+ * NO DEFAULTS ON ANY OF THESE, which is the same rule #73 applied to party.js
+ * itself: a seam that quietly defaults to a no-op is a callback you can forget
+ * to wire and never find out about. There is one caller; it passes all ten.
+ *
+ * @param onTableClosed (key) => void — a host broadcast `bye 'closed'`
+ * @param onHostsGone   (keys) => void — hosts that left the party entirely
+ * @param onSuperseded  (keys) => void — tables their own host has replaced
+ *
+ * THREE WAYS FOR A TABLE TO STOP EXISTING, AND THEY ARE NOT ONE EVENT. What
+ * the panel should do afterwards differs in each — a table that closed hands
+ * the focus on to whatever else is in the room, whereas one that was superseded
+ * must NOT, because the table replacing it is being sighted in the same breath
+ * and inheriting the focus would auto-join a joiner into it. The module reports
+ * what happened; the screen decides where to look.
+ */
+export function createTableSightings({
+  port,
+  selfId,
+  peerName,
+  hosting,
+  clearStaleNotice,
+  setNotice,
+  onSighting,
+  onTableClosed,
+  onHostsGone,
+  onSuperseded,
+}) {
+  // EVERY TABLE IN EARSHOT, which used to be a single `invitation` slot — see
+  // the header of src/match/tableDirectory.js for what that one slot cost. It
+  // is owned here because this is the only code that WRITES to it from the
+  // wire; the screen reads it, and files its own table through `sight`.
+  const tables = createTableDirectory();
+  let off = null;
+
+  /**
+   * The same host, the same game, a DIFFERENT table.
+   *
+   * `(hostDeviceId, packId)` is the uniqueness rule for tables that are live,
+   * and the minted id is what tells two apart across time (plan §2) — so this
+   * pairing means exactly one thing: they ended the game we had a seat at and
+   * dealt another. The seat is not coming back, and a tile that went on
+   * promising it would be the "sign on an open door saying CLOSED" the sniffer
+   * already worries about elsewhere.
+   *
+   * Said ONCE without needing a flag to remember: clearing the stub removes the
+   * only thing that makes this true, so the next frame finds nothing to
+   * announce.
+   */
+  function noteSupersededSeat(frame) {
+    if (!frame || frame.hostDeviceId === selfId()) return;
+
+    // THE OLD TILE GOES TOO, and this half is not about our seat at all. A host
+    // that ends a table politely sends `bye 'closed'` and the directory forgets
+    // it; one whose battery died and who came back to deal again sends nothing,
+    // and `pruneDead` will not help because that host is plainly alive. The
+    // pair being unique among LIVE tables is what makes the older entry
+    // provably dead, so it is dropped here rather than left advertising open
+    // seats.
+    const stale = [];
+    for (const entry of tables.all()) {
+      if (entry.hostDeviceId !== frame.hostDeviceId) continue;
+      if (entry.packId !== frame.packId) continue;
+      if (entry.key === frame.tableId) continue;
+      tables.forget(entry.key);
+      stale.push(entry.key);
+    }
+    if (stale.length) onSuperseded(stale);
+
+    const superseded = seatStubs().find((stub) => stub.hostDeviceId === frame.hostDeviceId
+      && stub.packId === frame.packId
+      && stub.tableId !== frame.tableId);
+    if (!superseded) return;
+    clearSeatStub(superseded.tableId);
+    setNotice(`${peerName(frame.hostDeviceId)} started a new game — your old seat is gone.`);
+  }
+
+  /**
+   * Record — or forget — our seat at the table this frame describes.
+   *
+   * THE HOST'S ROSTER IS WHAT MAKES IT TRUE. We write the stub when the host
+   * says we are in the chair, never when we ask for it: a claim that was
+   * refused, or one still in flight, would otherwise leave a tile promising a
+   * seat nobody gave us. It is read off the LOBBY rather than a view because a
+   * seat is real before the deal, and a table waiting to start is exactly one
+   * worth coming back to.
+   *
+   * EXPORTED, because our own host's frames reach us through the client rather
+   * than through the subscription below — already authenticated, and just as
+   * much a statement about which chair is ours.
+   */
+  function noteSeatFrom(frame) {
+    if (!frame || frame.hostDeviceId === selfId()) return;
+    const me = selfId();
+    const mine = (frame.seats || []).find((s) => s.kind === 'device' && s.deviceId === me);
+    if (mine) {
+      saveSeatStub({
+        tableId: frame.tableId,
+        hostDeviceId: frame.hostDeviceId,
+        packId: frame.packId,
+        seat: mine.seat,
+        // Captured NOW, while they are still on the roster. Once they go quiet
+        // `peerName` can only answer "Someone", and that is the exact moment
+        // the tile needs to say whose table it was.
+        hostName: peerName(frame.hostDeviceId),
+      });
+      return;
+    }
+    // NOT IN THE ROSTER ANY MORE. The host gave the seat to a bot, or somebody
+    // else took it — either way the promise is void and the tile must stop
+    // making it. `bye 'replaced'` says the same thing; this catches the case
+    // where we simply were not listening when it did.
+    clearSeatStub(frame.tableId);
+  }
+
+  /**
+   * A `bye` from a host we know about.
+   *
+   * ONLY 'closed' RETIRES A TABLE, and the precision matters because three
+   * different partings share this frame kind. A joiner leaving says 'leave' and
+   * reaches us relayed through the hub — that is somebody standing up, not a
+   * table ending. A removed player is told 'replaced', privately, about their
+   * own seat. Only the host broadcasting 'closed' means the felt is gone, and
+   * only the host's own direct frame is believed for it: a relayed 'closed' is
+   * a fellow joiner claiming an authority it does not have.
+   */
+  function noteBye(fromDeviceId, frame, meta) {
+    if (meta?.relayed) return;
+    if (frame.why !== 'closed') return;
+    // WHICH TABLE CLOSED, said by the frame itself. Under v1 this had to be
+    // inferred from the sender, which was right only because a device could
+    // host just one — the assumption the tables work exists to remove.
+    const key = frame.tableId;
+    const entry = tables.get(key);
+    if (!entry || entry.hostDeviceId !== fromDeviceId) return;
+    tables.forget(key);
+    onTableClosed(key);
+  }
+
+  /**
+   * A host that stopped answering.
+   *
+   * A table whose host has left the party is not a table any more, and nothing
+   * says so on the wire: a host that closes politely broadcasts `bye`, but one
+   * whose battery died says nothing, and the only evidence is the roster.
+   * Without this, that table would sit on the lobby forever advertising open
+   * seats.
+   */
+  function pruneDead() {
+    const live = (port()?.peers() || []).map((p) => p.deviceId);
+    // OURSELVES, EXPLICITLY. A device is never in its own `peers()`, so a host
+    // that filed its own table would prune it on the next roster change and its
+    // tile would blink out while the game was still running.
+    if (hosting()) live.push(selfId());
+    const dropped = tables.retain(live);
+    if (dropped.length) onHostsGone(dropped);
+  }
+
+  /**
+   * The table sniffer.
+   *
+   * A joiner cannot start a real client before it knows WHICH pack to load —
+   * the client refuses a lobby whose pack is not the one this build has open,
+   * and quite right too. So this listens for the one frame that answers that
+   * question, applying the two rules in this file's header.
+   *
+   * It fills the directory and never holds a scrap of state.
+   */
+  function start() {
+    if (off || !port()) return;
+    off = port().onMessage((payload, fromDeviceId, meta) => {
+      // EVERYBODY HEARS THE ROOM, whatever they are doing in it. This used to
+      // give up the moment we became a client — `if (client || host)` — which
+      // meant the second table in a party was unknowable to anybody already
+      // sitting at the first, and a host was deaf to every table but its own.
+      // Hearing is not joining: what a host or a seated joiner does with a
+      // sighting is put it on a tile, and the guards below are what keep it
+      // from becoming anything more.
+      if (!fromDeviceId) return;
+      const verdict = validateFrame(payload);
+      if (!verdict.ok) return;
+      const frame = verdict.frame;
+      if (frame.k === FRAME.BYE) return void noteBye(fromDeviceId, frame, meta);
+      if (frame.k !== FRAME.LOBBY) return;
+      // Our own broadcast, come back to us. Not a table we discovered.
+      if (frame.hostDeviceId === selfId()) return;
+      // AUTHENTIC MEANS "FROM A DEVICE WE HOLD A DIRECT LINK TO", which is not
+      // the same test as "from the single device we hold a direct link to" —
+      // and the difference is the whole of two tables. With two hosts in the
+      // party there are two direct peers, the old `direct.length === 1`
+      // answered null, and every lobby frame from BOTH of them was dropped as
+      // unauthenticated: not one table too few, but nothing at all. The
+      // security property is the one that mattered and it is unchanged — the
+      // sender must be direct and the frame must not be relayed, so a fellow
+      // joiner cannot advertise a table through the hub.
+      const direct = port().peers().filter((p) => p.direct).map((p) => p.deviceId);
+      const hostDeviceId = direct.includes(fromDeviceId) ? fromDeviceId : null;
+      if (!isAuthentic(FRAME.LOBBY, { fromDeviceId, hostDeviceId, relayed: meta?.relayed })) return;
+
+      // A FRESH INVITATION CLEARS THE LAST ONE'S EPITAPH. Asked while `known`
+      // is still the previous frame for this table, and before the superseded
+      // check below has anything to say — a sighting that clears the notice
+      // after that would wipe the one sentence this path exists to print.
+      const known = tables.get(tableKeyOf(frame));
+      clearStaleNotice(frame, known);
+
+      const entry = tables.sight(frame);
+      if (!entry) return;
+      // HEARING THE HOST IS ENOUGH TO KEEP THE PROMISE ALIVE. A seat we hold at
+      // a table we are not currently a client of still ages on this, which is
+      // what stops a week of watching from someone else's felt rolling it off.
+      touchSeatStub(entry.key);
+      noteSupersededSeat(frame);
+      noteSeatFrom(frame);
+      onSighting({ entry, frame });
+    });
+  }
+
+  return {
+    // THE DIRECTORY ITSELF, read-only by convention. Handing back narrow
+    // accessors was the first draft and it was twelve one-line methods for
+    // twenty-six reads that already say what they mean — `tables.forPack`,
+    // `tables.latest`, `tables.all` — none of which can lie about a table. The
+    // WRITES are what needed an owner, and every one of them is above.
+    tables,
+    start,
+    pruneDead,
+    noteSeatFrom,
+  };
+}

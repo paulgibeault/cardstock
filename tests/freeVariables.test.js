@@ -39,6 +39,10 @@ const AMBIENT = new Set([
   // ECMAScript
   "Array", "ArrayBuffer", "BigInt", "Boolean", "DataView", "Date", "Error", "JSON",
   "Map", "Math", "Number", "Object", "Promise", "Proxy", "Reflect", "RegExp", "Set",
+  // `new TypeError(...)` — the one a required argument throws when it is
+  // missing (src/ui/party.js, #73). `Error` was already here; this is its
+  // sibling and arrives for the same reason.
+  "TypeError",
   "String", "Symbol", "WeakMap", "WeakSet", "isFinite", "isNaN", "parseFloat",
   "parseInt", "structuredClone", "Intl", "Uint8Array", "Int32Array", "Float64Array",
   // host: browser + the launcher SDK + Node's shared subset
