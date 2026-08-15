@@ -82,8 +82,10 @@ export function seatingFromRoster(frame, ctx) {
   // published" both read off `own`, so a host BEFORE THE DEAL — when
   // `session.seating` is still null — falls back to frame names and does not
   // pick up a peer who renames themselves until the first seat change. A narrow
-  // window, a cosmetic symptom, and a real conflation. Filed rather than fixed
-  // here; splitting it is a behaviour change and belongs in its own commit.
+  // window, a cosmetic symptom, and a real conflation. Filed as #79 rather than
+  // fixed here; splitting it is a behaviour change and belongs in its own
+  // commit, with the CURRENT BEHAVIOUR pin in tests/partyModel.test.js rewritten
+  // in the same breath.
   const own = ctx.ownSeating || null;
 
   const out = [];
@@ -260,7 +262,9 @@ function viewOf({ tableId, frame, stub, session, lastSeenAt }, ctx) {
     packName: ctx.packNameOf(packId) || packId || '',
     // Captured while they were still on the roster, for a stub — once a host
     // goes quiet `nameOfPeer` can only answer "Someone", and that is the exact
-    // moment the tile needs to say whose table it was.
+    // moment the tile needs to say whose table it was. A LIVE table whose host
+    // is briefly off the roster still falls to "Someone" rather than reaching
+    // for the stub; that flicker is #78, with `lastSeenAt` below waiting for it.
     hostName: frame
       ? nameOfPeer(hostDeviceId, ctx)
       : (stub?.hostName || nameOfPeer(hostDeviceId, ctx)),

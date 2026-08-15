@@ -248,7 +248,7 @@ test('CURRENT BEHAVIOUR: before the deal, a host reads names off its own frame',
     peers: [{ deviceId: ADA, name: 'Ada Live', direct: true }],
   });
   assert.strictEqual(model.tables[0].seats[1].name, 'Ada',
-    'the frame, not the roster — fix this deliberately or not at all');
+    'the frame, not the roster — #79 fixes this and rewrites this test with it');
 });
 
 test('a joiner takes a fellow joiner\'s name from the frame, since its roster holds only the host', () => {
@@ -415,7 +415,7 @@ test('a seat at a table nobody is advertising is dormant, and belongs to the Tab
     // a live table is always drawn against. With the host absent from `peers`
     // the name falls to "Someone" rather than to the stub's captured `hostName`;
     // that fallback would be an improvement and is deliberately not made here
-    // (#75 defers the aging/flicker behaviours to their own issue).
+    // (#78 is the aging/flicker work #75 deferred).
     peers: [{ deviceId: ADA, name: 'Ada', direct: true }],
   });
   assert.deepStrictEqual(packState(live, 'hearts'),
