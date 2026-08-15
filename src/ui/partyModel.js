@@ -68,25 +68,29 @@ export function seatingFromRoster(frame, ctx) {
   const seatCount = frame?.seatCount || roster.length;
   const botSeats = roster.filter((s) => s.kind === 'bot').map((s) => s.seat);
   const botIds = pickBotIds(frame?.hostDeviceId || 'party', botSeats.length);
-  // THE HOST ALREADY HAS AN ANSWER, and it is the one on the felt. Deriving a
-  // second set of bot faces here put Cass and Nell in the seat grid while Otto
-  // and Bruno sat at the same two seats on the table behind it. The derivation
-  // is for a JOINER, which has no seed and no seating; the host defers to its
-  // own — but ONLY for its own table. A host looking at a NEIGHBOUR'S roster
-  // derives like any other joiner, or our bots' faces land on their chairs.
+  // TWO QUESTIONS, AND THEY WERE ONE FLAG UNTIL #79.
   //
-  // ONE FLAG, TWO QUESTIONS, and they are not the same one — carried over
-  // verbatim from party.js because #75 stage 1 changes no behaviour, but worth
-  // naming now that it is written down once instead of inline. "Do we hold bot
-  // faces of our own" and "may we trust our live roster over the frame we
-  // published" both read off `own`, so a host BEFORE THE DEAL — when
-  // `session.seating` is still null — falls back to frame names and does not
-  // pick up a peer who renames themselves until the first seat change. A narrow
-  // window, a cosmetic symptom, and a real conflation. Filed as #79 rather than
-  // fixed here; splitting it is a behaviour change and belongs in its own
-  // commit, with the CURRENT BEHAVIOUR pin in tests/partyModel.test.js rewritten
-  // in the same breath.
+  // WHOSE BOT FACES. The host already has an answer and it is the one on the
+  // felt; deriving a second set here put Cass and Nell in the seat grid while
+  // Otto and Bruno sat at the same two seats on the table behind it. The
+  // derivation below is for a JOINER, which has no seed and no seating.
   const own = ctx.ownSeating || null;
+  // WHOSE ROSTER TO BELIEVE, which is a different question with a different
+  // answer. A host holds a direct link to every player, so its `peers()` is
+  // current and a rename shows up at once. A joiner's holds only the host, so a
+  // fellow joiner's name exists nowhere but the frame the host published.
+  //
+  // Both used to read `own`, and `own` is null until the first seat change
+  // fills `session.seating` — so a host BEFORE THE DEAL read names off the
+  // frame it had published a moment earlier and did not notice a rename until
+  // somebody took a chair. Narrow and cosmetic, and exactly the shape #73 and
+  // #75 each removed elsewhere: one flag answering two questions is a window
+  // that moves the next time either answer's timing changes.
+  //
+  // BOTH ARE STILL ONLY ABOUT OUR OWN TABLE. A host looking at a NEIGHBOUR'S
+  // roster derives bot faces and reads names like any other joiner — borrowing
+  // our felt's seating would put our bots on their chairs, and trusting our
+  // roster for their table would answer about people who are not at it.
 
   const out = [];
   for (let seat = 0; seat < seatCount; seat++) {
@@ -118,7 +122,7 @@ export function seatingFromRoster(frame, ctx) {
     // and stays current when somebody renames themselves. A joiner cannot: its
     // `peers()` contains only the host, so a fellow joiner's name exists
     // nowhere but the frame the host published.
-    const fromRoster = own ? nameOfPeer(entry.deviceId, ctx) : entry.name;
+    const fromRoster = ctx.trustOurRoster ? nameOfPeer(entry.deviceId, ctx) : entry.name;
     const name = mine
       ? myName
       : String(fromRoster || nameOfPeer(entry.deviceId, ctx)).slice(0, 60);
@@ -248,9 +252,12 @@ function viewOf({ tableId, frame, stub, session, lastSeenAt }, ctx) {
   // promise falls back to. A stub's `seat` is what the host last confirmed, so
   // it is the honest answer for a table nobody is advertising.
   const seat = frame ? seatOfSelf(frame, ctx.self) : (stub ? stub.seat : null);
-  // OUR OWN SEATING, ONLY FOR OUR OWN TABLE — see seatingFromRoster.
+  // OUR OWN TABLE, ANSWERED TWICE — see seatingFromRoster for why these are two
+  // fields. The seating may not exist yet; the authority does not wait for it.
   const ownSeating = ours && hosted ? session.seating || null : null;
-  const seating = frame ? seatingFromRoster(frame, { ...ctx, ownSeating }) : [];
+  const seating = frame
+    ? seatingFromRoster(frame, { ...ctx, ownSeating, trustOurRoster: ours && hosted })
+    : [];
   const presence = frame ? presenceBySeat(frame, session, ctx) : new Map();
   const unreachable = session?.unreachable || new Set();
   const deadlines = deadlinesOf(session);

@@ -208,19 +208,12 @@ test('we are "You" on our own screen and our published name in the roster we sen
     seats: [{ seat: 0, kind: 'device', deviceId: ME, name: 'Me' },
       { seat: 1, kind: 'device', deviceId: ADA, name: 'Ada' }],
   });
-  const dealt = hostSession('t1a1a1a1a1a1a1a1a1a', 'hearts');
-  // SEATING PRESENT means the table has been through a seat change or a deal,
-  // which is also — see the note in seatingFromRoster — what currently decides
-  // whether a host trusts its live roster over the frame. The next test pins
-  // the other side of that conflation so it cannot drift unnoticed.
-  dealt.seating = [];
-
   const model = partyModel({
     ...base,
     myName: 'You',
     publishedName: 'Paul',
     sightings: sightingsOf(frame),
-    sessions: [dealt],
+    sessions: [hostSession('t1a1a1a1a1a1a1a1a1a', 'hearts')],
     peers: [{ deviceId: ADA, name: 'Ada Live', direct: true }],
   });
   const seats = model.tables[0].seats;
@@ -231,11 +224,11 @@ test('we are "You" on our own screen and our published name in the roster we sen
   assert.strictEqual(seats[1].name, 'Ada Live');
 });
 
-test('CURRENT BEHAVIOUR: before the deal, a host reads names off its own frame', () => {
-  // NOT AN ENDORSEMENT — this pins what ships today so the conflation named in
-  // seatingFromRoster cannot be changed by accident. A host whose table has no
-  // `seating` yet (between `hostGame` and the first seat change) shows the name
-  // its own frame carries rather than the live one. Cosmetic, narrow, real.
+test('a host picks up a rename before the deal, with no seating of its own yet', () => {
+  // #79. "Do we hold bot faces of our own" and "may we trust our live roster"
+  // were one flag, and it is null between `hostGame` and the first seat change
+  // — so a host read names off the frame it had just published and did not
+  // notice a rename until somebody took a chair. Two questions now.
   const frame = lobbyFrame({
     tableId: 't1a1a1a1a1a1a1a1a1a', hostDeviceId: ME, packId: 'hearts',
     seats: [{ seat: 0, kind: 'device', deviceId: ME, name: 'Me' },
@@ -247,8 +240,25 @@ test('CURRENT BEHAVIOUR: before the deal, a host reads names off its own frame',
     sessions: [hostSession('t1a1a1a1a1a1a1a1a1a', 'hearts')], // seating still null
     peers: [{ deviceId: ADA, name: 'Ada Live', direct: true }],
   });
-  assert.strictEqual(model.tables[0].seats[1].name, 'Ada',
-    'the frame, not the roster — #79 fixes this and rewrites this test with it');
+  assert.strictEqual(model.tables[0].seats[1].name, 'Ada Live',
+    'the roster, which a host holds a direct link to — not the frame it published');
+});
+
+test('a host still derives a NEIGHBOUR\'s names from their frame, roster or no roster', () => {
+  // The other half of #79's split, and the one that must not move: our direct
+  // links say nothing about who is sitting at somebody else's table.
+  const theirs = lobbyFrame({
+    tableId: 't2b2b2b2b2b2b2b2b2b', hostDeviceId: ADA, packId: 'crazy-eights',
+    seats: [{ seat: 0, kind: 'device', deviceId: ADA, name: 'Ada' },
+      { seat: 1, kind: 'device', deviceId: BO, name: 'Bo In Their Frame' }],
+  });
+  const model = partyModel({
+    ...base,
+    sightings: sightingsOf(theirs),
+    sessions: [hostSession('t1a1a1a1a1a1a1a1a1a', 'hearts')], // we host something else
+    peers: [{ deviceId: ADA, direct: true }, { deviceId: BO, name: 'Bo Renamed', direct: true }],
+  });
+  assert.strictEqual(model.tables[0].seats[1].name, 'Bo In Their Frame');
 });
 
 test('a joiner takes a fellow joiner\'s name from the frame, since its roster holds only the host', () => {
