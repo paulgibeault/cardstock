@@ -284,6 +284,34 @@ workstream closed:
   focus, joining, rendering — stayed behind, because those need the felt and
   the registry in view.
 
+### The party.js inversion (#75)
+
+`party.js` kept its beliefs in five places — the sighting directory, the session
+registry, the seat stubs, the per-session `unreachable` sets, and the transport
+roster — and every surface it drew ran its own join across some subset of them.
+Five joins of the same facts disagree, which is how the tile row kept a tile the
+ribbon had already, correctly, dropped. Four stages, each shipped green:
+
+1. **`partyModel()`** — one derived account of every table, and every surface
+   renders it. Pure, so it runs under `node --test`.
+2. **One repaint.** Handlers mutate and say `repaint()`. `refreshEntry` had been
+   a renderer that also started the sniffer and pruned dead tables, which is why
+   "just repaint" was never possible; the drawing is `renderEntry` now. The 1 Hz
+   countdown keeping `renderStrip` to itself is the one named exception.
+3. **One intake for lobby frames.** Two doors — the subscription and our own
+   client — is correct and neither subsumes the other, but each carried a
+   partial copy of what believing a frame means. `noteLobby` is that work once.
+4. **Focus in one function.** `nextFocus` is the six scattered rules as a table
+   of cases; the sightings seam collapsed from four callbacks to one `onChange`
+   because what made them four was each carrying its own focus decision.
+
+**The screen has unit coverage now, and had none.** 43 tests across
+`partyModel` (22), `tableSightings` (9) and `partyFocus` (12) — including
+several the browser tier structurally cannot reach, because on a real transport
+both frame doors fire and the full path masks the partial one.
+
+`src/match/*` was not touched.
+
 ### Testing (§10)
 
 The net went under first, as planned. `npm run mp-acceptance` runs nine
@@ -293,5 +321,8 @@ one table reaching only that table, and (since #73) the tile row itself read
 back out of the DOM, which is the visible end of the directory the sniffer
 fills.
 
-`src/ui/party.js`, `table.js` and `lobby.js` still have no unit coverage.
-Every bug listed above was found by driving the real thing.
+`table.js` and `lobby.js` still have no unit coverage, and every bug listed
+above was found by driving the real thing. `party.js` is the exception since
+#75: the derivations behind it — the belief model, the sighting intake, the
+focus rules — are pure modules with 43 tests, and the file itself is the
+wiring and the actions.

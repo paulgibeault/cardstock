@@ -49,23 +49,29 @@ import {
  *                    epitaph has stopped being true; this module only knows
  *                    when to ask.
  * @param setNotice   (text) => void, for the one thing a sighting says out loud
- * @param onSighting  ({ entry, frame }) => void — an authenticated lobby frame,
- *                    filed. Focus, joining and rendering all happen here, in
- *                    the caller, deliberately.
  * NO DEFAULTS ON ANY OF THESE, which is the same rule #73 applied to party.js
  * itself: a seam that quietly defaults to a no-op is a callback you can forget
- * to wire and never find out about. There is one caller; it passes all ten.
+ * to wire and never find out about. There is one caller; it passes all of them.
  *
- * @param onTableClosed (key) => void — a host broadcast `bye 'closed'`
- * @param onHostsGone   (keys) => void — hosts that left the party entirely
- * @param onSuperseded  (keys) => void — tables their own host has replaced
+ * @param onChange   (change) => void — what is in earshot changed. One of:
  *
- * THREE WAYS FOR A TABLE TO STOP EXISTING, AND THEY ARE NOT ONE EVENT. What
- * the panel should do afterwards differs in each — a table that closed hands
- * the focus on to whatever else is in the room, whereas one that was superseded
+ *     { kind: 'sighted',     entry, frame, provenance }
+ *     { kind: 'closed',      keys }   a host broadcast `bye 'closed'`
+ *     { kind: 'hosts-gone',  keys }   hosts that left the party entirely
+ *     { kind: 'superseded',  keys }   tables their own host has replaced
+ *
+ * FOUR KINDS, ONE CALLBACK, and the kinds are the load-bearing part: what the
+ * panel should do afterwards differs in each — a table that closed hands the
+ * focus on to whatever else is in the room, whereas one that was superseded
  * must NOT, because the table replacing it is being sighted in the same breath
- * and inheriting the focus would auto-join a joiner into it. The module reports
- * what happened; the screen decides where to look.
+ * and inheriting the focus would auto-join a browsing joiner into it. This
+ * module reports WHAT HAPPENED and never what to do about it; the screen reads
+ * the kind and decides (`moveFocus` in src/ui/party.js).
+ *
+ * It was four callbacks until the screen had one place to answer them from
+ * (#75 stage 4). Four seams for four one-line handlers that differed only in
+ * where they pointed the panel is a boundary describing the caller's old
+ * structure rather than this module's job.
  */
 export function createTableSightings({
   port,
@@ -74,10 +80,7 @@ export function createTableSightings({
   hosting,
   clearStaleNotice,
   setNotice,
-  onSighting,
-  onTableClosed,
-  onHostsGone,
-  onSuperseded,
+  onChange,
 }) {
   // EVERY TABLE IN EARSHOT, which used to be a single `invitation` slot — see
   // the header of src/match/tableDirectory.js for what that one slot cost. It
@@ -118,7 +121,7 @@ export function createTableSightings({
       tables.forget(entry.key);
       stale.push(entry.key);
     }
-    if (stale.length) onSuperseded(stale);
+    if (stale.length) onChange({ kind: 'superseded', keys: stale });
 
     const superseded = seatStubs().find((stub) => stub.hostDeviceId === frame.hostDeviceId
       && stub.packId === frame.packId
@@ -187,7 +190,7 @@ export function createTableSightings({
     const entry = tables.get(key);
     if (!entry || entry.hostDeviceId !== fromDeviceId) return;
     tables.forget(key);
-    onTableClosed(key);
+    onChange({ kind: 'closed', keys: [key] });
   }
 
   /**
@@ -206,7 +209,63 @@ export function createTableSightings({
     // tile would blink out while the game was still running.
     if (hosting()) live.push(selfId());
     const dropped = tables.retain(live);
-    if (dropped.length) onHostsGone(dropped);
+    if (dropped.length) onChange({ kind: 'hosts-gone', keys: dropped });
+  }
+
+  /**
+   * A LOBBY FRAME WE BELIEVE, FROM WHICHEVER DOOR IT CAME THROUGH (#75 stage 3).
+   *
+   * There are two, and there have to be. The subscription below authenticates
+   * with this file's rules — direct sender, not relayed. Our own client
+   * authenticates with `src/match/client.js`'s, which are about the one host it
+   * sat down with. Neither subsumes the other, and the client is the only path
+   * that can vouch for a frame from a host whose link has degraded.
+   *
+   * WHAT MUST NOT BE TWO IS WHAT HAPPENS NEXT. Each door used to carry its own
+   * partial copy: the subscription filed the sighting, aged the seat stub,
+   * retired a superseded table and cleared a stale notice; the client's
+   * `onLobby` filed the sighting and wrote the seat stub, and did none of the
+   * rest. Since both doors receive the same broadcast — two separate
+   * `peer.onMessage` subscriptions — most frames went through the full path and
+   * then a partial one, and a frame that reached ONLY the client got the
+   * partial path alone: no stub ageing, no superseded table retired.
+   *
+   * So the doors decide whether to believe a frame. This decides what believing
+   * one means, once.
+   *
+   * IDEMPOTENT, BECAUSE THE WIRE IS AND BECAUSE BOTH DOORS FIRE. A host
+   * re-broadcasts its lobby on every `onReady` and every seat change; running
+   * this twice for one frame has to be exactly as harmless as running it once.
+   * Every step below is: `sight` upserts, `touchSeatStub` restamps,
+   * `noteSupersededSeat` finds nothing the second time, and `clearStaleNotice`
+   * compares against a `known` that is now the frame itself.
+   *
+   * @param provenance 'wire' from the subscription, 'client' from our own
+   *                   client handing over a frame it authenticated. Passed
+   *                   through on the change because the screen focuses
+   *                   differently for each: a frame our own client handed over
+   *                   is from the table we are already sitting at, so it raises
+   *                   no auto-join question and only asks whether the panel is
+   *                   pointed at anything yet.
+   */
+  function noteLobby(frame, { provenance }) {
+    // A FRESH INVITATION CLEARS THE LAST ONE'S EPITAPH. Asked while `known` is
+    // still the previous frame for this table, and before the superseded check
+    // has anything to say — a sighting that cleared the notice after that would
+    // wipe the one sentence that path exists to print.
+    const known = tables.get(tableKeyOf(frame));
+    clearStaleNotice(frame, known);
+
+    const entry = tables.sight(frame);
+    if (!entry) return null;
+    // HEARING THE HOST IS ENOUGH TO KEEP THE PROMISE ALIVE. A seat we hold at a
+    // table we are not currently a client of still ages on this, which is what
+    // stops a week of watching from someone else's felt rolling it off.
+    touchSeatStub(entry.key);
+    noteSupersededSeat(frame);
+    noteSeatFrom(frame);
+    onChange({ kind: 'sighted', entry, frame, provenance });
+    return entry;
   }
 
   /**
@@ -250,22 +309,7 @@ export function createTableSightings({
       const hostDeviceId = direct.includes(fromDeviceId) ? fromDeviceId : null;
       if (!isAuthentic(FRAME.LOBBY, { fromDeviceId, hostDeviceId, relayed: meta?.relayed })) return;
 
-      // A FRESH INVITATION CLEARS THE LAST ONE'S EPITAPH. Asked while `known`
-      // is still the previous frame for this table, and before the superseded
-      // check below has anything to say — a sighting that clears the notice
-      // after that would wipe the one sentence this path exists to print.
-      const known = tables.get(tableKeyOf(frame));
-      clearStaleNotice(frame, known);
-
-      const entry = tables.sight(frame);
-      if (!entry) return;
-      // HEARING THE HOST IS ENOUGH TO KEEP THE PROMISE ALIVE. A seat we hold at
-      // a table we are not currently a client of still ages on this, which is
-      // what stops a week of watching from someone else's felt rolling it off.
-      touchSeatStub(entry.key);
-      noteSupersededSeat(frame);
-      noteSeatFrom(frame);
-      onSighting({ entry, frame });
+      noteLobby(frame, { provenance: 'wire' });
     });
   }
 
@@ -278,6 +322,9 @@ export function createTableSightings({
     tables,
     start,
     pruneDead,
-    noteSeatFrom,
+    // THE OTHER DOOR'S WAY IN. Our own client authenticates a frame its own
+    // way and then hands it here, so both doors mean the same thing by
+    // believing one.
+    noteLobby,
   };
 }
