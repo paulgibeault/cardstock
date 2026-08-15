@@ -710,6 +710,28 @@ const twoPacks = {
     check('host: is still the host of both', ours.length >= 2
       && (await party(frames.H, 'partySnapshot')).role === 'host',
       `${ours.length} table(s) of ours`);
+
+    // THE ROW, IN THE DOM, on the device that is only a guest at both tables.
+    // Everything above reads `partySnapshot()`, which reports the directory —
+    // so it would go on passing if the tiles drawn FROM that directory had
+    // stopped being drawn. Added with #73, which moved the sniffing and the
+    // directory into src/ui/tableSightings.js: the tile row is the visible end
+    // of that pipe, and it has never had an assertion on it.
+    await frames.A.evaluate(() => document.getElementById('party-button').click());
+    const drawnTiles = () => frames.A.evaluate(() =>
+      [...document.querySelectorAll('#tables-grid .table-tile')].map((tile) => ({
+        key: tile.dataset.tableKey,
+        game: tile.querySelector('.table-tile__game')?.textContent || '',
+        seat: !!tile.querySelector('.table-tile__seat'),
+      })));
+    await waitFor(async () => (await drawnTiles()).length >= 2, 20000);
+    const tiles = await drawnTiles();
+    check('joiner A: a tile for each table, one per game, each promising its own seat',
+      tiles.length === 2
+        && new Set(tiles.map((t) => t.key)).size === 2
+        && new Set(tiles.map((t) => t.game)).size === 2
+        && tiles.every((t) => t.seat),
+      JSON.stringify(tiles));
   },
 };
 

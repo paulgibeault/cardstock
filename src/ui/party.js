@@ -43,12 +43,12 @@ import { rehydrateMatch } from '../engine/replay.js';
 import { createTableClient } from '../match/client.js';
 import { createTableSession } from '../match/tableSession.js';
 import { createSessionRegistry } from '../match/sessionRegistry.js';
-import { FRAME, EMOTES, validateFrame, isAuthentic, mintTableId } from '../match/protocol.js';
+import { EMOTES, mintTableId } from '../match/protocol.js';
 import { botById, initialsOf, pickBotIds } from '../players/roster.js';
 import { createBotDriver } from './botDriver.js';
 import {
   loadSettings, saveHostMatch, clearHostMatch, hostMatches, loadHostMatch,
-  saveSeatStub, clearSeatStub, touchSeatStub, sweepStaleTables, seatStubs,
+  clearSeatStub, sweepStaleTables, seatStubs,
 } from '../arcade/storage.js';
 import { fetchPack, fetchPackManifest } from './packSource.js';
 import { confirmAction } from './confirm.js';
@@ -57,7 +57,7 @@ import {
   setLocalMoveListener, afterRemoteMove, setTablePaused, rerenderTable,
 } from './table.js';
 import { createSeatTable, createSeatLens, deserializeSeatTable } from '../players/seats.js';
-import { createTableDirectory, tableKeyOf } from '../match/tableDirectory.js';
+import { createTableSightings } from './tableSightings.js';
 
 const el = {
   entry: document.getElementById('party-button'),
@@ -147,17 +147,10 @@ let port = null;              // the peer port, or null when there is no surface
 // second one.
 const sessions = createSessionRegistry();
 let tick = null;              // the countdown's own repaint
-// EVERY TABLE IN EARSHOT, which used to be a single `invitation` slot — see the
-// header of src/match/tableDirectory.js for what that one slot cost. `host` is
-// still at most one (ours) and `client` still at most one (the table we are
-// sitting at), because there is still exactly one felt; what is plural now is
-// what this device KNOWS, which is the half that was never a limit worth having.
-const tables = createTableDirectory();
 // Which sighted table the panel is about. Null when we are hosting or idle with
 // nothing in earshot. It moves on its own only while we are unattached — once
 // we are a client of a table, a new sighting elsewhere is news, not a summons.
 let activeKey = null;
-let sniffOff = null;
 let joining = false;          // one join at a time; see joinTable
 let lastEmoteAt = 0;
 let notice = '';              // the one error line the screen is showing
@@ -248,6 +241,93 @@ const lobbyFrame = () => attached()?.lobbyFrame || null;
 const decided = () => ourTable()?.decided || new Set();
 const unreachable = () => ourTable()?.unreachable || new Set();
 
+/* ------------------------------------------------------------------ *
+ * The tables we are NOT part of
+ *
+ * Everything in earshot, and the layer that decides what "in earshot" even
+ * means — the subscription, the two authenticity rules, the directory, and the
+ * seat stubs that outlive a host going quiet. All of it lives in
+ * src/ui/tableSightings.js now (#73) — the first piece of this file to leave,
+ * chosen because it had the fewest tendrils.
+ *
+ * WHAT CAME BACK ARE THE DECISIONS. A sighting is news; what to do about it —
+ * where to point the panel, whether to load a pack, what to repaint — needs the
+ * felt and the registry in view, so it is here and the module calls out to it.
+ * ------------------------------------------------------------------ */
+
+const sightings = createTableSightings({
+  port: () => port,
+  selfId: () => selfId(),
+  peerName: (deviceId) => peerName(deviceId),
+  hosting: () => !!host(),
+
+  /**
+   * A FRESH INVITATION CLEARS THE LAST ONE'S EPITAPH. "The host closed the
+   * table" is true and worth saying — right up until the host opens another
+   * one, at which point it is a sign on an open door saying CLOSED. The
+   * comparison is against THIS table's last frame rather than against the one
+   * slot everything used to share.
+   */
+  clearStaleNotice: (frame, known) => {
+    if (notice && (!known || known.frame.packId !== frame.packId
+      || !known.frame.started !== !frame.started)) {
+      notice = '';
+    }
+  },
+  setNotice: (text) => setNotice(text),
+
+  onSighting: ({ entry, frame }) => {
+    rememberPackName(frame.packId);
+    // WHERE TO LOOK, and the rule is about attachment rather than recency: an
+    // unattached device follows the latest table it hears about (which with one
+    // table in earshot is exactly the old behaviour), and a device already at a
+    // table — its own or somebody else's — is not dragged off it by a neighbour
+    // dealing.
+    if (!host() && !client() && !joining) focusTable(entry.key);
+    if (!host() && activeKey === entry.key) {
+      // No `lobbyFrame` to stash: `shownFrame()` already prefers the
+      // directory's copy of this very frame, which the sighting just filed.
+      // BECOME A CLIENT AS SOON AS WE ARE INVITED, rather than on a button.
+      // Loading the pack is the only thing "Join" ever did, and making it a
+      // separate tap meant the seat buttons were dead until you found it —
+      // two decisions where there is only one, and the second one is the seat.
+      // Only for the table we are looking at: auto-loading a pack for every
+      // table in earshot would be a fetch per host, for felts nobody asked
+      // to see.
+      joinTable(entry).catch(reportFailure);
+    }
+    refreshEntry();
+    renderScreen();
+  },
+
+  onTableClosed: (key) => {
+    // The frame this clears belongs to whichever table closed, and a table's
+    // frame now goes with its session. Clearing it here used to reach across
+    // and blank the HOST's own roster when a neighbour's table ended.
+    refocusAway([key]);
+    refreshEntry();
+    renderScreen();
+  },
+  onHostsGone: (keys) => refocusAway(keys),
+  // NO REFOCUS HERE, and it is the whole reason this is not the same callback
+  // as the two above: the table that replaced these is being sighted in the
+  // same breath, so handing it the focus would auto-join a joiner who was only
+  // browsing. The panel falls back to whatever we are actually attached to.
+  onSuperseded: (keys) => { if (keys.includes(activeKey)) activeKey = null; },
+});
+
+// The directory, read wherever a table has to be counted, named or drawn. Every
+// WRITE to it is in tableSightings.js — bar our own table's, which goes through
+// `publishOwnTable` below and is a sighting like any other.
+const tables = sightings.tables;
+
+/** The panel was pointed at a table that has stopped existing. */
+function refocusAway(keys) {
+  if (!activeKey || !keys.includes(activeKey)) return;
+  activeKey = null;
+  focusTable(tables.latest()?.key);
+}
+
 /**
  * What to call ourselves ON THIS SCREEN. Second person, because at our own
  * table we are "You" — the same voice the status bar has always used.
@@ -328,8 +408,12 @@ function focusTable(key) {
  *
  * The sniffer still ignores our own frames off the wire; this is the deliberate
  * way in, called wherever the roster changes.
+ *
+ * WHICH TABLE, SAID OUT LOUD. There is no default here — see the note on
+ * `ourLobbyFrame` for why the panel-facing callers write `ourTable()` at the
+ * call site rather than letting this reach for it.
  */
-function publishOwnTable(session = ourTable()) {
+function publishOwnTable(session) {
   if (!session?.host || !session.seats || !session.pack) return;
   const frame = ourLobbyFrame(session);
   if (frame) tables.sight(frame);
@@ -378,7 +462,7 @@ function peerName(deviceId) {
 }
 
 /** The name the HOST publishes for a seat — read by the lobby roster it sends. */
-function nameForSeat(seat, session = ourTable()) {
+function nameForSeat(seat, session) {
   // THE SESSION IS PASSED IN because this is a host's `nameFor` seam: with two
   // hosted tables it is asked by both, and answering about whichever one the
   // panel happens to be showing would publish one table's names in the other's
@@ -387,6 +471,17 @@ function nameForSeat(seat, session = ourTable()) {
   // The felt is still the right answer for the second half: the fallback is a
   // JOINER, whose only seat table is the one the felt built from the view it is
   // showing. Deliberate, and one of the three reads left after the #64 sweep.
+  //
+  // WHICH IS WHY THIS ONE ASKS OUT LOUD, and it is the only function in the
+  // sweep that does. Everywhere else a forgotten session is now inert — the
+  // function no-ops on a table nobody named, which is wrong but harmless.
+  // Here the fallback would quietly catch it and answer off the FELT, so the
+  // mistake would look exactly like the joiner path working. `null` is the
+  // joiner saying "I have no session"; `undefined` is a caller who forgot.
+  if (session === undefined) {
+    throw new TypeError('nameForSeat needs the session whose seat this is — '
+      + 'pass null only for the joiner path that reads the felt (#73)');
+  }
   const owner = (session?.seats || tableContext()?.seats)?.ownerOf(seat);
   if (!owner || owner.kind === 'empty') return '';
   // The felt's own name for this bot when there is a felt, so the roster a
@@ -397,12 +492,16 @@ function nameForSeat(seat, session = ourTable()) {
   // every joiner draws from, so reading it off the felt meant a host who
   // navigated to the lobby republished DIFFERENT bot names — the felt's while
   // it was on screen, the shared derivation once it was not.
-  if (owner.kind === 'bot') return session?.seating?.[seat]?.name || derivedBotName(seat);
+  if (owner.kind === 'bot') return session?.seating?.[seat]?.name || derivedBotName(seat, session);
   return peerName(owner.deviceId);
 }
 
 /** The bot a seat gets before anybody has dealt — same input on every device. */
-function derivedBotName(seat, session = ourTable()) {
+function derivedBotName(seat, session) {
+  // `hostSeats()` only for the sessionless call — `nameForSeat`'s joiner path,
+  // which has no seat table of its own. Left exactly as it was rather than
+  // swept with the defaults above: it is reached with `session` null, where
+  // there is no other table to be confused with.
   const table = session?.seats || hostSeats();
   if (!table) return botById(null).name;
   const botSeats = [];
@@ -597,6 +696,11 @@ function renderSeats() {
   // still a host, and offering it the bot/open toggles would have applied our
   // own seat table to their chairs.
   const ours = shownIsOurs();
+  // RESOLVED ONCE, HERE, and handed to every button this row grows. The panel's
+  // subject is a moving target — a sighting can land, and `removeSeat` awaits a
+  // confirm dialog — so a button that asked "which table?" when it was tapped
+  // could act on a different one than the seats it was drawn beside.
+  const session = ours ? ourTable() : null;
 
   for (const identity of seating) {
     const seat = identity.seat;
@@ -636,11 +740,11 @@ function renderSeats() {
         // did not stop, or say anything; it simply stopped answering. If the
         // host may do this at all it has to be named, confirmed, and TOLD to
         // the person it happens to.
-        actions.append(button('Remove', () => { removeSeat(seat).catch(reportFailure); }));
+        actions.append(button('Remove', () => { removeSeat(seat, session).catch(reportFailure); }));
       } else if (entry.kind !== 'device') {
         actions.append(entry.kind === 'bot'
-          ? button('Open', () => { hostSeats().release(seat); afterSeatChange(); })
-          : button('Bot', () => { hostSeats().seatBot(seat); afterSeatChange(); }));
+          ? button('Open', () => { session.seats.release(seat); afterSeatChange(session); })
+          : button('Bot', () => { session.seats.seatBot(seat); afterSeatChange(session); }));
       }
     } else if (!host() && (client() || activeTable())) {
       const mine = entry.kind === 'device' && entry.deviceId === me;
@@ -840,8 +944,8 @@ function graceChooser() {
       session.graceMs = choice.ms;
       // Everybody who can see this table is told at once; the timer reads it at
       // arm time, so nothing has to be rebuilt.
-      session.lobbyFrame = ourLobbyFrame();
-      publishOwnTable();
+      session.lobbyFrame = ourLobbyFrame(session);
+      publishOwnTable(session);
       session.host?.broadcastLobby();
       renderScreen();
     }, { className: `party-grace__option${picked ? ' party-grace__option--on' : ''}` });
@@ -874,7 +978,7 @@ async function returnToOurTable() {
     variants: session.pack.variants,
     state: session.state,
     seats: session.seats,
-    seating: session.seating || seatingFromRoster(ourLobbyFrame()),
+    seating: session.seating || seatingFromRoster(ourLobbyFrame(session)),
   });
   bindFelt(session.tableId);
   // The felt drives the bots again, so the headless driver must let go.
@@ -1147,10 +1251,17 @@ function reportFailure(err) {
   setNotice(`Could not join that table: ${err.message}`);
 }
 
-/** The three error surfaces §10 asks for, each said in its own words. */
-function surfaceError(detail, session = ourTable()) {
+/**
+ * The three error surfaces §10 asks for, each said in its own words.
+ *
+ * THE SESSION THE ERROR CAME FROM, passed by both roles' hooks. A send that
+ * failed at one table says nothing about the seats at another, and defaulting
+ * to the focused one meant a joiner's failure marked a HOSTED seat unreachable.
+ */
+function surfaceError(detail, session) {
+  if (!session) return;
   if (detail?.kind === 'send-failed' && Number.isInteger(detail.seat)) {
-    (session?.unreachable || unreachable()).add(detail.seat);
+    session.unreachable.add(detail.seat);
     renderScreen();
     return;
   }
@@ -1192,10 +1303,10 @@ function surfaceIncompatible(why) {
  * left a bot's name and face on a chair a person had just taken. `rerenderTable`
  * alone redraws the same stale identities.
  */
-function refreshSeats(session = ourTable()) {
-  // THE SESSION IS PASSED IN by every host hook, because each host must
-  // refresh ITS OWN roster: with two hosted tables, answering about whichever
-  // one the panel is showing would republish one table's seats as the other's.
+function refreshSeats(session) {
+  // THE SESSION IS PASSED IN by every caller, because each host must refresh
+  // ITS OWN roster: with two hosted tables, answering about whichever one the
+  // panel is showing would republish one table's seats as the other's.
   if (session) session.lobbyFrame = ourLobbyFrame(session);
   if (lobbyFrame()) {
     const seating = seatingFromRoster(lobbyFrame());
@@ -1209,13 +1320,23 @@ function refreshSeats(session = ourTable()) {
 }
 
 /** A seat WE changed: refresh, then tell everybody. */
-function afterSeatChange(session = ourTable()) {
+function afterSeatChange(session) {
   session?.host?.broadcastLobby();
   refreshSeats(session);
 }
 
-/** The roster WE publish, read back so one renderer draws both roles. */
-function ourLobbyFrame(session = ourTable()) {
+/**
+ * The roster WE publish, read back so one renderer draws both roles.
+ *
+ * NO IMPLICIT SUBJECT — and this is the shape the whole file follows now. A
+ * `session = ourTable()` default compiles at every call site, including the
+ * ones that meant a specific table, and answers about whichever table the
+ * panel happens to be pointed at. That is the bug the two-table work shipped
+ * three times (#64, #69, `takeTurn` in #58): a question about one table
+ * answered about another. A caller that genuinely means "the table on screen"
+ * writes `ourTable()` here, where the choice is visible.
+ */
+function ourLobbyFrame(session) {
   if (!session?.host || !session.seats) return null;
   const seats = [];
   for (let seat = 0; seat < session.seats.count; seat++) {
@@ -1295,7 +1416,11 @@ function openHostSession({ tableId, packId, packName: name, variants, seats }) {
     // navigating away from a hosted table stopped it being a table at all.
     liveState: () => session.state,
     packInfo: () => ({ packId: session.pack.packId, variants: session.pack.variants }),
-    nameFor: nameForSeat,
+    // BOUND TO THIS SESSION. `host.js` calls `nameFor(seat)` with a seat and
+    // nothing else, so handing it the bare function was the implicit default at
+    // its most expensive: two hosted tables, and each published the other's
+    // names whenever the panel was pointed at the other one.
+    nameFor: (seat) => nameForSeat(seat, session),
     deadlines: () => session.timer?.deadlines() || [],
     graceMs: () => graceOf(session),
     hooks: {
@@ -1480,7 +1605,7 @@ export async function dealParty() {
   // about the table, and reading it back off `tableContext()` meant it vanished
   // the moment the felt showed something else — see the notes at each of the
   // sites this fixes.
-  session.seating = seatingFromRoster(ourLobbyFrame());
+  session.seating = seatingFromRoster(ourLobbyFrame(session));
   session.state = await dealHostedTable({
     packId: session.pack.packId,
     variants: session.pack.variants,
@@ -1494,7 +1619,7 @@ export async function dealParty() {
   session.host.broadcastLobby();
   session.host.publish([]);
   hidePartyScreen();
-  refreshSeats();
+  refreshSeats(session);
   return true;
 }
 
@@ -1506,78 +1631,6 @@ export async function dealParty() {
  * here — coming back re-claims and asks for a snapshot, which is the path a
  * late joiner already takes.
  * ------------------------------------------------------------------ */
-
-/**
- * The same host, the same game, a DIFFERENT table.
- *
- * `(hostDeviceId, packId)` is the uniqueness rule for tables that are live, and
- * the minted id is what tells two apart across time (plan §2) — so this pairing
- * means exactly one thing: they ended the game we had a seat at and dealt
- * another. The seat is not coming back, and a tile that went on promising it
- * would be the "sign on an open door saying CLOSED" the sniffer already worries
- * about elsewhere.
- *
- * Said ONCE without needing a flag to remember: clearing the stub removes the
- * only thing that makes this true, so the next frame finds nothing to announce.
- */
-function noteSupersededSeat(frame) {
-  if (!frame || frame.hostDeviceId === selfId()) return;
-
-  // THE OLD TILE GOES TOO, and this half is not about our seat at all. A host
-  // that ends a table politely sends `bye 'closed'` and the directory forgets
-  // it; one whose battery died and who came back to deal again sends nothing,
-  // and `pruneDeadTables` will not help because that host is plainly alive. The
-  // pair being unique among LIVE tables is what makes the older entry provably
-  // dead, so it is dropped here rather than left advertising open seats.
-  for (const entry of tables.all()) {
-    if (entry.hostDeviceId !== frame.hostDeviceId) continue;
-    if (entry.packId !== frame.packId) continue;
-    if (entry.key === frame.tableId) continue;
-    tables.forget(entry.key);
-    if (activeKey === entry.key) activeKey = null;
-  }
-
-  const superseded = seatStubs().find((stub) => stub.hostDeviceId === frame.hostDeviceId
-    && stub.packId === frame.packId
-    && stub.tableId !== frame.tableId);
-  if (!superseded) return;
-  clearSeatStub(superseded.tableId);
-  setNotice(`${peerName(frame.hostDeviceId)} started a new game — your old seat is gone.`);
-}
-
-/**
- * Record — or forget — our seat at the table this frame describes.
- *
- * THE HOST'S ROSTER IS WHAT MAKES IT TRUE. We write the stub when the host says
- * we are in the chair, never when we ask for it: a claim that was refused, or
- * one still in flight, would otherwise leave a tile promising a seat nobody
- * gave us. It is read off the LOBBY rather than a view because a seat is real
- * before the deal, and a table waiting to start is exactly one worth coming
- * back to.
- */
-function noteSeatFrom(frame) {
-  if (!frame || frame.hostDeviceId === selfId()) return;
-  const me = selfId();
-  const mine = (frame.seats || []).find((s) => s.kind === 'device' && s.deviceId === me);
-  if (mine) {
-    saveSeatStub({
-      tableId: frame.tableId,
-      hostDeviceId: frame.hostDeviceId,
-      packId: frame.packId,
-      seat: mine.seat,
-      // Captured NOW, while they are still on the roster. Once they go quiet
-      // `peerName` can only answer "Someone", and that is the exact moment the
-      // tile needs to say whose table it was.
-      hostName: peerName(frame.hostDeviceId),
-    });
-    return;
-  }
-  // NOT IN THE ROSTER ANY MORE. The host gave the seat to a bot, or somebody
-  // else took it — either way the promise is void and the tile must stop
-  // making it. `bye 'replaced'` says the same thing; this catches the case
-  // where we simply were not listening when it did.
-  clearSeatStub(frame.tableId);
-}
 
 /* ------------------------------------------------------------------ *
  * A table that survives the tab
@@ -1719,7 +1772,7 @@ function headlessBotsFor(session) {
     botDelayMs: () => loadSettings().botDelayMs,
     me: seatLens,
     identityOf: (seat) => session.seating?.[seat]
-      || { seat, name: nameForSeat(seat) || `Seat ${seat}`, icon: '', color: '#6b7280', isBot: true },
+      || { seat, name: nameForSeat(seat, session) || `Seat ${seat}`, icon: '', color: '#6b7280', isBot: true },
     actingSeatsOf: (state) => {
       if (state.gameOver) return [];
       const template = state.pack.template;
@@ -1789,7 +1842,7 @@ export function leaveFelt() {
  * KEEPS its deadline rather than having its clock reset by somebody else's
  * move, which is what stops a timeout being unreachable at a busy table.
  */
-function armTimer(session = ourTable()) {
+function armTimer(session) {
   const state = session?.state;
   if (!session?.timer || !state) return;
   session.timer.arm(state);
@@ -1824,28 +1877,6 @@ export function stopHosting() {
   renderScreen();
 }
 
-/**
- * A host that stopped answering.
- *
- * A table whose host has left the party is not a table any more, and nothing
- * says so on the wire: a host that closes politely broadcasts `bye`, but one
- * whose battery died says nothing, and the only evidence is the roster. Without
- * this, that table would sit on the lobby forever advertising open seats.
- */
-function pruneDeadTables() {
-  const live = (port?.peers() || []).map((p) => p.deviceId);
-  // OURSELVES, EXPLICITLY. A device is never in its own `peers()`, so a host
-  // that filed its own table would prune it on the next roster change and its
-  // tile would blink out while the game was still running.
-  if (host()) live.push(selfId());
-  const dropped = tables.retain(live);
-  if (!dropped.length) return;
-  if (activeKey && dropped.includes(activeKey)) {
-    activeKey = null;
-    focusTable(tables.latest()?.key);
-  }
-}
-
 /** Can this device offer a party at all? The lobby tile asks before drawing. */
 export function canHost() {
   return availability().available;
@@ -1860,17 +1891,22 @@ export function canHost() {
  * cannot tell being removed from the host crashing, and would sit there
  * proposing into nothing.
  */
-async function removeSeat(seat) {
-  const who = nameForSeat(seat) || `Seat ${seat + 1}`;
+async function removeSeat(seat, session) {
+  // THE TABLE THE SEAT WAS DRAWN FOR, held across the await. This asks a
+  // question and waits for an answer, and the panel can be pointed somewhere
+  // else by the time one comes back — re-reading the subject afterwards would
+  // bot a seat at whichever table the player had wandered to.
+  if (!session?.host || !session.seats) return;
+  const who = nameForSeat(seat, session) || `Seat ${seat + 1}`;
   const ok = await confirmAction(`Remove ${who} from the table? A bot takes over their hand.`,
     { okLabel: 'Remove them', cancelLabel: 'Keep them' });
   if (!ok) return;
-  const owner = hostSeats().ownerOf(seat);
+  const owner = session.seats.ownerOf(seat);
   if (owner.kind === 'device' && owner.deviceId) {
-    host().sendBye('replaced', { to: owner.deviceId });
+    session.host.sendBye('replaced', { to: owner.deviceId });
   }
-  hostSeats().seatBot(seat);
-  afterSeatChange();
+  session.seats.seatBot(seat);
+  afterSeatChange(session);
 }
 
 /* ------------------------------------------------------------------ *
@@ -1885,7 +1921,7 @@ async function removeSeat(seat) {
  * has missed nothing, and bot-filling it would turn a recoverable blip into a
  * lost seat. Only when the grace has run out is there anything to ask.
  */
-function checkForDrops(session = ourTable()) {
+function checkForDrops(session) {
   if (!session?.host || !session.seats) return;
   // OUR TABLE, NOT THE ONE ON SCREEN. Read from the felt, this returned early
   // for a backgrounded hosted table — so a player dropping out of a game the
@@ -1900,7 +1936,7 @@ function checkForDrops(session = ourTable()) {
   }
 }
 
-function askAboutSeat(seat, session = ourTable()) {
+function askAboutSeat(seat, session) {
   if (!el.decision) return;
   const who = nameForSeat(seat, session) || `Seat ${seat + 1}`;
   el.decisionText.textContent = `${who} has left the table.`;
@@ -1917,7 +1953,7 @@ function askAboutSeat(seat, session = ourTable()) {
     } else if (choice === 'pause') {
       setTablePaused(true);
       setNotice(`Paused — waiting for ${who}.`);
-      afterSeatChange();
+      afterSeatChange(session);
     } else {
       stopHosting();
       goToLobby();
@@ -1932,123 +1968,6 @@ function askAboutSeat(seat, session = ourTable()) {
 /* ------------------------------------------------------------------ *
  * Joining
  * ------------------------------------------------------------------ */
-
-/**
- * The table sniffer.
- *
- * A joiner cannot start a real client before it knows WHICH pack to load — the
- * client refuses a lobby whose pack is not the one this build has open, and
- * quite right too. So this listens for the one frame that answers that
- * question, applying the same two rules the client itself applies: a frame is
- * only believed from the device we hold a DIRECT link to, and never when it
- * arrives relayed (a fellow joiner can address us through the hub).
- *
- * It fills the directory and never holds a scrap of state.
- */
-function startSniffing() {
-  if (sniffOff || !port) return;
-  sniffOff = port.onMessage((payload, fromDeviceId, meta) => {
-    // EVERYBODY HEARS THE ROOM, whatever they are doing in it. This used to
-    // give up the moment we became a client — `if (client || host)` — which
-    // meant the second table in a party was unknowable to anybody already
-    // sitting at the first, and a host was deaf to every table but its own.
-    // Hearing is not joining: what a host or a seated joiner does with a
-    // sighting is put it on a tile, and the guards below are what keep it from
-    // becoming anything more.
-    if (!fromDeviceId) return;
-    const verdict = validateFrame(payload);
-    if (!verdict.ok) return;
-    const frame = verdict.frame;
-    if (frame.k === FRAME.BYE) return void noteBye(fromDeviceId, frame, meta);
-    if (frame.k !== FRAME.LOBBY) return;
-    // Our own broadcast, come back to us. Not a table we discovered.
-    if (frame.hostDeviceId === selfId()) return;
-    // AUTHENTIC MEANS "FROM A DEVICE WE HOLD A DIRECT LINK TO", which is not the
-    // same test as "from the single device we hold a direct link to" — and the
-    // difference is the whole of two tables. With two hosts in the party there
-    // are two direct peers, the old `direct.length === 1` answered null, and
-    // every lobby frame from BOTH of them was dropped as unauthenticated: not
-    // one table too few, but nothing at all. The security property is the one
-    // that mattered and it is unchanged — the sender must be direct and the
-    // frame must not be relayed, so a fellow joiner cannot advertise a table
-    // through the hub.
-    const direct = port.peers().filter((p) => p.direct).map((p) => p.deviceId);
-    const hostDeviceId = direct.includes(fromDeviceId) ? fromDeviceId : null;
-    if (!isAuthentic(FRAME.LOBBY, { fromDeviceId, hostDeviceId, relayed: meta?.relayed })) return;
-
-    const known = tables.get(tableKeyOf(frame));
-    // A FRESH INVITATION CLEARS THE LAST ONE'S EPITAPH. "The host closed the
-    // table" is true and worth saying — right up until the host opens another
-    // one, at which point it is a sign on an open door saying CLOSED. Now that
-    // several tables are known, the comparison is against THIS table's last
-    // frame rather than against the one slot everything used to share.
-    if (notice && (!known || known.frame.packId !== frame.packId
-      || !known.frame.started !== !frame.started)) {
-      notice = '';
-    }
-    const entry = tables.sight(frame);
-    if (!entry) return;
-    rememberPackName(frame.packId);
-    // HEARING THE HOST IS ENOUGH TO KEEP THE PROMISE ALIVE. A seat we hold at a
-    // table we are not currently a client of still ages on this, which is what
-    // stops a week of watching from someone else's felt rolling it off.
-    touchSeatStub(entry.key);
-    noteSupersededSeat(frame);
-    noteSeatFrom(frame);
-    // WHERE TO LOOK, and the rule is about attachment rather than recency: an
-    // unattached device follows the latest table it hears about (which with one
-    // table in earshot is exactly the old behaviour), and a device already at a
-    // table — its own or somebody else's — is not dragged off it by a neighbour
-    // dealing.
-    if (!host() && !client() && !joining) focusTable(entry.key);
-    if (!host() && activeKey === entry.key) {
-      // No `lobbyFrame` to stash any more: `shownFrame()` already prefers the
-      // directory's copy of this very frame, which `tables.sight` just filed.
-      // BECOME A CLIENT AS SOON AS WE ARE INVITED, rather than on a button.
-      // Loading the pack is the only thing "Join" ever did, and making it a
-      // separate tap meant the seat buttons were dead until you found it —
-      // two decisions where there is only one, and the second one is the seat.
-      // Only for the table we are looking at: auto-loading a pack for every
-      // table in earshot would be a fetch per host, for felts nobody asked
-      // to see.
-      joinTable(entry).catch(reportFailure);
-    }
-    refreshEntry();
-    renderScreen();
-  });
-}
-
-/**
- * A `bye` from a host we know about.
- *
- * ONLY 'closed' RETIRES A TABLE, and the precision matters because three
- * different partings share this frame kind. A joiner leaving says 'leave' and
- * reaches us relayed through the hub — that is somebody standing up, not a
- * table ending. A removed player is told 'replaced', privately, about their own
- * seat. Only the host broadcasting 'closed' means the felt is gone, and only
- * the host's own direct frame is believed for it: a relayed 'closed' is a
- * fellow joiner claiming an authority it does not have.
- */
-function noteBye(fromDeviceId, frame, meta) {
-  if (meta?.relayed) return;
-  if (frame.why !== 'closed') return;
-  // WHICH TABLE CLOSED, said by the frame itself. Under v1 this had to be
-  // inferred from the sender, which was right only because a device could host
-  // just one — the assumption this whole stage exists to remove.
-  const key = frame.tableId;
-  const entry = tables.get(key);
-  if (!entry || entry.hostDeviceId !== fromDeviceId) return;
-  tables.forget(key);
-  if (activeKey === key) {
-    activeKey = null;
-    // The frame this clears belongs to whichever table closed, and a table's
-    // frame now goes with its session. Clearing it here used to reach across
-    // and blank the HOST's own roster when a neighbour's table ended.
-    focusTable(tables.latest()?.key);
-  }
-  refreshEntry();
-  renderScreen();
-}
 
 /**
  * Load the host's pack, then become a real client of its table.
@@ -2118,7 +2037,7 @@ async function joinTable(entry) {
         const seen = tables.sight(next);
         if (seen && !activeKey) focusTable(seen.key);
         session.lobbyFrame = next;
-        noteSeatFrom(next);
+        sightings.noteSeatFrom(next);
         renderScreen();
       },
       onView: (view, _events, meta) => {
@@ -2143,7 +2062,10 @@ async function joinTable(entry) {
         { kind: 'error', duration: 2500 }),
       onEmote: ({ emote }) => burst(emote),
       onIncompatible: surfaceIncompatible,
-      onError: surfaceError,
+      // OUR SEAT'S TABLE, not the panel's. Handed the bare function, this
+      // marked a seat unreachable on whatever table `ourTable()` answered with
+      // — which on a device that also hosts is somebody else's game entirely.
+      onError: (detail) => surfaceError(detail, session),
       // 'replaced' is the host taking this seat back; 'closed' is the whole
       // table ending. Same exit, two different sentences, because "your game
       // vanished" is not a thing to leave somebody guessing about.
@@ -2348,12 +2270,17 @@ export function refreshEntry() {
     el.entry.disabled = true;
     return;
   }
-  startSniffing();
+  sightings.start();
   // Re-ask about the seats too. `onPeersChange` is the usual trigger, but a
   // player coming back to this screen deserves an answer that is current rather
   // than one that is waiting for the next transport event.
-  checkForDrops();
-  pruneDeadTables();
+  //
+  // THE TABLE ON SCREEN, deliberately and out loud. One at a time is the rule
+  // `checkForDrops` itself keeps — the decision dialog is a single element and
+  // asking about two tables at once would have the second overwrite the first —
+  // and each hosted table's own `onPeersChange` covers the rest.
+  checkForDrops(ourTable());
+  sightings.pruneDead();
   // THE HEADER BUTTON IS THE JOINER'S DOOR AND ONLY THE JOINER'S. Hosting is
   // offered on the game tiles, because a host picks a game first; there is
   // nothing for this button to mean until somebody else has picked one.
@@ -2494,7 +2421,7 @@ export function initParty({ onShowTable, onShowLobby }) {
   // anybody has paired. Both of these re-ask rather than remembering.
   try {
     port?.onStatus(() => { refreshEntry(); renderScreen(); });
-    port?.onPeersChange(() => { pruneDeadTables(); refreshEntry(); renderStrip(); });
+    port?.onPeersChange(() => { sightings.pruneDead(); refreshEntry(); renderStrip(); });
   } catch { /* an older surface without the hooks is simply quieter */ }
 
   refreshEntry();
@@ -2571,7 +2498,7 @@ export function takeTurn() {
     // `applyLocal` publishes AND fires onApplied, which is what runs the felt's
     // post-move ritual. Calling that ritual again here ran it twice per host
     // move — two renders, two saves, and two round-summary timers.
-    const verdict = host().applyLocal(move);
+    const verdict = session.host.applyLocal(move);
     if (verdict?.legal) return move;
   }
   return null;
