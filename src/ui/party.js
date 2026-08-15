@@ -60,7 +60,7 @@ import { createSeatTable, createSeatLens, deserializeSeatTable } from '../player
 import { createTableSightings } from './tableSightings.js';
 import { nextFocus } from './partyFocus.js';
 import {
-  partyModel, tableOf, packState, seatingFromRoster as seatingOf,
+  partyModel, tableOf, packState, seatingFromRoster as seatingOf, emptyBeliefs,
 } from './partyModel.js';
 
 const el = {
@@ -370,8 +370,16 @@ export function partyRole() {
  * being stale has a bug list.
  * ------------------------------------------------------------------ */
 
+// WHAT WE LAST THOUGHT, so a downgrade has to hold before it is repeated
+// (#78, src/ui/partyModel.js). Threaded through the model rather than kept by
+// it: the model is pure, and a cache in there would be the fifth store #75
+// spent four stages removing. This is the one variable that half of one.
+let beliefs = emptyBeliefs();
+/** The pending downgrade's own timer — see `armBeliefs`. */
+let settling = null;
+
 function model() {
-  return partyModel({
+  const built = partyModel({
     self: selfId(),
     myName: myName(),
     publishedName: publishedName(),
@@ -387,7 +395,31 @@ function model() {
     stubs: seatStubs(),
     packNameOf: (packId) => packNames.get(packId) || null,
     focusedKey: activeKey,
+    now: Date.now(),
+    beliefs,
   });
+  beliefs = built.beliefs;
+  return built;
+}
+
+/**
+ * ONE TIMER, FOR THE ONE MOMENT A HELD-BACK READING COMES DUE.
+ *
+ * A repaint is not a clock: nothing else would happen when a seat's four
+ * seconds of probation elapse, so the chip would sit on its old value until
+ * some unrelated event repainted. This arms exactly one wake-up for the
+ * earliest pending change — and nothing at all when nothing is pending, which
+ * is nearly always.
+ *
+ * THE SESSION CLOCK ON PURPOSE, unlike the shared table's bots (#71): this is
+ * about what a screen is showing, and a screen nobody is looking at has nothing
+ * to correct. It resumes with the remaining time when the frame does.
+ */
+function armBeliefs(at) {
+  if (settling) { settling.cancel(); settling = null; }
+  if (at === null || at === undefined) return;
+  settling = Arcade.session.setTimeout(() => { settling = null; repaint(); },
+    Math.max(0, at - Date.now()));
 }
 
 /* ------------------------------------------------------------------ *
@@ -884,11 +916,13 @@ function renderEntry(views) {
  * path calls the one renderer it needs, and every belief change calls this.
  */
 function repaint() {
-  const views = model().tables;
+  const built = model();
+  const views = built.tables;
   renderEntry(views);
   renderLobby(views);
   renderPanel(views);
   renderStrip(attachedView(views));
+  armBeliefs(built.beliefs.nextChangeAt);
 }
 
 function renderPanel(views) {

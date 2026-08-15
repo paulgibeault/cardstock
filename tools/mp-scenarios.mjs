@@ -479,6 +479,10 @@ const namesAndChips = {
     // one door it comes through on its way to the seat grid.
     const result = await frames.H.evaluate(async ({ hostile }) => {
       const p = await window.__mod('src/ui/party.js');
+      // #78: a WORSE reading has to hold before the screen repeats it, so every
+      // downgrade below is read twice — once at once, and once after probation.
+      const { SETTLE_MS } = await window.__mod('src/ui/partyModel.js');
+      const settle = () => new Promise((r) => setTimeout(r, SETTLE_MS + 750));
       const real = window.Arcade.peer.peers;
       const patch = (mutate) => { window.Arcade.peer.peers = () => mutate(real.call(window.Arcade.peer)); };
       const chipsNow = () => [...document.querySelectorAll('.party-seat')].map((row) => ({
@@ -499,17 +503,24 @@ const namesAndChips = {
       // Scripted transitions, one status at a time.
       patch((peers) => peers.map((peer) => ({ ...peer, status: 'interrupted' })));
       p.showPartyScreen();
+      const blip = chipsNow();   // straight away: still connected (#78)
+      // NOTHING REPAINTS HERE ON PURPOSE. The screen arms one timer for the
+      // moment probation ends, so reading after the wait with no repaint of our
+      // own is what proves that timer exists and fires.
+      await settle();
       const interrupted = chipsNow();
 
       patch(() => []);           // every peer off the roster: terminal drop
       p.refreshEntry();          // the same re-ask returning to this screen does
       p.showPartyScreen();
+      const stillHere = chipsNow();
+      await settle();
       const gone = chipsNow();
       const decision = !document.getElementById('party-decision').hidden;
 
       window.Arcade.peer.peers = real;
       p.showPartyScreen();
-      return { rendered, interrupted, gone, decision, restored: chipsNow() };
+      return { rendered, blip, interrupted, stillHere, gone, decision, restored: chipsNow() };
     }, { hostile: HOSTILE });
 
     check('a hostile peer name reaches the DOM as text, never as markup',
@@ -519,10 +530,19 @@ const namesAndChips = {
     check('and it is still the name the peer chose, verbatim',
       result.rendered.text.includes(HOSTILE), JSON.stringify(result.rendered.text));
 
-    check('an interrupted link shows a reconnecting chip, on every seated device',
+    // #78, IN THE REAL THING. The unit tests walk `partyModel` forward by
+    // handing it different `now`s; only here does a real clock, a real repaint
+    // and the one-shot timer that drives it all take part.
+    check('a link that has only just dropped shows nothing yet — a blip is not news',
+      result.blip.every((row) => !row.chip.includes('--interrupted')),
+      JSON.stringify(result.blip));
+    check('an interrupted link shows a reconnecting chip once it has held',
       result.interrupted.some((row) => row.chip.includes('presence-chip--interrupted')),
       JSON.stringify(result.interrupted));
-    check('a peer off the roster reads as gone',
+    check('a peer that has only just left the roster is not called gone yet',
+      result.stillHere.every((row) => !row.chip.includes('--gone')),
+      JSON.stringify(result.stillHere));
+    check('a peer off the roster reads as gone once it has held',
       result.gone.some((row) => row.chip.includes('presence-chip--gone')),
       JSON.stringify(result.gone));
     check("and only 'gone' asks the host for a decision", result.decision === true);
