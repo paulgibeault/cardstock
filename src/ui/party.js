@@ -268,8 +268,20 @@ const sightings = createTableSightings({
   },
   setNotice: (text) => setNotice(text),
 
-  onSighting: ({ entry, frame }) => {
+  onSighting: ({ entry, frame, provenance }) => {
     rememberPackName(frame.packId);
+    // TWO FOCUS RULES, STILL, AND THIS IS WHERE THEY MEET. A frame our own
+    // client handed over is from the table we are sitting at, so the only
+    // question it raises is whether the panel is pointed at anything yet;
+    // there is no auto-join to consider, because being a client is what
+    // brought the frame here. Collapsing this into one `moveFocus(event)` is
+    // stage 4 — the point of naming both here is that stage 4 has one place to
+    // read them off rather than six.
+    if (provenance === 'client') {
+      if (!activeKey) focusTable(entry.key);
+      refreshEntry();
+      return;
+    }
     // WHERE TO LOOK, and the rule is about attachment rather than recency: an
     // unattached device follows the latest table it hears about (which with one
     // table in earshot is exactly the old behaviour), and a device already at a
@@ -2022,10 +2034,13 @@ async function joinTable(entry) {
       // authenticated, and filing them keeps the tile of the table we are
       // sitting at as current as the tiles of the ones we are only watching.
       onLobby: (next) => {
-        const seen = tables.sight(next);
-        if (seen && !activeKey) focusTable(seen.key);
+        // OUR HOST'S FRAMES ARE SIGHTINGS TOO, and they go through the same
+        // intake as the ones off the wire (#75 stage 3). This used to file the
+        // sighting and write the seat stub and stop there — no stub ageing, no
+        // superseded table retired — which was invisible only because the
+        // sniffer usually saw the same frame and did the rest.
         session.lobbyFrame = next;
-        sightings.noteSeatFrom(next);
+        sightings.noteLobby(next, { provenance: 'client' });
         repaint();
       },
       onView: (view, _events, meta) => {
