@@ -62,7 +62,7 @@ import {
   LOCAL_DEVICE as LOCAL_VIEWER,
 } from '../players/seats.js';
 import { modelFromView } from './tableModel.js';
-import { sessionClock } from '../match/clock.js';
+import { feltClock } from '../match/clock.js';
 import { createMatchRecord } from './matchRecord.js';
 import { watchHandGestures } from './handGestures.js';
 import { createZoneRenderer } from './zoneRenderer.js';
@@ -3200,8 +3200,14 @@ export function initTable({ onExit }) {
   // THE SESSION CLOCK IS THE SOLO ANSWER, and naming it here rather than
   // reaching for `Arcade.session` inside the driver is what lets a shared
   // table hand it the host wall clock instead (src/match/clock.js).
+  //
+  // WHICH ONE IS A PER-MATCH QUESTION, AND THIS IS BUILT ONCE (#71). The driver
+  // outlives every match the tab plays, so the clock is chosen when a turn is
+  // scheduled rather than here: session time for solo, the host's wall clock
+  // for a table other people are sitting at, whose hand does not stop because
+  // the host pocketed their phone.
   bots = createBotDriver({
-    clock: sessionClock(),
+    clock: feltClock({ shared: () => !!session?.shared }),
     currentEpoch: () => epoch,
     botDelayMs: () => settings.botDelayMs,
     me,

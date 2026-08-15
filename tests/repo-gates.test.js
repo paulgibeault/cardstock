@@ -202,6 +202,44 @@ test("party.js takes its session, never defaults to the focused table", () => {
     + "the caller meant. Make it a required parameter and write ourTable() at the call site.");
 });
 
+/**
+ * THE FELT'S BOTS ASK WHICH TABLE THEY ARE AT (#71).
+ *
+ * `createBotDriver` is built once, in `initTable`, before any match exists — so
+ * the clock it is handed has to be one that asks per timer, not one chosen at
+ * construction. Hand it `sessionClock()` and a HOSTED table the host is looking
+ * at schedules its bots on time that freezes when the frame suspends: the host
+ * pockets their phone on a bot's turn and the table stops for everybody at it.
+ *
+ * `tests/clock.test.js` proves `feltClock` dispatches correctly. It cannot
+ * prove the felt ASKS — src/ui/table.js touches `document` at import time, so
+ * no Node test can load it, and the symptom needs a frame suspension the
+ * three-launcher harness has no hook for. Reverting the call site alone to
+ * `() => false` reintroduces the whole bug with 493 tests still green, which is
+ * what this gate is for.
+ *
+ * Deliberately a grep, for the reason the rules.* gate above gives: the
+ * question is "does the felt's driver read the shared flag", and the cheapest
+ * honest answer is the right one.
+ */
+test("the felt's bot driver picks its clock from the match, not from the tab", () => {
+  const src = fs.readFileSync(path.join(ROOT, "src/ui/table.js"), "utf8");
+  // The driver's option list is long; only its FIRST option matters here, and
+  // it is the line straight after the call opens.
+  const opener = src.match(/createBotDriver\(\{\s*\n\s*clock:\s*([^\n]*)/);
+  assert.ok(opener, "src/ui/table.js no longer opens its bot driver with a `clock:` option");
+  assert.match(opener[1], /feltClock\(/,
+    "the felt's driver must take feltClock — a fixed clock is the solo answer for the life of the tab");
+  // The predicate itself, captured rather than pattern-matched around: a
+  // negative lookahead here backtracks through `\s*` and quietly passes on the
+  // very text it is meant to refuse.
+  const predicate = (opener[1].match(/shared:\s*\(\)\s*=>([^,}]+)/) || [, ''])[1].trim();
+  assert.ok(predicate, "feltClock is not being asked a `shared` question at all");
+  assert.match(predicate, /session/,
+    `feltClock must read the MATCH on the felt, not a constant — found \`shared: () => ${predicate}\`, `
+    + "which is the #71 bug restored");
+});
+
 test("no frame leaves src/match without going through its stamping helper", () => {
   const allowed = {
     "src/match/host.js": 2,     // sendTo + broadcast, both via stamp()
