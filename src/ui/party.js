@@ -569,8 +569,11 @@ function seatingFromRoster(frame) {
     publishedName: publishedName(),
     peers: port?.peers() || [],
     // ONLY FOR OUR OWN TABLE — a host looking at a neighbour's roster derives
-    // like any other joiner, or our own bots' faces land on their chairs.
+    // like any other joiner, or our own bots' faces land on their chairs. The
+    // bot faces and the roster authority are two answers now (#79): the felt's
+    // seating may not exist yet, and the direct links do not wait for it.
     ownSeating: host() && frame?.hostDeviceId === selfId() ? ourTable()?.seating : null,
+    trustOurRoster: !!host() && frame?.hostDeviceId === selfId(),
   });
 }
 
