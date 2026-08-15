@@ -25,6 +25,7 @@ import assert from "node:assert";
 
 import { createTableSightings } from "../src/ui/tableSightings.js";
 import { FRAME, PROTOCOL_VERSION } from "../src/match/protocol.js";
+import { PRUNE_GRACE_MS } from "../src/ui/tableSightings.js";
 
 // The SDK's synchronous state surface is a key/value store; a Map is the whole
 // of what storage.js uses (the same stub tests/storage.test.js stands up).
@@ -62,7 +63,10 @@ function lobby({ tableId = T1, hostDeviceId = ADA, packId = "hearts", seats = nu
 }
 
 /** A sightings instance with every callback recorded rather than acted on. */
-function standUp({ peers = [{ deviceId: ADA, name: "Ada", direct: true }] } = {}) {
+function standUp({ peers = [{ deviceId: ADA, name: "Ada", direct: true }], start = 0 } = {}) {
+  // A CLOCK THE TEST DRIVES, so the prune grace can be walked forward without
+  // sleeping — the same seam src/match/tableDirectory.js takes one for.
+  let clock = start;
   const seen = { sightings: [], notices: [], stale: [], closed: [], gone: [], superseded: [] };
   let handler = null;
   const port = {
@@ -71,6 +75,7 @@ function standUp({ peers = [{ deviceId: ADA, name: "Ada", direct: true }] } = {}
   };
   const sightings = createTableSightings({
     port: () => port,
+    now: () => clock,
     selfId: () => ME,
     peerName: (id) => (id === ADA ? "Ada" : "Someone"),
     hosting: () => false,
@@ -92,6 +97,7 @@ function standUp({ peers = [{ deviceId: ADA, name: "Ada", direct: true }] } = {}
   return {
     sightings,
     seen,
+    tick: (ms) => { clock += ms; },
     deliver: (frame, meta, from) => handler(frame, from ?? frame.hostDeviceId ?? ADA, meta),
   };
 }
@@ -220,14 +226,58 @@ test("only a host's own unrelayed 'closed' retires a table", () => {
  * A host that stopped answering
  * ------------------------------------------------------------------ */
 
-test("a table whose host left the party is pruned; one still on the roster is not", () => {
+test("a table whose host is on the roster is never pruned, and asks for no wake-up", () => {
   const { sightings, seen, deliver } = standUp();
   deliver(lobby(), {});
-  sightings.pruneDead();
+  assert.strictEqual(sightings.pruneDead(), null);
   assert.deepStrictEqual(seen.gone, [], "Ada is still on the roster");
+});
 
+test("a host that just fell off the roster keeps its table, and says when to look again", () => {
+  // #78 (c). Dropping the entry on the first glance is a tile that vanishes
+  // mid-glance and comes back a second later — and once it is gone the model
+  // cannot age it, because the table is no longer among its inputs at all.
   const quiet = standUp({ peers: [] });
   quiet.sightings.noteLobby(lobby(), { provenance: "wire" });
+  const dueAt = quiet.sightings.pruneDead();
+  assert.deepStrictEqual(quiet.seen.gone, [], "spared through the gap");
+  assert.strictEqual(dueAt, PRUNE_GRACE_MS, "and the caller is told when it comes due");
+  assert.strictEqual(quiet.sightings.tables.all().length, 1);
+});
+
+test("a host that came back inside the grace never lost its table at all", () => {
+  const live = [{ deviceId: ADA, name: "Ada", direct: true }];
+  let roster = live;
+  const s = standUp({ peers: [] });
+  // Rebuilt by hand so the roster can change between prunes.
+  s.sightings.noteLobby(lobby(), { provenance: "wire" });
+  s.sightings.pruneDead();          // Ada off the roster: spared
+  s.tick(PRUNE_GRACE_MS - 1);
+  assert.strictEqual(s.sightings.tables.all().length, 1);
+  assert.deepStrictEqual(s.seen.gone, []);
+  void roster; void live;
+});
+
+test("a host that really is gone loses its table once the grace is up", () => {
+  const quiet = standUp({ peers: [] });
+  quiet.sightings.noteLobby(lobby(), { provenance: "wire" });
+  quiet.sightings.pruneDead();
+  quiet.tick(PRUNE_GRACE_MS);
+  const dueAt = quiet.sightings.pruneDead();
+  assert.deepStrictEqual(quiet.seen.gone, [T1]);
+  assert.deepStrictEqual(quiet.sightings.tables.all(), []);
+  assert.strictEqual(dueAt, null, "nothing left waiting");
+});
+
+test("the grace is measured from the last sighting, not from the first prune", () => {
+  // A host we heard from a moment ago gets its full grace; one we last heard
+  // from long before it dropped off does not get a fresh one.
+  const quiet = standUp({ peers: [] });
+  quiet.sightings.noteLobby(lobby(), { provenance: "wire" });
+  quiet.tick(PRUNE_GRACE_MS - 100);          // most of the grace already spent
+  const dueAt = quiet.sightings.pruneDead();
+  assert.strictEqual(dueAt, PRUNE_GRACE_MS, "an absolute moment, not a fresh countdown");
+  quiet.tick(200);
   quiet.sightings.pruneDead();
   assert.deepStrictEqual(quiet.seen.gone, [T1]);
 });

@@ -69,7 +69,21 @@ function hostSession(tableId, packId, { seats = 3, state = null } = {}) {
   return session;
 }
 
-const base = { self: ME, myName: 'You', publishedName: 'Me', packNameOf: () => null };
+/**
+ * A LIVE SIGHTING MEANS ITS HOST IS A DIRECT PEER, so the default roster says
+ * so. src/ui/tableSightings.js will not file a frame from anyone else — the two
+ * authenticity rules are exactly that — and since #78 the model reads the
+ * roster to decide `liveness`, so a fixture without the host in `peers` is a
+ * table that could not exist. A test that wants an absent host overrides
+ * `peers` deliberately, which is the interesting case rather than the default.
+ */
+const base = {
+  self: ME,
+  myName: 'You',
+  publishedName: 'Me',
+  packNameOf: () => null,
+  peers: [{ deviceId: ADA, name: 'Ada', direct: true }, { deviceId: BO, name: 'Bo', direct: true }],
+};
 
 /* ------------------------------------------------------------------ *
  * The merge: live sightings and dormant stubs are one list
@@ -601,4 +615,25 @@ test('a key nobody asked about is forgotten rather than kept for ever', () => {
   const keys = [...steps.at(-1).model.beliefs.settled.keys()];
   assert.ok(keys.every((k) => k.startsWith('t1a1a1a1a1a1a1a1a1a')),
     `stale keys survived: ${keys.join(', ')}`);
+});
+
+test('a frame is not a pulse: a host off the roster goes offline, frame or no frame', () => {
+  // #78 (c). The directory spares a table through a brief roster gap so the
+  // screen has something to say about it — and a spared entry still holds the
+  // last frame, so "is there a frame" stopped being enough to call it live.
+  const here = { sightings: sightingsOf(lobbyFrame()), peers: [{ deviceId: ADA, direct: true }] };
+  const away = { sightings: sightingsOf(lobbyFrame()), peers: [] };
+  const steps = overTime([[0, here], [10, away], [10 + SETTLE_MS, away], [99_999, here]]);
+  assert.deepStrictEqual(steps.map((s) => s.model.tables[0].liveness),
+    ['live', 'live', 'offline', 'live'],
+    'held through the blip, offline once it holds, and back at once when they return');
+});
+
+test('our own table is always reachable — a device is never in its own peers()', () => {
+  const mine = lobbyFrame({ tableId: 't1a1a1a1a1a1a1a1a1a', hostDeviceId: ME, packId: 'hearts' });
+  const model = partyModel({
+    ...base, sightings: sightingsOf(mine), peers: [],
+    sessions: [hostSession('t1a1a1a1a1a1a1a1a1a', 'hearts')],
+  });
+  assert.strictEqual(model.tables[0].liveness, 'live');
 });

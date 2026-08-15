@@ -353,7 +353,18 @@ function viewOf({ tableId, frame, stub, session, lastSeenAt }, ctx) {
     // ONE WORD, and it is about the HOST rather than the game. "Paused" or
     // "waiting" would be claims about a table we cannot see; offline is the
     // only thing this device actually knows.
-    liveness: settle(`${tableId}:liveness`, frame ? 'live' : 'offline',
+    // A FRAME IS NOT A PULSE (#78). This asked only whether the directory held
+    // a frame — but a frame is the last thing we heard, not evidence anybody is
+    // still there, and `pruneDead` now spares a table through a brief roster
+    // gap precisely so the screen can say something about it. "Live" has to
+    // mean the host is REACHABLE too, or a spared tile goes on advertising open
+    // seats at a table nobody can answer for.
+    //
+    // OUR OWN TABLE IS ALWAYS REACHABLE: a device is never in its own
+    // `peers()`, and we are plainly here.
+    liveness: settle(`${tableId}:liveness`,
+      frame && (ours || (ctx.peers || []).some((p) => p.deviceId === hostDeviceId))
+        ? 'live' : 'offline',
       WORSE.liveness, ctx.memo),
     lastSeenAt: lastSeenAt ?? stub?.lastSeenAt ?? null,
     relation: relationTo({ hosted, joined, seat }),
