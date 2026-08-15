@@ -58,6 +58,7 @@ import {
 } from './table.js';
 import { createSeatTable, createSeatLens, deserializeSeatTable } from '../players/seats.js';
 import { createTableSightings } from './tableSightings.js';
+import { partyModel, tableOf, packState } from './partyModel.js';
 
 const el = {
   entry: document.getElementById('party-button'),
@@ -353,6 +354,41 @@ export function partyRole() {
   if (host()) return 'host';
   if (client()) return 'joiner';
   return 'idle';
+}
+
+/* ------------------------------------------------------------------ *
+ * What we believe, in one answer
+ *
+ * `partyModel()` (src/ui/partyModel.js) merges the five stores this module used
+ * to join at render time — the sighting directory, the session registry, the
+ * seat stubs, the per-session `unreachable` sets, and the transport roster —
+ * into one ordered account of every table. Surfaces render what it says.
+ *
+ * ASSEMBLED FRESH PER READ, not cached, and for the same reason `ourTable()` is
+ * a function rather than a binding: a cached belief is exactly how this file
+ * came to hold five of them. It is a walk over a handful of tables and at most
+ * six seats each — the cost of being certain is nothing here, and the cost of
+ * being stale has a bug list.
+ * ------------------------------------------------------------------ */
+
+function model() {
+  return partyModel({
+    self: selfId(),
+    myName: myName(),
+    publishedName: publishedName(),
+    peers: port?.peers() || [],
+    // The cap, asked fresh — a launcher can gain it between two reads, and a
+    // joiner seeing fellow members directly is the upgrade this branch waits
+    // for (src/ui/partyModel.js).
+    presence: (port?.caps() || []).includes('peer.presence') && Arcade.peer?.presence
+      ? (Arcade.peer.presence() || [])
+      : null,
+    sightings: tables.all(),
+    sessions: sessions.all(),
+    stubs: seatStubs(),
+    packNameOf: (packId) => packNames.get(packId) || null,
+    focusedKey: activeKey,
+  });
 }
 
 /* ------------------------------------------------------------------ *
@@ -870,10 +906,14 @@ function rememberPackName(packId) {
  * and as a ribbon on the game each is playing. Drawing them from separate call
  * sites is how the row kept a tile for a host who had left the party while the
  * ribbon for the same table had already, correctly, gone.
+ *
+ * ONE MODEL, PASSED TO BOTH (#75), which is what makes "always together" a
+ * property of the code rather than a promise in a comment: the two surfaces
+ * cannot disagree about a table because they are handed the same account of it.
  */
-function renderLobby() {
-  decorateTiles();
-  renderTablesRow();
+function renderLobby(views = model().tables) {
+  decorateTiles(views);
+  renderTablesRow(views);
 }
 
 function renderScreen() {
@@ -1049,7 +1089,13 @@ function renderActions() {
  * plus the manifest names the panel caches anyway, which is what keeps the
  * lobby's cost ceiling — manifests only, and opening it must not get slower as
  * packs ship — exactly where it was.
+ *
+ * ONE LIST NOW (#75). This drew from a hand-rolled union of `tables.all()` and
+ * the seat stubs — the join that let the row keep a tile for a host the ribbon
+ * had already, correctly, dropped. The model does the merge, so a dormant table
+ * is not a second code path here; it is a `liveness` of 'offline'.
  */
+
 /**
  * A seat at a table whose host is not here.
  *
@@ -1060,23 +1106,22 @@ function renderActions() {
  * tappable again — nothing here has to handle the waking, because waking is
  * just the directory learning about the table again.
  */
-function dormantTile(stub) {
+function dormantTile(view) {
   const tile = document.createElement('div');
   tile.className = 'table-tile table-tile--dormant';
-  tile.dataset.tableKey = stub.tableId;
+  tile.dataset.tableKey = view.tableId;
 
   const who = document.createElement('span');
   who.className = 'table-tile__who';
   // textContent, always — a name somebody else typed, read back from storage,
   // which is if anything a better reason to be careful rather than a worse one.
-  who.textContent = stub.hostName ? `Your seat at ${stub.hostName}'s table` : 'Your seat';
+  who.textContent = view.hostName ? `Your seat at ${view.hostName}'s table` : 'Your seat';
   tile.append(who);
 
   const game = document.createElement('span');
   game.className = 'table-tile__game';
-  game.textContent = packName(stub.packId);
+  game.textContent = view.packName;
   tile.append(game);
-  rememberPackName(stub.packId);
 
   const state = document.createElement('span');
   state.className = 'table-tile__state';
@@ -1091,106 +1136,74 @@ function dormantTile(stub) {
   return tile;
 }
 
-/**
- * The tables worth drawing: everything in earshot, plus the seats we hold at
- * tables that are not.
- *
- * A DORMANT TABLE IS NOT IN THE DIRECTORY, and cannot be — the directory is
- * built from frames, and a host that is asleep sends none. So the row is the
- * union: live entries first, then a stub for every seat whose table nobody has
- * advertised. Without this half, the promise T4a stores is one no screen ever
- * makes, and a player who closes the tab has no way to know their seat is
- * waiting.
- */
-function tablesToDraw() {
-  const live = tables.all().map((entry) => ({ entry, stub: null }));
-  const known = new Set(live.map((row) => row.entry.key));
-  const dormant = seatStubs()
-    .filter((stub) => !known.has(stub.tableId))
-    .map((stub) => ({ entry: null, stub }));
-  return [...live, ...dormant];
+/** "waiting to deal · 2 seats open", or "in progress · table full". */
+function tableState(view) {
+  const open = view.openSeats;
+  return `${view.stage} · ${open === 0 ? 'table full' : `${open} ${open === 1 ? 'seat' : 'seats'} open`}`;
 }
 
-function renderTablesRow() {
+function liveTile(view) {
+  const tile = document.createElement('button');
+  tile.type = 'button';
+  tile.className = `table-tile${view.ours ? ' table-tile--mine' : ''}`;
+  tile.dataset.tableKey = view.tableId;
+
+  const who = document.createElement('span');
+  who.className = 'table-tile__who';
+  // textContent, always — this is a name somebody else typed. The file
+  // header's rule is not relaxed because the element is new.
+  who.textContent = view.ours ? 'Your party' : `${view.hostName}'s table`;
+  tile.append(who);
+
+  const game = document.createElement('span');
+  game.className = 'table-tile__game';
+  game.textContent = view.packName;
+  tile.append(game);
+
+  const state = document.createElement('span');
+  state.className = 'table-tile__state';
+  state.textContent = tableState(view);
+  tile.append(state);
+
+  // YOUR SEAT, AT SOMEBODY ELSE'S TABLE. On your own it says nothing — of
+  // course you have a seat at the table you dealt — and a badge that is
+  // always there stops being read at all, including on the tile where it is
+  // the entire reason to come back.
+  const seat = view.ours ? null : view.mySeat;
+  if (seat !== null) {
+    const badge = document.createElement('span');
+    badge.className = 'table-tile__seat';
+    badge.textContent = 'Your seat';
+    tile.append(badge);
+  }
+
+  // A SEAT WE ALREADY HOLD IS A GAME, NOT A LOBBY. Tapping it takes us to the
+  // felt rather than to the panel — the panel is for deciding where to sit,
+  // and that decision was made. Any other tile still opens the seats.
+  const held = seat !== null && view.seatedHere;
+  // OUR OWN RUNNING TABLE IS ALSO A GAME TO GO BACK TO, not a lobby to open.
+  // A host's session has no client, so the `held` test above cannot see it.
+  const oursAndRunning = view.ours && view.hasState && !view.bound;
+  tile.setAttribute('aria-label',
+    `${who.textContent}, ${game.textContent}. ${state.textContent}.${seat !== null ? ' You hold a seat.' : ''}`);
+  tile.addEventListener('click', () => {
+    if (held && switchToSeat(view.tableId)) return;
+    if (oursAndRunning) { returnToOurTable().catch(reportFailure); return; }
+    showPartyScreen(view.tableId);
+  });
+  return tile;
+}
+
+function renderTablesRow(views) {
   if (!el.tablesRow || !el.tablesGrid) return;
-  const all = tablesToDraw();
-  el.tablesRow.hidden = all.length === 0;
+  el.tablesRow.hidden = views.length === 0;
   el.tablesGrid.replaceChildren();
-  if (!all.length) return;
-
-  const me = selfId();
-  for (const row of all) {
-    if (!row.entry) { el.tablesGrid.append(dormantTile(row.stub)); continue; }
-    const entry = row.entry;
-    const frame = entry.frame;
-    const mine = frame.hostDeviceId === me;
-    const tile = document.createElement('button');
-    tile.type = 'button';
-    tile.className = `table-tile${mine ? ' table-tile--mine' : ''}`;
-    tile.dataset.tableKey = entry.key;
-
-    const who = document.createElement('span');
-    who.className = 'table-tile__who';
-    // textContent, always — this is a name somebody else typed. The file
-    // header's rule is not relaxed because the element is new.
-    who.textContent = mine ? 'Your party' : `${peerName(frame.hostDeviceId)}'s table`;
-    tile.append(who);
-
-    const game = document.createElement('span');
-    game.className = 'table-tile__game';
-    game.textContent = packNames.get(frame.packId) || frame.packId || '';
-    tile.append(game);
-    rememberPackName(frame.packId);
-
-    const state = document.createElement('span');
-    state.className = 'table-tile__state';
-    state.textContent = tableState(frame);
-    tile.append(state);
-
-    // YOUR SEAT, AT SOMEBODY ELSE'S TABLE. On your own it says nothing — of
-    // course you have a seat at the table you dealt — and a badge that is
-    // always there stops being read at all, including on the tile where it is
-    // the entire reason to come back.
-    const seat = mine ? null : seatOfSelf(frame);
-    if (seat !== null) {
-      const badge = document.createElement('span');
-      badge.className = 'table-tile__seat';
-      badge.textContent = 'Your seat';
-      tile.append(badge);
-    }
-
-    // A SEAT WE ALREADY HOLD IS A GAME, NOT A LOBBY. Tapping it takes us to the
-    // felt rather than to the panel — the panel is for deciding where to sit,
-    // and that decision was made. Any other tile still opens the seats.
-    const held = seat !== null && sessions.get(entry.key)?.client?.seat?.() != null;
-    // OUR OWN RUNNING TABLE IS ALSO A GAME TO GO BACK TO, not a lobby to open.
-    // A host's session has no client, so the `held` test above cannot see it.
-    const oursAndRunning = mine && !!ourTable()?.state && !ourTable().bound;
-    tile.setAttribute('aria-label',
-      `${who.textContent}, ${game.textContent}. ${state.textContent}.${seat !== null ? ' You hold a seat.' : ''}`);
-    tile.addEventListener('click', () => {
-      if (held && switchToSeat(entry.key)) return;
-      if (oursAndRunning) { returnToOurTable().catch(reportFailure); return; }
-      showPartyScreen(entry.key);
-    });
-    el.tablesGrid.append(tile);
+  if (!views.length) return;
+  for (const view of views) {
+    rememberPackName(view.packId);
+    el.tablesGrid.append(view.liveness === 'offline' ? dormantTile(view) : liveTile(view));
   }
 }
-
-/** "waiting to deal · 2 seats open", or "in progress · table full". */
-function tableState(frame) {
-  const stage = frame.started ? 'in progress' : 'waiting to deal';
-  const open = (frame.seats || []).filter((s) => s.kind !== 'device').length;
-  return `${stage} · ${open === 0 ? 'table full' : `${open} ${open === 1 ? 'seat' : 'seats'} open`}`;
-}
-
-/** Which seat this device holds at a table, or null. */
-function seatOfSelf(frame) {
-  const me = selfId();
-  const mine = (frame?.seats || []).find((s) => s.kind === 'device' && s.deviceId === me);
-  return mine ? mine.seat : null;
-}
-
 /* ------------------------------------------------------------------ *
  * Emotes
  * ------------------------------------------------------------------ */
@@ -2315,34 +2328,38 @@ export function refreshEntry() {
  * "there is something here": the in-progress ribbon. This is the same sentence
  * about somebody else's table, on the tile that game lives on.
  */
-function decorateTiles() {
+function decorateTiles(views) {
   // EVERY PACK WITH A TABLE ON IT, not the one pack the single slot happened to
   // hold. Two hosts in a party means two ribboned tiles, and the old code could
   // only ever draw one of them — the other game looked idle while somebody was
   // sitting at it.
+  //
+  // LIVE ONLY. A dormant seat belongs to the Tables row, where "offline" is
+  // already said properly — a ribbon reading "waiting to deal" over a host who
+  // is asleep would be the tile making a promise nothing can keep.
   const live = new Map();
-  for (const entry of tables.all()) {
+  for (const view of views) {
+    if (view.liveness !== 'live') continue;
     // OURS WINS THE TILE when two hosts happen to run the same pack: "Your
     // party" is the more useful of the two sentences to read on your own
     // screen, whichever of them we heard about first.
-    if (live.has(entry.packId) && entry.hostDeviceId !== selfId()) continue;
-    live.set(entry.packId, entry.frame);
+    if (live.has(view.packId) && !view.ours) continue;
+    live.set(view.packId, view);
   }
 
   for (const tile of document.querySelectorAll('.tile[data-pack-id]')) {
     const slot = tile.querySelector('.tile__party');
     const door = tile.querySelector('.tile__together');
-    const frame = live.get(tile.dataset.packId) || null;
+    const view = live.get(tile.dataset.packId) || null;
     if (slot) {
-      slot.hidden = !frame;
-      slot.textContent = frame ? partyRibbon(frame) : '';
+      slot.hidden = !view;
+      slot.textContent = view ? partyRibbon(view) : '';
     }
     // The door's LABEL changes with its meaning. "Play together" starts a
     // table; on the game somebody is already at, the only useful verb is the
     // one that takes you there.
     if (door && !door.hidden) {
-      const someone = frame && frame.hostDeviceId !== selfId();
-      door.textContent = someone ? 'Take a seat' : 'Play together';
+      door.textContent = view && !view.ours ? 'Take a seat' : 'Play together';
     }
   }
 }
@@ -2356,15 +2373,12 @@ function decorateTiles() {
  * else's, and a party leader is not necessarily the person who dealt — with two
  * tables in one party, at most one of them belongs to the leader.
  */
-function partyRibbon(frame) {
-  if (!frame) return 'Your party';
-  const whose = frame.hostDeviceId === selfId()
-    ? 'Your party'
-    : `${peerName(frame.hostDeviceId)}'s table`;
-  const stage = frame.started ? 'in progress' : 'waiting to deal';
-  const open = (frame.seats || []).filter((s) => s.kind !== 'device').length;
-  const seats = open === 0 ? 'table full' : `${open} ${open === 1 ? 'seat' : 'seats'} open`;
-  return `${whose} · ${stage} · ${seats}`;
+function partyRibbon(view) {
+  if (!view) return 'Your party';
+  const whose = view.ours ? 'Your party' : `${view.hostName}'s table`;
+  // The same sentence the tile row says, from the same two fields — which is
+  // the point of them being fields rather than two derivations.
+  return `${whose} · ${tableState(view)}`;
 }
 
 /**
