@@ -25,6 +25,17 @@
 // superseded while the panel is looking at it — be written down as tests
 // instead of as comments.
 //
+// BELIEFS HAVE TIME IN THEM (#78). Everything here used to be instantaneous: a
+// seat was connected or interrupted or gone, a table was live or it was not,
+// each recomputed from whatever the transport said at the moment something
+// repainted. On a good link that is correct and invisible. On a shaky one —
+// phones in pockets, laptops sleeping, which is what this game is actually
+// played on — it is a surface that flickers between two truths, and a player
+// cannot tell a two-second blip from somebody leaving.
+//
+// So a DOWNGRADE has to hold before it is reported, and an UPGRADE never does.
+// One mechanism, `settle` below, for all three of the readings that flicker.
+//
 // IT DERIVES; IT DOES NOT DECIDE. Nothing here focuses a table, joins one,
 // repaints anything or sends a frame. Those need the felt and the registry in
 // view and stay in party.js. This answers what is true, once, so that the code
@@ -35,6 +46,64 @@ import { seatStatus } from '../match/host.js';
 
 /** The grace a table falls back to when its host never chose (party.js §7). */
 const DEFAULT_GRACE_MS = 60_000;
+
+/**
+ * How long a WORSE reading has to hold before the screen repeats it.
+ *
+ * A PRODUCT DECISION, NOT A TUNING KNOB, so it is written down with its
+ * reasoning like `TURN_TIMEOUT_MS` and `GRACE_CHOICES` in party.js.
+ *
+ * The number has to clear the two interruptions that cost a player nothing.
+ * A data channel blipping and recovering is one — the transport queues sends
+ * through the gap and replays them exactly once, which is the whole reason an
+ * interrupted seat keeps playing — and a roster that has not caught up with a
+ * peer yet is the other. Four seconds is longer than either and shorter than
+ * anybody's patience for "is this thing broken": a real disconnection still
+ * announces itself well inside the time it takes to look up and wonder.
+ *
+ * TOO SHORT IS WORSE THAN TOO LONG HERE. A chip that flashes teaches the player
+ * to distrust every chip; a chip that arrives four seconds late told the truth.
+ */
+export const SETTLE_MS = 4_000;
+
+/**
+ * HOW BAD A READING IS, so that only downgrades wait.
+ *
+ * Good news is never delayed — a seat that comes back says so at once, and
+ * hiding a recovery is a worse lie than showing a blip. Only the walk in the
+ * other direction has to prove itself.
+ */
+const WORSE = {
+  presence: { connected: 0, bot: 0, empty: 0, interrupted: 1, gone: 2 },
+  liveness: { live: 0, offline: 1 },
+};
+
+/** An empty memory. Held by the caller, never by this module — see `settle`. */
+export const emptyBeliefs = () => ({ settled: new Map(), nextChangeAt: null });
+
+/**
+ * The last reading worth repeating, given how long the current one has held.
+ *
+ * THE STATE IS THE CALLER'S. Hysteresis needs memory across renders, and a
+ * module-scoped cache here would be the fifth store #75 spent four stages
+ * removing — so it goes in one side and comes out the other, which is also
+ * what lets a test walk a flap forward by handing it different `now`s.
+ *
+ * @param rank  value -> how bad it is. Equal or better applies at once.
+ */
+function settle(key, raw, rank, memo) {
+  const prior = memo.prev.get(key);
+  const keep = (entry, out) => { memo.next.set(key, entry); return out; };
+  if (!prior) return keep({ reported: raw }, raw);
+  if ((rank[raw] ?? 0) <= (rank[prior.reported] ?? 0)) return keep({ reported: raw }, raw);
+  // A DOWNGRADE. Hold the last good reading until this one has proved itself —
+  // and keep the clock running from when it FIRST appeared, so a flap that
+  // keeps re-arriving does not reset its own probation for ever.
+  const since = prior.candidate === raw ? prior.since : memo.now;
+  if (memo.now - since >= SETTLE_MS) return keep({ reported: raw }, raw);
+  memo.pending(since + SETTLE_MS);
+  return keep({ reported: prior.reported, candidate: raw, since }, prior.reported);
+}
 
 /**
  * A peer's display name, from the roster, clamped and never trusted.
@@ -272,14 +341,20 @@ function viewOf({ tableId, frame, stub, session, lastSeenAt }, ctx) {
     // moment the tile needs to say whose table it was. A LIVE table whose host
     // is briefly off the roster still falls to "Someone" rather than reaching
     // for the stub; that flicker is #78, with `lastSeenAt` below waiting for it.
-    hostName: frame
+    // A LIVE TABLE WHOSE HOST BLINKED OFF THE ROSTER used to read "Someone" for
+    // one repaint and back again. `Someone` is the worse reading, so it waits —
+    // and the stub, captured while they WERE on the roster, is the better
+    // answer for a table nobody is advertising at all.
+    hostName: settle(`${tableId}:host`, frame
       ? nameOfPeer(hostDeviceId, ctx)
       : (stub?.hostName || nameOfPeer(hostDeviceId, ctx)),
+    { Someone: 1 }, ctx.memo),
     ours,
     // ONE WORD, and it is about the HOST rather than the game. "Paused" or
     // "waiting" would be claims about a table we cannot see; offline is the
     // only thing this device actually knows.
-    liveness: frame ? 'live' : 'offline',
+    liveness: settle(`${tableId}:liveness`, frame ? 'live' : 'offline',
+      WORSE.liveness, ctx.memo),
     lastSeenAt: lastSeenAt ?? stub?.lastSeenAt ?? null,
     relation: relationTo({ hosted, joined, seat }),
     bound: !!session?.bound,
@@ -302,7 +377,10 @@ function viewOf({ tableId, frame, stub, session, lastSeenAt }, ctx) {
       ...identity,
       kind: (frame?.seats || []).find((s) => s.seat === identity.seat)?.kind || 'empty',
       deviceId: (frame?.seats || []).find((s) => s.seat === identity.seat)?.deviceId || null,
-      presence: presence.get(identity.seat) || 'connected',
+      // A BLIP IS NOT A DEPARTURE. connected → interrupted → gone only lands
+      // once the reading has held; the walk back is immediate.
+      presence: settle(`${tableId}:${identity.seat}`,
+        presence.get(identity.seat) || 'connected', WORSE.presence, ctx.memo),
       unreachable: unreachable.has(identity.seat),
       deadlineAt: deadlines.find((d) => d.seat === identity.seat)?.expiresAt ?? null,
     })),
@@ -346,8 +424,20 @@ export function partyModel({
   stubs = [],
   packNameOf = () => null,
   focusedKey = null,
+  now = Date.now(),
+  beliefs = emptyBeliefs(),
 } = {}) {
-  const ctx = { self, myName, publishedName, peers, presence, packNameOf, focusedKey };
+  // THE MEMORY GOES THROUGH, NOT IN. A fresh `next` is built each pass and
+  // handed back, so a key nobody asked about this time is forgotten rather than
+  // accumulating for every table this device has ever heard of.
+  const memo = {
+    now,
+    prev: beliefs.settled,
+    next: new Map(),
+    at: null,
+    pending(when) { memo.at = memo.at === null ? when : Math.min(memo.at, when); },
+  };
+  const ctx = { self, myName, publishedName, peers, presence, packNameOf, focusedKey, memo };
   const sessionFor = (tableId) => sessions.find((s) => s.tableId === tableId) || null;
 
   const live = sightings.map((entry) => viewOf({
@@ -369,7 +459,16 @@ export function partyModel({
       lastSeenAt: stub.lastSeenAt,
     }, ctx));
 
-  return { self, focusedKey, tables: [...live, ...dormant] };
+  return {
+    self,
+    focusedKey,
+    tables: [...live, ...dormant],
+    // WHAT THE CALLER OWES US BACK, and when to ask again. `nextChangeAt` is
+    // the earliest moment a held-back downgrade comes due — null when nothing
+    // is pending, which is nearly always. A repaint is not a clock, so the
+    // screen arms exactly one timer off this rather than polling (party.js).
+    beliefs: { settled: memo.next, nextChangeAt: memo.at },
+  };
 }
 
 /* ------------------------------------------------------------------ *

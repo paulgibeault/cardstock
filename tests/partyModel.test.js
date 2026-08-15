@@ -19,7 +19,7 @@ import { test } from 'node:test';
 import assert from 'node:assert';
 
 import {
-  partyModel, tableOf, focusedTable, boundTable, packState,
+  partyModel, tableOf, focusedTable, boundTable, packState, emptyBeliefs, SETTLE_MS,
 } from '../src/ui/partyModel.js';
 import { createTableSession } from '../src/match/tableSession.js';
 import { createTableDirectory } from '../src/match/tableDirectory.js';
@@ -466,4 +466,139 @@ test('an empty room is an empty model, not a crash', () => {
   assert.strictEqual(focusedTable(model), null);
   assert.strictEqual(boundTable(model), null);
   assert.strictEqual(packState(model, 'hearts'), null);
+});
+
+/* ------------------------------------------------------------------ *
+ * Beliefs with time in them (#78)
+ *
+ * A DOWNGRADE HAS TO HOLD; AN UPGRADE NEVER DOES. Walked forward by handing
+ * the model different `now`s — no sleeping, no fake timers, which is the whole
+ * dividend of the model being pure.
+ * ------------------------------------------------------------------ */
+
+/** A little rig that keeps the beliefs between readings, as the screen does. */
+function overTime(readings) {
+  let beliefs = emptyBeliefs();
+  const out = [];
+  for (const [now, input] of readings) {
+    const model = partyModel({ ...base, ...input, now, beliefs });
+    beliefs = model.beliefs;
+    out.push({ model, nextChangeAt: model.beliefs.nextChangeAt });
+  }
+  return out;
+}
+
+const seatsOf = (host, me) => [
+  { seat: 0, kind: 'device', deviceId: ADA, name: 'Ada', status: host },
+  { seat: 1, kind: 'device', deviceId: BO, name: 'Bo', status: me },
+];
+
+test('a seat that blips and recovers never shows a chip at all', () => {
+  const at = (status) => ({ sightings: sightingsOf(lobbyFrame({ seats: seatsOf('connected', status) })) });
+  const steps = overTime([
+    [0, at('connected')],
+    [1000, at('interrupted')],   // the blip
+    [2000, at('interrupted')],   // still blipping, still inside probation
+    [2500, at('connected')],     // recovered, well before SETTLE_MS
+  ]);
+  assert.deepStrictEqual(steps.map((s) => s.model.tables[0].seats[1].presence),
+    ['connected', 'connected', 'connected', 'connected'],
+    'a two-second interruption the transport already covered is not news');
+});
+
+test('a real disconnection still arrives, once it has held', () => {
+  const at = (status) => ({ sightings: sightingsOf(lobbyFrame({ seats: seatsOf('connected', status) })) });
+  const steps = overTime([
+    [0, at('connected')],
+    [1000, at('interrupted')],
+    [1000 + SETTLE_MS - 1, at('interrupted')],
+    [1000 + SETTLE_MS, at('interrupted')],
+  ]);
+  assert.deepStrictEqual(steps.map((s) => s.model.tables[0].seats[1].presence),
+    ['connected', 'connected', 'connected', 'interrupted']);
+});
+
+test('coming back is never delayed — hiding a recovery is the worse lie', () => {
+  const at = (status) => ({ sightings: sightingsOf(lobbyFrame({ seats: seatsOf('connected', status) })) });
+  const steps = overTime([
+    [0, at('gone')],
+    [1, at('connected')],
+  ]);
+  assert.deepStrictEqual(steps.map((s) => s.model.tables[0].seats[1].presence), ['gone', 'connected']);
+});
+
+test('a flap does not reset its own probation for ever', () => {
+  // THE BUG A NAIVE DEBOUNCE HAS. Restarting the clock on every fresh sighting
+  // of the same bad reading means a seat that flaps once a second is never
+  // reported at all. The clock runs from when the reading FIRST appeared.
+  const at = (status) => ({ sightings: sightingsOf(lobbyFrame({ seats: seatsOf('connected', status) })) });
+  const steps = overTime([
+    [0, at('connected')],
+    [100, at('interrupted')],
+    [1100, at('interrupted')],
+    [2100, at('interrupted')],
+    [100 + SETTLE_MS, at('interrupted')],
+  ]);
+  assert.strictEqual(steps.at(-1).model.tables[0].seats[1].presence, 'interrupted');
+});
+
+test('a worse reading arriving after a bad one restarts the clock for ITS own step', () => {
+  const at = (status) => ({ sightings: sightingsOf(lobbyFrame({ seats: seatsOf('connected', status) })) });
+  const steps = overTime([
+    [0, at('connected')],
+    [100, at('interrupted')],
+    [100 + SETTLE_MS, at('interrupted')],  // interrupted lands
+    [100 + SETTLE_MS + 1, at('gone')],     // now a further downgrade
+    [100 + SETTLE_MS + 2, at('gone')],
+  ]);
+  assert.deepStrictEqual(steps.map((s) => s.model.tables[0].seats[1].presence),
+    ['connected', 'connected', 'interrupted', 'interrupted', 'interrupted'],
+    'gone waits its own turn rather than inheriting interrupted\'s served time');
+});
+
+test("a live table's host blinking off the roster does not rename them", () => {
+  const seen = { sightings: sightingsOf(lobbyFrame()), peers: [{ deviceId: ADA, name: 'Ada', direct: true }] };
+  const blinked = { sightings: sightingsOf(lobbyFrame()), peers: [] };
+  const steps = overTime([[0, seen], [500, blinked], [900, seen]]);
+  assert.deepStrictEqual(steps.map((s) => s.model.tables[0].hostName), ['Ada', 'Ada', 'Ada']);
+});
+
+test('a host who really is gone becomes Someone, once it has held', () => {
+  const seen = { sightings: sightingsOf(lobbyFrame()), peers: [{ deviceId: ADA, name: 'Ada', direct: true }] };
+  const gone = { sightings: sightingsOf(lobbyFrame()), peers: [] };
+  const steps = overTime([[0, seen], [10, gone], [10 + SETTLE_MS, gone]]);
+  assert.deepStrictEqual(steps.map((s) => s.model.tables[0].hostName), ['Ada', 'Ada', 'Someone']);
+});
+
+test('a table going dormant waits, and coming back does not', () => {
+  const stub = { tableId: 't1a1a1a1a1a1a1a1a1a', hostDeviceId: ADA, packId: 'hearts', seat: 1, hostName: 'Ada', lastSeenAt: 5 };
+  const live = { sightings: sightingsOf(lobbyFrame()), stubs: [stub] };
+  const away = { sightings: [], stubs: [stub] };
+  const steps = overTime([[0, live], [10, away], [10 + SETTLE_MS, away], [99_999, live]]);
+  assert.deepStrictEqual(steps.map((s) => s.model.tables[0].liveness),
+    ['live', 'live', 'offline', 'live']);
+});
+
+test('the model says when to look again, and says nothing when nothing is pending', () => {
+  const at = (status) => ({ sightings: sightingsOf(lobbyFrame({ seats: seatsOf('connected', status) })) });
+  const steps = overTime([
+    [0, at('connected')],
+    [1000, at('interrupted')],
+    [1000 + SETTLE_MS, at('interrupted')],
+  ]);
+  assert.strictEqual(steps[0].nextChangeAt, null, 'a settled reading needs no wake-up');
+  assert.strictEqual(steps[1].nextChangeAt, 1000 + SETTLE_MS, 'the earliest moment it comes due');
+  assert.strictEqual(steps[2].nextChangeAt, null, 'and nothing once it has landed');
+});
+
+test('a key nobody asked about is forgotten rather than kept for ever', () => {
+  // The memory is rebuilt each pass, so a table that leaves earshot does not
+  // leave an entry behind for every seat it ever had.
+  const two = { sightings: sightingsOf(lobbyFrame({ tableId: 't1a1a1a1a1a1a1a1a1a' }),
+    lobbyFrame({ tableId: 't2b2b2b2b2b2b2b2b2b', hostDeviceId: BO, packId: 'gin' })) };
+  const one = { sightings: sightingsOf(lobbyFrame({ tableId: 't1a1a1a1a1a1a1a1a1a' })) };
+  const steps = overTime([[0, two], [10, one]]);
+  const keys = [...steps.at(-1).model.beliefs.settled.keys()];
+  assert.ok(keys.every((k) => k.startsWith('t1a1a1a1a1a1a1a1a1a')),
+    `stale keys survived: ${keys.join(', ')}`);
 });
