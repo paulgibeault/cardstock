@@ -289,7 +289,6 @@ const sightings = createTableSightings({
       joinTable(entry).catch(reportFailure);
     }
     refreshEntry();
-    renderScreen();
   },
 
   onTableClosed: (key) => {
@@ -298,7 +297,6 @@ const sightings = createTableSightings({
     // and blank the HOST's own roster when a neighbour's table ended.
     refocusAway([key]);
     refreshEntry();
-    renderScreen();
   },
   onHostsGone: (keys) => refocusAway(keys),
   // NO REFOCUS HERE, and it is the whole reason this is not the same callback
@@ -801,7 +799,7 @@ function rememberPackName(packId) {
   if (!packId || packNames.has(packId)) return;
   packNames.set(packId, null); // in flight; never ask twice
   fetchPackManifest(packId)
-    .then((manifest) => { packNames.set(packId, manifest?.name || packId); renderScreen(); })
+    .then((manifest) => { packNames.set(packId, manifest?.name || packId); repaint(); })
     .catch(() => { packNames.set(packId, packId); });
 }
 
@@ -822,12 +820,80 @@ function renderLobby(views = model().tables) {
   renderTablesRow(views);
 }
 
-function renderScreen() {
-  // ONE MODEL PER REPAINT, handed to every surface below. Four surfaces each
-  // asking separately is exactly the shape #75 exists to remove — and it is
-  // also four walks over the same tables for one repaint.
+/**
+ * THE HEADER DOOR, AND THE TILES' OWN DOORS.
+ *
+ * Three reasons it can be closed and only one is worth a sentence: standalone
+ * play offers nothing (there is no party to join and saying so would be noise),
+ * an old launcher gets one specific notice, and a live party gets the button.
+ *
+ * DRAWING ONLY. Starting the sniffer, pruning dead tables and asking about
+ * drops used to happen in the middle of this — three side effects wearing a
+ * renderer's name, which is why "just repaint" was never a thing this file
+ * could do. They live in `refreshEntry` below now.
+ */
+function renderEntry(views) {
+  const gate = availability();
+  if (gate.reason === 'standalone' || gate.reason === 'no-peer-api') {
+    if (el.entry) el.entry.hidden = true;
+    for (const node of document.querySelectorAll('.tile__together')) node.hidden = true;
+    // A LAUNCHER CAN GO AWAY. Leaving the row up after the party surface has
+    // gone would leave tiles pointing at tables nothing can reach.
+    if (el.tablesRow) el.tablesRow.hidden = true;
+    return;
+  }
+  if (!gate.available) {
+    if (!el.entry) return;
+    el.entry.hidden = false;
+    el.entry.textContent = 'Launcher update required';
+    el.entry.disabled = true;
+    return;
+  }
+  // THE HEADER BUTTON IS THE JOINER'S DOOR AND ONLY THE JOINER'S. Hosting is
+  // offered on the game tiles, because a host picks a game first; there is
+  // nothing for this button to mean until somebody else has picked one.
+  // The tiles' own doors, toggled in place: a party can form while the player
+  // is sitting on the lobby, and the tiles were built before it did.
+  for (const node of document.querySelectorAll('.tile__together')) node.hidden = false;
+  if (!el.entry) return;
+  const invited = views.some((view) => view.liveness === 'live') || !!client() || !!host();
+  el.entry.hidden = !invited;
+  el.entry.disabled = false;
+  el.entry.textContent = host() ? 'Your party' : (client() ? 'Your table' : 'Join the table');
+}
+
+/**
+ * EVERY PARTY SURFACE, FROM ONE MODEL, ONCE (#75 stage 2).
+ *
+ * This file used to ask each caller to remember which renderers its change
+ * touched, and there were about twenty of them holding four in varying
+ * combinations — `renderScreen`, `refreshEntry`, `renderStrip`, `rerenderTable`.
+ * Whether a changed fact reached the surface that draws it depended on the
+ * discipline of one handler, and the ones that got it wrong are in this file's
+ * history: a tile reading "waiting to deal" over a hand mid-trick, "Deal"
+ * offered at a table dealt an hour ago.
+ *
+ * So handlers mutate and then say `repaint()`. There is nothing to remember.
+ *
+ * NO DISPATCH FRAMEWORK, deliberately. This is vanilla DOM over a handful of
+ * tables and at most six seats each; `replaceChildren` on that is cheaper than
+ * the bookkeeping any framework would want in exchange.
+ *
+ * ONE DELIBERATE EXCEPTION, AND IT IS NAMED: `renderStrip` on its own. The
+ * countdown ticks once a second and a published move re-arms it, and the strip
+ * is the only surface either touches. Repainting the tile row and the seat grid
+ * at 1 Hz to move a clock would be a real cost for no change — so the deadline
+ * path calls the one renderer it needs, and every belief change calls this.
+ */
+function repaint() {
   const views = model().tables;
+  renderEntry(views);
   renderLobby(views);
+  renderPanel(views);
+  renderStrip(attachedView(views));
+}
+
+function renderPanel(views) {
   if (!el.screen) return;
   const shown = shownView(views);
   if (el.heading) el.heading.textContent = panelHeading(shown);
@@ -863,7 +929,6 @@ function renderScreen() {
 
   renderSeats(shown);
   renderActions();
-  renderStrip(attachedView(views));
   renderEmotes();
 }
 
@@ -899,7 +964,7 @@ function graceChooser() {
       session.lobbyFrame = ourLobbyFrame(session);
       publishOwnTable(session);
       session.host?.broadcastLobby();
-      renderScreen();
+      repaint();
     }, { className: `party-grace__option${picked ? ' party-grace__option--on' : ''}` });
     option.setAttribute('aria-pressed', picked ? 'true' : 'false');
     option.title = choice.hint;
@@ -937,7 +1002,7 @@ async function returnToOurTable() {
   session.cancelBots();
   goToTable();
   hidePartyScreen();
-  renderScreen();
+  repaint();
   return true;
 }
 
@@ -1166,7 +1231,7 @@ function burst(glyph) {
 
 function setNotice(text) {
   notice = text || '';
-  renderScreen();
+  repaint();
 }
 
 function reportFailure(err) {
@@ -1185,7 +1250,7 @@ function surfaceError(detail, session) {
   if (!session) return;
   if (detail?.kind === 'send-failed' && Number.isInteger(detail.seat)) {
     session.unreachable.add(detail.seat);
-    renderScreen();
+    repaint();
     return;
   }
   if (detail?.kind === 'send-failed' && detail.deviceId) {
@@ -1195,7 +1260,7 @@ function surfaceError(detail, session) {
     for (const seat of session?.seats?.seatsOfDevice(detail.deviceId) || []) {
       session?.unreachable?.add(seat);
     }
-    renderScreen();
+    repaint();
   }
 }
 
@@ -1239,7 +1304,7 @@ function refreshSeats(session) {
   // Our own tile says what our own roster says, and it changed.
   publishOwnTable(session);
   rerenderTable();
-  renderScreen();
+  repaint();
 }
 
 /** A seat WE changed: refresh, then tell everybody. */
@@ -1505,7 +1570,7 @@ export async function hostGame(packId) {
   // by its own name now, not by the device's.
   publishOwnTable(session);
   activeKey = session.tableId;
-  refreshPartyLabel().then(renderScreen);
+  refreshPartyLabel().then(repaint);
   showPartyScreen();
   return true;
 }
@@ -1627,7 +1692,7 @@ export async function rehydrateHostedTables() {
       clearHostMatch(entry.tableId);
     }
   }
-  if (restored) { refreshEntry(); renderScreen(); }
+  if (restored) refreshEntry();
   return restored;
 }
 
@@ -1797,7 +1862,7 @@ export function stopHosting() {
   // it — which for the host who was never told about the neighbours' tables
   // used to be nothing at all.
   focusTable(tables.latest()?.key);
-  renderScreen();
+  repaint();
 }
 
 /** Can this device offer a party at all? The lobby tile asks before drawing. */
@@ -1961,7 +2026,7 @@ async function joinTable(entry) {
         if (seen && !activeKey) focusTable(seen.key);
         session.lobbyFrame = next;
         sightings.noteSeatFrom(next);
-        renderScreen();
+        repaint();
       },
       onView: (view, _events, meta) => {
         // THE VIEW IS THIS TABLE'S, and it is kept on this table's session — so
@@ -2005,8 +2070,8 @@ async function joinTable(entry) {
   joining = false;
   // The last table's parting words are not this table's news.
   if (notice) setNotice('');
-  refreshPartyLabel().then(renderScreen);
-  renderScreen();
+  refreshPartyLabel().then(repaint);
+  repaint();
 }
 
 
@@ -2046,7 +2111,7 @@ function switchToSeat(tableId) {
   // re-adopts and repaints — the same door a late joiner's snapshot comes in.
   session.client.requestSnapshot();
   hidePartyScreen();
-  renderScreen();
+  repaint();
   return true;
 }
 
@@ -2107,7 +2172,7 @@ export function leaveTable() {
   // back to whichever one we were looking at. `shownFrame()` does that on its
   // own now that the session carrying the old frame is gone.
   leaveSharedTable();
-  renderScreen();
+  repaint();
 }
 
 /* ------------------------------------------------------------------ *
@@ -2161,46 +2226,21 @@ function announceGate(gate) {
  * live party gets the button.
  */
 export function refreshEntry() {
-  if (!el.entry) return;
-  const gate = availability();
   ensurePort();
-  if (gate.reason === 'standalone' || gate.reason === 'no-peer-api') {
-    el.entry.hidden = true;
-    for (const node of document.querySelectorAll('.tile__together')) node.hidden = true;
-    // A LAUNCHER CAN GO AWAY. Leaving the row up after the party surface has
-    // gone would leave tiles pointing at tables nothing can reach.
-    if (el.tablesRow) el.tablesRow.hidden = true;
-    return;
+  if (availability().available) {
+    sightings.start();
+    // Re-ask about the seats too. `onPeersChange` is the usual trigger, but a
+    // player coming back to this screen deserves an answer that is current
+    // rather than one that is waiting for the next transport event.
+    //
+    // THE TABLE ON SCREEN, deliberately and out loud. One at a time is the rule
+    // `checkForDrops` itself keeps — the decision dialog is a single element and
+    // asking about two tables at once would have the second overwrite the first
+    // — and each hosted table's own `onPeersChange` covers the rest.
+    checkForDrops(ourTable());
+    sightings.pruneDead();
   }
-  if (!gate.available) {
-    el.entry.hidden = false;
-    el.entry.textContent = 'Launcher update required';
-    el.entry.disabled = true;
-    return;
-  }
-  sightings.start();
-  // Re-ask about the seats too. `onPeersChange` is the usual trigger, but a
-  // player coming back to this screen deserves an answer that is current rather
-  // than one that is waiting for the next transport event.
-  //
-  // THE TABLE ON SCREEN, deliberately and out loud. One at a time is the rule
-  // `checkForDrops` itself keeps — the decision dialog is a single element and
-  // asking about two tables at once would have the second overwrite the first —
-  // and each hosted table's own `onPeersChange` covers the rest.
-  checkForDrops(ourTable());
-  sightings.pruneDead();
-  // THE HEADER BUTTON IS THE JOINER'S DOOR AND ONLY THE JOINER'S. Hosting is
-  // offered on the game tiles, because a host picks a game first; there is
-  // nothing for this button to mean until somebody else has picked one.
-  // The tiles' own doors, toggled in place: a party can form while the player
-  // is sitting on the lobby, and the tiles were built before it did.
-  for (const node of document.querySelectorAll('.tile__together')) node.hidden = false;
-  renderLobby();
-  const invited = tables.size > 0 || !!client() || !!host();
-  el.entry.hidden = !invited;
-  el.entry.disabled = false;
-  el.entry.textContent = host() ? 'Your party' : (client() ? 'Your table' : 'Join the table');
-  renderStrip();
+  repaint();
 }
 
 /**
@@ -2288,8 +2328,8 @@ export function showPartyScreen(key = null) {
   if (!el.screen) return;
   if (key) focusTable(key);
   el.screen.hidden = false;
-  refreshPartyLabel().then(renderScreen);
-  renderScreen();
+  refreshPartyLabel().then(repaint);
+  repaint();
 }
 
 export function hidePartyScreen() {
@@ -2329,8 +2369,9 @@ export function initParty({ onShowTable, onShowLobby }) {
   // The party surface can appear at any moment: a game is often mounted before
   // anybody has paired. Both of these re-ask rather than remembering.
   try {
-    port?.onStatus(() => { refreshEntry(); renderScreen(); });
-    port?.onPeersChange(() => { sightings.pruneDead(); refreshEntry(); renderStrip(); });
+    port?.onStatus(() => refreshEntry());
+    // `refreshEntry` prunes and repaints; it was three calls that had to agree.
+    port?.onPeersChange(() => refreshEntry());
   } catch { /* an older surface without the hooks is simply quieter */ }
 
   refreshEntry();
