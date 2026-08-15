@@ -76,10 +76,15 @@ function standUp({ peers = [{ deviceId: ADA, name: "Ada", direct: true }] } = {}
     hosting: () => false,
     clearStaleNotice: (frame, known) => seen.stale.push({ packId: frame.packId, known: !!known }),
     setNotice: (text) => seen.notices.push(text),
-    onSighting: (event) => seen.sightings.push(event),
-    onTableClosed: (key) => seen.closed.push(key),
-    onHostsGone: (keys) => seen.gone.push(...keys),
-    onSuperseded: (keys) => seen.superseded.push(...keys),
+    // ONE CALLBACK, FOUR KINDS — recorded by kind so each test can assert the
+    // one it is about (#75 stage 4).
+    onChange: (change) => {
+      if (change.kind === 'sighted') return void seen.sightings.push(change);
+      if (change.kind === 'closed') return void seen.closed.push(...change.keys);
+      if (change.kind === 'hosts-gone') return void seen.gone.push(...change.keys);
+      if (change.kind === 'superseded') return void seen.superseded.push(...change.keys);
+      throw new Error(`unexpected change ${change.kind}`);
+    },
   });
   sightings.start();
   // A `bye` carries no `hostDeviceId` — the sender IS the claim — so the

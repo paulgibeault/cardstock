@@ -58,6 +58,7 @@ import {
 } from './table.js';
 import { createSeatTable, createSeatLens, deserializeSeatTable } from '../players/seats.js';
 import { createTableSightings } from './tableSightings.js';
+import { nextFocus } from './partyFocus.js';
 import {
   partyModel, tableOf, packState, seatingFromRoster as seatingOf,
 } from './partyModel.js';
@@ -268,54 +269,37 @@ const sightings = createTableSightings({
   },
   setNotice: (text) => setNotice(text),
 
-  onSighting: ({ entry, frame, provenance }) => {
-    rememberPackName(frame.packId);
-    // TWO FOCUS RULES, STILL, AND THIS IS WHERE THEY MEET. A frame our own
-    // client handed over is from the table we are sitting at, so the only
-    // question it raises is whether the panel is pointed at anything yet;
-    // there is no auto-join to consider, because being a client is what
-    // brought the frame here. Collapsing this into one `moveFocus(event)` is
-    // stage 4 — the point of naming both here is that stage 4 has one place to
-    // read them off rather than six.
-    if (provenance === 'client') {
-      if (!activeKey) focusTable(entry.key);
-      refreshEntry();
+  /**
+   * WHAT IS IN EARSHOT CHANGED. One callback, because after `moveFocus` there
+   * is almost nothing left for the four this replaced to do differently — the
+   * thing that made them four was that each carried its own copy of "and where
+   * should the panel look now".
+   */
+  onChange: (change) => {
+    moveFocus(change);
+    if (change.kind !== 'sighted') {
+      // A TABLE THAT WENT AWAY. `closed` arrives on its own and has to repaint;
+      // `hosts-gone` and `superseded` arrive inside something that is about to
+      // — `pruneDead`'s caller and the sighting being filed in the same breath —
+      // and repainting here would be one wasted pass per lobby frame.
+      if (change.kind === 'closed') refreshEntry();
       return;
     }
-    // WHERE TO LOOK, and the rule is about attachment rather than recency: an
-    // unattached device follows the latest table it hears about (which with one
-    // table in earshot is exactly the old behaviour), and a device already at a
-    // table — its own or somebody else's — is not dragged off it by a neighbour
-    // dealing.
-    if (!host() && !client() && !joining) focusTable(entry.key);
-    if (!host() && activeKey === entry.key) {
-      // No `lobbyFrame` to stash: `shownFrame()` already prefers the
-      // directory's copy of this very frame, which the sighting just filed.
-      // BECOME A CLIENT AS SOON AS WE ARE INVITED, rather than on a button.
-      // Loading the pack is the only thing "Join" ever did, and making it a
-      // separate tap meant the seat buttons were dead until you found it —
-      // two decisions where there is only one, and the second one is the seat.
-      // Only for the table we are looking at: auto-loading a pack for every
-      // table in earshot would be a fetch per host, for felts nobody asked
-      // to see.
-      joinTable(entry).catch(reportFailure);
+    rememberPackName(change.frame.packId);
+    // BECOME A CLIENT AS SOON AS WE ARE INVITED, rather than on a button.
+    // Loading the pack is the only thing "Join" ever did, and making it a
+    // separate tap meant the seat buttons were dead until you found it — two
+    // decisions where there is only one, and the second one is the seat. Only
+    // for the table we are looking at: auto-loading a pack for every table in
+    // earshot would be a fetch per host, for felts nobody asked to see.
+    //
+    // NOT FOR A FRAME OUR OWN CLIENT HANDED OVER: being a client is what
+    // brought that one here, so there is nothing to join.
+    if (change.provenance === 'wire' && !host() && activeKey === change.entry.key) {
+      joinTable(change.entry).catch(reportFailure);
     }
     refreshEntry();
   },
-
-  onTableClosed: (key) => {
-    // The frame this clears belongs to whichever table closed, and a table's
-    // frame now goes with its session. Clearing it here used to reach across
-    // and blank the HOST's own roster when a neighbour's table ended.
-    refocusAway([key]);
-    refreshEntry();
-  },
-  onHostsGone: (keys) => refocusAway(keys),
-  // NO REFOCUS HERE, and it is the whole reason this is not the same callback
-  // as the two above: the table that replaced these is being sighted in the
-  // same breath, so handing it the focus would auto-join a joiner who was only
-  // browsing. The panel falls back to whatever we are actually attached to.
-  onSuperseded: (keys) => { if (keys.includes(activeKey)) activeKey = null; },
 });
 
 // The directory, read wherever a table has to be counted, named or drawn. Every
@@ -323,11 +307,25 @@ const sightings = createTableSightings({
 // `publishOwnTable` below and is a sighting like any other.
 const tables = sightings.tables;
 
-/** The panel was pointed at a table that has stopped existing. */
-function refocusAway(keys) {
-  if (!activeKey || !keys.includes(activeKey)) return;
-  activeKey = null;
-  focusTable(tables.latest()?.key);
+/**
+ * Point the panel wherever `nextFocus` says (src/ui/partyFocus.js).
+ *
+ * THE RULE IS PURE AND LIVES THERE; this is the two lines that read the state
+ * it needs and write the one variable it answers about. Splitting it that way
+ * is what finally let the transitions be tested: `activeKey` is a module-scoped
+ * `let` in a file no Node test can import.
+ */
+function moveFocus(change) {
+  activeKey = nextFocus(change, {
+    focusedKey: activeKey,
+    // ATTACHED, not "have we a session": hosting our own table and sitting at
+    // somebody else's are the same answer to "is this device already at a
+    // table it should not be dragged off".
+    attached: !!host() || !!client(),
+    joining,
+    latestKey: tables.latest()?.key ?? null,
+    knows: (key) => tables.has(key),
+  });
 }
 
 /**
@@ -440,21 +438,6 @@ function attachedView(views = model().tables) {
 function shownIsOurs() {
   const frame = shownFrame();
   return !!host() && !!frame && frame.hostDeviceId === selfId();
-}
-
-/**
- * Look at a table: point the panel at it.
- *
- * THIS IS THE WHOLE OF "SWITCHING", and it is deliberately not the whole of
- * joining. Focus is a question about what is on screen; being a client is a
- * question about which host we are exchanging frames with. Keeping them apart
- * is what lets a device see three tables while playing at one — and, since
- * this stage, look at a neighbour's seats without leaving its own.
- */
-function focusTable(key) {
-  if (!key || !tables.has(key)) return false;
-  activeKey = key;
-  return true;
 }
 
 /**
@@ -1525,7 +1508,7 @@ export async function hostGame(packId) {
   // than the model ever asked.
   const ours = sessions.hostedForPack(packId);
   if (ours) {
-    focusTable(ours.tableId);
+    moveFocus({ kind: 'chosen', key: ours.tableId });
     showPartyScreen();
     return false;
   }
@@ -1535,7 +1518,7 @@ export async function hostGame(packId) {
   // starting a rival one nobody can see.
   const existing = tables.forPack(packId)[0];
   if (existing) {
-    focusTable(existing.key);
+    moveFocus({ kind: 'chosen', key: existing.key });
     attachToActive().catch(reportFailure);
     showPartyScreen();
     return false;
@@ -1581,7 +1564,7 @@ export async function hostGame(packId) {
   // Our table takes its place among the others, and the panel points at it —
   // by its own name now, not by the device's.
   publishOwnTable(session);
-  activeKey = session.tableId;
+  moveFocus({ kind: 'chosen', key: session.tableId });
   refreshPartyLabel().then(repaint);
   showPartyScreen();
   return true;
@@ -1869,11 +1852,10 @@ export function stopHosting() {
   // Our table stops being a table the moment we stop hosting it, and its tile
   // has to go with it — we already told everybody else the same thing by `bye`.
   tables.forget(tableId);
-  activeKey = null;
   // Closing our table puts us back in the room, looking at whatever else is in
   // it — which for the host who was never told about the neighbours' tables
   // used to be nothing at all.
-  focusTable(tables.latest()?.key);
+  moveFocus({ kind: 'stopped-hosting' });
   repaint();
 }
 
@@ -2109,7 +2091,7 @@ function switchToSeat(tableId) {
   const session = sessions.get(tableId);
   if (!session || session.hosting() || !session.client) return false;
 
-  focusTable(tableId);
+  moveFocus({ kind: 'chosen', key: tableId });
   bindFelt(tableId);
 
   if (session.state && session.pack) {
@@ -2341,7 +2323,7 @@ function partyRibbon(view) {
  */
 export function showPartyScreen(key = null) {
   if (!el.screen) return;
-  if (key) focusTable(key);
+  if (key) moveFocus({ kind: 'chosen', key });
   el.screen.hidden = false;
   refreshPartyLabel().then(repaint);
   repaint();

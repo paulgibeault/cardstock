@@ -49,23 +49,29 @@ import {
  *                    epitaph has stopped being true; this module only knows
  *                    when to ask.
  * @param setNotice   (text) => void, for the one thing a sighting says out loud
- * @param onSighting  ({ entry, frame }) => void — an authenticated lobby frame,
- *                    filed. Focus, joining and rendering all happen here, in
- *                    the caller, deliberately.
  * NO DEFAULTS ON ANY OF THESE, which is the same rule #73 applied to party.js
  * itself: a seam that quietly defaults to a no-op is a callback you can forget
- * to wire and never find out about. There is one caller; it passes all ten.
+ * to wire and never find out about. There is one caller; it passes all of them.
  *
- * @param onTableClosed (key) => void — a host broadcast `bye 'closed'`
- * @param onHostsGone   (keys) => void — hosts that left the party entirely
- * @param onSuperseded  (keys) => void — tables their own host has replaced
+ * @param onChange   (change) => void — what is in earshot changed. One of:
  *
- * THREE WAYS FOR A TABLE TO STOP EXISTING, AND THEY ARE NOT ONE EVENT. What
- * the panel should do afterwards differs in each — a table that closed hands
- * the focus on to whatever else is in the room, whereas one that was superseded
+ *     { kind: 'sighted',     entry, frame, provenance }
+ *     { kind: 'closed',      keys }   a host broadcast `bye 'closed'`
+ *     { kind: 'hosts-gone',  keys }   hosts that left the party entirely
+ *     { kind: 'superseded',  keys }   tables their own host has replaced
+ *
+ * FOUR KINDS, ONE CALLBACK, and the kinds are the load-bearing part: what the
+ * panel should do afterwards differs in each — a table that closed hands the
+ * focus on to whatever else is in the room, whereas one that was superseded
  * must NOT, because the table replacing it is being sighted in the same breath
- * and inheriting the focus would auto-join a joiner into it. The module reports
- * what happened; the screen decides where to look.
+ * and inheriting the focus would auto-join a browsing joiner into it. This
+ * module reports WHAT HAPPENED and never what to do about it; the screen reads
+ * the kind and decides (`moveFocus` in src/ui/party.js).
+ *
+ * It was four callbacks until the screen had one place to answer them from
+ * (#75 stage 4). Four seams for four one-line handlers that differed only in
+ * where they pointed the panel is a boundary describing the caller's old
+ * structure rather than this module's job.
  */
 export function createTableSightings({
   port,
@@ -74,10 +80,7 @@ export function createTableSightings({
   hosting,
   clearStaleNotice,
   setNotice,
-  onSighting,
-  onTableClosed,
-  onHostsGone,
-  onSuperseded,
+  onChange,
 }) {
   // EVERY TABLE IN EARSHOT, which used to be a single `invitation` slot — see
   // the header of src/match/tableDirectory.js for what that one slot cost. It
@@ -118,7 +121,7 @@ export function createTableSightings({
       tables.forget(entry.key);
       stale.push(entry.key);
     }
-    if (stale.length) onSuperseded(stale);
+    if (stale.length) onChange({ kind: 'superseded', keys: stale });
 
     const superseded = seatStubs().find((stub) => stub.hostDeviceId === frame.hostDeviceId
       && stub.packId === frame.packId
@@ -187,7 +190,7 @@ export function createTableSightings({
     const entry = tables.get(key);
     if (!entry || entry.hostDeviceId !== fromDeviceId) return;
     tables.forget(key);
-    onTableClosed(key);
+    onChange({ kind: 'closed', keys: [key] });
   }
 
   /**
@@ -206,7 +209,7 @@ export function createTableSightings({
     // tile would blink out while the game was still running.
     if (hosting()) live.push(selfId());
     const dropped = tables.retain(live);
-    if (dropped.length) onHostsGone(dropped);
+    if (dropped.length) onChange({ kind: 'hosts-gone', keys: dropped });
   }
 
   /**
@@ -239,8 +242,11 @@ export function createTableSightings({
    *
    * @param provenance 'wire' from the subscription, 'client' from our own
    *                   client handing over a frame it authenticated. Passed
-   *                   through to `onSighting` because the screen still focuses
-   *                   differently for each — collapsing THAT is stage 4.
+   *                   through on the change because the screen focuses
+   *                   differently for each: a frame our own client handed over
+   *                   is from the table we are already sitting at, so it raises
+   *                   no auto-join question and only asks whether the panel is
+   *                   pointed at anything yet.
    */
   function noteLobby(frame, { provenance }) {
     // A FRESH INVITATION CLEARS THE LAST ONE'S EPITAPH. Asked while `known` is
@@ -258,7 +264,7 @@ export function createTableSightings({
     touchSeatStub(entry.key);
     noteSupersededSeat(frame);
     noteSeatFrom(frame);
-    onSighting({ entry, frame, provenance });
+    onChange({ kind: 'sighted', entry, frame, provenance });
     return entry;
   }
 
