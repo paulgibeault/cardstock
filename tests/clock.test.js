@@ -9,7 +9,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
 
-import { wallClock, sessionClock, deadline } from '../src/match/clock.js';
+import { wallClock, sessionClock, feltClock, deadline } from '../src/match/clock.js';
 import { createTurnTimer } from '../src/match/turnTimer.js';
 
 /**
@@ -151,6 +151,80 @@ test('the session clock is the SDK timer, untouched', () => {
   clock.after(750, () => {});
   assert.deepEqual(calls, [750]);
   assert.equal(clock.kind, 'session');
+});
+
+/* ------------------------------------------------------------------ *
+ * The felt's clock — which of the two, asked per timer (#71)
+ * ------------------------------------------------------------------ */
+
+/** Two recording stand-ins, so a test can say which one was reached for. */
+function twoClocks() {
+  const reached = [];
+  const make = (kind) => ({
+    kind,
+    now: () => (kind === 'wall' ? 1000 : 2000),
+    after(ms, fn) { reached.push([kind, 'after', ms]); return { cancel() { reached.push([kind, 'cancel']); } }; },
+    at(expiresAt, fn) { reached.push([kind, 'at', expiresAt]); return { cancel() {} }; },
+  });
+  return { reached, session: make('session'), wall: make('wall') };
+}
+
+test('a solo match schedules bots on the session clock, which freezes on suspend', () => {
+  const { reached, session, wall } = twoClocks();
+  const clock = feltClock({ shared: () => false, session, wall });
+  clock.after(800, () => {});
+  assert.deepEqual(reached, [['session', 'after', 800]]);
+});
+
+test('a SHARED match schedules bots on the wall clock, because the hand does not stop', () => {
+  // THE BUG THIS FIXES. A hosted table the host is LOOKING AT used to schedule
+  // its bots on session time, so the host pocketing their phone on a bot's turn
+  // stopped the table for everybody at it.
+  const { reached, session, wall } = twoClocks();
+  const clock = feltClock({ shared: () => true, session, wall });
+  clock.after(800, () => {});
+  assert.deepEqual(reached, [['wall', 'after', 800]]);
+});
+
+test('the question is asked per timer, not once — the felt outlives every match', () => {
+  // `bots` is built once in `initTable`, before any match exists, and is never
+  // rebuilt. A clock chosen at construction would be the SOLO answer for the
+  // life of the tab.
+  let shared = false;
+  const { reached, session, wall } = twoClocks();
+  const clock = feltClock({ shared: () => shared, session, wall });
+
+  clock.after(100, () => {});          // solo hand
+  shared = true;                        // ...then the player hosts a table
+  clock.after(200, () => {});
+  shared = false;                       // ...and goes back to solo
+  clock.after(300, () => {});
+
+  assert.deepEqual(reached, [
+    ['session', 'after', 100],
+    ['wall', 'after', 200],
+    ['session', 'after', 300],
+  ]);
+});
+
+test('a handle cancels through whichever clock issued it', () => {
+  // Both `Arcade.session.setTimeout` and `wallClock.at` return `{ cancel() }`,
+  // which is what lets the driver hold one `botTimer` slot and never ask where
+  // it came from.
+  const { reached, session, wall } = twoClocks();
+  let shared = true;
+  const clock = feltClock({ shared: () => shared, session, wall });
+  clock.after(50, () => {}).cancel();
+  shared = false;
+  clock.after(60, () => {}).cancel();
+  assert.deepEqual(reached.filter((r) => r[1] === 'cancel'), [['wall', 'cancel'], ['session', 'cancel']]);
+});
+
+test('deadlines dispatch too, so a countdown and a turn agree about time', () => {
+  const { reached, session, wall } = twoClocks();
+  feltClock({ shared: () => true, session, wall }).at(9999, () => {});
+  feltClock({ shared: () => false, session, wall }).at(8888, () => {});
+  assert.deepEqual(reached, [['wall', 'at', 9999], ['session', 'at', 8888]]);
 });
 
 test('a deadline travels as {seat, kind, expiresAt}', () => {

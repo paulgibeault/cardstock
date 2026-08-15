@@ -244,11 +244,14 @@ lying.
   written in T3, deleted rather than shipped uncalled (there was only ever one
   joiner session to refuse), and restored in T4 when holding two seats became
   possible.
-- **Bots at a bound table still use the session clock.** §3 gives an *unbound*
-  hosted table a driver on the host's wall clock, which is what ships. The
-  felt's own driver is unchanged, so a shared table the host is looking at
-  schedules bots on a clock that freezes when the frame suspends — the mirror
-  image of the bug #58 fixed. Filed as #71.
+- **Bots at a bound table used the session clock, and now do not (#71).** §3
+  gives an *unbound* hosted table a driver on the host's wall clock. The felt's
+  own driver was left on session time, so a shared table the host was looking at
+  scheduled bots on a clock that freezes when the frame suspends — the mirror
+  image of the bug #58 fixed, and not covered by the turn timer, which never
+  waits on a bot. It takes `feltClock` now (`src/match/clock.js`) and asks which
+  clock per timer, because it is built once in `initTable` and outlives every
+  match the tab plays.
 
 ### Beyond the plan
 

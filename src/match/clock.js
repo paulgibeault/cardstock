@@ -1,5 +1,8 @@
 // TWO CLOCKS, AND WHY A SHARED TABLE CANNOT USE THE FIRST.
 //
+// (Three exports, but two clocks: `feltClock` at the bottom is not a third kind
+// of time, it is the choice between these two made per timer instead of once.)
+//
 // Every timer at a solo table is `Arcade.session.setTimeout`, and that is
 // right: it FREEZES while the frame is suspended (§6c — forgotten timers are
 // the fleet's number one battery drain) and cancels itself when a save import
@@ -97,6 +100,46 @@ export function wallClock({ now = () => Date.now(), schedule = setTimeout, unsch
     now,
     after: (ms, fn) => at(now() + ms, fn),
     at,
+  };
+}
+
+/**
+ * THE FELT'S CLOCK, CHOSEN PER TIMER RATHER THAN ONCE (#71).
+ *
+ * The felt's bot driver is built once, in `initTable`, before any match exists
+ * — and a match is what decides which clock is right. So the driver was handed
+ * `sessionClock()` at construction and kept it for the life of the tab, which
+ * is correct for the solo play that is nearly all of it and wrong for the case
+ * this exists to fix: a HOSTED table the host is looking at.
+ *
+ * There, a bot's turn was scheduled on a clock that freezes when the frame
+ * suspends. Host pockets their phone on a bot's turn and the table stops for
+ * everybody — the mirror image of the bug #58 fixed, which was a table that
+ * could not play while unwatched. The turn timer is no help: `waitsOn` only
+ * ever waits on device-held seats, because a bot needs no encouragement.
+ *
+ * WHY NOT DECIDE AT BIND TIME. Nothing rebuilds the driver between matches, so
+ * "decide once, when the match is adopted" would mean either rebuilding it or
+ * mutating a clock in place. Asking per timer is smaller and has no lifecycle:
+ * the question is answered at the only moment it matters, which is when a turn
+ * is actually being scheduled.
+ *
+ * BOTH HANDLES ALREADY AGREE. `Arcade.session.setTimeout` returns
+ * `{ cancel() }` and so does `wallClock.at`, so a handle from either can be
+ * cancelled without anyone remembering which clock issued it. That is what
+ * makes this a four-line dispatch rather than a bookkeeping layer.
+ *
+ * @param shared () => is the match on the felt a SHARED one? Read at schedule
+ *               time, never cached — the felt adopts matches over its lifetime
+ *               and the answer changes with each.
+ */
+export function feltClock({ shared, session = sessionClock(), wall = wallClock() } = {}) {
+  const pick = () => (shared() ? wall : session);
+  return {
+    kind: 'felt',
+    now: () => pick().now(),
+    after: (ms, fn) => pick().after(ms, fn),
+    at: (expiresAt, fn) => pick().at(expiresAt, fn),
   };
 }
 

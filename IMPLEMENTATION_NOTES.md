@@ -176,12 +176,13 @@ What the pre-Phase-8 version of this section listed as missing:
   `src/ui/table.js` as *solo defaults* only.
 - **Bot timers**: partly. An **unbound** hosted table drives its bots on the
   host's wall clock (`src/ui/party.js` → `createBotDriver`), which is what
-  lets a backgrounded table keep playing. The felt's own driver still uses
-  `Arcade.session` timers (`src/ui/table.js`), so a shared table the host is
-  *looking at* schedules its bots on a clock that freezes when the frame
-  suspends. The turn timer covers device-held seats either way — `waitsOn`
-  never waits on a bot — so a bot's turn at a bound table waits for the host
-  to come back. Filed as #71.
+  lets a backgrounded table keep playing. The felt's own driver reaches the
+  same answer by a different road (#71): it is built once, before any match
+  exists, so it takes `feltClock` and asks per timer — session time for solo,
+  the host's wall clock for a shared table. Until that landed, a shared table
+  the host was *looking at* scheduled its bots on a clock that freezes when the
+  frame suspends, and the turn timer was no help because `waitsOn` never waits
+  on a bot.
 
 **Where the coverage is, and is not.** `src/match/` is well covered headlessly
 (`tests/protocol.test.js`, `tests/twoSessions.test.js`, `tests/twoTables.test.js`).
