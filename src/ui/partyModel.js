@@ -62,7 +62,7 @@ function nameOfPeer(deviceId, { peers, self, publishedName }) {
  * every device already agrees on: the HOST'S DEVICE ID. Same input, same faces,
  * no secret shared.
  */
-function seatingFromRoster(frame, ctx) {
+export function seatingFromRoster(frame, ctx) {
   const { self, myName } = ctx;
   const roster = frame?.seats || [];
   const seatCount = frame?.seatCount || roster.length;
