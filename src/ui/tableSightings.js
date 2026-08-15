@@ -210,6 +210,59 @@ export function createTableSightings({
   }
 
   /**
+   * A LOBBY FRAME WE BELIEVE, FROM WHICHEVER DOOR IT CAME THROUGH (#75 stage 3).
+   *
+   * There are two, and there have to be. The subscription below authenticates
+   * with this file's rules — direct sender, not relayed. Our own client
+   * authenticates with `src/match/client.js`'s, which are about the one host it
+   * sat down with. Neither subsumes the other, and the client is the only path
+   * that can vouch for a frame from a host whose link has degraded.
+   *
+   * WHAT MUST NOT BE TWO IS WHAT HAPPENS NEXT. Each door used to carry its own
+   * partial copy: the subscription filed the sighting, aged the seat stub,
+   * retired a superseded table and cleared a stale notice; the client's
+   * `onLobby` filed the sighting and wrote the seat stub, and did none of the
+   * rest. Since both doors receive the same broadcast — two separate
+   * `peer.onMessage` subscriptions — most frames went through the full path and
+   * then a partial one, and a frame that reached ONLY the client got the
+   * partial path alone: no stub ageing, no superseded table retired.
+   *
+   * So the doors decide whether to believe a frame. This decides what believing
+   * one means, once.
+   *
+   * IDEMPOTENT, BECAUSE THE WIRE IS AND BECAUSE BOTH DOORS FIRE. A host
+   * re-broadcasts its lobby on every `onReady` and every seat change; running
+   * this twice for one frame has to be exactly as harmless as running it once.
+   * Every step below is: `sight` upserts, `touchSeatStub` restamps,
+   * `noteSupersededSeat` finds nothing the second time, and `clearStaleNotice`
+   * compares against a `known` that is now the frame itself.
+   *
+   * @param provenance 'wire' from the subscription, 'client' from our own
+   *                   client handing over a frame it authenticated. Passed
+   *                   through to `onSighting` because the screen still focuses
+   *                   differently for each — collapsing THAT is stage 4.
+   */
+  function noteLobby(frame, { provenance }) {
+    // A FRESH INVITATION CLEARS THE LAST ONE'S EPITAPH. Asked while `known` is
+    // still the previous frame for this table, and before the superseded check
+    // has anything to say — a sighting that cleared the notice after that would
+    // wipe the one sentence that path exists to print.
+    const known = tables.get(tableKeyOf(frame));
+    clearStaleNotice(frame, known);
+
+    const entry = tables.sight(frame);
+    if (!entry) return null;
+    // HEARING THE HOST IS ENOUGH TO KEEP THE PROMISE ALIVE. A seat we hold at a
+    // table we are not currently a client of still ages on this, which is what
+    // stops a week of watching from someone else's felt rolling it off.
+    touchSeatStub(entry.key);
+    noteSupersededSeat(frame);
+    noteSeatFrom(frame);
+    onSighting({ entry, frame, provenance });
+    return entry;
+  }
+
+  /**
    * The table sniffer.
    *
    * A joiner cannot start a real client before it knows WHICH pack to load —
@@ -250,22 +303,7 @@ export function createTableSightings({
       const hostDeviceId = direct.includes(fromDeviceId) ? fromDeviceId : null;
       if (!isAuthentic(FRAME.LOBBY, { fromDeviceId, hostDeviceId, relayed: meta?.relayed })) return;
 
-      // A FRESH INVITATION CLEARS THE LAST ONE'S EPITAPH. Asked while `known`
-      // is still the previous frame for this table, and before the superseded
-      // check below has anything to say — a sighting that clears the notice
-      // after that would wipe the one sentence this path exists to print.
-      const known = tables.get(tableKeyOf(frame));
-      clearStaleNotice(frame, known);
-
-      const entry = tables.sight(frame);
-      if (!entry) return;
-      // HEARING THE HOST IS ENOUGH TO KEEP THE PROMISE ALIVE. A seat we hold at
-      // a table we are not currently a client of still ages on this, which is
-      // what stops a week of watching from someone else's felt rolling it off.
-      touchSeatStub(entry.key);
-      noteSupersededSeat(frame);
-      noteSeatFrom(frame);
-      onSighting({ entry, frame });
+      noteLobby(frame, { provenance: 'wire' });
     });
   }
 
@@ -278,6 +316,9 @@ export function createTableSightings({
     tables,
     start,
     pruneDead,
-    noteSeatFrom,
+    // THE OTHER DOOR'S WAY IN. Our own client authenticates a frame its own
+    // way and then hands it here, so both doors mean the same thing by
+    // believing one.
+    noteLobby,
   };
 }
