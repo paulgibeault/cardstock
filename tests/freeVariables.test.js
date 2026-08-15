@@ -53,6 +53,17 @@ const AMBIENT = new Set([
   "setInterval", "setTimeout", "window",
 ]);
 
+/**
+ * Comments only, for the checks that need string literals intact — an import's
+ * module path is a string, and blanking it leaves nothing to resolve. That was
+ * this gate's own first bug: it passed on the very import it was written for.
+ */
+function stripComments(src) {
+  return src
+    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    .replace(/(^|[^:"'`\\])\/\/.*$/gm, "$1");
+}
+
 /** Comments and every kind of string literal, blanked so their contents cannot
  *  read as code. Template literals matter most: "follow suit (${led})" and a CSS
  *  `translate(...)` both look like calls otherwise. */
@@ -118,6 +129,70 @@ function boundNames(code) {
 
 const tracked = execSync("git ls-files src", { cwd: ROOT, encoding: "utf8" })
   .split("\n").filter((f) => f.endsWith(".js"));
+
+/**
+ * A NAMED IMPORT THAT DOES NOT EXIST IS THE SAME BUG ONE STEP EARLIER.
+ *
+ * The check below catches a name nothing declares. This catches a name the
+ * OTHER file does not export — which is worse, because it is not a crash on
+ * some rare code path, it is a module that will not load at all, taking the
+ * whole screen with it.
+ *
+ * It shipped the moment there was something to catch: #75 moved
+ * `seatingFromRoster` into src/ui/partyModel.js and party.js imported it by
+ * name before the `export` keyword was on it. Every unit test passed —
+ * party.js touches `document` at import time, so no Node test can load it — and
+ * the failure surfaced only in the three-launcher acceptance run, as three
+ * pageerrors and a timeout twenty seconds later.
+ *
+ * RELATIVE, IN-REPO IMPORTS ONLY. A bare specifier is somebody else's package
+ * and a URL is somebody else's server; neither is this gate's business.
+ */
+test("every named import resolves to something the other module exports", () => {
+  const offenders = [];
+  const exportsOf = new Map();
+  const exportedNames = (code) => {
+    const names = new Set();
+    for (const m of code.matchAll(/export\s+(?:async\s+)?(?:function\*?|const|let|var|class)\s+(\w+)/g)) {
+      names.add(m[1]);
+    }
+    // `export { a, b as c }` — the renamed half is what the importer sees.
+    for (const m of code.matchAll(/export\s*\{([^}]*)\}/g)) {
+      for (const part of m[1].split(",")) {
+        const name = part.trim().split(/\s+as\s+/).pop().trim();
+        if (name) names.add(name);
+      }
+    }
+    if (/export\s+\*/.test(code)) names.add("*"); // re-export: cannot resolve cheaply, so do not try
+    return names;
+  };
+
+  for (const file of tracked) {
+    const dir = path.dirname(file);
+    // STRINGS INTACT HERE — the module path is one.
+    const code = stripComments(fs.readFileSync(path.join(ROOT, file), "utf8"));
+    for (const m of code.matchAll(/import\s*\{([^}]*)\}\s*from\s*['"](\.[^'"]*)['"]/g)) {
+      const target = path.normalize(path.join(dir, m[2]));
+      if (!tracked.includes(target)) {
+        offenders.push(`${file}: imports from ${m[2]}, which is not a tracked file`);
+        continue;
+      }
+      if (!exportsOf.has(target)) {
+        exportsOf.set(target, exportedNames(
+          stripComments(fs.readFileSync(path.join(ROOT, target), "utf8"))));
+      }
+      const available = exportsOf.get(target);
+      if (available.has("*")) continue;
+      for (const part of m[1].split(",")) {
+        const name = part.trim().split(/\s+as\s+/)[0].trim();
+        if (!name || available.has(name)) continue;
+        offenders.push(`${file}: imports { ${name} } from ${m[2]}, which does not export it`);
+      }
+    }
+  }
+  assert.deepStrictEqual(offenders, [],
+    "a missing named export is not a bad code path, it is a module that will not load");
+});
 
 test("every function a module calls is one it imports or declares", () => {
   const offenders = [];
