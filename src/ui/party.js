@@ -422,6 +422,26 @@ function armBeliefs(at) {
     Math.max(0, at - Date.now()));
 }
 
+/** The pending prune's own timer — see `prune`. */
+let pruning = null;
+
+/**
+ * Drop the tables whose hosts have gone, and come back for the ones still in
+ * their grace.
+ *
+ * THE SAME SHAPE AS `armBeliefs`, and for the same reason: pruning runs on
+ * roster changes, and a host going quiet produces exactly one of those. Without
+ * a wake-up, a table spared through its grace would sit there until something
+ * unrelated happened to ask again (#78).
+ */
+function prune() {
+  const dueAt = sightings.pruneDead();
+  if (pruning) { pruning.cancel(); pruning = null; }
+  if (dueAt === null) return;
+  pruning = Arcade.session.setTimeout(() => { pruning = null; prune(); repaint(); },
+    Math.max(0, dueAt - Date.now()));
+}
+
 /* ------------------------------------------------------------------ *
  * Which table we are looking at
  * ------------------------------------------------------------------ */
@@ -2272,7 +2292,7 @@ export function refreshEntry() {
     // asking about two tables at once would have the second overwrite the first
     // — and each hosted table's own `onPeersChange` covers the rest.
     checkForDrops(ourTable());
-    sightings.pruneDead();
+    prune();
   }
   repaint();
 }

@@ -43,6 +43,10 @@ import {
  * @param peerName    (deviceId) => a display name, clamped and never trusted
  * @param hosting     () => are we hosting anything? `pruneDead` needs it: a
  *                    device is never in its own `peers()`.
+ * @param now         () => the clock `pruneDead`'s grace is measured against.
+ *                    Injected for the reason src/match/tableDirectory.js
+ *                    injects one: a test that has to sleep to make an
+ *                    assertion true is slow AND flaky.
  * @param clearStaleNotice (frame, known) => void, called BEFORE the sighting is
  *                    filed, while the previous frame for that table is still
  *                    the one on record. The panel's own rule about when an
@@ -73,11 +77,24 @@ import {
  * where they pointed the panel is a boundary describing the caller's old
  * structure rather than this module's job.
  */
+/**
+ * How long a table outlives its host falling off the roster.
+ *
+ * LONGER THAN THE MODEL'S PROBATION ON PURPOSE (`SETTLE_MS`, four seconds): the
+ * tile has to finish becoming "offline" and be readable as such before it is
+ * taken away, or the fade is just a slower vanish. Fifteen seconds also covers
+ * an ordinary reconnect, so the common case is a tile that dims and recovers
+ * without the player ever losing their place — while a lobby still does not
+ * accumulate ghosts of tables nobody is at.
+ */
+export const PRUNE_GRACE_MS = 15_000;
+
 export function createTableSightings({
   port,
   selfId,
   peerName,
   hosting,
+  now = () => Date.now(),
   clearStaleNotice,
   setNotice,
   onChange,
@@ -86,7 +103,11 @@ export function createTableSightings({
   // the header of src/match/tableDirectory.js for what that one slot cost. It
   // is owned here because this is the only code that WRITES to it from the
   // wire; the screen reads it, and files its own table through `sight`.
-  const tables = createTableDirectory();
+  // THE SAME CLOCK THE GRACE IS MEASURED AGAINST. `pruneDead` compares an
+  // entry's `lastSeenAt` to now, so the hand that stamps a sighting and the
+  // hand that reads it must be the same one — two clocks here would be a grace
+  // that is right only when both happen to agree.
+  const tables = createTableDirectory({ now });
   let off = null;
 
   /**
@@ -201,6 +222,21 @@ export function createTableSightings({
    * whose battery died says nothing, and the only evidence is the roster.
    * Without this, that table would sit on the lobby forever advertising open
    * seats.
+   *
+   * BUT NOT ON THE FIRST GLANCE (#78). Dropping the entry the instant a host
+   * falls off `peers()` meant a tile that vanished mid-glance and came back a
+   * second later — and once the entry is gone the model cannot age it, because
+   * the table is no longer among its inputs at all. So a host we have heard
+   * from recently keeps its table through the gap; the screen says "offline"
+   * over it (the model's `liveness`, which now asks whether the host is
+   * reachable as well as whether a frame exists) and the entry is dropped for
+   * real once the grace is up.
+   *
+   * @returns the earliest moment a spared table becomes prunable, or null when
+   *          none is waiting. NOTHING ELSE WOULD RE-ASK: pruning runs on roster
+   *          changes, and a host going quiet produces exactly one. The caller
+   *          arms a single timer off this — same shape as the model's
+   *          `nextChangeAt` (src/ui/party.js).
    */
   function pruneDead() {
     const live = (port()?.peers() || []).map((p) => p.deviceId);
@@ -208,8 +244,24 @@ export function createTableSightings({
     // that filed its own table would prune it on the next roster change and its
     // tile would blink out while the game was still running.
     if (hosting()) live.push(selfId());
-    const dropped = tables.retain(live);
+
+    const at = now();
+    let dueAt = null;
+    // SPARED BY THEIR HOST, because that is what `retain` keys on. A host with
+    // two tables keeps both, which is the honest reading: it is the DEVICE we
+    // have not heard from, not one of its tables.
+    const spared = [];
+    for (const entry of tables.all()) {
+      if (live.includes(entry.hostDeviceId)) continue;
+      const prunableAt = entry.lastSeenAt + PRUNE_GRACE_MS;
+      if (at >= prunableAt) continue;
+      spared.push(entry.hostDeviceId);
+      dueAt = dueAt === null ? prunableAt : Math.min(dueAt, prunableAt);
+    }
+
+    const dropped = tables.retain([...live, ...spared]);
     if (dropped.length) onChange({ kind: 'hosts-gone', keys: dropped });
+    return dueAt;
   }
 
   /**
