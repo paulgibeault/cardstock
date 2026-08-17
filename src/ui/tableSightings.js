@@ -194,12 +194,18 @@ export function createTableSightings({
    * A `bye` from a host we know about.
    *
    * ONLY 'closed' RETIRES A TABLE, and the precision matters because three
-   * different partings share this frame kind. A joiner leaving says 'leave' and
-   * reaches us relayed through the hub — that is somebody standing up, not a
-   * table ending. A removed player is told 'replaced', privately, about their
-   * own seat. Only the host broadcasting 'closed' means the felt is gone, and
-   * only the host's own direct frame is believed for it: a relayed 'closed' is
-   * a fellow joiner claiming an authority it does not have.
+   * different partings share this frame kind. A joiner standing up says
+   * 'leave', which since protocol v3 is addressed to its own host and does not
+   * arrive here at all — it used to arrive relayed, and the first line below is
+   * what made that harmless. A removed player is told 'replaced', privately,
+   * about their own seat. Only the host broadcasting 'closed' means the felt is
+   * gone, and only the host's own direct frame is believed for it: a relayed
+   * 'closed' is a fellow joiner claiming an authority it does not have.
+   *
+   * THE RELAY GUARD STAYS even though the launcher no longer relays and the
+   * flag can no longer be true. It is one comparison, it is the rule this
+   * file's header is about, and it is the reason a joiner's 'leave' was never
+   * able to retire somebody else's table in the first place.
    */
   function noteBye(fromDeviceId, frame, meta) {
     if (meta?.relayed) return;
