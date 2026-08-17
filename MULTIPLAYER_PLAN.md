@@ -121,7 +121,11 @@ What `Arcade.peer` guarantees (and what we must therefore never rebuild):
 **Caps gate (unchanged from `ARCADE_ENHANCEMENTS.md` §8.1):** multiplayer UI renders
 only when `Arcade.peer.status() !== 'unavailable'`, never cached at init. Require
 `peer.sendTo` + `peer.roster`; use `peer.meta` for the spoof check. Older launcher →
-one "launcher update required" notice; no fallback protocol.
+one "launcher update required" notice; no fallback protocol. **`peer.invite` is
+asked for, never required** (§4): a launcher without it carries every frame we
+send and had nothing to open, so the fallback is one sentence rather than a
+second, worse proposal of our own — the same no-fallback rule, applied to an
+optional cap.
 
 ---
 
@@ -141,11 +145,36 @@ roster entry with `direct: true`.
    game is already open on whichever connections consented to it, and `peers()`
    is that set. (v1 read `Arcade.peer.party()` here to label the screen; the
    launcher has no parties, so the label went with them — §10.)
-2. Host broadcasts `lobby` on every `onReady` firing and on every seat change.
-3. Joiners render the seat grid and send `claim-seat`. The host arbitrates
+2. **The same tap knocks.** A connection is not a table: until both ends have
+   agreed to play *this game* over it, `peers()` is empty however many devices
+   are paired. So "Play together" asks — `Arcade.peer.invite()` behind the
+   `peer.invite` cap, which proposes the game to every live connection that
+   does not already have it open (`src/ui/party.js`, `knock`). The launcher
+   owns the prompt and the answer; a game can ask, never grant, and what comes
+   back is only how many were asked. The knock is **unaddressed** because at
+   the one moment it is needed this game knows no deviceId to aim at — with no
+   scope open the roster is empty — and it self-guards on that roster, so it is
+   a no-op the moment anybody is already here.
+3. Host broadcasts `lobby` on every `onReady` firing and on every seat change.
+   Accepting an invite mounts the game and fires `onReady`, so a yes reaches
+   the seat grid with no extra machinery.
+4. Joiners render the seat grid and send `claim-seat`. The host arbitrates
    (first-come), rebinding a returning `deviceId` to its previous seat automatically.
-4. Host fills remaining seats with bots (or waits), then deals — the `start` is just
+5. Host fills remaining seats with bots (or waits), then deals — the `start` is just
    the first view frames going out.
+
+**A joiner knocks too, and it is the same door.** Mounting the game with
+nothing open proposes it once, quietly: there is nothing for a joiner to tap,
+because a table becomes visible only *after* a scope is open. One knock, and
+nothing to retry on — a game nobody has opened with us hears no roster and no
+status change, so pairing a device afterwards arrives as silence and the tile's
+"Play together" is the door for it. An older launcher without the cap is not
+asked at all and gets a sentence rather than a second, worse proposal of our own
+(`src/match/peerPort.js` — the caps gate's argument, applied to an optional
+cap): *"Nobody is connected yet — add a device in the launcher's Multiplayer
+menu."* That sentence is true of both launchers, which is why there is one of
+it — a launcher without open games puts every paired device in the roster, so
+an empty roster there means the same thing it means here.
 
 **The `lobby` frame carries the compatibility contract:** protocol version, pack id +
 pack version, active variant set, seat roster (with per-seat presence), host device
@@ -374,6 +403,18 @@ On top of Phase 4's hardening (`tests/security.test.js`), all peer input is host
   `Arcade.peer.party()`; the launcher has no parties and no leaders, so that
   sentence could no longer be true of anything.) Seat grid with claim/bot toggles
   (host) and claim buttons (joiners), pack + variant summary from the handshake.
+- **Getting anybody there:** "Play together" is a door that asks (§4). Tapping
+  it proposes the game to every live connection that is not already playing it;
+  the other device sees the launcher's own one-sentence prompt ("⟨name⟩ wants to
+  play Cardstock"), and accepting mounts the game there and puts them in front
+  of this seat grid. Who sits where is settled here rather than in that prompt —
+  the seat grid discloses who else is at the table better than a launcher dialog
+  could, and it does it *before* anybody sits down. Nothing is reported about
+  who declined: a proposal is not an acceptance, and consent arrives as a device
+  appearing in the roster. **Nobody to ask** is the one answer worth a sentence,
+  and the mount-time knock stays silent about it — an unprompted complaint about
+  the launcher on a screen the player has just opened is noise, and the tile's
+  door is where the question was actually asked.
 - **Presence:** per-seat chips driven by the host's lobby/seat roster (transport
   status where known; the optional `peer.presence` cap upgrades fellow-joiner
   fidelity when present).
@@ -407,14 +448,25 @@ On top of Phase 4's hardening (`tests/security.test.js`), all peer input is host
      view + seq.
   6. Caps-stripped harness shows the "launcher update required" notice.
 
-  > **Grown since (2026-08).** The suite runs nine scenarios, not six: 7 adds
+  > **Grown since (2026-08).** The suite runs ten scenarios, not six: 7 adds
   > hostile peer names and scripted presence transitions, 8 leaving and coming
-  > back, and 9 the two-table case `TABLES_PLAN.md` §10 asked for — one device
+  > back, 9 the two-table case `TABLES_PLAN.md` §10 asked for — one device
   > hosting two packs, a joiner seated at both, a move at one table reaching
-  > only that table. Items 4 and 5 remain SKIP with a stated reason: cutting a
-  > live data channel and forcing `overflowed` need a transport hook neither the
-  > SDK nor the launcher harness exposes, and both behaviours are covered
-  > headlessly in `tests/protocol.test.js`.
+  > only that table — and 10 the field test that produced the framework's
+  > open-game redesign, replayed from a cold start: every scope closed, a host
+  > paired with two joiners who have never paired with each other, its
+  > "Play together" door proposing the game down both links, both accepting,
+  > both seated, and one move reaching both. That last one is the shape the
+  > party model got wrong (a member's lobby reached a fellow member only by
+  > relay, which this game refuses as spoofed), so it is the suite's evidence
+  > that it is right now. Items 4 and 5 remain SKIP with a stated reason:
+  > cutting a live data channel and forcing `overflowed` need a transport hook
+  > neither the SDK nor the launcher harness exposes, and both behaviours are
+  > covered headlessly in `tests/protocol.test.js`.
+  >
+  > The suite is also the integration gate for the launcher redesign itself:
+  > nothing below the game layer can be checked from `tests/`, because the stub
+  > grants its caps by construction and has no scopes to open.
 - **Simulation:** `tools/simulate.mjs` gains a mode that runs host + N scripted
   clients over the stub transport for all five packs (bot-vs-bot through the full
   protocol), keeping the completion-rate bars.

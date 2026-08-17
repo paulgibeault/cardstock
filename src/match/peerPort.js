@@ -25,6 +25,19 @@
 // and the two cases it would cover (no targeting, no spoof check) are exactly
 // the two where being wrong is worst.
 //
+// THE FOURTH CAP IS A REQUEST, NOT A REQUIREMENT. `peer.invite` asks the
+// launcher to offer this game to the devices it is connected to, and it is the
+// first capability this file treats as optional — because the three above are
+// what the protocol is made of and this one is a door onto it. A launcher
+// without it still carries every frame; what it cannot do is OPEN A GAME, and
+// under such a launcher a paired connection was already live, so there was
+// nothing to open. The rule from the paragraph above still holds and gets no
+// exception: we do not hand-roll a proposal over the wire when the cap is
+// missing. There is nothing to hand-roll — consent is the launcher's to take,
+// a game can ask and never grant — so the fallback is a SENTENCE, not a second
+// protocol: "add a device in the launcher's Multiplayer menu", which happens to
+// be the same sentence a current launcher gets when it has nobody to ask.
+//
 // THE PARTY IS NOT IN THE PORT, and it is not coming back. `Arcade.peer.party()`
 // was read for exactly one thing — a line on the party screen naming whoever
 // led the party — and the launcher is deleting the party as a concept: a device
@@ -41,32 +54,42 @@
 
 export const REQUIRED_CAPS = Object.freeze(['peer.sendTo', 'peer.roster', 'peer.meta']);
 
+/** The optional one: asked for, never required. See the header. */
+export const INVITE_CAP = 'peer.invite';
+
 /**
  * What this launcher can do for us, right now.
  *
- * Returns `{ available, status, missing }`. `available` false with an empty
- * `missing` means there is no peer surface at all (standalone, or an SDK too
- * old to have one) — a different message from "your launcher needs updating".
+ * Returns `{ available, status, missing, reason, canInvite }`. `available`
+ * false with an empty `missing` means there is no peer surface at all
+ * (standalone, or an SDK too old to have one) — a different message from "your
+ * launcher needs updating".
+ *
+ * `canInvite` IS PART OF THE SAME ANSWER on purpose. It is a fourth cap read,
+ * and a second entry point for it would be a second place that decides what
+ * this launcher will let us do — the thing this function exists to be the only
+ * one of. The door in src/ui/party.js already asks here before it opens.
  */
 export function peerAvailability(api = globalThis.Arcade?.peer) {
   if (!api || typeof api.status !== 'function') {
-    return { available: false, status: 'unavailable', missing: [], reason: 'no-peer-api' };
+    return { available: false, status: 'unavailable', missing: [], reason: 'no-peer-api', canInvite: false };
   }
   let status;
   try {
     status = api.status();
   } catch {
-    return { available: false, status: 'unavailable', missing: [], reason: 'no-peer-api' };
+    return { available: false, status: 'unavailable', missing: [], reason: 'no-peer-api', canInvite: false };
   }
   if (status === 'unavailable') {
-    return { available: false, status, missing: [], reason: 'standalone' };
+    return { available: false, status, missing: [], reason: 'standalone', canInvite: false };
   }
   const caps = typeof api.caps === 'function' ? (api.caps() || []) : [];
   const missing = REQUIRED_CAPS.filter((cap) => !caps.includes(cap));
+  const canInvite = caps.includes(INVITE_CAP);
   if (missing.length) {
-    return { available: false, status, missing, reason: 'launcher-too-old' };
+    return { available: false, status, missing, reason: 'launcher-too-old', canInvite };
   }
-  return { available: true, status, missing: [], reason: null };
+  return { available: true, status, missing: [], reason: null, canInvite };
 }
 
 /**
@@ -89,5 +112,11 @@ export function arcadePeerPort(api = globalThis.Arcade?.peer) {
     onPeersChange: (fn) => api.onPeersChange(fn),
     onStatus: (fn) => api.onStatus(fn),
     queue: () => (typeof api.queue === 'function' ? api.queue() : { depth: 0, limit: 0, overflowed: false }),
+    // Guarded like `caps` and `queue`, and for the same reason: an SDK that
+    // predates the call has no such function, and a port that only works on the
+    // launcher we happen to be looking at is a port that fails on a phone.
+    // Resolves the NUMBER OF PROPOSALS SENT — never who said yes. Consent
+    // arrives later, as a peer appearing in the roster.
+    invite: () => (typeof api.invite === 'function' ? api.invite() : Promise.resolve(0)),
   };
 }

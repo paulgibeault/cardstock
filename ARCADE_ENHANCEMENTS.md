@@ -398,6 +398,15 @@ These are why Phase 8 can be "later" without becoming "expensive":
   it is showing instead. Nothing else moved — `peers()` is still the set of
   devices this game is live with, every entry direct and possibly several,
   and the three caps we gate on never included this one.
+- **New 2026-08 — `peer.invite`, asked for and not required.**
+  `Arcade.peer.invite()` asks the launcher to offer this game to the
+  connections it holds; it is what the party's replacement needs, because a
+  connection is no longer permission to play and something has to propose.
+  Feature-detected like every other cap (`peerAvailability().canInvite`) and
+  deliberately outside the gate: a launcher without it carries every frame we
+  send, and had no scope to open in the first place. Without it the door says
+  a sentence — the no-fallback rule above, applied to a cap we can live
+  without. See MULTIPLAYER_PLAN §4.
 
 ### 8.2 Lobby and seats
 

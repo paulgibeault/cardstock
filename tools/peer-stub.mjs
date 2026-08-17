@@ -61,13 +61,17 @@ export function createPeerNetwork({ hostDeviceId = 'host', hostDeviceIds = null 
     return true;
   }
 
-  function createDevice(deviceId, { name = deviceId } = {}) {
+  function createDevice(deviceId, { name = deviceId, invitable = 0 } = {}) {
     const device = {
       deviceId,
       name,
       up: true,
       status: 'connected',
       overflowed: false,
+      // How many connections are paired but have NOT agreed to play this game,
+      // and how many proposals this device has sent. See `invite` below.
+      invitable,
+      invites: 0,
       handlers: { message: new Set(), ready: new Set(), peersChange: new Set(), status: new Set() },
     };
     devices.set(deviceId, device);
@@ -75,11 +79,14 @@ export function createPeerNetwork({ hostDeviceId = 'host', hostDeviceIds = null 
     const port = {
       self: () => ({ deviceId, name }),
       status: () => (device.up ? device.status : 'idle'),
-      // THE THREE THE PORT ACTUALLY GATES ON (src/match/peerPort.js). `peer.party`
-      // was here too, alongside a `party()` that answered with a leader's name;
-      // nothing reads either any more, and a stub that models a door the real
-      // port no longer has is a stub that lets a re-added door go untested.
-      caps: () => ['peer.sendTo', 'peer.roster', 'peer.meta'],
+      // THE THREE THE PORT GATES ON, plus the one it merely asks for
+      // (src/match/peerPort.js). `peer.party` was here too, alongside a
+      // `party()` that answered with a leader's name; nothing reads either any
+      // more, and a stub that models a door the real port no longer has is a
+      // stub that lets a re-added door go untested. `peer.invite` is the
+      // opposite case — a door the real launcher grew, and one the game must be
+      // able to find missing, which is what makes it worth advertising here.
+      caps: () => ['peer.sendTo', 'peer.roster', 'peer.meta', 'peer.invite'],
       peers: () => linksOf(deviceId)
         .filter((id) => devices.get(id)?.up)
         .map((id) => ({
@@ -116,6 +123,23 @@ export function createPeerNetwork({ hostDeviceId = 'host', hostDeviceIds = null 
         return deliver(to, payload, deviceId, { relayed });
       },
 
+      /**
+       * Ask the launcher to offer this game to the connections it holds — the
+       * door src/ui/party.js knocks on when nobody is playing with us.
+       *
+       * ZERO BY CONSTRUCTION, which is the faithful answer and not a shortcut:
+       * every device on this network is already playing with its links (that is
+       * what being on it means), and a launcher proposes only to connections
+       * that do NOT already have the game open. `invitable` is the one fact a
+       * star of people already playing cannot express — paired, hasn't said yes
+       * — so a test that wants somebody to ask says so out loud.
+       *
+       * ACCEPTING IS NOT MODELLED, because it already is: a peer saying yes
+       * arrives as a device joining this network and its `ready` firing, which
+       * is how every test here brings a joiner online.
+       */
+      invite() { device.invites++; return Promise.resolve(device.invitable); },
+
       onMessage(fn) { device.handlers.message.add(fn); return () => device.handlers.message.delete(fn); },
       onReady(fn) { device.handlers.ready.add(fn); return () => device.handlers.ready.delete(fn); },
       onPeersChange(fn) { device.handlers.peersChange.add(fn); return () => device.handlers.peersChange.delete(fn); },
@@ -138,6 +162,10 @@ export function createPeerNetwork({ hostDeviceId = 'host', hostDeviceIds = null 
       const device = devices.get(deviceId);
       if (!device) return;
       for (const fn of [...device.handlers.ready]) fn({ deviceId: aboutId });
+    },
+    /** How many times a device asked the launcher to open this game. */
+    invitesFrom(deviceId) {
+      return devices.get(deviceId)?.invites || 0;
     },
     peersChanged(deviceId) {
       const device = devices.get(deviceId);
