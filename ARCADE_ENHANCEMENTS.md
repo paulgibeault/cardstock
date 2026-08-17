@@ -388,13 +388,16 @@ These are why Phase 8 can be "later" without becoming "expensive":
   older launcher the Multiplayer panel shows a single "launcher update
   required" notice — there is **no fallback protocol** in the game, by
   design.
-- **New since the design doc — `peer.party`** (cap `peer.party`): a
-  device can hold several concurrent connection stars; the game is
-  attached to exactly **one** party, and `Arcade.peer.peers()` is that
-  party's roster. v1 scope: read `Arcade.peer.party()` to label the lobby
-  ("Playing with {leaderName}'s party") and treat roster as party-scoped.
-  `parties()` / `attach()` (multi-table switching) is explicitly out of
-  scope for v1 — note it in the code where the party is read.
+- ~~**New since the design doc — `peer.party`**~~ — **retired 2026-08, and
+  it was never required.** The ask was to read `Arcade.peer.party()` for a
+  lobby label ("Playing with {leaderName}'s party") and to treat the roster
+  as party-scoped. The launcher has since deleted the party as a concept: a
+  device holds durable **connections**, and a game is *open* on some of
+  them. `party()` answers null forever, so both reads are gone
+  (`src/match/peerPort.js`, `src/ui/party.js`) and the panel names the table
+  it is showing instead. Nothing else moved — `peers()` is still the set of
+  devices this game is live with, every entry direct and possibly several,
+  and the three caps we gate on never included this one.
 
 ### 8.2 Lobby and seats
 
@@ -550,4 +553,4 @@ Other docs still reference the labels:
 | E1 | targeted sends | `Arcade.peer.send(payload, { to })`, cap `peer.sendTo` |
 | E2 | roster + per-peer status | `Arcade.peer.peers()` / `onPeersChange`, cap `peer.roster` |
 | E3 | message metadata | `onMessage(payload, fromPeer, meta)` with `{ relayed, to }`, cap `peer.meta` |
-| — | (postdates v1) | parties: `Arcade.peer.party()` / `parties()` / `attach()`, cap `peer.party` |
+| — | (postdates v1) | parties: `Arcade.peer.party()` / `parties()` / `attach()`, cap `peer.party` — **since retired by the launcher and unread here** (§8.1) |

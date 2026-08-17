@@ -243,7 +243,10 @@ test("the felt's bot driver picks its clock from the match, not from the tab", (
 test("no frame leaves src/match without going through its stamping helper", () => {
   const allowed = {
     "src/match/host.js": 2,     // sendTo + broadcast, both via stamp()
-    "src/match/client.js": 2,   // send (targeted) + broadcast, both spreading tableId
+    // ONE DOOR, NOT TWO, since protocol v3. The second was `broadcast`, for the
+    // `emote` and `bye` a joiner said to the room; both are targeted at the host
+    // now and re-announced by it, so a client speaks to exactly one device.
+    "src/match/client.js": 1,   // send (targeted), spreading tableId
     // THE UI DOES NOT TOUCH THE WIRE. party.js sent three frames of its own —
     // an emote and the two `bye`s — each stamping `tableId` by hand. Correct,
     // and three more doors beside which a fourth could be added without anyone

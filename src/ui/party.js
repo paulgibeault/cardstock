@@ -649,21 +649,6 @@ const CHIP_TEXT = {
  * Rendering
  * ------------------------------------------------------------------ */
 
-function partyLabel() {
-  const party = partyLabel.cached;
-  if (!party) return 'Playing together';
-  return party.role === 'leader' ? 'Your party' : `Playing with ${party.leaderName}'s party`;
-}
-partyLabel.cached = null;
-
-/** `Arcade.peer.party()` answers with a PROMISE — so the label arrives late. */
-async function refreshPartyLabel() {
-  try {
-    const party = await port?.party?.();
-    partyLabel.cached = party && typeof party === 'object' ? party : null;
-  } catch { partyLabel.cached = null; }
-}
-
 function chip(status) {
   const node = document.createElement('span');
   node.className = `presence-chip presence-chip--${status}`;
@@ -1061,13 +1046,17 @@ async function returnToOurTable() {
 /**
  * What the panel calls itself.
  *
- * The party label was the whole answer when the panel could only ever be about
- * one table. It still names the ROOM, which is worth saying — but with a tile
- * row it is possible to be looking at a table that is not ours, and "Your
- * party" over somebody else's seats is simply wrong.
+ * IT NAMES A TABLE, AND THAT IS ALL IT CAN HONESTLY NAME. The heading used to
+ * fall back to a party label — "Playing with Ada's party", read from
+ * `Arcade.peer.party()` — which was the whole answer when the panel could only
+ * ever be about one table, then merely incomplete once a tile row meant you
+ * could be looking at somebody else's, and is now a sentence about a thing that
+ * does not exist: the launcher has no parties and no leaders, only connections
+ * and the games open on them. So the panel names the table it is showing, by
+ * its host, and when it is showing none it says the one true thing left.
  */
 function panelHeading(view) {
-  if (!view) return partyLabel();
+  if (!view) return 'Playing together';
   return view.ours ? 'Your party' : `${view.hostName}'s table`;
 }
 
@@ -1622,7 +1611,6 @@ export async function hostGame(packId) {
   // by its own name now, not by the device's.
   publishOwnTable(session);
   moveFocus({ kind: 'chosen', key: session.tableId });
-  refreshPartyLabel().then(repaint);
   showPartyScreen();
   return true;
 }
@@ -2124,7 +2112,6 @@ async function joinTable(entry) {
   joining = false;
   // The last table's parting words are not this table's news.
   if (notice) setNotice('');
-  refreshPartyLabel().then(repaint);
   repaint();
 }
 
@@ -2382,7 +2369,10 @@ export function showPartyScreen(key = null) {
   if (!el.screen) return;
   if (key) moveFocus({ kind: 'chosen', key });
   el.screen.hidden = false;
-  refreshPartyLabel().then(repaint);
+  // ONE REPAINT, AND NOTHING TO WAIT FOR. This used to chase an async
+  // `refreshPartyLabel()` with a second repaint, because the party label came
+  // back from the SDK as a promise. The heading is derived from what we already
+  // hold now, so the panel is right the first time it is drawn.
   repaint();
 }
 

@@ -169,6 +169,22 @@ whichever session is open and unbinds without ending it. A hosted table
 nobody is watching keeps arbitrating, keeps playing bots headlessly, and is
 persisted under `mpMatch.<tableId>`.
 
+**Nothing a client says goes to the room (protocol v3).** `emote` and a joiner's
+`bye` used to be broadcast, and a fellow joiner heard them only because the
+launcher's hub forwarded frames between spokes. That forwarding is being removed
+fleet-wide — these two frames were the entire fleet's use of it — so both are
+targeted at the host now, which re-announces the emote (stamped with the
+emoter's **seat**, resolved from the authenticated `fromDeviceId`, because after
+mediation the *sender* of every emote a client sees is the host) and lets the
+departure ride the `lobby` frame it already re-broadcasts on every seat change.
+Two things fell out. `emote` and `bye` joined `HOST_FRAMES`, so a client holds
+them to the same authenticity test as a view — before this, an emote was the one
+frame a client took from a fellow joiner, and anybody in the party could burst
+an emoji on somebody else's screen. And `src/match/client.js` lost its
+`broadcast` door: a client speaks to exactly one device now, which is what §5 of
+the plan always claimed. The version log is at the top of
+`src/match/protocol.js`.
+
 What the pre-Phase-8 version of this section listed as missing:
 
 - **Seat identity** is `(deviceId, localIndex)` now (`src/players/seats.js`),

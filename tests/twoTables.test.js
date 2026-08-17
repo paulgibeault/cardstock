@@ -25,7 +25,7 @@ import { createSeatTable } from '../src/players/seats.js';
 import { createTableHost } from '../src/match/host.js';
 import { createTableClient } from '../src/match/client.js';
 import { createTableDirectory, tableKeyOf } from '../src/match/tableDirectory.js';
-import { FRAME, validateFrame, isAuthentic } from '../src/match/protocol.js';
+import { FRAME, PROTOCOL_VERSION, validateFrame, isAuthentic } from '../src/match/protocol.js';
 import { createPeerNetwork } from '../tools/peer-stub.mjs';
 import { loadPackFromDisk } from '../tools/pack-test.mjs';
 
@@ -124,7 +124,7 @@ test('a relayed lobby frame is still refused — widening the host is not wideni
   impostorPort.send({
     tableId: 'tbl-mal',
     k: FRAME.LOBBY,
-    protocol: 2,
+    protocol: PROTOCOL_VERSION,
     packId: 'crazy-eights',
     packVersion: '1.0.0',
     variants: [],
@@ -196,7 +196,7 @@ test('a frame for OUR table from the wrong device is still a spoof', async () =>
   party.ports.dana.send({
     tableId: 'tbl-ada',
     k: FRAME.LOBBY,
-    protocol: 2,
+    protocol: PROTOCOL_VERSION,
     packId: 'crazy-eights',
     packVersion: '1.0.0',
     variants: [],

@@ -91,6 +91,7 @@ async function buildTable({ packId = 'crazy-eights', seed, hostDeviceId, port, j
   seats.seatBot(2);
 
   const errors = [];
+  const emotes = [];
   const host = createTableHost({
     peer: port,
     seats,
@@ -98,16 +99,16 @@ async function buildTable({ packId = 'crazy-eights', seed, hostDeviceId, port, j
     liveState: () => state,
     packInfo: () => ({ packId: pack.id, packVersion: pack.manifest?.version, variants: pack.activeVariants ?? [] }),
     nameFor: (seat) => `Seat ${seat}`,
-    hooks: { onError: (e) => errors.push(e) },
+    hooks: { onError: (e) => errors.push(e), onEmote: (e) => emotes.push(e) },
   });
-  return { pack, state, seats, host, errors, tableId, expects: () => ({
+  return { pack, state, seats, host, errors, emotes, tableId, expects: () => ({
     packId: pack.id, packVersion: pack.manifest?.version, variants: pack.activeVariants ?? [],
   }) };
 }
 
 /** A client with everything it said recorded, so nothing has to be inferred. */
 function watchedClient(port, hostDeviceId, expects, tableId) {
-  const seen = { views: [], lobbies: [], ends: [], problems: [] };
+  const seen = { views: [], lobbies: [], ends: [], emotes: [], problems: [] };
   const client = createTableClient({
     peer: port,
     host: hostDeviceId,
@@ -117,6 +118,7 @@ function watchedClient(port, hostDeviceId, expects, tableId) {
       onLobby: (frame) => seen.lobbies.push(frame),
       onView: (view) => seen.views.push(view),
       onEnd: (why) => seen.ends.push(why),
+      onEmote: (detail) => seen.emotes.push(detail),
       onIncompatible: (why) => seen.problems.push(why),
       onError: (err) => seen.problems.push(err),
     },
@@ -203,6 +205,33 @@ test('one host closing ends one client, and leaves the other playing', async () 
   const before = atDana.seen.views.length;
   dana.host.publish([]);
   assert.ok(atDana.seen.views.length > before, 'Dana’s table kept playing');
+});
+
+test('an emote is announced at the table it was made at, and nowhere else', async () => {
+  const net = createPeerNetwork({ hostDeviceIds: ['ada', 'dana'] });
+  const adaPort = net.createDevice('ada', { name: 'Ada' });
+  const danaPort = net.createDevice('dana', { name: 'Dana' });
+  const kitPort = net.createDevice('kit', { name: 'Kit' });
+
+  const ada = await buildTable({ seed: 'a', hostDeviceId: 'ada', port: adaPort, joinerId: 'kit', tableId: 'tbl-ada' });
+  const dana = await buildTable({ seed: 'd', hostDeviceId: 'dana', port: danaPort, joinerId: 'kit', tableId: 'tbl-dana' });
+  const atAda = watchedClient(kitPort, 'ada', ada.expects, 'tbl-ada');
+  const atDana = watchedClient(kitPort, 'dana', dana.expects, 'tbl-dana');
+  atAda.client.start();
+  atDana.client.start();
+  ada.host.start();
+  dana.host.start();
+
+  atAda.client.emote(0);
+
+  assert.deepStrictEqual(ada.emotes.map((e) => ({ deviceId: e.deviceId, seat: e.seat })),
+    [{ deviceId: 'kit', seat: 1 }], 'Ada’s table heard it, from the seat Kit holds there');
+  // TWO WAYS IT COULD HAVE CROSSED, AND BOTH ARE SHUT. Protocol v3 addresses a
+  // joiner's emote to the one host it concerns, so Dana never sees Kit's frame
+  // at all; and Ada's re-announcement goes out over every link she holds —
+  // Dana's included — where the table id is what stops it being Dana's news.
+  assert.deepStrictEqual(dana.emotes, [], 'Dana’s table was not told about it');
+  assert.deepStrictEqual(atDana.seen.emotes, [], 'nor was the client sitting at it');
 });
 
 test('two turn timers keep their own clocks', () => {

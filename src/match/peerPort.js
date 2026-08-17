@@ -25,9 +25,19 @@
 // and the two cases it would cover (no targeting, no spoof check) are exactly
 // the two where being wrong is worst.
 //
+// THE PARTY IS NOT IN THE PORT, and it is not coming back. `Arcade.peer.party()`
+// was read for exactly one thing — a line on the party screen naming whoever
+// led the party — and the launcher is deleting the party as a concept: a device
+// holds durable CONNECTIONS, and a game is open on some of them. The SDK keeps
+// the call and answers null forever, so a port line for it would be a door onto
+// a room that no longer exists, and a label derived from it would be a sentence
+// that is never printed. The three caps this file gates on are untouched; none
+// of them was ever `peer.party`.
+//
 // STATUS IS NEVER CACHED. `Arcade.peer.status()` is read at call time because
-// a game can be mounted before a party exists and paired afterwards; a value
-// read once at init is a multiplayer button that never appears.
+// a game can be mounted before there is anybody to play with and paired
+// afterwards; a value read once at init is a multiplayer button that never
+// appears.
 
 export const REQUIRED_CAPS = Object.freeze(['peer.sendTo', 'peer.roster', 'peer.meta']);
 
@@ -73,7 +83,6 @@ export function arcadePeerPort(api = globalThis.Arcade?.peer) {
     status: () => api.status(),
     caps: () => (typeof api.caps === 'function' ? api.caps() || [] : []),
     peers: () => api.peers() || [],
-    party: () => (typeof api.party === 'function' ? api.party() : null),
     send: (payload, opts) => api.send(payload, opts),
     onMessage: (fn) => api.onMessage(fn),
     onReady: (fn) => api.onReady(fn),

@@ -75,8 +75,11 @@ export function createPeerNetwork({ hostDeviceId = 'host', hostDeviceIds = null 
     const port = {
       self: () => ({ deviceId, name }),
       status: () => (device.up ? device.status : 'idle'),
-      caps: () => ['peer.sendTo', 'peer.roster', 'peer.meta', 'peer.party'],
-      party: () => ({ id: 'party-1', leaderName: devices.get(hostDeviceId)?.name || 'host' }),
+      // THE THREE THE PORT ACTUALLY GATES ON (src/match/peerPort.js). `peer.party`
+      // was here too, alongside a `party()` that answered with a leader's name;
+      // nothing reads either any more, and a stub that models a door the real
+      // port no longer has is a stub that lets a re-added door go untested.
+      caps: () => ['peer.sendTo', 'peer.roster', 'peer.meta'],
       peers: () => linksOf(deviceId)
         .filter((id) => devices.get(id)?.up)
         .map((id) => ({
