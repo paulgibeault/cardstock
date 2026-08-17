@@ -28,7 +28,9 @@ import { createTurnTimer } from '../src/match/turnTimer.js';
 import { wallClock } from '../src/match/clock.js';
 import { chooseBotMove } from '../src/engine/bot.js';
 import { createTableClient } from '../src/match/client.js';
-import { peerAvailability, REQUIRED_CAPS } from '../src/match/peerPort.js';
+import {
+  peerAvailability, arcadePeerPort, REQUIRED_CAPS, INVITE_CAP,
+} from '../src/match/peerPort.js';
 import {
   validateFrame, isAuthentic, isSafeCardId, isSafeAddress, FRAME, PROTOCOL_VERSION, EMOTES,
 } from '../src/match/protocol.js';
@@ -585,10 +587,11 @@ test('a different variant set is a different rule set, and is refused', async ()
 
 test('no peer surface at all reads as standalone, not as a broken launcher', () => {
   assert.deepEqual(peerAvailability(undefined), {
-    available: false, status: 'unavailable', missing: [], reason: 'no-peer-api',
+    available: false, status: 'unavailable', missing: [], reason: 'no-peer-api', canInvite: false,
   });
   const standalone = peerAvailability({ status: () => 'unavailable' });
   assert.equal(standalone.reason, 'standalone');
+  assert.equal(standalone.canInvite, false);
 });
 
 test('a launcher missing a capability is named, so the notice can be specific', () => {
@@ -610,6 +613,66 @@ test('every required capability is genuinely required', () => {
     assert.equal(verdict.available, false, `${cap} should be required`);
   }
   assert.ok(peerAvailability({ status: () => 'connected', caps: () => REQUIRED_CAPS }).available);
+});
+
+/* ------------------------------------------------------------------ *
+ * The invite door
+ * ------------------------------------------------------------------ */
+
+// A LAUNCHER THAT CANNOT BE ASKED IS NOT A BROKEN LAUNCHER. `peer.invite` is
+// the one capability this game asks for and can live without: without it the
+// transport still carries every frame, and a paired connection was already live
+// — there was no scope to open. So the gate must keep saying `available` while
+// saying `canInvite: false`, because collapsing the two would take the whole
+// multiplayer UI away from a launcher that works.
+test('the invite cap is asked for, never required', () => {
+  const old = peerAvailability({ status: () => 'connected', caps: () => REQUIRED_CAPS });
+  assert.equal(old.available, true);
+  assert.equal(old.canInvite, false);
+
+  const current = peerAvailability({
+    status: () => 'connected', caps: () => [...REQUIRED_CAPS, INVITE_CAP],
+  });
+  assert.equal(current.available, true);
+  assert.equal(current.canInvite, true);
+});
+
+// The door reads the count and says nothing else about it: a proposal is not an
+// acceptance, and the number is only ever "was there anybody to ask".
+test('the port forwards an invite, and answers zero on a launcher that has none', async () => {
+  const asked = [];
+  const modern = arcadePeerPort({
+    self: () => ({ deviceId: 'me' }), status: () => 'connected',
+    caps: () => [...REQUIRED_CAPS, INVITE_CAP], peers: () => [], send: () => true,
+    onMessage: () => {}, onReady: () => {}, onPeersChange: () => {}, onStatus: () => {},
+    invite: () => { asked.push(1); return Promise.resolve(2); },
+  });
+  assert.equal(await modern.invite(), 2);
+  assert.equal(asked.length, 1);
+
+  // The SDK that predates the call has no such function — a port that assumed
+  // one would throw on the phone it was written to support.
+  const ancient = arcadePeerPort({
+    self: () => ({ deviceId: 'me' }), status: () => 'connected',
+    caps: () => REQUIRED_CAPS, peers: () => [], send: () => true,
+    onMessage: () => {}, onReady: () => {}, onPeersChange: () => {}, onStatus: () => {},
+  });
+  assert.equal(await ancient.invite(), 0);
+});
+
+// The stub is the headless tier's launcher, so it has to be able to play both
+// parts — a launcher with the door and one without.
+test('the stub advertises the invite cap and answers with who is left to ask', async () => {
+  const net = createPeerNetwork({ hostDeviceId: 'host' });
+  const hostPort = net.createDevice('host', { name: 'Host' });
+  const lonely = net.createDevice('lonely', { name: 'Lonely', invitable: 2 });
+
+  assert.equal(peerAvailability(hostPort).canInvite, true);
+  // Everyone on this network is already playing with their links, so there is
+  // nobody left for the host to propose to.
+  assert.equal(await hostPort.invite(), 0);
+  assert.equal(await lonely.invite(), 2);
+  assert.equal(net.invitesFrom('lonely'), 1);
 });
 
 /* ------------------------------------------------------------------ *

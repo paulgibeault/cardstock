@@ -185,6 +185,23 @@ an emoji on somebody else's screen. And `src/match/client.js` lost its
 the plan always claimed. The version log is at the top of
 `src/match/protocol.js`.
 
+**A connection is not a table, so the game asks.** The launcher's parties are
+gone and what replaced them is per-connection, per-game consent: two devices
+stay paired forever, and a game between them is live only while both ends have
+agreed to play *it*. So `peers()` can be empty with three devices connected, and
+something has to propose. `knock()` (`src/ui/party.js`) is that something — one
+function behind two doors. "Play together" calls it and hears the answer;
+mounting the game calls it once, quietly, because a joiner has nothing to tap
+(a table becomes visible only *after* a scope is open) and no deviceId to aim at
+(with nothing open the roster is empty, which is exactly why
+`Arcade.peer.invite()` takes no target). It self-guards on the roster, so
+neither door can pester somebody already here, and it is feature-detected on
+`peer.invite` — a launcher without the cap gets a sentence, never a hand-rolled
+proposal of our own (`src/match/peerPort.js` explains why at length). There is
+nothing to retry on afterwards: a game nobody has opened with us receives no
+roster and no status change, so a device paired *after* the mount arrives as
+silence and the tile's door is the answer for it.
+
 What the pre-Phase-8 version of this section listed as missing:
 
 - **Seat identity** is `(deviceId, localIndex)` now (`src/players/seats.js`),

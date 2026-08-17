@@ -2,7 +2,9 @@
 // one exported scenario per numbered item — plus the ones the checklist grew.
 // 7 and 8 came from the hardening and rejoin work; 9 is the two-table case
 // TABLES_PLAN.md §10 asked for, and is the only automated evidence that a
-// device can host two packs at once.
+// device can host two packs at once. 10 is the 2026-08-16 field test that
+// produced the framework's open-game redesign, replayed from a cold start: the
+// shape the party model got wrong, and the proof it no longer is.
 //
 // Separated from tools/mp-acceptance.mjs on purpose: that file is the harness —
 // three devices, three launchers, the game mounted and the caps gate satisfied
@@ -30,6 +32,11 @@
 // is worse than one that admits to them.
 
 const PACK = 'crazy-eights';
+// The launcher's id for this game, which is what a SCOPE is keyed by — the
+// packs above are cardstock's own word for what is being played on one. Two
+// vocabularies, deliberately: "table" is this repo's and the framework never
+// uses it (plans/tables-2026-08.md, Terminology).
+const GAME = 'cardstock';
 
 /* ------------------------------------------------------------------ *
  * Talking to the game
@@ -755,7 +762,178 @@ const twoPacks = {
   },
 };
 
+/* ------------------------------------------------------------------ *
+ * 10. The field test this whole redesign came from
+ * ------------------------------------------------------------------ */
+
+/**
+ * THE SHAPE THAT WAS BROKEN, PLAYED THROUGH FROM A COLD START.
+ *
+ * The 2026-08-16 field test put three phones in a room: one host, paired with
+ * two people who had never paired with EACH OTHER. Under the party model the
+ * host's table was visible to one of them and invisible to the other, because a
+ * member's lobby broadcast reached a fellow member only by transport relay —
+ * and cardstock refuses a relayed frame as spoofed (src/ui/tableSightings.js).
+ * Discovery was asymmetric by transport accident, and no amount of tapping
+ * fixed it.
+ *
+ * So this is that room, and it starts where that room started: every scope
+ * closed, three devices connected and nothing open between them. The host taps
+ * "Play together", which is now a door that PROPOSES (WP6b) rather than one
+ * that assumes; both joiners accept; both sight the table over their own direct
+ * link; both sit down; and one move reaches both of them.
+ *
+ * The joiners never become adjacent, and the scenario asserts that they do not
+ * — that is the point. Seating never required players to be adjacent to each
+ * other, only to the host (D2), and the old model's failure was never about
+ * what the physics allowed.
+ */
+const theFieldTestShape = {
+  title: 'a host and two joiners who are strangers to each other: both sit, and one move reaches both',
+  async run({ check, waitFor, pages, frames, devices }) {
+    const THIRD = 'wildfire';   // a pack no earlier scenario has touched
+    const SEAT = { A: 1, B: 2 };
+
+    /** What this game can see of the world: its status and its roster. */
+    const world = (frame) => frame.evaluate(() => ({
+      status: window.Arcade.peer.status(),
+      peers: window.Arcade.peer.peers().map((p) => p.deviceId),
+    }));
+    /** What the LAUNCHER can see: the durable connections underneath. */
+    const links = (page) => page.evaluate(() =>
+      window.__arcade.p2p.connectedPeers().map((p) => p.deviceId).sort());
+
+    // 1. THE TOPOLOGY, ASSERTED RATHER THAN ASSUMED. Everything below means
+    //    nothing if these three devices are quietly a fully-connected mesh.
+    const [hostLinks, aLinks, bLinks] = [
+      await links(pages.H), await links(pages.A), await links(pages.B)];
+    check('the host holds both connections; the joiners hold only the host, and have never met',
+      hostLinks.length === 2 && hostLinks.includes(devices.A) && hostLinks.includes(devices.B)
+      && aLinks.join() === devices.H && bLinks.join() === devices.H,
+      `H:[${hostLinks}] A:[${aLinks}] B:[${bLinks}]`);
+
+    // 2. BACK TO A COLD START. Closing the scopes leaves the connections
+    //    untouched — only Hang Up moves pairing state (D5) — so what is left is
+    //    exactly the field test's opening position.
+    for (const label of ['H', 'A', 'B']) {
+      await pages[label].evaluate((g) => window.__arcade.p2p.leaveGame(g), GAME);
+    }
+    const cold = await waitFor(async () => {
+      for (const label of ['H', 'A', 'B']) {
+        const seen = await world(frames[label]);
+        if (seen.status !== 'idle' || seen.peers.length) return false;
+      }
+      return true;
+    }, 20000);
+    check('every scope closed: three connected devices with no game between them', cold,
+      JSON.stringify(await world(frames.H)));
+
+    // 3. THE HOST'S DOOR. `hostGame` is what the "Play together" button on a
+    //    lobby tile calls, and the proposal it sends is cardstock's own —
+    //    `Arcade.peer.invite()`, unaddressed, because with no scope open this
+    //    game knows no deviceId to aim at.
+    for (const label of ['A', 'B']) {
+      await pages[label].evaluate(() => { if (window.__invites) window.__invites.length = 0; });
+    }
+    const hosted = await party(frames.H, 'hostGame', THIRD);
+    check('host: "Play together" opens a table on a pack nobody was playing', hosted === true,
+      `hostGame → ${hosted}`);
+
+    for (const label of ['A', 'B']) {
+      const heard = await pages[label].waitForFunction(([dev, g]) =>
+        (window.__invites || []).some((i) => i.deviceId === dev && i.gameId === g),
+        [devices.H, GAME], { timeout: 20000 }).then(() => true).catch(() => false);
+      check(`joiner ${label}: the host's door proposed the game to it, over its own link`, heard);
+      // The yes. See tools/mp-acceptance.mjs for why the prompt itself is not
+      // clicked: it is the launcher's, and its dialog chain is shared.
+      await pages[label].evaluate(([dev, g]) => window.__arcade.p2p.acceptGameInvite(dev, g),
+        [devices.H, GAME]);
+    }
+
+    // 4. WHAT EACH DEVICE CAN NOW SEE. A scope is per-connection, so accepting
+    //    reveals a joiner to the HOST and to nobody else — the roster proves
+    //    the two joiners are still strangers while both are playing.
+    for (const label of ['A', 'B']) {
+      const onlyTheHost = await waitFor(async () => {
+        const seen = await world(frames[label]);
+        return seen.peers.length === 1 && seen.peers[0] === devices.H;
+      }, 20000);
+      check(`joiner ${label}: the game is open with the host, and with nobody else`, onlyTheHost,
+        JSON.stringify(await world(frames[label])));
+    }
+    const bothLinks = await waitFor(async () => (await world(frames.H)).peers.length === 2, 20000);
+    check('host: the game is open on both links at once', bothLinks,
+      JSON.stringify(await world(frames.H)));
+
+    // 5. THE TABLE BECOMES VISIBLE TO BOTH — the half the field test lost. The
+    //    host's lobby frame rides each direct link on `onReady`, which the
+    //    accept fires, so neither joiner needs the other to hear it.
+    const table = (await party(frames.H, 'partySnapshot')).tables.find((t) => t.packId === THIRD);
+    check('host: the new table is in its own directory, under its own id', !!table,
+      JSON.stringify(table));
+
+    for (const label of ['A', 'B']) {
+      const sighted = await waitFor(async () => {
+        await party(frames[label], 'refreshEntry');
+        return (await party(frames[label], 'partySnapshot')).tables.some((t) => t.key === table.key);
+      }, 20000);
+      check(`joiner ${label}: sights the host's table`, sighted);
+
+      await party(frames[label], 'showPartyScreen', table.key);
+      const offered = await waitFor(() => frames[label].evaluate(
+        (s) => !!document.querySelector(`.party-seat[data-seat="${s}"] .party-seat__actions button`),
+        SEAT[label]), 20000);
+      check(`joiner ${label}: the seat grid offers seat ${SEAT[label]}`, offered);
+      await frames[label].evaluate(
+        (s) => document.querySelector(`.party-seat[data-seat="${s}"] .party-seat__actions button`).click(),
+        SEAT[label]);
+    }
+
+    const bothSeated = await waitFor(async () => {
+      await party(frames.H, 'showPartyScreen', table.key);
+      const seats = (await party(frames.H, 'partySnapshot')).seats;
+      return [SEAT.A, SEAT.B].every((s) => seats.find((r) => r.seat === s)?.status === 'connected');
+    }, 20000);
+    check('host: both strangers are seated at one table', bothSeated,
+      JSON.stringify((await party(frames.H, 'partySnapshot')).seats));
+
+    // 6. AND THE CARDS COME OUT ONCE, TO EVERYBODY.
+    await party(frames.H, 'showPartyScreen', table.key);
+    await frames.H.evaluate(async () => {
+      const p = await window.__mod('src/ui/party.js');
+      await p.dealParty();
+    });
+    const seqOf = async (label) => {
+      await party(frames[label], 'showPartyScreen', table.key);
+      return (await party(frames[label], 'partySnapshot')).seq;
+    };
+    for (const label of ['A', 'B']) {
+      const dealt = await waitFor(async () => (await seqOf(label)) >= 1, 20000);
+      check(`joiner ${label}: the deal arrives as a view of its own seat`, dealt,
+        `seq ${await seqOf(label)}`);
+    }
+
+    // THE ASSERTION THIS SCENARIO EXISTS FOR. One move, published by the host
+    // down two separate direct links, landing on two devices that cannot hear
+    // each other. Every player is asked each pass; only the seat whose turn it
+    // is has anything to do, and the house's own seat moves on the bot's think
+    // time (see scenario 1 on why patience here is load-bearing).
+    const before = { A: await seqOf('A'), B: await seqOf('B') };
+    let reachedBoth = false;
+    for (let i = 0; i < 120 && !reachedBoth; i++) {
+      await party(frames.H, 'showPartyScreen', table.key);
+      for (const label of ['H', 'A', 'B']) {
+        try { await party(frames[label], 'takeTurn'); } catch { /* not our turn */ }
+      }
+      reachedBoth = (await seqOf('A')) > before.A && (await seqOf('B')) > before.B;
+      if (!reachedBoth) await new Promise((r) => setTimeout(r, 100));
+    }
+    check('a move reaches BOTH joiners — the thing the party model got wrong', reachedBoth,
+      `A ${before.A} → ${await seqOf('A')}, B ${before.B} → ${await seqOf('B')}`);
+  },
+};
+
 export const SCENARIOS = [
   scriptedHand, privacy, unknownTarget, interruption, overflow, capsStripped, namesAndChips,
-  rejoining, twoPacks,
+  rejoining, twoPacks, theFieldTestShape,
 ];

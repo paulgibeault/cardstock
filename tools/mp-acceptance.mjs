@@ -194,6 +194,17 @@ try {
 
   /* --- 3. Cardstock, mounted in all three ------------------------- */
 
+  // BEFORE THE GAME IS MOUNTED, because the mount is what proposes. Cardstock
+  // knocks on its own door as it comes up (WP6b), and a recorder installed
+  // afterwards would be listening for a proposal that had already arrived.
+  for (const page of [H, A, B]) {
+    await page.evaluate(() => {
+      if (window.__invites) return;
+      window.__invites = [];
+      window.__arcade.p2p.onGameInvite((e) => window.__invites.push(e));
+    });
+  }
+
   for (const page of [H, A, B]) {
     await page.evaluate((id) => window.__arcade.showGame(id, `${id}/index.html`, 'Cardstock'), GAME_ID);
   }
@@ -211,10 +222,52 @@ try {
   }
   check('cardstock booted in all three launchers', true);
 
+  /* --- 4. A connection is not a table ----------------------------- */
+
+  // THE REDESIGN, IN ONE ASSERTION, and it is the one the field test cost us.
+  // Three launchers, two live links, cardstock mounted in all of them — and no
+  // game. A pairing is durable and symmetric; an OPEN GAME is per-connection,
+  // consented to by both ends, and until one exists this game's roster is empty
+  // and its status is idle however many devices are connected
+  // (plans/tables-2026-08.md D1). Every line below this block used to be true
+  // the moment the ceremony finished.
+  for (const [label, frame] of Object.entries(frames)) {
+    const before = await frame.evaluate(() => ({
+      status: window.Arcade.peer.status(),
+      peers: window.Arcade.peer.peers().length,
+    }));
+    check(`${label}: a connection is not a table — idle, and an empty roster`,
+      before.status === 'idle' && before.peers === 0, JSON.stringify(before));
+  }
+
+  // AND THE GAME'S OWN DOOR IS WHAT OPENS ONE. Nothing here sends a proposal:
+  // src/ui/party.js knocked as it mounted (`Arcade.peer.invite()`, behind the
+  // `peer.invite` cap), the launcher offered cardstock to every live connection
+  // that did not already have it open, and what is waited on below is that
+  // proposal ARRIVING at the other end — over the real wire, past the envelope
+  // gate and the identity binding.
+  //
+  // ONLY THE YES IS SCRIPTED. The prompt belongs to the launcher and shares one
+  // serialized dialog chain with the name-this-connection and auto-reconnect
+  // questions a fresh ceremony raises, so clicking OK would answer whichever of
+  // them happened to be first; the launcher's own harness declines to click it
+  // for the same reason (tools/lib/p2p-test-harness.mjs, openScope). Both
+  // joiners answer the HOST's proposal, which is the shape of the field test:
+  // one host, two joiners who are strangers to each other.
+  for (const label of ['A', 'B']) {
+    const page = { A, B }[label];
+    const heard = await page.waitForFunction(([dev, game]) =>
+      (window.__invites || []).some((i) => i.deviceId === dev && i.gameId === game),
+      [devices.H, GAME_ID], { timeout: 20000 }).then(() => true).catch(() => false);
+    check(`joiner ${label}: the game's own door proposed cardstock, over the wire`, heard);
+    await page.evaluate(([dev, game]) => window.__arcade.p2p.acceptGameInvite(dev, game),
+      [devices.H, GAME_ID]);
+  }
+
   for (const frame of Object.values(frames)) {
     await frame.waitForFunction("window.Arcade.peer.status() === 'connected'", null, { timeout: 20000 });
   }
-  check('all three games see peer.status connected', true);
+  check('all three games see peer.status connected once the game is open on both links', true);
 
   // The id the GAME is given has to be the id the launcher holds — every
   // authority check in src/match/ is a comparison against `peer.self()`, so a
@@ -226,7 +279,7 @@ try {
       `${seen} vs ${devices[label]}`);
   }
 
-  /* --- 4. The caps gate, against the real launcher ---------------- */
+  /* --- 5. The caps gate, against the real launcher ---------------- */
 
   // src/match/peerPort.js refuses to show any multiplayer UI without
   // peer.sendTo / peer.roster / peer.meta, and names what is missing so the
@@ -241,7 +294,7 @@ try {
     availability.available && availability.missing.length === 0,
     availability.missing.length ? `missing ${availability.missing.join(', ')}` : availability.caps.join(','));
 
-  /* --- 5. The frame really is the running game -------------------- */
+  /* --- 6. The frame really is the running game -------------------- */
 
   // If dynamic import handed back a SECOND copy of the module graph, every
   // assertion in every scenario below would be inspecting a table nobody is
@@ -253,7 +306,7 @@ try {
   });
   check('the game modules a scenario drives are the ones the game is running', sameInstance);
 
-  /* --- 6. The checklist ------------------------------------------- */
+  /* --- 7. The checklist ------------------------------------------- */
 
   const { SCENARIOS } = await import('./mp-scenarios.mjs');
   const only = process.argv.find((a) => a.startsWith('--only='))?.split('=')[1];
