@@ -542,6 +542,90 @@ function ensurePort() {
 }
 
 /* ------------------------------------------------------------------ *
+ * The invite door
+ * ------------------------------------------------------------------ */
+
+/**
+ * The one sentence there is to say when the room is empty.
+ *
+ * TRUE OF BOTH LAUNCHERS, which is why there is one of it. On a launcher that
+ * can be asked, an empty roster after a proposal means nobody was there to
+ * propose to; on one that cannot, an empty roster means the same thing, because
+ * a launcher without open games puts every paired device in it. So the copy
+ * does not branch on the capability — the player is told the fact, not our
+ * feature detection.
+ */
+const NOBODY_TO_ASK = 'Nobody is connected yet — add a device in the launcher\'s Multiplayer menu.';
+
+/** Is this game open with anybody? */
+function playingWithAnybody() {
+  // A CONNECTION IS NOT A TABLE, and this line is the whole of what that
+  // changed for us. A device holds durable connections; a game is open on the
+  // ones both ends agreed to play it on, and `peers()` is exactly that set. So
+  // an empty roster on a launcher we are paired through means nobody has said
+  // yes YET — not that nobody is there — and it is the only question the door
+  // below has to ask.
+  return (port?.peers() || []).length > 0;
+}
+
+/**
+ * KNOCK — ask the launcher to offer this game to the devices it is connected to.
+ *
+ * THE DOOR EXISTS BECAUSE PAIRING STOPPED BEING ENOUGH. Two devices that have
+ * done the ceremony are connected for good; a game between them is live only
+ * while both ends have agreed to play it, so something has to propose. The
+ * launcher has a door of its own, and a game that knows it wants players —
+ * which is exactly what tapping "Play together" means — should not send the
+ * player away to find it.
+ *
+ * UNADDRESSED, AND NOT FOR WANT OF THE OTHER FORM. The launcher's own invite
+ * takes an optional device and its connection rows use it; we cannot, and the
+ * reason is the state the door is for. With nothing open our roster is EMPTY,
+ * so at the one moment this is needed the game does not know a single deviceId
+ * to aim at — which is also why `Arcade.peer.invite()` takes no target: a game
+ * can only name devices it is already playing with. The proposal therefore goes
+ * to every live connection that does not already have us open, and WHO ends up
+ * at the table is settled where it should be, on the seat grid, after they
+ * accept.
+ *
+ * IT SELF-GUARDS ON THE ROSTER, so both doors can call it without asking first
+ * and neither can pester somebody who is already here.
+ *
+ * `announce` is the whole difference between the two doors. A tap is a question
+ * and deserves an answer, so the tile's door says the sentence above when there
+ * was nobody to ask. The knock at mount is nobody's question — it goes out
+ * because opening the game is as much of an intention as we will get — and a
+ * launcher-shaped complaint on a screen the player just opened is exactly the
+ * noise this file refuses to make elsewhere.
+ *
+ * Resolves the number of proposals sent. Never who accepted: consent comes back
+ * later, as a device appearing in the roster.
+ */
+async function knock({ announce }) {
+  const gate = availability();
+  if (!gate.available || playingWithAnybody()) return 0;
+  // NO FALLBACK PROTOCOL, for the reason the caps gate gives at length
+  // (src/match/peerPort.js). There is nothing here to hand-roll: consent is the
+  // launcher's to take and a game can ask, never grant — so an older launcher
+  // gets the sentence and not a second, worse proposal of our own.
+  if (!gate.canInvite) {
+    if (announce) setNotice(NOBODY_TO_ASK);
+    return 0;
+  }
+  // AN ASK THAT FAILED IS AN ASK THAT REACHED NOBODY, as far as this screen is
+  // concerned — the sentence below is the same either way — and neither door
+  // awaits this call, so a rejection would surface as an unhandled one rather
+  // than as anything a player could act on.
+  const sent = await ensurePort().invite().catch(() => 0);
+  // The answer, either way. Clearing on success matters as much as the notice:
+  // this is the door a player taps AGAIN once they have connected somebody, and
+  // "nobody is connected yet" left over from the last tap would be a screen
+  // arguing with what just happened.
+  if (announce) setNotice(sent ? '' : NOBODY_TO_ASK);
+  return sent;
+}
+
+/* ------------------------------------------------------------------ *
  * Names and faces
  * ------------------------------------------------------------------ */
 
@@ -1547,6 +1631,15 @@ function openHostSession({ tableId, packId, packName: name, variants, seats }) {
 export async function hostGame(packId) {
   const gate = availability();
   if (!gate.available) { announceGate(gate); showPartyScreen(); return false; }
+  // THE KNOCK COMES FIRST, AND BEFORE THE EARLY RETURNS BELOW. Every path out
+  // of this function that is not a refusal is the player saying "I want to play
+  // this with people" — a fresh table, the door back to ours, or a tap on
+  // somebody else's — and all three are worth nothing if this game is open with
+  // nobody. It is deliberately NOT awaited: the proposal is a round trip to the
+  // launcher, the table below does not depend on its answer, and a door that
+  // waits on the transport is a door that hangs when the transport does. The
+  // notice paints itself when it comes back (`setNotice` repaints).
+  knock({ announce: true });
   // OUR OWN TABLE OF THIS GAME is already open; this is the door back to it.
   // It used to be `if (host())` — any hosted table at all — which was the one
   // thing actually stopping a second pack being hosted. The registry's rule was
@@ -2419,6 +2512,19 @@ export function initParty({ onShowTable, onShowLobby }) {
   } catch { /* an older surface without the hooks is simply quieter */ }
 
   refreshEntry();
+  // THE JOINER'S DOOR, AND IT IS THE SAME DOOR. Opening the game is the only
+  // intention a joiner ever gets to express — there is nothing to tap on a
+  // lobby with no tables in it, because a table becomes visible only after a
+  // scope is open — so the mount knocks, quietly, and the seats appear when
+  // somebody says yes.
+  //
+  // ONCE, AND THERE IS NOTHING TO RETRY ON. A game nobody has opened with us
+  // hears no roster and no status change, so pairing a device after this point
+  // reaches us as silence: the tile's "Play together" is the door for that, and
+  // it knocks again. `Arcade.ready` has resolved by the time src/main.js calls
+  // this, so the gate inside it is answering about a launcher that has already
+  // introduced itself, not about one that may still be arriving.
+  knock({ announce: false });
 }
 
 /* ------------------------------------------------------------------ *
