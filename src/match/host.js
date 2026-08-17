@@ -197,18 +197,57 @@ export function createTableHost({
    * That is #56's shape, and #63's whole point: one door out.
    */
   function emote(index) {
-    if (!Number.isInteger(index) || index < 0 || index >= EMOTES.length) return false;
-    return broadcast({ k: FRAME.EMOTE, i: index });
+    return announceEmote(index, selfDeviceId());
   }
 
   /**
    * `closed` ends the table for everybody; `replaced` is aimed at one device
    * whose seat has been taken back. Same frame, two audiences, and the caller
    * says which by passing `to` or not.
+   *
+   * A JOINER'S `bye` IS NOT THIS FRAME AT ALL — it is a request to the host
+   * (`handleBye`), and the room hears about it in the lobby rebroadcast that
+   * follows. Only a host announces a departure, as of protocol v3.
    */
   function sendBye(why, { to = null } = {}) {
     const frame = { k: FRAME.BYE, why };
     return to ? sendTo(to, frame) : broadcast(frame);
+  }
+
+  /**
+   * SAY AN EMOTE TO THE ROOM, IN THE HOST'S VOICE — protocol v3.
+   *
+   * An emote used to be broadcast by whoever felt it, and a fellow joiner heard
+   * it only because the hub forwarded between spokes. That made it one of the
+   * two frames in this repo that needed transport relay, and the launcher is
+   * removing relay entirely. So a joiner sends its emote here and the host says
+   * it again. This makes the authority model MORE consistent, not less:
+   * everything else a fellow joiner knows — the roster, its own view, the fact
+   * that the table closed — already reaches it from the host.
+   *
+   * WHOSE EMOTE IT WAS TRAVELS AS A SEAT, because after mediation the sender of
+   * every emote a client receives is the host, and a client attributing one to
+   * `fromDeviceId` would credit the host with all of them. The seat is looked up
+   * from the AUTHENTICATED sender — the same rule `handlePropose` keys on — so
+   * it is a fact the host establishes rather than one the emoter claims. A
+   * device that is only watching holds no seat and gets none.
+   *
+   * TO THE ROOM MINUS WHOEVER SAID IT, which is why this is a walk over the
+   * links rather than a `broadcast`. The emoter's own screen burst the moment
+   * they tapped (src/ui/party.js), so sending it back is a second wave for the
+   * one person who does not need one. The reach is otherwise identical: "the
+   * room" is every device this host holds a link to, which is exactly what a
+   * broadcast addressed.
+   */
+  function announceEmote(index, from) {
+    if (!Number.isInteger(index) || index < 0 || index >= EMOTES.length) return false;
+    const frame = { k: FRAME.EMOTE, i: index, seat: seats.seatsOfDevice(from)[0] };
+    let announced = false;
+    for (const entry of peer.peers()) {
+      if (entry.deviceId === from) continue;
+      if (sendTo(entry.deviceId, frame)) announced = true;
+    }
+    return announced;
   }
 
   /** One seat's view, addressed to the device holding it. */
@@ -381,9 +420,7 @@ export function createTableHost({
       case FRAME.CLAIM_SEAT: return handleClaim(fromDeviceId, frame);
       case FRAME.PROPOSE: return handlePropose(fromDeviceId, frame, now());
       case FRAME.SNAPSHOT_REQ: return handleSnapshotReq(fromDeviceId);
-      case FRAME.EMOTE: return void hooks.onEmote?.({
-        deviceId: fromDeviceId, emote: EMOTES[frame.i], seat: seats.seatsOfDevice(fromDeviceId)[0] ?? null,
-      });
+      case FRAME.EMOTE: return handleEmote(fromDeviceId, frame);
       case FRAME.BYE: return handleBye(fromDeviceId, frame);
       default:
         // A host-only frame arriving from a peer is a client that thinks it is
@@ -392,6 +429,39 @@ export function createTableHost({
     }
   }
 
+  /**
+   * Somebody at the table said something, and the room hears it from us.
+   *
+   * The host's own screen bursts it (the hook) and then it goes back out to
+   * everybody else — `announceEmote` above is where the reasoning lives. The
+   * emoter's `seat` is read here, from the transport's `fromDeviceId`, and
+   * never from the frame: `frame.seat` on the way IN is a field a client filled
+   * in, and the only interesting reason for a client to fill it in is to emote
+   * as somebody else.
+   */
+  function handleEmote(fromDeviceId, frame) {
+    hooks.onEmote?.({
+      deviceId: fromDeviceId, emote: EMOTES[frame.i], seat: seats.seatsOfDevice(fromDeviceId)[0] ?? null,
+    });
+    announceEmote(frame.i, fromDeviceId);
+  }
+
+  /**
+   * Somebody stood up.
+   *
+   * THE LOBBY IS THE ANNOUNCEMENT — that is v3's other half. A joiner's `bye`
+   * used to be broadcast so fellow joiners heard it too, which was the second
+   * frame in this repo depending on the hub to forward between spokes; it also
+   * never worked, because the only two things that consume a `bye` both refuse
+   * a relayed one (src/match/client.js believes a `bye` only from its host, and
+   * `noteBye` in src/ui/tableSightings.js drops anything relayed). So the
+   * departure is announced the way every other seat change already is: this
+   * re-broadcast, which says who is where in one frame instead of leaving the
+   * room to assemble it from two.
+   *
+   * It is also the invitation back (#56) — the frame the panel picks up as a
+   * sighting, so the player who just left can sit down again.
+   */
   function handleBye(fromDeviceId, frame) {
     const held = seats.seatsOfDevice(fromDeviceId);
     hooks.onBye?.({ deviceId: fromDeviceId, seats: held, why: frame.why });

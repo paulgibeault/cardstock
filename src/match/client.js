@@ -14,7 +14,10 @@
 //   * A HOST-ROLE FRAME MUST ARRIVE ON THE DIRECT LINK. Under a star topology
 //     the hub relays between spokes, so a fellow joiner can address a `view`
 //     frame at us. `meta.relayed` is what tells that apart, and it comes from
-//     the transport rather than the payload.
+//     the transport rather than the payload. The launcher is removing relay
+//     outright, which does not retire the check — it retires the last two
+//     frames the check could not cover (protocol v3: `emote` and `bye` are
+//     host-mediated, so EVERY frame this client believes is now a host's).
 //   * A GAP IN `seq` IS NOT SOMETHING TO REASON THROUGH. Views are whole
 //     (D2), so a client that notices it missed one simply asks for a snapshot
 //     rather than trying to interpolate. That is also the entire recovery path
@@ -60,8 +63,10 @@ export function createTableClient({ peer, expects, host = null, tableId, hooks =
    *
    * On a joiner the party roster contains exactly the hub, so this is both the
    * whole answer and an unforgeable one. (A member's roster is direct-links
-   * only — fellow joiners are reachable but never listed. That is the
-   * transport's documented shape, not an accident of ours.)
+   * only — fellow joiners are neither listed nor, as of the launcher's relay
+   * removal, reachable. That is the transport's documented shape rather than an
+   * accident of ours, and since v3 nothing here wants them to be: everything
+   * one joiner learns about another comes from the host.)
    *
    * ONE DIRECT PEER IS NO LONGER THE ONLY SHAPE. A party can contain two hosts,
    * and then this device holds two direct links and "the" host is a question
@@ -100,6 +105,17 @@ export function createTableClient({ peer, expects, host = null, tableId, hooks =
     return { ok: true };
   }
 
+  /**
+   * THE ONLY DOOR OUT, and since v3 there is genuinely only one.
+   *
+   * There used to be two: this, and a `broadcast` for the frames a joiner said
+   * to the ROOM rather than to the host — an `emote`, and a `bye` on standing
+   * up. Both reached fellow joiners only because the hub forwarded between
+   * spokes, and the launcher is removing that forwarding, so both are targeted
+   * at the host now and the host announces them (src/match/host.js
+   * `announceEmote` / `handleBye`). A client speaks to exactly one device, which
+   * is what §5 of the plan always claimed it did.
+   */
   function send(frame) {
     if (!hostDeviceId) return false;
     // Which table we are talking about, on every frame — see protocol.js. A
@@ -107,20 +123,6 @@ export function createTableClient({ peer, expects, host = null, tableId, hooks =
     const delivered = peer.send({ ...frame, tableId }, { to: hostDeviceId });
     if (!delivered) hooks.onError?.({ kind: 'send-failed', frame: frame.k });
     return delivered;
-  }
-
-  /**
-   * The same stamp, for the frames we say to the ROOM rather than to the host.
-   *
-   * `emote` and `bye` are announcements, not requests: an emote is for everyone
-   * at the table and a `bye` is heard by fellow joiners as well as the host, so
-   * neither takes a `{ to }`. What they still need is the table's name — and
-   * going straight to `peer.send` to skip the targeting skipped that too, which
-   * is what this exists to make impossible. Every outbound frame now leaves
-   * through one of these two functions.
-   */
-  function broadcast(frame) {
-    return peer.send({ ...frame, tableId });
   }
 
   /* ---------------------------------------------------------------- *
@@ -195,17 +197,14 @@ export function createTableClient({ peer, expects, host = null, tableId, hooks =
     // read a neighbour's move as a gap in our own.
     if (frame.tableId !== tableId) return;
 
-    // An emote is the one frame that legitimately comes from a fellow joiner,
-    // so it is checked for authenticity as a NON-host frame and simply passed on.
-    if (frame.k === FRAME.EMOTE) {
-      hooks.onEmote?.({ deviceId: fromDeviceId, emote: EMOTES[frame.i] });
-      return;
-    }
-    if (frame.k === FRAME.BYE) {
-      if (fromDeviceId === hostDeviceId) hooks.onEnd?.({ why: frame.why });
-      return;
-    }
-
+    // EVERY FRAME NOW GOES THROUGH THE SAME GATE, which is v3's dividend.
+    // `emote` and `bye` used to be handled above it: an emote because it was the
+    // one frame that legitimately came from a fellow joiner, and a `bye` with a
+    // hand-rolled `fromDeviceId === hostDeviceId` of its own. The first was a
+    // hole — any device in the party could burst an emoji on this screen — and
+    // the second was the authenticity check written a second time, minus the
+    // relay clause. Both are host announcements now, so both are simply
+    // believed on the same terms as a view.
     if (!hostDeviceId) hostDeviceId = discoverHost();
     if (!isAuthentic(frame.k, { fromDeviceId, hostDeviceId, relayed: meta?.relayed })) {
       // Somebody who is not our host sent us a frame only a host may send. Not
@@ -221,6 +220,14 @@ export function createTableClient({ peer, expects, host = null, tableId, hooks =
       case FRAME.VIEW:
       case FRAME.SNAPSHOT: return acceptView(frame);
       case FRAME.REJECT: return void hooks.onReject?.(frame);
+      // WHO EMOTED IS A SEAT, NOT A DEVICE, and it has to be: the sender of
+      // every emote that reaches us is now the host, so `fromDeviceId` would
+      // name the host each time somebody else waved. The seat is the host's own
+      // attribution, resolved from the authenticated sender at its end.
+      case FRAME.EMOTE: return void hooks.onEmote?.({
+        seat: frame.seat ?? null, emote: EMOTES[frame.i],
+      });
+      case FRAME.BYE: return void hooks.onEnd?.({ why: frame.why });
       default:
         hooks.onError?.({ kind: 'unexpected-frame', deviceId: fromDeviceId, frame: frame.k });
     }
@@ -251,13 +258,29 @@ export function createTableClient({ peer, expects, host = null, tableId, hooks =
     return send({ k: FRAME.SNAPSHOT_REQ, since: Math.max(0, lastSeq) });
   }
 
+  /**
+   * Say something to the table — by asking the host to say it.
+   *
+   * NO SEAT IS CLAIMED HERE. The host resolves which seat this came from off the
+   * authenticated sender and stamps it on the re-announcement; a `seat` we put
+   * on the frame ourselves would be a client naming somebody else as the
+   * emoter, which is exactly why the host does not read one.
+   */
   function emote(index) {
     if (!Number.isInteger(index) || index < 0 || index >= EMOTES.length) return false;
-    return broadcast({ k: FRAME.EMOTE, i: index });
+    return send({ k: FRAME.EMOTE, i: index });
   }
 
+  /**
+   * Stand up.
+   *
+   * TOLD TO THE HOST, NOT TO THE ROOM. The room learns it from the lobby frame
+   * the host re-broadcasts on the way through (`handleBye`) — which is how every
+   * other seat change already travels, and which says who is where rather than
+   * leaving each joiner to work it out from a departure notice.
+   */
   function sendBye(why = 'leave') {
-    return broadcast({ k: FRAME.BYE, why });
+    return send({ k: FRAME.BYE, why });
   }
 
   /* ---------------------------------------------------------------- *

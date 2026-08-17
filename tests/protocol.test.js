@@ -82,7 +82,8 @@ async function threeSeatTable({ packId = 'crazy-eights', now } = {}) {
     variants: pack.activeVariants ?? [],
   });
 
-  const seen = { a: { views: [], rejects: [], lobbies: [], bad: [] }, b: { views: [], rejects: [], lobbies: [], bad: [] } };
+  const watched = () => ({ views: [], rejects: [], lobbies: [], bad: [], emotes: [], ends: [] });
+  const seen = { a: watched(), b: watched() };
   const mkClient = (port, key) => createTableClient({ tableId: TID,
     peer: port,
     expects,
@@ -91,6 +92,8 @@ async function threeSeatTable({ packId = 'crazy-eights', now } = {}) {
       onView: (view, events, meta) => seen[key].views.push({ view, events, meta }),
       onReject: (frame) => seen[key].rejects.push(frame),
       onIncompatible: (why) => seen[key].bad.push(why),
+      onEmote: (detail) => seen[key].emotes.push(detail),
+      onEnd: (detail) => seen[key].ends.push(detail),
       onError: (e) => errors[key].push(e),
     },
   });
@@ -792,6 +795,102 @@ test('a host acts on a joiner’s bye by re-publishing its lobby', async () => {
   // that frame up as a sighting and becomes a client of it a second time.
   assert.ok(t.seen.a.lobbies.length > before,
     `expected a fresh lobby after the bye, saw ${t.seen.a.lobbies.length - before}`);
+});
+
+/* ------------------------------------------------------------------ *
+ * Host-mediated announcements (protocol v3)
+ *
+ * `emote` and `bye` were the last two frames a joiner said to the ROOM, and
+ * they reached fellow joiners only because the hub forwarded between spokes.
+ * The launcher is deleting that forwarding, so both go to the host now and the
+ * host says them again. What these pin is that the room still hears everything
+ * it used to, that it hears it from the host, and that the host's account is
+ * the only one a client will believe.
+ * ------------------------------------------------------------------ */
+
+test('a joiner’s emote reaches the room through the host, never around it', async () => {
+  const t = await threeSeatTable();
+  seatAll(t);
+  t.net.clearLog();
+
+  t.a.emote(0);
+
+  const emotes = t.net.log.filter((e) => e.payload.k === FRAME.EMOTE);
+  assert.deepEqual(emotes.map((e) => `${e.from}->${e.to}`), ['a->host', 'host->b'],
+    'one frame in to the host, one back out to the other seat');
+  // THE HALF THAT USED TO BE IMPOSSIBLE. A joiner's broadcast reached Bo marked
+  // relayed, which is exactly what a client is supposed to distrust — so the
+  // frame could not be authenticated and was accepted on faith instead.
+  assert.equal(emotes[1].relayed, false, 'and on a direct link, so a client may believe it');
+  assert.deepEqual(t.seen.b.emotes, [{ seat: 1, emote: EMOTES[0] }],
+    'Bo heard Ada’s wave, attributed to the seat Ada holds');
+});
+
+test('an emote never comes back to the device that sent it', async () => {
+  const t = await threeSeatTable();
+  seatAll(t);
+  t.net.clearLog();
+
+  t.a.emote(0);
+
+  // The emoter's screen burst the moment they tapped (src/ui/party.js), so an
+  // echo is a second wave for the one person who does not need one.
+  assert.deepEqual(t.net.deliveredTo('a').filter((p) => p.k === FRAME.EMOTE), []);
+  assert.deepEqual(t.seen.a.emotes, []);
+});
+
+test('the host says whose emote it was — the sender does not get to', async () => {
+  const t = await threeSeatTable();
+  seatAll(t);
+
+  // Ada, hand-rolling a frame that claims Bo's seat. The host resolves the seat
+  // from the authenticated sender, the same rule `handlePropose` keys on, and
+  // never reads this field at all.
+  t.ports.a.send({ tableId: TID, k: FRAME.EMOTE, i: 0, seat: 2 }, { to: 'host' });
+
+  assert.deepEqual(t.seen.b.emotes, [{ seat: 1, emote: EMOTES[0] }]);
+});
+
+test('a client refuses an emote that did not come from its host', async () => {
+  const t = await threeSeatTable();
+  seatAll(t);
+
+  // Bo, addressing Ada directly. Until v3 this was the one frame a client took
+  // from a fellow joiner, so anybody in the party could burst an emoji on
+  // somebody else's screen and there was no test that could tell.
+  t.ports.b.send({ tableId: TID, k: FRAME.EMOTE, i: 3 }, { to: 'a' });
+
+  assert.deepEqual(t.seen.a.emotes, [], 'nothing was rendered');
+  assert.ok(t.errors.a.some((e) => e.kind === 'spoofed-authority' && e.frame === FRAME.EMOTE),
+    'and it was noticed rather than dropped in silence');
+});
+
+test('a joiner’s bye goes to the host alone, and the room hears the lobby', async () => {
+  const t = await threeSeatTable();
+  seatAll(t);
+  const before = t.seen.b.lobbies.length;
+  t.net.clearLog();
+
+  t.a.sendBye('leave');
+
+  // NOTHING IS LOST BY NOT BROADCASTING IT. Both consumers of a `bye` already
+  // refused a relayed one — a client believes one only from its host, and
+  // `noteBye` (src/ui/tableSightings.js) drops anything relayed outright — so
+  // the room-facing half was reaching fellow joiners and being thrown away.
+  assert.deepEqual(t.net.deliveredTo('b').filter((p) => p.k === FRAME.BYE), []);
+  assert.ok(t.seen.b.lobbies.length > before,
+    'the departure travels as a seat change, like every other seat change');
+});
+
+test('a client refuses a bye from anyone but its host', async () => {
+  const t = await threeSeatTable();
+  seatAll(t);
+
+  // Bo, announcing that Ada's table has closed. It has not.
+  t.ports.b.send({ tableId: TID, k: FRAME.BYE, why: 'closed' }, { to: 'a' });
+
+  assert.deepEqual(t.seen.a.ends, [], 'Ada is still at the table');
+  assert.ok(t.errors.a.some((e) => e.kind === 'spoofed-authority' && e.frame === FRAME.BYE));
 });
 
 /* ------------------------------------------------------------------ *

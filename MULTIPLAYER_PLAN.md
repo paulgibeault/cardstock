@@ -92,17 +92,28 @@ What `Arcade.peer` guarantees (and what we must therefore never rebuild):
   `interrupted` gaps — sends queue (cap 1000) and replay in order. The move log needs
   no dedup or reordering logic. The only resync path we owe is the overflow case (§8).
 - **Targeted sends** `send(payload, {to})` are routing-private: non-addressees never
-  receive the frame. Joiner↔joiner frames transit the host readably — irrelevant under
-  host authority.
+  receive the frame. There is no other kind of send between two joiners — the
+  transport carries a frame along a direct link and never forwards it to another.
 - **Authenticated attribution**: `fromDeviceId` on `onMessage` is bound by the
   launcher's identity handshake and cannot be spoofed by payload content. Authority
   checks key on it, never on payload fields.
 - **`meta.relayed`** marks frames that arrived via the hub bridge rather than the
-  direct link — the spoof check for host-role frames (§9).
-- **Parties**: the game attaches to exactly one party; `peers()`/`onPeersChange` are
-  that party's roster. On a joiner the roster contains only the host (`direct: true`);
-  fellow joiners are reachable but invisible — seat presence therefore rides *our*
-  lobby frames (§4), with the optional `peer.presence` cap as a future refinement.
+  direct link — the spoof check for host-role frames (§9). The launcher has removed
+  transport relay outright, so on a current build it is always `false`; the flag
+  stays in the SDK contract, the check stays as defence in depth, and `peer.meta`
+  stays one of the three caps we require.
+- **Open games, not parties.** A device holds durable **connections**; a game is
+  *open* on some of them, by mutual consent, for as long as the link and the game
+  last. `peers()`/`onPeersChange` are the devices with cardstock open — **every
+  entry direct, and there may be more than one**. That is the shape this repo was
+  already built for: a party could contain two hosts long before the launcher
+  changed, which is why `discoverHost` (`src/match/client.js`) takes the table's
+  host from the *caller* rather than assuming a single direct peer, and why the
+  sighting rule (`src/ui/tableSightings.js`) is "direct sender, not relayed"
+  rather than "the one direct sender". Neither needs a line changed.
+  Fellow joiners are **not reachable — and nothing here ever needed them to be.**
+  Seat presence rides *our* lobby frames (§4); protocol v3 (§5) moved the last two
+  frames that did not — `emote` and a joiner's `bye` — onto the same road.
 - **`onReady`** fires when the remote device has *this game* mounted, re-fires on
   reconnect, idempotent by contract. The lobby rebroadcast hangs off it — no
   hand-rolled hello/echo.
@@ -126,9 +137,10 @@ already reserve `peer:<deviceId>` keys (`src/arcade/storage.js`,
 roster entry with `direct: true`.
 
 **Lobby flow:**
-1. Host opens a pack's table in "host" mode → cardstock attaches to the party
-   (v1: the single live party via `Arcade.peer.party()`; `parties()`/`attach()`
-   pickers stay out of scope, noted in code where party is read).
+1. Host opens a pack's table in "host" mode. There is nothing to attach to: the
+   game is already open on whichever connections consented to it, and `peers()`
+   is that set. (v1 read `Arcade.peer.party()` here to label the screen; the
+   launcher has no parties, so the label went with them — §10.)
 2. Host broadcasts `lobby` on every `onReady` firing and on every seat change.
 3. Joiners render the seat grid and send `claim-seat`. The host arbitrates
    (first-come), rebinding a returning `deviceId` to its previous seat automatically.
@@ -150,20 +162,43 @@ Names come from `Arcade.player.name()` and pass through `Arcade.html.escape`
 
 ## 5. Wire protocol
 
-All frames ride `Arcade.peer.send`. Clients speak only to the host. Every inbound
-frame is shape-validated before use (§9). Frame kinds:
+All frames ride `Arcade.peer.send`. Clients speak only to the host — since
+protocol v3 that is literally true, not nearly true. Every inbound frame is
+shape-validated before use (§9). Frame kinds:
 
 | Frame | Direction | Delivery | Contents |
 |---|---|---|---|
-| `lobby` | host → all | broadcast | protocol v, packId, packVersion, variants, seats[], hostDeviceId |
-| `claim-seat` | client → host | broadcast (host-addressed) | requested seat, localIndex |
-| `propose` | client → host | broadcast (host-addressed) | `pid` (client-local id), move object |
+| `lobby` | host → all | broadcast | protocol v, packId, packVersion, variants, seats[], hostDeviceId, graceMs? |
+| `claim-seat` | client → host | **targeted** | requested seat, localIndex |
+| `propose` | client → host | **targeted** | `pid` (client-local id), move object |
 | `view` | host → each seat | **targeted** | seq, ViewState, events[], yourMoves?, turn, deadlines |
 | `reject` | host → proposer | **targeted** | pid, reason (from `validateMove`) |
-| `snapshot-req` | client → host | targeted | last seq seen |
+| `snapshot-req` | client → host | **targeted** | last seq seen |
 | `snapshot` | host → client | **targeted** | identical payload to `view` (D2 makes them the same thing) |
-| `emote` | any → all | broadcast | index into a fixed emoji set — no free text |
-| `bye` | any → all | broadcast | reason (leave / onStateReplaced / close) |
+| `emote` | client → host, then host → every other link | **targeted** both ways | index into a fixed emoji set — no free text; the host's re-announcement adds the emoter's `seat` |
+| `bye` | client → host; host → all (`closed`) or one (`replaced`) | **targeted** / broadcast | reason (leave / replaced / closed) |
+
+**Protocol v3: announcements are host-mediated.** `emote` and a joiner's `bye`
+were the last two frames a client said to the *room* rather than to its host,
+and they reached fellow joiners only because the hub forwarded between spokes.
+The launcher has deleted transport relay, so both are targeted at the host, which
+re-announces the emote itself and lets the departure travel in the `lobby` frame
+it already re-broadcasts on every seat change. This makes the authority model
+*more* consistent, not less: everything a fellow joiner knows now comes from the
+host, as views and rosters already did. Two consequences worth stating:
+
+- The host stamps the emoter's **seat**, resolved from the authenticated
+  `fromDeviceId` and never from the frame — after mediation the *sender* of every
+  emote a client receives is the host, so `fromDeviceId` alone would credit the
+  host with all of them.
+- `emote` and `bye` join `HOST_FRAMES`, so a client holds them to the same
+  authenticity test as a `view` (§9.3). Before v3 an emote was the one frame a
+  client accepted from a fellow joiner, which meant anybody in the party could
+  burst an emoji on somebody else's screen.
+
+Nothing negotiates: a mismatched build gets the existing reload prompt and the
+service worker converges everyone, the same call `TABLES_PLAN.md` §4 made for v2.
+No compatibility shims. `src/match/protocol.js` carries the version log.
 
 Rules:
 - **`send()` returning `false` on a targeted frame is an error path** — surface it
@@ -312,9 +347,12 @@ On top of Phase 4's hardening (`tests/security.test.js`), all peer input is host
    never trusts a client's claim of legality, and a rejected propose must leave state
    bit-identical (engine test: illegal frames through the pipeline, assert no
    mutation).
-3. Authority check: clients accept `lobby`/`view`/`reject`/`snapshot` only from the
-   host `deviceId` **and** only when `meta.relayed !== true` (a host-role frame via
-   the relay path is a spoof attempt — needs cap `peer.meta`).
+3. Authority check: clients accept `lobby`/`view`/`reject`/`snapshot` — and, from
+   protocol v3, `emote` and `bye` — only from the host `deviceId` **and** only when
+   `meta.relayed !== true` (a host-role frame via the relay path is a spoof attempt
+   — needs cap `peer.meta`). Host-mediating the announcements is what let the last
+   two frames join that list; before it, an emote from a fellow joiner was
+   legitimate and therefore uncheckable.
 4. Attribution: the host keys every propose/claim on the transport's `fromDeviceId`,
    never on payload fields.
 5. Wire ids (deviceIds, seat indexes, zone/card ids, pack ids) are validated against
@@ -330,9 +368,12 @@ On top of Phase 4's hardening (`tests/security.test.js`), all peer input is host
 
 ## 10. UX flows (summary — full treatment in WP-C5)
 
-- **Lobby:** party context labeled from `Arcade.peer.party()` ("Playing with
-  {leaderName}'s party"), seat grid with claim/bot toggles (host) and claim buttons
-  (joiners), pack + variant summary from the handshake.
+- **Lobby:** the panel names the table it is showing — "Your party" for ours,
+  "{hostName}'s table" for a neighbour's, and "Playing together" when it is
+  showing none. (It used to fall back to a party label read from
+  `Arcade.peer.party()`; the launcher has no parties and no leaders, so that
+  sentence could no longer be true of anything.) Seat grid with claim/bot toggles
+  (host) and claim buttons (joiners), pack + variant summary from the handshake.
 - **Presence:** per-seat chips driven by the host's lobby/seat roster (transport
   status where known; the optional `peer.presence` cap upgrades fellow-joiner
   fidelity when present).

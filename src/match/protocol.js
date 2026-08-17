@@ -33,8 +33,21 @@
  * converges versions on its own (the launcher owns the only update control),
  * so the honest move is to wait for that rather than to keep a mismatched
  * client at a table where it can desync a hand nobody can replay.
+ *
+ * WHAT EACH BUMP WAS, so a frame on the wire can be dated:
+ *
+ *   v2  every frame names its `tableId` (#48). One device may host or sit at
+ *       two tables, and `hostDeviceId` stopped disambiguating the moment it
+ *       could.
+ *   v3  `emote` and `bye` are HOST-MEDIATED. They were the last two frames a
+ *       joiner broadcast to the room, which only ever reached fellow joiners
+ *       because the hub relayed between spokes; the launcher is removing relay
+ *       entirely, so a joiner sends both to its host and the host announces
+ *       them. `emote` grew an optional `seat` — the host's own statement about
+ *       who it came from, since after mediation the sender of every emote a
+ *       client sees is the host.
  */
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 
 export const FRAME = Object.freeze({
   LOBBY: 'lobby',
@@ -48,8 +61,22 @@ export const FRAME = Object.freeze({
   BYE: 'bye',
 });
 
-/** Frames only a host may send. A client that accepts one from a peer is spoofed. */
-export const HOST_FRAMES = Object.freeze([FRAME.LOBBY, FRAME.VIEW, FRAME.REJECT, FRAME.SNAPSHOT]);
+/**
+ * Frames a client believes only from its host. Anything else claiming one is
+ * spoofed.
+ *
+ * `emote` AND `bye` JOINED THE LIST IN v3, and the reason is the transport's
+ * rather than ours. Both used to be broadcast by whoever said them, and a
+ * fellow joiner heard them only because the hub forwarded between spokes — so
+ * they were the two frames a client legitimately received from somebody who was
+ * not its host, and therefore the two that could not be checked. The hub does
+ * not forward any more (the launcher's relay is gone), so a joiner sends both to
+ * its host and the host announces them; every emote and every `bye` a client
+ * now sees is a host's own statement, and is held to the same test as a view.
+ */
+export const HOST_FRAMES = Object.freeze([
+  FRAME.LOBBY, FRAME.VIEW, FRAME.REJECT, FRAME.SNAPSHOT, FRAME.EMOTE, FRAME.BYE,
+]);
 
 /** Frames only a client sends. */
 export const CLIENT_FRAMES = Object.freeze([FRAME.CLAIM_SEAT, FRAME.PROPOSE, FRAME.SNAPSHOT_REQ]);
@@ -468,7 +495,15 @@ function validateBody(raw, kind) {
 
     case FRAME.EMOTE: {
       if (!Number.isInteger(raw.i) || raw.i < 0 || raw.i >= EMOTES.length) return fail('emote: bad index');
-      return ok({ k: kind, i: raw.i });
+      // WHOSE EMOTE IT WAS, and only the host may say. A joiner's emote travels
+      // to its host bare — the host looks the seat up from the authenticated
+      // `fromDeviceId`, exactly as `handlePropose` does, and stamps it on the
+      // way back out. So the field is optional on the way in and it is never
+      // read from a sender's own claim; a client that receives one is receiving
+      // the host's answer to "who was that", which is the only answer worth
+      // anything.
+      if (raw.seat !== undefined && !isSeatIndex(raw.seat)) return fail('emote: bad seat');
+      return ok({ k: kind, i: raw.i, seat: raw.seat });
     }
 
     case FRAME.BYE: {
@@ -491,6 +526,15 @@ function validateBody(raw, kind) {
  * the wire addressed to us. It is the transport's `relayed` flag, not anything
  * in the payload, that tells the two apart; a payload field would be the very
  * thing an impostor controls.
+ *
+ * THE HUB HAS STOPPED FORWARDING, AND THE CHECK STAYS. The launcher is removing
+ * transport relay outright, so on a current build `relayed` is always false and
+ * this clause can only ever pass. It is kept because a check that costs one
+ * comparison is not worth the argument about which launcher the player is on,
+ * because `relayed` remains in the SDK contract (`peer.meta` is still one of
+ * the three caps we require), and because it was load-bearing for the whole of
+ * the time relay existed — v3's own reason for host-mediating `emote` and `bye`
+ * is that they were the two frames it could NOT protect.
  */
 export function isAuthentic(kind, { fromDeviceId, hostDeviceId, relayed }) {
   if (!HOST_FRAMES.includes(kind)) return true;
