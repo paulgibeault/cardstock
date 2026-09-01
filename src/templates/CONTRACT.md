@@ -49,9 +49,52 @@ than an error.
 | `scoreRound` | `(ctx) -> {seat: delta}` | `runRoundScore(ctx)` — the pack's declared strategy, or `{}` when it declares none |
 | `isGameOver` | `(ctx) -> boolean` | `false`. Only consulted when the pack's `scoring.gameOver` is absent or says `"template"`. |
 | `botHeuristic` | `(ctx, move) -> number` | every non-draw move scores equally |
+| `evaluateState` | `(ctx, seat) -> number` | none — the bot ranks by `botHeuristic` alone |
 | `actingSeats` | `(ctx) -> seat[]` | `[ctx.turn.seat]`. Say so for a simultaneous-commit phase, or the table will schedule only one of the seats that may act. |
 | `enumerateAnnouncements` | `(ctx, seat) -> move[]` | none. Its presence is also what reserves the announce bar's slot on the felt. |
 | `applyAnnouncement` | `(ctx, announcement) -> void` | none — the rule-test harness's entry point only |
+
+> **⚠ The `evaluateState` contract.** `botHeuristic` grades a **move**;
+> `evaluateState` grades the **position** a move would leave behind — "how good
+> is this for `seat`", higher is better. Offering it turns on the generic
+> one-ply search in `src/engine/bot.js`: every legal move is played out on a
+> `forkState` copy (`src/engine/fork.js`) and the resulting position scored.
+> Three rules make it usable:
+>
+> * **The scale is yours**, per-template, and only ever compared against
+>   itself — but it must be **seat-symmetric**. `evaluateState(ctx, s)` has to
+>   mean the same thing for every `s`, or the bot prefers positions merely
+>   because of who was asked about them.
+> * **Read only what that seat is entitled to see** — public zones, its own
+>   hand, declared public vars. A bot is handed the whole state, opponents'
+>   hands and stock order included; reading them here is a bot that always knew
+>   you had the queen, and nothing would catch it. Say in the comment what the
+>   evaluator deliberately does not read. The search layer helps: it refuses to
+>   judge any move whose fork turned up a card the seat could not see
+>   beforehand (drawing off a face-down deck, completing a simultaneous pass),
+>   and falls back to `botHeuristic` for that whole turn.
+> * **Return `null`** for a position you cannot judge; the turn falls back to
+>   `botHeuristic`. Rounds that END inside the move are never passed to you at
+>   all — the pipeline has already dealt the next hand by then.
+
+> **⚠ What the `hard` bot asks of you, which is nothing new.** The rollout
+> layer (`src/engine/bot.js`) plays a hand out to its end and grades the result
+> with hooks you already implement, so no template has to know it exists:
+>
+> * **`scoreRound` is the terminal signal.** Whatever it returns for a finished
+>   hand is what the search is trying to steer toward, so a template whose
+>   `scoreRound` returns `{}` (Stockpile) gives every rollout the same answer.
+>   The chooser detects that — every candidate tied means the scorer has no
+>   opinion — and drops back to one ply for that turn rather than ranking by
+>   enumeration order.
+> * **The pack's manifest says which way is up**, via
+>   `scoring.gameOver.winner`: `highestScore` means points are the prize,
+>   anything else (including `"template"`) means they are the penalty. A pack
+>   that gets this wrong gets a bot that plays to lose, and nothing else in the
+>   codebase would notice.
+> * **`isRoundOver` has to be reachable from mid-hand under greedy play.** A
+>   rollout that never finishes is thrown away, so a template that can only end
+>   a hand through a move no heuristic would choose gets no search at all.
 
 > **⚠ The `startRound` trap.** A template without `startRound` gets the default
 > round boundary, which **wipes every `playerVars` entry** before re-running

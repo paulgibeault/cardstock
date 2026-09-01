@@ -3210,6 +3210,7 @@ export function initTable({ onExit }) {
     clock: feltClock({ shared: () => !!session?.shared }),
     currentEpoch: () => epoch,
     botDelayMs: () => settings.botDelayMs,
+    difficulty: () => settings.botDifficulty,
     me,
     identityOf,
     actingSeatsOf,

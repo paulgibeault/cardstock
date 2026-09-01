@@ -18,7 +18,8 @@ import path from "node:path";
 import { loadPack } from "../src/engine/packLoader.js";
 import { createState } from "../src/engine/state.js";
 import { makeCtx } from "../src/engine/context.js";
-import { enumerateLegalMoves } from "../src/engine/movePipeline.js";
+import { enumerateLegalMoves, validateMove } from "../src/engine/movePipeline.js";
+import { rankOrder } from "../src/engine/cards.js";
 import { chooseBotMove, rankMoves } from "../src/engine/bot.js";
 import { ROOT } from "../tools/stage.mjs";
 import {
@@ -167,6 +168,57 @@ test("the plain chooser stays deterministic — simulate.mjs and the rule tests 
   for (let i = 0; i < 12; i++) {
     assert.deepStrictEqual(chooseBotMove(a, a.turn.seat), chooseBotMove(b, b.turn.seat));
   }
+});
+
+/* ------------------------------------------------------------------ *
+ * The pass, which used to be a decision nobody could make
+ * ------------------------------------------------------------------ */
+
+// A CHOICE WITH ONE OPTION IS NOT A CHOICE. trick-taking's enumerator collapsed
+// the whole pass space into a single canned "pass your N highest", so no
+// heuristic, persona or search could touch the three most consequential cards a
+// Hearts player commits all round — and nothing noticed, because a hand passed
+// badly still completes. These two are what would notice.
+test("the pass phase offers a real choice, and every option is a legal pass", () => {
+  const state = dealt("hearts", "pass:choice");
+  assert.strictEqual(state.turn.phase, "pass", "hearts round 1 opens on a pass");
+  const seat = state.turn.seat;
+  const moves = enumerateLegalMoves(state, seat);
+
+  assert.ok(moves.length > 1, `the pass enumerated ${moves.length} move(s) — nothing to choose between`);
+  // Still a SHORTLIST. Seventeen-choose-three is 680 moves, and this list is
+  // shipped to every joiner with their view (src/match/host.js).
+  assert.ok(moves.length <= 6, `the pass shortlist grew to ${moves.length} — it is shipped over the wire`);
+
+  const seen = new Set();
+  for (const move of moves) {
+    assert.strictEqual(move.type, "passCards");
+    assert.strictEqual(move.cards.length, 3, "hearts passes exactly three");
+    assert.strictEqual(new Set(move.cards).size, 3, "a pass named the same card twice");
+    assert.ok(validateMove(state, move).legal, `enumerated an illegal pass: ${move.cards}`);
+    const key = move.cards.slice().sort().join("|");
+    assert.ok(!seen.has(key), "the shortlist offered the same three cards twice");
+    seen.add(key);
+  }
+});
+
+test("a pass is scored as all N cards, not by whichever one sorted first", () => {
+  // The exact bug the enumerator would otherwise have walked into:
+  // `botHeuristic` read `move.cards[0]`, which was correct while a pass was one
+  // canned move and ranks five whole passes by an accident of sort order the
+  // moment it is not. Both passes below start with the same card.
+  const state = dealt("hearts", "pass:whole");
+  const seat = state.turn.seat;
+  const hand = [...state.zones.cards(`hand.${seat}`)]
+    .sort((a, b) => rankOrder(state.pack.cardsById.get(b)) - rankOrder(state.pack.cardsById.get(a)));
+  const heuristic = state.pack.template.botHeuristic;
+  const ctx = makeCtx(state);
+
+  const shedHigh = { actor: seat, type: "passCards", cards: [hand[0], hand[1], hand[2]] };
+  const shedLow = { actor: seat, type: "passCards", cards: [hand[0], hand.at(-1), hand.at(-2)] };
+
+  assert.ok(heuristic(ctx, shedHigh) > heuristic(ctx, shedLow),
+    "two passes sharing a first card scored the same — the whole pass is not being read");
 });
 
 test("a persona's mistakes stay near-best, and never reach the worst move", () => {

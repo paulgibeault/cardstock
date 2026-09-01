@@ -41,6 +41,10 @@ const REQUIRED = [
 // fires, which is the failure mode the whole contract is here to prevent.
 const OPTIONAL_FUNCTIONS = [
   "defaultReactions", "startRound", "scoreRound", "isGameOver", "botHeuristic",
+  // Grades a POSITION rather than a move, and its presence is what turns on the
+  // one-ply lookahead in src/engine/bot.js — so a typo here is not a hook that
+  // silently never fires, it is a whole search layer that silently never runs.
+  "evaluateState",
   "actingSeats", "enumerateAnnouncements", "applyAnnouncement",
   "interactionMode", "pendingChoice", "activeMatch", "scoreChip",
   "seatCounters",

@@ -343,7 +343,10 @@ test('a template publishes vars its RULES name, not just literal ones', async ()
   }
 });
 
-test('a template that declares nothing publishes nothing', async () => {
+test('a shared var nobody declared is published to nobody', async () => {
+  // The allowlist, from the other side: milestones declares exactly one shared
+  // var, and a second one appearing in the bag — a new template's bookkeeping,
+  // a stray write — must not ride out with it.
   const state = await tableFor('milestones', 3);
   state.vars.somethingNobodyDeclared = 'secret';
   const other = viewFor(state, (state.turn.seat + 1) % state.seats);

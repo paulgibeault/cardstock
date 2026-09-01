@@ -277,7 +277,15 @@ test('A CLIENT BUILDS THE SAME UI MODEL AS THE HOST, for its own seat', async ()
         [...fromState.sourceTops.keys()].sort(),
         `${packId} seat ${seat}: a different set of pick-up piles`,
       );
-      assert.deepEqual(fromView.action, fromState.action, `${packId} seat ${seat}: action button`);
+      // THE BUTTON IS A LABEL AND THE MOVE IT SENDS, and both halves have to
+      // match. `deepEqual` on the objects themselves compares `makeMove` by
+      // reference, so it could only ever pass where BOTH models had no action
+      // at all — which is what it happened to be doing, because the five bot
+      // moves above never reached a position with a button on it. Improving the
+      // bot moved the wildfire line onto a "Keep it" and the assertion started
+      // failing on two closures that build the identical move.
+      const button = (ui) => (ui.action ? { label: ui.action.label, move: ui.action.makeMove() } : null);
+      assert.deepEqual(button(fromView), button(fromState), `${packId} seat ${seat}: action button`);
     }
   }
 });

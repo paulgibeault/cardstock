@@ -35,6 +35,12 @@ import { thinkTimeMs } from '../players/roster.js';
  *                      their phone.
  * @param currentEpoch  () => the table's epoch, read at fire time
  * @param botDelayMs    () => the player's bot-speed setting
+ * @param difficulty    () => how deeply the house thinks ('easy' | 'medium' |
+ *                      'hard', src/engine/bot.js). Read at fire time like the
+ *                      delay is, so changing it takes effect on the next turn
+ *                      rather than at the next deal. A function, and per
+ *                      TABLE-not-per-bot: skill is the player's setting, while
+ *                      the persona beside it is the opponent's own character.
  * @param me            the seat lens (src/players/seats.js). The driver moves
  *                      the seats it says the HOUSE plays — bots and empties.
  *                      Not "every seat this device does not hold": at a shared
@@ -52,6 +58,7 @@ export function createBotDriver({
   clock,
   currentEpoch,
   botDelayMs,
+  difficulty = () => undefined,
   me,
   identityOf,
   actingSeatsOf,
@@ -92,7 +99,16 @@ export function createBotDriver({
       try {
         const actingNow = actingSeatsOf(state).find((s) => me.plays(s));
         if (actingNow === undefined) return; // every acting seat now belongs to a person
-        const move = chooseBotMove(state, actingNow, { persona: identityOf(actingNow).persona });
+        // PERSONA AND DIFFICULTY ARE BOTH PASSED, AND THEY ARE DIFFERENT
+        // QUESTIONS: the persona is the opponent's style (how much it commits,
+        // how often it slips), the difficulty is how far ahead the house looks
+        // on its behalf. `hard` samples, so it needs randomness — and it lives
+        // outside the reducer here, exactly where the persona's coin flips
+        // already do, which is why a bot's thinking can never desync a replay.
+        const move = chooseBotMove(state, actingNow, {
+          persona: identityOf(actingNow).persona,
+          difficulty: difficulty(),
+        });
         if (!move) return;
         playMove(state, move, actingNow);
       } catch (err) {
