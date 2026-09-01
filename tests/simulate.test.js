@@ -8,22 +8,30 @@
 //
 // TWO BARS, AND THE SECOND ONE IS THE HONEST PART. Crazy Eights, Wildfire and
 // Hearts must complete 100% of rounds: those are rules-complete, and anything
-// short of 100 is a bug. Milestones and Stockpile are NOT gated at 100, because
-// their shortfalls are known and documented (IMPLEMENTATION_NOTES.md):
+// short of 100 is a bug. Stockpile is NOT gated at 100:
 //
-//   Milestones ~31-40%  a bot-quality artifact. A laid-down seat's hand only
-//                       shrinks through a lucky hit, so a round can legitimately
-//                       run past the move cap with entirely correct rules.
-//   Stockpile  ~91-94%  a genuine manifest-level rules property: once draw and
+//   Stockpile  ~91-95%  a genuine manifest-level rules property: once draw and
 //                       recycled are both exhausted a table can have no legal
 //                       move at all. The fix is a house rule the reaction
 //                       vocabulary cannot express yet, not an engine change —
 //                       see the TODO in IMPLEMENTATION_NOTES.md.
 //
-// Gating those at 100% would mean a permanently red suite; gating them at
-// nothing means a real regression in either could land unnoticed. So they get a
-// FLOOR, set below where they actually sit, which catches a regression without
-// pretending the bar is met.
+// Gating that at 100% would mean a permanently red suite; gating it at nothing
+// means a real regression could land unnoticed. So it gets a FLOOR, set below
+// where it actually sits, which catches a regression without pretending the bar
+// is met.
+//
+// MILESTONES USED TO BE ON THAT LIST AT ~31-40%, and it is worth saying why it
+// is not any more, because the diagnosis in this comment was wrong. It was
+// written up as slow bot convergence — a laid-down seat's hand only shrinks
+// through a lucky hit — but the rounds were not converging slowly, they were
+// not converging at all. The contract-rummy heuristic scored the face-up
+// discard above the deck unconditionally, so every seat took the pile top every
+// turn, the deck was never touched, and the same forty dealt cards circulated
+// until the move cap. Teaching the bot when to turn the deck instead
+// (src/templates/contract-rummy-bot.js) took Milestones from 16/40 rounds and
+// 7,227 moves a round to 1000/1000 and 53. Its floor below is a floor on real
+// completion now, not an allowance for a live-lock.
 import { test } from "node:test";
 import assert from "node:assert";
 import { simulatePack, simulateProtocolPack, availableVariantIds } from "../tools/simulate.mjs";
@@ -76,15 +84,14 @@ test("every available house rule also completes every round", async () => {
 // one of those is invisible to the solo run and none of them is subtle here:
 // the pack simply stops completing rounds.
 //
-// Milestones gets fewer games because its stalled rounds run to a 12,000-move
-// cap and every move costs a per-seat view. Four rounds of that is still tens
-// of thousands of proposals through the full validator.
-const PROTOCOL_GAMES = { milestones: 4 };
+// Milestones used to get four games instead of twelve, because its stalled
+// rounds ran to a 12,000-move cap and every move costs a per-seat view. Its
+// rounds are fifty-odd moves now, so it pays the same twelve as everyone else.
 const PROTOCOL_GAMES_DEFAULT = 12;
 
 for (const packId of ["crazy-eights", "hearts", "wildfire", "stockpile", "milestones"]) {
   test(`${packId} plays the same over the protocol as it does in one process`, async () => {
-    const games = PROTOCOL_GAMES[packId] ?? PROTOCOL_GAMES_DEFAULT;
+    const games = PROTOCOL_GAMES_DEFAULT;
     const solo = await simulatePack(packId, games, { variants: [] });
     const wire = await simulateProtocolPack(packId, games, { variants: [] });
 
@@ -105,11 +112,18 @@ test("the rules-complete packs are rules-complete over the wire too", async () =
   }
 });
 
-test("the two documented-shortfall packs have not got worse", async () => {
+test("the two floored packs have not got worse", async () => {
   // Floors, not targets. Set below where each actually sits so ordinary
   // seed-to-seed variation does not flap the suite; a real regression halves
   // these long before it reaches either number.
-  const FLOORS = { milestones: 0.25, stockpile: 0.85 };
+  //
+  // Milestones' floor was 0.25 against a measured 31-40%. It now measures
+  // 1000/1000 at four seats and 100/100 at every seat count from two to six, so
+  // 0.9 is the same kind of number the old one was: a long way below the truth,
+  // and a long way ABOVE the 40% the old heuristic managed. Reverting either
+  // half of the contract-rummy draw/discard scoring drops this straight through
+  // 0.9, which is the regression this line is here to catch.
+  const FLOORS = { milestones: 0.9, stockpile: 0.85 };
   for (const [packId, floor] of Object.entries(FLOORS)) {
     const { completed, errored } = await simulatePack(packId, GAMES, { variants: [] });
     assert.strictEqual(errored, 0, `${packId}: ${errored} rounds threw — a stall is documented, a throw is not`);

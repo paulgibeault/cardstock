@@ -21,7 +21,10 @@ import {
   isWildCard, resolveMeld, resolveHit, itemsMatchContract,
   getMeldGroups, meldKindOf, pinnedAttr, wildHitValues,
 } from './melds.js';
-import { findContractLayDown, findHits } from './contract-rummy-bot.js';
+import {
+  findContractLayDown, findHits, scoreDraw, scoreDiscard,
+  rememberPileTake, forgetPileTakes, PILE_TAKEN_VAR,
+} from './contract-rummy-bot.js';
 import { arrangeContract, suggestMeld } from './contract-rummy-ui.js';
 
 function skipNextTurnFrom(ctx, seat) {
@@ -45,6 +48,7 @@ function dealRound(ctx) {
     ctx.setPlayerVar(s, 'melds', undefined);
     ctx.setPlayerVar(s, 'skipNextTurn', false);
   }
+  forgetPileTakes(ctx);
   ctx.deal('discard', 1);
 }
 
@@ -52,8 +56,11 @@ const contractRummy = {
   id: 'contract-rummy',
 
   // Which shared vars a peer may see (src/engine/view.js). This template keeps
-  // its state per player (`phase`, `laidDown`, `melds`), so it publishes none.
-  publicVars: [],
+  // its state per player (`phase`, `laidDown`, `melds`) and publishes exactly
+  // one shared thing: who has been taking cards off the face-up pile, which
+  // everyone at the table watched happen. See PILE_TAKEN_VAR for why it is
+  // public rather than hidden, and for what it deliberately does not store.
+  publicVars: [PILE_TAKEN_VAR],
 
   defaultZones(rules, seats) {   // eslint-disable-line no-unused-vars
     return [
@@ -196,7 +203,14 @@ const contractRummy = {
     if (move.type === 'draw') {
       const from = move.from ?? 'draw';
       const topId = ctx.topOf(from);
-      if (topId !== undefined) ctx.moveCards([topId], from, ctx.zoneAddr('hand', seat));
+      if (topId !== undefined) {
+        // Recorded BEFORE the card moves, while it is still the face-up top —
+        // this is the table noticing what a seat took, not the engine reading a
+        // hand. Only the deck-vs-pile choice is worth remembering; a card off
+        // the face-down deck was seen by nobody.
+        if (from === 'discard') rememberPileTake(ctx, seat, ctx.cardById(topId));
+        ctx.moveCards([topId], from, ctx.zoneAddr('hand', seat));
+      }
       ctx.setPhase('meld');
       return;
     }
@@ -507,22 +521,22 @@ const contractRummy = {
     return false;
   },
 
+  /**
+   * Shrink the hand if you can, otherwise pick the draw and the discard that
+   * bring the next shrink closer.
+   *
+   * layDown and hit keep their flat, dominating scores: both take cards out of
+   * the hand for good and there is never a reason to prefer holding on. The two
+   * genuinely open questions — deck or pile, and which card to throw — are
+   * scored in ./contract-rummy-bot.js beside the rest of this template's
+   * strategy, where they can read the contract, the melds on the felt and the
+   * table's memory of who has been taking from the pile.
+   */
   botHeuristic(ctx, move) {
-    if (move.type === 'draw') return move.from === 'discard' ? 0.5 : -1;
+    if (move.type === 'draw') return scoreDraw(ctx, move);
     if (move.type === 'layDown') return 100;
     if (move.type === 'hit') return 50;
-    // Discard the card that contributes least toward the current contract: prefer
-    // keeping anything that shares a rank or color with something else in hand (a
-    // building block for a future set/colorGroup) over cards with no hand-mates at
-    // all. Without this a bot's hand composition random-walks instead of converging
-    // on a layDown, and rounds can run long enough to look like a live-lock.
-    const cardId = move.cards[0];
-    const card = ctx.cardById(cardId);
-    if (isWildCard(ctx, card)) return -100;
-    const handIds = ctx.cardIdsIn(ctx.zoneAddr('hand', move.actor));
-    const rankMates = handIds.filter((id) => id !== cardId && ctx.cardById(id).rank === card.rank).length;
-    const colorMates = handIds.filter((id) => id !== cardId && ctx.cardById(id).color === card.color).length;
-    return -(rankMates * 2 + colorMates * 0.1);
+    return scoreDiscard(ctx, move);
   },
 };
 

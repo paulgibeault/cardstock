@@ -78,7 +78,7 @@ type for the one legitimate case where a seat has zero cards playable
 anywhere and an empty hand — not a bug, just Stockpile's real "nobody can go"
 edge case needing a defined action.
 
-## Known limitation: `1000-sims-zero-stalls` bar is not met by two packs
+## Known limitation: `1000-sims-zero-stalls` bar is not met by one pack
 
 The design doc's bar (§11) is that a pack "isn't done until 1,000 headless
 simulations complete without a stall." At 1000 games, 4 seats:
@@ -88,10 +88,10 @@ simulations complete without a stall." At 1000 games, 4 seats:
 | crazy-eights | 1000/1000 | clean |
 | wildfire | 1000/1000 | clean |
 | hearts | 1000/1000 | clean |
-| stockpile | 910/1000 | see below |
-| milestones | 306/1000 (12,000-move cap) | see below |
+| milestones | 1000/1000 | clean since the bot learned to turn the deck — see below |
+| stockpile | 925/1000 | see below |
 
-**Stockpile (91%)**: traced one stalled seed directly. All four hands were
+**Stockpile (~92%)**: traced one stalled seed directly. All four hands were
 empty, `draw` and `recycled` were both genuinely exhausted, and none of
 the four stock-tops or discard-tops matched any build pile's required next
 card. This is a real, if rare, property of the pack's rules as specified —
@@ -116,27 +116,35 @@ engine.
 > wiring §7 specifies. Until then Stockpile's completion rate is floored rather
 > than gated — see `tests/simulate.test.js`.
 
-**Milestones (31%)**: also traced directly — the hit mechanism itself is
-correct (verified with a hand-constructed scenario: a matching card is
-found and offered). The slowness is structural to greedy bot play: a
-laid-down seat's hand only shrinks via a *hit* (a rank/color match onto an
-existing meld); plain draw+discard is net-zero every turn. Early in a
-round only a few melds exist on the table, so hit opportunities are
-genuinely scarce, and a seat that can't complete its own contract (bad
-luck on a 10-card hand, no reshuffle until next round) just cycles
-forever. This is a bot-strategy quality gap, not a rules defect — real
-contract-rummy groups experience slow first-contract rounds too, and normally shrug it
-off because there's always a next round. My `simulate.mjs` deliberately
-scopes to *one round* (see its header comment for why), which is the
-right scope for catching rules deadlocks but understates how forgiving
-the full multi-round game is.
+**Milestones — fixed (issue #89, phase 1), and the old diagnosis here was
+wrong.** This section used to record 31% and explain it as structural slowness
+in greedy bot play: a laid-down seat's hand only shrinks via a *hit*, hit
+opportunities are scarce early, so an unlucky seat cycles for a long time. The
+hit reasoning is true and the conclusion was not. The rounds were not converging
+slowly; they were not converging.
 
-**Recommended follow-up** (not done in this pass): a materially smarter
-contract-rummy bot — discard toward what opponents' melds need, not just
-what's isolated in your own hand — or extend the harness to simulate
-several rounds per "game" so one unlucky round doesn't read as a stall.
-Neither is a rules-correctness concern, so it was left for a dedicated
-pass rather than rushed here.
+`botHeuristic` scored a draw as `from === 'discard' ? 0.5 : -1` — a flat,
+unconditional preference for the face-up pile. Four seats obeying that never
+touch the deck: the pile stays one card deep, the same forty dealt cards
+circulate between the hands forever, and a seat that was not dealt the makings
+of its contract can never be dealt them. Every "stall" was that closed system
+running out the move cap, which is why the stalled hands all looked the same
+(one or two seats frozen at ten cards for six thousand moves).
+
+The fix is in `src/templates/contract-rummy-bot.js`: grade the pile top before
+taking it, read the contract the seat actually owes (four of Milestones' ten
+rungs are runs or a colour group, where the old rank-mate count was scoring
+duplicates as the best cards in the hand), and price a discard by what it gives
+away as well as what it costs — opponents' laid-down melds and their recent
+pile pickups are both public. Result at 4 seats: **1000/1000, 53 moves a round**,
+against 306/1000 and a 12,000-move cap before; 100/100 at every seat count from
+two to six. The per-template move cap in `tools/simulate.mjs` is gone with it —
+the worst round out of five thousand now finishes in 147 moves.
+
+Still open, and deliberately: the harness simulates *one round* (see its header
+comment), so it says nothing about full-match bot skill; and Phases 2 and 3 of
+issue #89 (fork-and-evaluate, determinized rollouts, a difficulty dial) are the
+lookahead this heuristic pass stops short of.
 
 ## Arcade platform enhancements — shipped
 

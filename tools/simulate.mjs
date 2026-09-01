@@ -27,13 +27,17 @@ import { createPeerNetwork } from './peer-stub.mjs';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..');
 const PACKS_DIR = path.join(REPO_ROOT, 'packs');
+// ONE CAP FOR EVERY TEMPLATE AGAIN. contract-rummy used to hold a 12,000-move
+// exemption here, justified as "rounds throttled by hitting opportunities, slow
+// but legitimate convergence". That was a misreading of the symptom: the bot
+// took the face-up discard unconditionally, so the deck was never turned and
+// the round could not converge at all. With that fixed
+// (src/templates/contract-rummy-bot.js) the worst Milestones round out of five
+// thousand — every seat count from two to six — finishes in 147 moves, and the
+// longest anything else runs is Stockpile's genuinely stuck hands. A cap that
+// generous stops being a deadlock detector and becomes a place for the next
+// live-lock to hide.
 const MAX_MOVES = 4000;
-// contract-rummy rounds are throttled by hitting opportunities (a laid-down seat's
-// hand only shrinks via a lucky rank/color match onto an existing meld — plain
-// draw/discard nets to zero) and can legitimately run long even with correct rules;
-// this is bot-strategy quality, not a rules deadlock, so it gets a longer leash
-// rather than a tighter one. See tools/README or the simulate output notes.
-const MAX_MOVES_BY_TEMPLATE = { 'contract-rummy': 12000 };
 
 async function readJson(p) {
   return JSON.parse(await readFile(p, 'utf8'));
@@ -75,12 +79,11 @@ function playOne(pack, seats, seed) {
   const state = createState({ pack, seats, seed });
   const ctx = makeCtx(state);
   pack.template.setup(ctx);
-  const maxMoves = MAX_MOVES_BY_TEMPLATE[pack.template.id] ?? MAX_MOVES;
 
   let moves = 0;
   let roundDone = false;
   const effectCounts = {};
-  while (!state.gameOver && !roundDone && moves < maxMoves) {
+  while (!state.gameOver && !roundDone && moves < MAX_MOVES) {
     let move = null;
     let actingSeat = null;
     for (const seat of actingSeats(makeCtx(state))) {
@@ -104,7 +107,7 @@ function playOne(pack, seats, seed) {
     if (state.events.some((e) => e.type === 'roundOver')) roundDone = true;
     moves++;
   }
-  if (moves >= maxMoves) return { outcome: 'stall', moves, reason: 'move cap exceeded (live-lock, or just very slow bot convergence)' };
+  if (moves >= MAX_MOVES) return { outcome: 'stall', moves, reason: 'move cap exceeded (live-lock, or just very slow bot convergence)' };
   return { outcome: 'complete', moves, effectCounts };
 }
 
@@ -283,7 +286,6 @@ function auditClient({ state, seat, client, delivered, isCardId, faults }) {
 function playOneOverProtocol(pack, seatCount, seed) {
   const state = createState({ pack, seats: seatCount, seed });
   pack.template.setup(makeCtx(state));
-  const maxMoves = MAX_MOVES_BY_TEMPLATE[pack.template.id] ?? MAX_MOVES;
   const isCardId = cardIdChecker(state);
 
   const net = createPeerNetwork({ hostDeviceId: 'host' });
@@ -340,7 +342,7 @@ function playOneOverProtocol(pack, seatCount, seed) {
 
   let moves = 0;
   let roundDone = false;
-  while (!state.gameOver && !roundDone && moves < maxMoves && !faults.length) {
+  while (!state.gameOver && !roundDone && moves < MAX_MOVES && !faults.length) {
     let move = null;
     let actingSeat = null;
     for (const seat of actingSeats(makeCtx(state))) {
@@ -377,11 +379,11 @@ function playOneOverProtocol(pack, seatCount, seed) {
     }
 
     // DENSE EARLY, SAMPLED LATE. The audit walks every zone of every seat, and
-    // a contract-rummy round that runs to its twelve-thousand-move cap would
-    // spend the whole simulation re-proving what the opening two hundred moves
-    // already proved. The deal, the first lay-down and every reaction cascade
-    // are inside the dense window; past it, one move in twenty-five is enough
-    // to catch a drift that would have to persist to matter.
+    // a round that runs to the move cap would spend the whole simulation
+    // re-proving what the opening two hundred moves already proved. The deal,
+    // the first lay-down and every reaction cascade are inside the dense
+    // window; past it, one move in twenty-five is enough to catch a drift that
+    // would have to persist to matter.
     if (moves < AUDIT_EVERY_MOVE_UNTIL || moves % AUDIT_SAMPLE === 0) {
       for (let seat = 1; seat < seatCount; seat++) {
         auditClient({
@@ -397,7 +399,7 @@ function playOneOverProtocol(pack, seatCount, seed) {
   }
 
   if (faults.length) return { outcome: 'error', moves, reason: faults[0] };
-  if (moves >= maxMoves) return { outcome: 'stall', moves, reason: 'move cap exceeded (live-lock, or just very slow bot convergence)' };
+  if (moves >= MAX_MOVES) return { outcome: 'stall', moves, reason: 'move cap exceeded (live-lock, or just very slow bot convergence)' };
   return { outcome: 'complete', moves };
 }
 

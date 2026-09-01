@@ -116,6 +116,169 @@ function rejectPlayCard(ctx, seat, cardId, hand) {
   return null;
 }
 
+/* ------------------------------------------------------------------ *
+ * The pass, as a handful of choices
+ * ------------------------------------------------------------------ *
+ *
+ * A PASS USED TO BE ONE CANNED MOVE — "your N highest" — and that is a decision
+ * taken away from every layer above this one. `enumerateLegalMoves` is what a
+ * bot chooses from and what the host ships a joiner as the moves it may make, so
+ * collapsing the pass space to a single entry meant no heuristic, no persona and
+ * no future search could ever affect the most consequential three cards a Hearts
+ * player commits all round. It always passed the same way, badly.
+ *
+ * The answer is not the full space — thirteen-choose-three is 286 moves per
+ * seat, shipped over the wire, in the enumerator this repo already calls its
+ * costliest. It is a SHORTLIST of the passes a human would recognise as
+ * different ideas, each one derived from the pack rather than from Hearts:
+ *
+ *   highest      shed rank. The old behaviour, kept FIRST because the timeout
+ *                takeover (src/ui/party.js) plays the head of this list for an
+ *                absent human and should keep playing the unremarkable move.
+ *   costliest    shed what the pack CHARGES for (scoring.cardValues).
+ *   liabilities  shed the cards whose only job is to take a charged card — see
+ *                perilRankBySuit.
+ *   void x2      empty a short suit, so you can throw danger away later.
+ *
+ * Deduplicated, because on most hands two of these are the same three cards.
+ */
+
+/**
+ * The rank above which a card is a LIABILITY, per suit: the rank of the
+ * priciest card the pack charges for in that suit.
+ *
+ * This is "dump the high spades" without the template ever hearing the word
+ * spades. Hearts charges 13 for the queen of spades, so the king and the ace
+ * are cards whose only future is taking it; it charges 1 for every heart, so
+ * the priciest heart is the ace and nothing outranks it — no heart is a
+ * liability by this rule, which is right, because a low heart is a card you
+ * WANT when hearts are led.
+ *
+ * A pack with no card values gets an empty map and the liability candidate
+ * collapses into "costliest", where the dedup drops it.
+ */
+function perilRankBySuit(ctx) {
+  const scoring = ctx.pack.scoring || {};
+  const peril = new Map();
+  for (const card of ctx.pack.cardsById.values()) {
+    if (!card.suit || cardValue(card, scoring) <= 0) continue;
+    const rank = rankOrder(card);
+    if (rank > (peril.get(card.suit) ?? -Infinity)) peril.set(card.suit, rank);
+  }
+  return peril;
+}
+
+function isLiability(ctx, card, peril) {
+  const bar = peril.get(card.suit);
+  return bar !== undefined && rankOrder(card) > bar;
+}
+
+/**
+ * `ids` ordered most-worth-passing first by `cost`, ties left in hand order — a
+ * stable sort, so a hand that cannot tell two cards apart passes the same two
+ * every time and the no-persona chooser stays reproducible (src/engine/bot.js).
+ */
+function mostPassableFirst(ctx, ids, cost) {
+  return ids.slice().sort((a, b) => cost(ctx.cardById(b)) - cost(ctx.cardById(a)));
+}
+
+function suitCounts(ctx, ids) {
+  const counts = new Map();
+  for (const id of ids) {
+    const suit = ctx.cardById(id).suit;
+    if (suit === undefined) continue;
+    counts.set(suit, (counts.get(suit) || 0) + 1);
+  }
+  return counts;
+}
+
+function passCandidates(ctx, seat) {
+  const hand = ctx.cardIdsIn(ctx.zoneAddr('hand', seat));
+  const count = ctx.rules.passing.count;
+  if (hand.length <= count) return [hand.slice()];
+
+  const scoring = ctx.pack.scoring || {};
+  const peril = perilRankBySuit(ctx);
+  const value = (card) => cardValue(card, scoring);
+
+  const byRank = mostPassableFirst(ctx, hand, (card) => rankOrder(card));
+  const byValue = mostPassableFirst(ctx, hand, (card) => value(card) * 100 + rankOrder(card));
+  const byLiability = mostPassableFirst(ctx, hand,
+    (card) => (isLiability(ctx, card, peril) ? 10000 : 0) + value(card) * 100 + rankOrder(card));
+
+  const candidates = [byRank.slice(0, count), byValue.slice(0, count), byLiability.slice(0, count)];
+
+  // A suit you can empty entirely is worth emptying: once void you may throw
+  // the pack's expensive cards away on somebody else's trick. Only the two
+  // shortest qualify — a third is either the same cards again or a suit long
+  // enough that voiding it costs more than it saves.
+  const counts = [...suitCounts(ctx, hand).entries()]
+    .filter(([, n]) => n > 0 && n <= count)
+    .sort((a, b) => a[1] - b[1]);
+  for (const [suit] of counts.slice(0, 2)) {
+    const going = hand.filter((id) => ctx.cardById(id).suit === suit);
+    const filler = byLiability.filter((id) => ctx.cardById(id).suit !== suit);
+    candidates.push([...going, ...filler].slice(0, count));
+  }
+
+  const seen = new Set();
+  const out = [];
+  for (const cards of candidates) {
+    if (cards.length !== count) continue;
+    const key = cards.slice().sort().join('|');
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(cards);
+  }
+  return out;
+}
+
+/**
+ * WHAT A PASS IS WORTH, SCORED AS ONE MOVE.
+ *
+ * This is the half that had to change with the enumerator. `botHeuristic` used
+ * to read `move.cards[0]` and nothing else, which was harmless while a pass was
+ * a single canned move and is a bug the moment there are five: the bot would
+ * have ranked whole passes by whichever card the sort happened to put first.
+ *
+ * RANK IS THE CURRENCY, and that is a measured result rather than a taste. The
+ * obvious weighting — points first, so Hearts passes the queen of spades and
+ * its high hearts — was tried and it LOSES, by more than a full penalty point
+ * per round against seats still passing their three highest. The reason is
+ * plain once seen: what costs you points in this genre is winning tricks, and
+ * what wins tricks is rank. A pass that keeps an ace to shed a queen buys one
+ * card's worth of safety and pays for it in tricks all round. So value,
+ * liability and voiding are TIE-BREAKERS between passes of similar rank, sized
+ * (against a four-seat Hearts round, averaged over every seat) to be worth a
+ * few points of rank each and no more. They are worth roughly a tenth of a
+ * penalty point per round — small, honestly, and the enumeration above is the
+ * part of this that a search layer will actually get value out of.
+ */
+const PASS_VALUE_WORTH = 0.25;
+const PASS_LIABILITY_WORTH = 3;
+const PASS_VOID_WORTH = 1;
+
+function scorePass(ctx, move) {
+  const scoring = ctx.pack.scoring || {};
+  const peril = perilRankBySuit(ctx);
+  const going = new Set(move.cards);
+
+  let score = 0;
+  for (const id of move.cards) {
+    const card = ctx.cardById(id);
+    score += rankOrder(card);
+    score += cardValue(card, scoring) * PASS_VALUE_WORTH;
+    if (isLiability(ctx, card, peril)) score += PASS_LIABILITY_WORTH;
+  }
+
+  const hand = ctx.cardIdsIn(ctx.zoneAddr('hand', move.actor));
+  const before = suitCounts(ctx, hand);
+  const after = suitCounts(ctx, hand.filter((id) => !going.has(id)));
+  for (const suit of before.keys()) if (!after.has(suit)) score += PASS_VOID_WORTH;
+
+  return score;
+}
+
 function seatsForTrick(ctx, leader, count) {
   const seats = [];
   let seat = leader;
@@ -338,16 +501,12 @@ const trickTaking = {
   enumerateLegalMoves(ctx, seat) {
     if (ctx.turn.phase === 'pass') {
       if (ctx.playerVar(seat, '__pendingPass') !== undefined) return [];
-      // The full combinatorial pass-choice space is a client/bot-strategy concern, not
-      // an engine one — offer the single "pass your N highest cards" move so a bot (or
-      // a headless simulation) always has a legal action here.
-      const hand = ctx.cardIdsIn(ctx.zoneAddr('hand', seat));
-      const count = ctx.rules.passing.count;
-      const cards = hand
-        .slice()
-        .sort((a, b) => rankOrder(ctx.cardById(b)) - rankOrder(ctx.cardById(a)))
-        .slice(0, count);
-      return [{ actor: seat, type: 'passCards', cards }];
+      // A SHORTLIST, NOT THE SPACE — see passCandidates for what is on it and
+      // why the full thirteen-choose-three is not. A human is not restricted to
+      // it: the pass is a commit-by-button phase and the table builds the move
+      // from whatever N cards were tapped (src/ui/interaction.js), which
+      // validateMove judges on its own terms.
+      return passCandidates(ctx, seat).map((cards) => ({ actor: seat, type: 'passCards', cards }));
     }
     const hand = ctx.cardIdsIn(ctx.zoneAddr('hand', seat));
     return legalCards(ctx, seat, hand).map((cardId) => ({ actor: seat, type: 'playCard', cards: [cardId] }));
@@ -448,6 +607,10 @@ const trickTaking = {
   },
 
   botHeuristic(ctx, move) {
+    // A pass is N cards or it is nothing: scoring it by `cards[0]` was correct
+    // only while the enumerator offered exactly one pass, and would now rank
+    // five whole passes by an accident of sort order. playCard is untouched.
+    if (move.type === 'passCards') return scorePass(ctx, move);
     const card = ctx.cardById(move.cards[0]);
     // Play low, and shed anything the pack charges you for holding. The second
     // clause used to be `card.tags?.includes('penalty')` — Hearts' own tag name,
