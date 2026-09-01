@@ -77,6 +77,25 @@ than an error.
 >   `botHeuristic`. Rounds that END inside the move are never passed to you at
 >   all — the pipeline has already dealt the next hand by then.
 
+> **⚠ What the `hard` bot asks of you, which is nothing new.** The rollout
+> layer (`src/engine/bot.js`) plays a hand out to its end and grades the result
+> with hooks you already implement, so no template has to know it exists:
+>
+> * **`scoreRound` is the terminal signal.** Whatever it returns for a finished
+>   hand is what the search is trying to steer toward, so a template whose
+>   `scoreRound` returns `{}` (Stockpile) gives every rollout the same answer.
+>   The chooser detects that — every candidate tied means the scorer has no
+>   opinion — and drops back to one ply for that turn rather than ranking by
+>   enumeration order.
+> * **The pack's manifest says which way is up**, via
+>   `scoring.gameOver.winner`: `highestScore` means points are the prize,
+>   anything else (including `"template"`) means they are the penalty. A pack
+>   that gets this wrong gets a bot that plays to lose, and nothing else in the
+>   codebase would notice.
+> * **`isRoundOver` has to be reachable from mid-hand under greedy play.** A
+>   rollout that never finishes is thrown away, so a template that can only end
+>   a hand through a move no heuristic would choose gets no search at all.
+
 > **⚠ The `startRound` trap.** A template without `startRound` gets the default
 > round boundary, which **wipes every `playerVars` entry** before re-running
 > `setup`. Any template with meta-state that outlives a round — contract-rummy's

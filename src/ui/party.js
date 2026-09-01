@@ -1593,6 +1593,14 @@ function openHostSession({ tableId, packId, packName: name, variants, seats }) {
       // A TURN THAT RAN OUT IS A MOVE. The house plays one for them and the
       // seat stays theirs — they are back in control the moment they come
       // back, which is the same answer an interrupted link already gets.
+      //
+      // AND IT STAYS ON THE CHEAP CHOOSER, deliberately, whatever the table's
+      // difficulty is set to. This is not an opponent thinking; it is the house
+      // keeping a hand moving for somebody who is not at their phone, and it
+      // should be fast and unremarkable. Playing an absent person's cards
+      // BETTER than they would is its own kind of wrong — and it would spend a
+      // rollout budget on the host at the exact moment the table is already
+      // waiting.
       const move = chooseBotMove(state, seat);
       if (!move) return;
       session.host?.applyLocal(move);
@@ -1891,6 +1899,11 @@ function headlessBotsFor(session) {
     clock: wallClock(),
     currentEpoch: () => session.epoch,
     botDelayMs: () => loadSettings().botDelayMs,
+    // THE HOST'S SETTING, FOR EVERY BOT AT ITS TABLE. Whoever is hosting owns
+    // the house players, the same way they own the turn clock — and a joiner
+    // whose own dial said something else would otherwise be arguing with the
+    // only device that actually runs the chooser.
+    difficulty: () => loadSettings().botDifficulty,
     me: seatLens,
     identityOf: (seat) => session.seating?.[seat]
       || { seat, name: nameForSeat(seat, session) || `Seat ${seat}`, icon: '', color: '#6b7280', isBot: true },

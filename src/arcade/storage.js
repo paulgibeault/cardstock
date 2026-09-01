@@ -114,6 +114,17 @@ export const SETTINGS_DEFAULTS = {
   // reducedMotion, handedness) are NOT mirrored here — they live in
   // Arcade.settings and copying them would immediately go stale.
   botDelayMs: 600,
+  // How far ahead the house thinks: 'easy' | 'medium' | 'hard'
+  // (src/engine/bot.js). A PREFERENCE, beside the bot speed, rather than
+  // something stored with a match — a player who likes a hard table likes it in
+  // every game, and a difficulty saved into a match would be a rule the replay
+  // has to reproduce when the chooser is never re-run at all.
+  //
+  // Like `botDelayMs`, this has no settings UI yet; `medium` is what the bots
+  // already played at when Phase 2 landed, so the default changes nothing for
+  // anyone who never touches it. An unknown value is read as the default by
+  // `chooseBotMove` itself, which is what makes a hand-edited save harmless.
+  botDifficulty: 'medium',
   showLegalHints: true,
   // How each pack's hand is arranged, per pack: { mode, order: [cardId, ...] }.
   // PRESENTATION ONLY (src/ui/handOrder.js) — it never reaches the engine, and

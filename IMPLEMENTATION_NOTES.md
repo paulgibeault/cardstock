@@ -146,6 +146,73 @@ comment), so it says nothing about full-match bot skill; and Phases 2 and 3 of
 issue #89 (fork-and-evaluate, determinized rollouts, a difficulty dial) are the
 lookahead this heuristic pass stops short of.
 
+## Known limitation: `hard` is a real gain at Hearts, a modest one at shedding, and none at Milestones
+
+Phase 3 of issue #89 adds the difficulty dial — `easy` is the heuristic,
+`medium` is Phase 2's one ply, `hard` deals itself worlds it is entitled to
+believe in (`src/engine/determinize.js`) and plays every candidate out in each
+of them. The fairness half of the acceptance held everywhere:
+`tests/rollouts.test.js` moves cards the seat may not see and the decision does
+not budge, in all five packs.
+
+The strength half did not reach its bar. The issue asked for hard to win **≥
+60% of head-to-head rounds on at least crazy-eights and milestones**; measured,
+it wins neither at that margin. `tools/simulate.mjs <pack> --vs=hard,easy`
+seats the two against each other, alternating chairs so dealing order cancels,
+and counts hands won:
+
+| pack | seats | rounds | hard's share of decisive rounds |
+|---|---|---|---|
+| hearts | 4 | 60 | **76.6%** (13 ties) |
+| crazy-eights | 2 | 200 | 57.0% |
+| wildfire | 2 | 120 | 54.3% |
+| milestones | 2 | 100 | 41.0% |
+
+Crazy Eights is worth a caution about sample size, because the smaller runs
+looked better than the truth: 65% over 60 rounds, 60.0% over 120, 57.0% over
+200. The standard error at 200 rounds is about 3.5 points, so the honest
+statement is "hard wins somewhere around 57%", not "hard cleared 60% once".
+
+Hearts is where determinization pays for itself, and the reason is the one the
+issue predicted: Phase 2's guard has to REFUSE to score the pass commit and
+every draw off a face-down pile, because playing them out on a fork reveals
+cards the seat may not see. A sampled world has no such problem, so the moves a
+Hearts player thinks hardest about are the ones only `hard` can judge at all.
+
+Milestones is not a budget problem, and that is worth recording because it is
+the first thing anyone will assume. Re-run with the wall clock lifted and ten
+times the simulated-move cap — about a second of thinking per decision instead
+of 120 ms — hard scores 43.3% over 30 rounds. More samples do not help because
+samples are not what is missing.
+
+The likelier reading is that **round-winning in two-handed Milestones is close
+to skill-blind at this level of play**, and the control says so: `medium` versus
+`easy`, which shares none of Phase 3's machinery, is 49.5% over 200 rounds at
+two seats and 44.0% over 200 at four. Phase 2's `evaluateState` does not beat
+the Phase 1 heuristic head-to-head either. Both search layers demonstrably
+CHANGE what contract-rummy plays — the ranking tests pin that — and neither
+changes who goes out first. Contract rummy's race is decided mostly by whether
+the deal contains the contract, and a rollout policy that plays greedily cannot
+see far enough past a discard to alter that.
+
+What would move the packs that fall short, in rough order of expected value,
+none of it attempted here:
+
+* **A rollout policy that plays contract rummy properly.** Flat Monte Carlo
+  inherits its judgement from the policy, and ours is the cheap heuristic in
+  both seats. Using `medium` as the policy costs about ten times as much per
+  rollout, which the think window cannot pay for at this template's enumeration
+  cost — a worker (explicitly out of scope in #89) is the way that becomes
+  affordable.
+* **A terminal signal closer to what Milestones is actually about.** The search
+  steers by `scoreRound`, which is leftover hand value — a proxy for "did I go
+  out". The real objective is the contract ladder, which one round cannot see.
+  Multi-round simulation is called out as a separate question in
+  `tools/simulate.mjs`'s header and this is a second reason to want it.
+* **Opponent modelling.** The determinizer pools every unknown card uniformly.
+  "They have passed on the pile twice, so they are not collecting reds" is
+  information a human uses and this deliberately does not.
+
 ## Arcade platform enhancements — shipped
 
 The four additive `Arcade.peer` changes this repo was waiting on (E0–E3:

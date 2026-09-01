@@ -25,6 +25,8 @@ import { makeCtx } from '../src/engine/context.js';
 import { loadPackFromDisk } from '../tools/pack-test.mjs';
 import { createSeatTable, createSeatLens, soloSeatTable } from '../src/players/seats.js';
 import { createBotDriver } from '../src/ui/botDriver.js';
+import { applyMove } from '../src/engine/movePipeline.js';
+import { chooseBotMove } from '../src/engine/bot.js';
 
 /**
  * A clock that fires nothing on its own.
@@ -68,7 +70,7 @@ function freshSession(state) {
 }
 
 /** A driver wired to a lens, recording every seat it actually moved. */
-function driverFor(seatTable, state, { acting = null, clock = fakeClock() } = {}) {
+function driverFor(seatTable, state, { acting = null, clock = fakeClock(), difficulty = undefined } = {}) {
   const played = [];
   const errors = [];
   const me = createSeatLens(() => seatTable);
@@ -76,11 +78,12 @@ function driverFor(seatTable, state, { acting = null, clock = fakeClock() } = {}
     clock,
     currentEpoch: () => 1,
     botDelayMs: () => 0,
+    ...(difficulty ? { difficulty } : {}),
     me,
     identityOf: (seat) => ({ seat, name: `Seat ${seat}`, persona: null }),
     actingSeatsOf: acting || ((s) => (s.gameOver ? [] : [s.turn.seat])),
     announcementsFor: () => [],
-    playMove: (_state, move, seat) => played.push({ seat, type: move.type }),
+    playMove: (_state, move, seat) => played.push({ seat, type: move.type, move }),
     playAnnouncement: () => {},
     onError: (message) => errors.push(message),
   });
@@ -207,4 +210,53 @@ test('an unseated joiner holds nothing and still draws a table', () => {
   // and `holds` must be false for every seat so no hand is drawn as mine.
   assert.equal(lens.seat(), 0);
   for (const seat of [0, 1, 2]) assert.equal(lens.holds(seat), false);
+});
+
+/* ------------------------------------------------------------------ *
+ * The difficulty dial reaches the chooser
+ * ------------------------------------------------------------------ */
+
+test('the driver hands the table its difficulty, and reads it when the turn fires', async () => {
+  // THE WIRING IS THE WHOLE FEATURE HERE. A difficulty setting the driver reads
+  // but never forwards is a preference that changes nothing, and it would pass
+  // every other test in this file — the driver still plays the right seat at
+  // the right time, just always at the default depth. So this asserts on the
+  // MOVE: a position where easy and medium genuinely disagree, played twice.
+  //
+  // Read at fire time rather than at schedule time, like `botDelayMs` is:
+  // changing the dial mid-hand should take effect on the next turn, not at the
+  // next deal.
+  const state = await crazyEights(3);
+  let seat = null;
+  for (let i = 0; i < 200 && seat === null; i++) {
+    const acting = state.turn.seat;
+    const move = chooseBotMove(state, acting);
+    if (!move) break;
+    // Seat 0 is this device's in a solo table, so the driver would decline it.
+    if (acting !== 0
+      && JSON.stringify(chooseBotMove(state, acting, { difficulty: 'easy' })) !== JSON.stringify(move)) {
+      seat = acting;
+      break;
+    }
+    applyMove(state, move);
+    if (state.events.some((e) => e.type === 'roundOver')) break;
+  }
+  assert.notStrictEqual(seat, null,
+    'no crazy-eights position found where easy and medium disagree — this test cannot tell them apart');
+
+  const asked = [];
+  for (const depth of ['easy', 'medium']) {
+    const clock = fakeClock();
+    const { bots, played } = driverFor(soloSeatTable(3), state, {
+      clock, difficulty: () => { asked.push(depth); return depth; },
+    });
+    const before = asked.length;
+    bots.scheduleNextTurn(freshSession(state), 1);
+    assert.strictEqual(asked.length, before,
+      'the difficulty was read while merely SCHEDULING the turn, so changing it mid-hand would not land');
+    clock.flush();
+    assert.strictEqual(played.length, 1, `${depth}: the turn did not play`);
+    assert.deepStrictEqual(played[0].move, chooseBotMove(state, seat, { difficulty: depth }),
+      `${depth}: the driver played something other than what that difficulty chooses`);
+  }
 });
