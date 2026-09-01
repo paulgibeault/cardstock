@@ -31,18 +31,175 @@
 // re-applies the logged move and never re-runs this function, so a bot's coin
 // flips can never desync a resumed match.
 
-import { legalMovesFor } from './movePipeline.js';
+// ONE PLY, WHERE THE TEMPLATE OFFERS TO JUDGE A POSITION. `botHeuristic` scores
+// a MOVE — "a discard with no hand-mates is cheap to lose" — which cannot say
+// the thing that actually decides a rummy turn: "and it leaves me one card off
+// the contract". A template that exports `evaluateState` gets each of its legal
+// moves played out on a throwaway fork (src/engine/fork.js) and the resulting
+// POSITION scored instead. Templates without the hook are untouched.
+//
+// Everything below the scorer is unchanged by that. The persona tilt and
+// `mistakeRate` still operate on the ranked list, the no-persona path is still
+// the plain deterministic chooser, and the determinism contract above still
+// holds verbatim: a fork is seeded from the source's own RNG position, so
+// forking and applying consume no randomness the original would have seen.
+
+import { legalMovesFor, applyMove } from './movePipeline.js';
 import { makeCtx } from './context.js';
+import { forkState } from './fork.js';
+import { visibleCardIds } from './view.js';
 
 function defaultHeuristic(ctx, move) {
   return move.type === 'draw' ? -1 : 1;
 }
+
+/**
+ * A CEILING ON THE WORK ONE DECISION MAY DO, not a tuning knob — the moves
+ * beyond it are ranked by the cheap heuristic and never forked.
+ *
+ * One ply is a fork plus a full `applyMove` per candidate, and contract-rummy is
+ * the template that could make that hurt: once seats have laid down, its
+ * enumerator offers every (meld × hand-card × wild-value) hit it can find, and
+ * `movePipeline.js` calls it the costliest enumeration in the repo.
+ *
+ * MEASURED RATHER THAN ASSUMED, and the measurement is why this number is high
+ * enough to be invisible. Across sixty games per configuration, the widest turn
+ * any pack offers is 17 moves at four-handed Milestones and 23 at six-handed —
+ * one turn in three thousand and twenty-three in three thousand respectively —
+ * and Hearts, Crazy Eights and Wildfire never pass fifteen. Phase 1 is why: the
+ * hands that used to enumerate for hundreds of moves were the live-locked ones.
+ * Removing the cap entirely changes `npm test` by about 0.15s on 7.0, which is
+ * noise, so this buys nothing today and exists for the pack that deals sixteen
+ * cards to eight seats.
+ *
+ * Sixteen because it is above every width measured for the seat counts the
+ * packs are actually played at, so the shortlist is a backstop rather than
+ * something ordinary play runs into.
+ */
+const LOOKAHEAD_WIDTH = 16;
 
 /** Moves that decline to commit a card. Persona `patience` speaks to these. */
 const HOLDING_MOVES = new Set(['draw', 'pass']);
 
 /** How much of the score spread a full point of aggression/patience is worth. */
 const TILT_SHARE = 0.25;
+
+/**
+ * ONE PLY IS NOT ALLOWED TO TURN THE DECK OVER — the trap that makes this
+ * function longer than it looks like it should be.
+ *
+ * Playing a move out on a fork produces a REAL position, dealt from the real
+ * shuffle, and `chooseBotMove` is handed the whole state (tools/simulate.mjs
+ * says so in as many words). So "draw from the deck, then score the hand you
+ * ended up with" is a bot reading the top of a face-down pile before deciding
+ * whether to take it — and it is not a subtle failure. Milestones went straight
+ * back to the live-lock Phase 1 had just fixed: the deck's top card never
+ * changes while nobody draws it, so a seat that judged it once as worse than
+ * the face-up pile judged it that way forever, and four seats doing that
+ * circulate the same forty cards until the move cap.
+ *
+ * The rule is therefore the entitlement rule, asked forward in time: if the
+ * fork turned up a card `seat` could not see beforehand, that outcome was not
+ * knowable and the move cannot be judged by it. This is Phase 3's fairness
+ * criterion arriving a phase early because the alternative did not work.
+ */
+function revealsHiddenCards(before, fork, seat) {
+  for (const id of visibleCardIds(fork, seat)) {
+    if (!before.has(id)) return true;
+  }
+  return false;
+}
+
+/**
+ * Score each move by the position it leaves behind, or say it could not.
+ *
+ * `null` means "score this turn with `botHeuristic` instead", and it is the
+ * answer whenever the candidates cannot be put on one scale — mixing a position
+ * score with a move score would rank moves by which scorer happened to reach
+ * them.
+ *
+ * BANDS, ON ONE SCALE. Everything the evaluator scored sits at face value; a
+ * clear spread above and below it are the moves it could not score.
+ *
+ * ABOVE: the moves that ENDED THE ROUND inside `applyMove`. The pipeline has
+ * already scored the hand and dealt the next one by the time we could look, so
+ * there is no position left to judge — and the honest reading is that the seat
+ * went out, because in every template here a round ends through
+ * `ctx.endRound(seat)` fired by the acting seat emptying its own hand, or on the
+ * last card of a hand where it was the only legal move.
+ *
+ * BELOW: the moves the shortlist never reached, left in the cheap heuristic's
+ * own order — what they would have had with no lookahead at all — and, beside
+ * them, the moves with a HIDDEN outcome that the cheap heuristic had ALREADY
+ * rated below everything the evaluator scored. Lookahead may reorder the moves
+ * it can see the consequences of; it may not overturn the heuristic's verdict
+ * on a move it cannot. Anything else — a hidden move the heuristic rated among
+ * or above the scored ones — has no honest place on this scale and the whole
+ * turn falls back instead.
+ *
+ * That one line is what gives shedding a lookahead at all: `mustPlayIfAble` is
+ * false in both its packs, so a draw is legal on EVERY turn and a rule of "any
+ * hidden move means fall back" would mean the hook never ran. `botHeuristic`
+ * already rates a draw below every play, so the evaluator sorts the plays and
+ * the draw stays where it was put.
+ */
+function scoreByLookahead(state, seat, moves, ctx, heuristic, evaluate) {
+  const cheap = moves.map((move) => heuristic(ctx, move));
+  const shortlist = moves.map((move, i) => i);
+  if (moves.length > LOOKAHEAD_WIDTH) {
+    shortlist.sort((a, b) => cheap[b] - cheap[a] || a - b);
+    shortlist.length = LOOKAHEAD_WIDTH;
+  }
+
+  const before = visibleCardIds(state, seat);
+  const values = new Map();
+  const terminal = new Set();
+  const hidden = [];
+  let lo = Infinity;
+  let hi = -Infinity;
+  let cheapLo = Infinity;
+  for (const i of shortlist) {
+    const fork = forkState(state);
+    // A move off the enumerator is legal by construction, so this cannot throw
+    // for any template in the repo. Guarded anyway, and conservatively: a bot
+    // that crashes the table is a worse failure than one that spends a turn on
+    // its cheap heuristic.
+    try {
+      applyMove(fork, moves[i]);
+    } catch {
+      return null;
+    }
+    if (fork.roundNumber !== state.roundNumber || fork.gameOver) {
+      terminal.add(i);
+      continue;
+    }
+    if (revealsHiddenCards(before, fork, seat)) {
+      hidden.push(i);
+      continue;
+    }
+    const value = evaluate(makeCtx(fork), seat);
+    if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+    values.set(i, value);
+    if (value < lo) lo = value;
+    if (value > hi) hi = value;
+    if (cheap[i] < cheapLo) cheapLo = cheap[i];
+  }
+  if (values.size === 0) return null;
+
+  for (const i of hidden) {
+    if (cheap[i] >= cheapLo) return null;
+  }
+
+  const band = hi - lo || 1;
+  // Built in enumeration order, so the stable sort below leaves equally scored
+  // moves — every unreached move, and every round-ending one — in the order the
+  // template offered them. Contract-rummy's enumeration order is itself
+  // strategy (see its enumerateLegalMoves), and this is what preserves it.
+  return moves.map((move, i) => ({
+    move,
+    score: terminal.has(i) ? hi + band : (values.get(i) ?? lo - band),
+  }));
+}
 
 /**
  * Rank every legal move for `seat`, best first.
@@ -58,8 +215,10 @@ export function rankMoves(state, seat, { persona = null } = {}) {
   if (moves.length === 0) return [];
   const ctx = makeCtx(state);
   const heuristic = state.pack.template.botHeuristic || defaultHeuristic;
+  const evaluate = state.pack.template.evaluateState;
 
-  const scored = moves.map((move) => ({ move, score: heuristic(ctx, move) }));
+  const scored = (evaluate && scoreByLookahead(state, seat, moves, ctx, heuristic, evaluate))
+    || moves.map((move) => ({ move, score: heuristic(ctx, move) }));
   if (persona) {
     let lo = Infinity;
     let hi = -Infinity;

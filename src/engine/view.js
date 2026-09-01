@@ -204,6 +204,36 @@ function cloneMove(move) {
 }
 
 /**
+ * EVERY CARD ID `seat` IS ENTITLED TO KNOW, straight off the zone visibility
+ * rules — the same three cases `zoneView` above filters on.
+ *
+ * Named and exported because it has a second caller now; it was inline in
+ * `eventsFor` below. tools/simulate.mjs keeps its OWN copy on purpose and
+ * should — its per-move audit is an independent reading of the visibility
+ * rules, and an auditor that imports the thing it audits cannot catch it being
+ * wrong.
+ *
+ * The new caller is the bot's lookahead (src/engine/bot.js), which uses it
+ * to REFUSE to judge a move: if playing a move out on a fork turns up a card
+ * the seat could not see beforehand, then the position it produced is one the
+ * seat had no way to predict, and scoring it is reading the deck. That is the
+ * same rule this function has always expressed, asked forward in time.
+ */
+export function visibleCardIds(state, seat) {
+  const visible = new Set();
+  for (const address of state.zones.allAddresses()) {
+    const instance = state.zones.get(address);
+    const def = instance.def;
+    if (def.visibility === 'all' || (def.visibility === 'owner' && instance.seat === seat)) {
+      for (const id of instance.cards) visible.add(id);
+    } else if (def.visibility === 'top' && instance.cards.length) {
+      visible.add(instance.cards[instance.cards.length - 1]);
+    }
+  }
+  return visible;
+}
+
+/**
  * The derived-event window, as one seat may see it.
  *
  * Events drive animation and narration only — the ViewState is what a client
@@ -220,16 +250,7 @@ function cloneMove(move) {
  * shipping.
  */
 export function eventsFor(state, seat, events = []) {
-  const visible = new Set();
-  for (const address of state.zones.allAddresses()) {
-    const instance = state.zones.get(address);
-    const def = instance.def;
-    if (def.visibility === 'all' || (def.visibility === 'owner' && instance.seat === seat)) {
-      for (const id of instance.cards) visible.add(id);
-    } else if (def.visibility === 'top' && instance.cards.length) {
-      visible.add(instance.cards[instance.cards.length - 1]);
-    }
-  }
+  const visible = visibleCardIds(state, seat);
 
   return events.map((ev) => {
     if (!Array.isArray(ev.cards)) return { ...ev };

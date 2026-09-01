@@ -22,7 +22,7 @@ import {
   getMeldGroups, meldKindOf, pinnedAttr, wildHitValues,
 } from './melds.js';
 import {
-  findContractLayDown, findHits, scoreDraw, scoreDiscard,
+  findContractLayDown, findHits, scoreDraw, scoreDiscard, evaluateState,
   rememberPileTake, forgetPileTakes, PILE_TAKEN_VAR,
 } from './contract-rummy-bot.js';
 import { arrangeContract, suggestMeld } from './contract-rummy-ui.js';
@@ -538,6 +538,14 @@ const contractRummy = {
     if (move.type === 'hit') return 50;
     return scoreDiscard(ctx, move);
   },
+
+  /**
+   * How good this position is for `seat` — the lookahead's scorer, in
+   * ./contract-rummy-bot.js beside the move scorer it shares a vocabulary with.
+   * See the comment there for what it reads and, more importantly, what it
+   * refuses to.
+   */
+  evaluateState,
 };
 
 // The two human affordances live in ./contract-rummy-ui.js; they are part of

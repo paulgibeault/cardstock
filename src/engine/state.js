@@ -68,6 +68,30 @@ export class ZoneSet {
   allAddresses() {
     return [...this.instances.keys()];
   }
+
+  /**
+   * A ZoneSet with the same shape and independent card arrays.
+   *
+   * Here rather than in src/engine/fork.js so that a fork never has to know how
+   * a ZoneSet is BUILT. Reconstructing one from outside would mean re-running
+   * `define` against zone defs and a seat count, which re-derives addresses
+   * that this object already knows — and would silently diverge the day a zone
+   * gains a field.
+   *
+   * The `def` objects are shared deliberately: they come from the manifest and
+   * the template's defaultZones and nothing mutates them after createState. The
+   * `cards` arrays are the only per-instance state, and they are copied.
+   */
+  clone() {
+    const copy = new ZoneSet();
+    copy.defs = new Map(this.defs);
+    for (const [address, zone] of this.instances) {
+      const instance = new ZoneInstance(zone.def, zone.seat, zone.n);
+      instance.cards = zone.cards.slice();
+      copy.instances.set(address, instance);
+    }
+    return copy;
+  }
 }
 
 function patternToRegex(pattern) {
