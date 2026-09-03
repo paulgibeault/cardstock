@@ -57,6 +57,11 @@ export function createSession({ pack, state, seats, seating, cardArt, handPrefs,
     // read it at click time rather than closing over a move, which is what lets
     // a selection change re-arm them without rebuilding the table.
     ui: null,
+    // The hint the player asked for this turn (src/ui/hint.js): the move, its
+    // sentence, and what to light. Cleared by every applied move and by any
+    // render where the human is no longer acting, so a suggestion can never
+    // outlive the position it was made in.
+    hint: null,
 
     // A render that landed mid-drag would replace the node the pointer is
     // holding, so renders are deferred while one is live and replayed after.

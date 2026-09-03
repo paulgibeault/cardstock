@@ -182,6 +182,11 @@
         <span class="turn-token" aria-hidden="true"></span>
         <span id="action-hint"></span>
         <button type="button" id="action-button" hidden></button>
+        <!-- What a player at the chosen difficulty would do (src/ui/hint.js).
+             Shown only while it is your turn and the felt holds the state a
+             ranking needs — a joiner at a shared table holds a view, and gets
+             no button rather than a guess. -->
+        <button type="button" id="hint-button" hidden>Hint</button>
       </div>
 
       <!-- Cards you have picked out but not yet committed — a meld you are
