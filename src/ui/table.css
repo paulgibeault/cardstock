@@ -3671,9 +3671,17 @@ body.is-dragging .card-face { cursor: grabbing; }
 }
 .new-game__heading:first-child { margin-top: 0; }
 
-.new-game__seats { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.new-game__seats,
+.new-game__skills { display: flex; flex-wrap: wrap; gap: 0.4rem; }
 
-.new-game__seat {
+/* The difficulty row is the seat row's twin on purpose: same chip, same
+   pressed state, so the sheet reads as one set of choices rather than as two
+   controls that happen to share a panel. Only the width differs — these hold
+   a word, not a digit. */
+.new-game__skill { min-width: 4.5rem; }
+
+.new-game__seat,
+.new-game__skill {
   min-width: 2.2rem;
   padding: 0.35rem 0.5rem;
   font: inherit;
@@ -3684,7 +3692,8 @@ body.is-dragging .card-face { cursor: grabbing; }
   border-radius: 8px;
   cursor: pointer;
 }
-.new-game__seat[aria-pressed="true"] {
+.new-game__seat[aria-pressed="true"],
+.new-game__skill[aria-pressed="true"] {
   background: var(--accent);
   border-color: var(--accent);
   color: #10240f;

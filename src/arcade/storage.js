@@ -120,9 +120,11 @@ export const SETTINGS_DEFAULTS = {
   // every game, and a difficulty saved into a match would be a rule the replay
   // has to reproduce when the chooser is never re-run at all.
   //
-  // Like `botDelayMs`, this has no settings UI yet; `medium` is what the bots
-  // already played at when Phase 2 landed, so the default changes nothing for
-  // anyone who never touches it. An unknown value is read as the default by
+  // Chosen on the new-game sheet (src/ui/newGame.js), which reads this value
+  // and hands the answer back for the lobby to write — so the row always opens
+  // showing what the last game was actually played at. `medium` is what the
+  // bots already played at when Phase 2 landed, so the default changes nothing
+  // for anyone who never touches it. An unknown value is read as the default by
   // `chooseBotMove` itself, which is what makes a hand-edited save harmless.
   botDifficulty: 'medium',
   showLegalHints: true,
