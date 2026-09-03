@@ -148,6 +148,10 @@ lookahead this heuristic pass stops short of.
 
 ## Known limitation: `hard` is a real gain at Hearts, a modest one at shedding, and none at Milestones
 
+> The Milestones numbers in this section are ROUND wins measured before #92,
+> under a heuristic that could live-lock late rounds. The section after this
+> one re-measures them at match level and says which of these still stand.
+
 Phase 3 of issue #89 adds the difficulty dial — `easy` is the heuristic,
 `medium` is Phase 2's one ply, `hard` deals itself worlds it is entitled to
 believe in (`src/engine/determinize.js`) and plays every candidate out in each
@@ -212,6 +216,116 @@ none of it attempted here:
 * **Opponent modelling.** The determinizer pools every unknown card uniformly.
   "They have passed on the pile twice, so they are not collecting reds" is
   information a human uses and this deliberately does not.
+
+## Milestones is a ladder, and the harness could not see one (#92)
+
+Everything above about Milestones bot strength was measured on ROUND wins —
+`tools/simulate.mjs --vs` played one hand per game and counted who was caught
+holding less. That is the wrong bar for this pack twice over, and #92 is
+where both halves came out.
+
+**The ladder is the match.** A round advances whoever laid their contract
+down, and the match ends the moment somebody lays the tenth one down. The
+round score is a scoreboard the winner is never read from, so a bot that
+"leaves fewer points in hand" while losing the lay-down race is optimising
+nothing. `--match` plays whole matches to the pack's own game-over rule and
+counts MATCHES won; `matchStanding` is a new optional template hook
+(`src/templates/CONTRACT.md`) that says how far along the match a seat is, and
+a finished `hard` rollout is graded by the CHANGE in it across the hand —
+contract-rummy prices a rung above anything a round's points can amount to,
+with the points behind it as a tie-break. A template without the hook is
+graded by the change in accumulated score, which is exactly the round score
+it always was; `tests/matchStanding.test.js` proves the equivalence by
+installing a hook that says the same thing and one that says the opposite.
+
+**Round one was hiding a second live-lock.** Round one's contract is two sets.
+The runs and the colour group are rungs four to eight, and with a run(8) owed
+nearly every pile top has a neighbour in hand, so two seats took each other's
+discards every turn and the deck never turned — the closed system phase 1
+had fixed for round one, back in round six. Round one measured 1000/1000 the
+whole time; **more than half of two-seat matches never finished** (22 of 40
+at easy against easy), and the first tournament numbers this section was
+going to report were inflated by exactly that: `medium` "won" 73.5% of the
+matches that finished, because the ones that did not were the ones easy was
+cycling in. Three changes in `src/templates/contract-rummy-bot.js`, each of
+which the two-seat match run found on its own:
+
+* the pile is graded by the SWAP GAIN — the hand's total keep value with the
+  top card in and the card the seat would actually throw out, valued on the
+  final hand — rather than by the top card alone. A swap that changes nothing
+  is worth nothing, which sends the seat to the deck; and because the total is
+  bounded and a take must raise it, a round cannot circulate the pile forever;
+* the card that leaves is the one `scoreDiscard` would choose, opponent terms
+  included, not the least valuable one — a seat that will not feed the pile
+  throws a better card instead, and a gain computed as if it had thrown the
+  worst one is a gain it never gets;
+* under a run contract a card is valued by the fullest run-length window it
+  sits in rather than by its immediate neighbours, and a duplicate rank is dead
+  weight — a seat holding eight tens under run(9) valued every ten and every
+  fresh card at nothing and threw the fresh card each turn to avoid feeding
+  the opponent, forever; a seat holding five wilds with a 4 and a 5 threw away
+  every 8, 9 and 11 the wilds could have bridged to.
+
+`PILE_PICKUP_BAR` was re-swept from 0 to 5 over three hundred two-seat matches
+each: every setting finishes every match at the same length now, because it
+is the swap gain being measured on the final hand that stops the cycle, not
+the bar. Completion after the fix: 500/500 two-seat matches, 100/100 at three,
+60/60 at four and six; round one unchanged at 53 moves. `tests/simulate.test.js`
+gates twelve two-seat matches at 100%, and fails on the code before this.
+
+**The numbers, on the right bar.** Two seats, `--match`, the reproducible
+move budget for `hard`:
+
+| contenders | matches | first contender's share |
+|---|---|---|
+| medium vs easy | 300 | 48.0% |
+| medium vs easy, four seats | 100 | 52.0% |
+| medium vs easy, rounds (for comparison) | 300 | 51.3% |
+| hard vs easy | 80 | 41.3% |
+| hard vs easy, matchStanding removed | 40 | 32.5% (30.0% with it, same seeds) |
+| hard vs easy, draw phase left to the heuristic | 40 | 45.0% |
+| hard vs medium | 40 | 52.5% |
+
+Read plainly: **with a heuristic that converges, neither search layer beats
+`easy` at Milestones matches.** Medium is a coin flip on every bar; hard is
+somewhat worse than easy at matches (41% over 80, standard error about 5.5
+points) and level with medium. The first 40 of those 80 came out at 30% and
+the next 40 at 52%, which is what a sample that size looks like, so the number
+to carry is the 80.
+
+Three things this run rules out, so the next one does not repeat them:
+
+* **The terminal signal is not what is holding hard back.** Removing
+  `matchStanding` moves hard by two points on the same seeds. That is what the
+  design predicted — a rollout is cut off at sixteen moves and graded by
+  `evaluateState`, so the terminal value only speaks in the last third of a
+  hand — and the hook stays because it is the right currency for the tail,
+  not because it measured as a gain.
+* **The run-valuation terms are not what is holding anyone back.** Duplicates
+  at 0 rather than −0.5, the window worth capped at the old neighbour ceiling,
+  both: identical round-level numbers (round one is two sets, so those terms
+  never fire there) and 48–53% for medium at match level, all noise.
+* **The sampled draw is not demonstrably the cause.** Hard's one decision
+  that easy and medium do not share is deck-or-pile, sampled in determinized
+  worlds; handing that to the heuristic gives 45% over 40, inside the noise
+  of the 41%.
+
+The old numbers this section replaces were not comparable and should not be
+quoted against these: under the old heuristic `easy` could cycle the pile in a
+late round indefinitely while `hard`'s sampling eventually turned the deck, so
+hard "won" those rounds by default (67% of 30 matches, 0 unfinished, while
+easy against easy left a quarter of matches unfinished). Fixing the live-lock
+took that away, which is correct, and is why hard measures lower now than it
+did in a broken game.
+
+What is left is the note above already said: the rollout policy is the cheap
+heuristic in both seats, `evaluateState` shares its vocabulary with it, and
+contract rummy's race is decided mostly by whether the deal contains the
+contract. A search that cannot out-think its own heuristic about which card to
+throw has nothing to add over it, and a rollout policy that plays properly is
+the only lever this pass has not pulled — priced, in the previous section, at
+a worker.
+
 
 ## Arcade platform enhancements — shipped
 

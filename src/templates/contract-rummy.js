@@ -52,6 +52,12 @@ function dealRound(ctx) {
   ctx.deal('discard', 1);
 }
 
+/**
+ * A rung of the contract ladder, in `matchStanding`'s units: more than the
+ * points any round can cost, so a rung is never traded for them.
+ */
+const RUNG_WORTH = 1000;
+
 const contractRummy = {
   id: 'contract-rummy',
 
@@ -546,6 +552,27 @@ const contractRummy = {
    * refuses to.
    */
   evaluateState,
+
+  /**
+   * How far along the match a seat is: the rung it has reached, and only then
+   * the points it has been caught holding.
+   *
+   * THE LADDER IS THE MATCH. A round advances whoever laid their contract down
+   * and ends the moment somebody lays the last one; the round score is a
+   * scoreboard the winner is never read from. So a rung is priced above
+   * anything a round's points can amount to — ten cards of wilds is 250 — and
+   * points only separate outcomes that moved the ladder the same way. That is
+   * what a rollout in src/engine/bot.js steers by once it has played a hand
+   * to its end (#92): "I laid down and they did not" outranks "I was caught
+   * holding less", which the round score alone had backwards.
+   *
+   * Seat-symmetric, and read from public vars only: the rung is on the felt
+   * for everyone and the totals are on the scoreboard.
+   */
+  matchStanding(ctx, seat) {
+    const phase = ctx.playerVar(seat, 'phase');
+    return (Number.isFinite(phase) ? phase : 1) * RUNG_WORTH - ctx.score(seat);
+  },
 };
 
 // The two human affordances live in ./contract-rummy-ui.js; they are part of

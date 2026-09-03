@@ -367,36 +367,73 @@ const SAMPLE_CONFIDENCE = 1;
 const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
 
 /**
- * How a finished hand turned out for `seat`, on a scale that means the same
- * thing in every pack.
+ * How far along the MATCH `seat` is, on the template's own scale.
  *
- * NO PACK KNOWLEDGE, AND ONE MANIFEST FIELD OF TEMPLATE KNOWLEDGE. Points are
- * not universally good: Crazy Eights hands the round's whole pot to whoever
- * went out (`winner: 'highestScore'`), Hearts counts them against you, and
- * Milestones scores the cards you were caught holding. The manifest already
- * declares which direction wins, so that is what is read — a pack that says
+ * A template that exports `matchStanding` (src/templates/CONTRACT.md) answers
+ * this itself, and contract-rummy is why the hook exists: a Milestones match
+ * is won by laying the tenth contract down, and the round score — the cards
+ * you were caught holding — never decides it. A bot steering by round score
+ * there optimises a scoreboard (#92).
+ *
+ * WITHOUT THE HOOK, THE STANDING IS THE ACCUMULATED SCORE, signed by the one
+ * manifest field that says which way is up. Points are not universally good:
+ * Crazy Eights hands the round's whole pot to whoever went out
+ * (`winner: 'highestScore'`), Hearts counts them against you. A pack that says
  * nothing is assumed to be counting penalties, which is the commoner shape and
- * the safer guess.
+ * the safer guess. Differenced across a round (below) this is exactly the
+ * round score, so a template without the hook is scored as it always was.
+ *
+ * @returns a finite number, or null for a template whose hook had no answer
+ */
+function standingOf(state, seat) {
+  const hook = state.pack.template.matchStanding;
+  if (hook) {
+    const value = hook(makeCtx(state), seat);
+    return typeof value === 'number' && Number.isFinite(value) ? value : null;
+  }
+  const scoring = state.pack.scoring || state.pack.manifest?.scoring || {};
+  const sign = scoring.gameOver?.winner === 'highestScore' ? 1 : -1;
+  return sign * (Number(state.scores?.[seat] ?? 0) || 0);
+}
+
+/**
+ * How a finished hand turned out for `seat`: how much further along the match
+ * it left the seat, against how much further along it left everyone else.
+ *
+ * A DIFFERENCE ACROSS THE ROUND, not a reading of the final position. The
+ * rollout began at `before` and ended at `after`, one round boundary later,
+ * and what the candidate move is answerable for is the change — a seat that
+ * was already three rungs clear is three rungs clear under every candidate,
+ * and that term would cancel out of the comparison anyway.
  *
  * RELATIVE, NOT ABSOLUTE. A rollout is compared against other rollouts of the
  * same position, so what matters is the MARGIN over the other seats rather than
  * the raw total: "I went out and left them holding forty" and "I went out and
  * left them holding four" are different outcomes and an absolute own-score
- * would call the first of them identical to the second in Hearts.
+ * would call the first of them identical to the second in Hearts. Under a
+ * ladder it is the same reading: going out before the opponent lays down is
+ * worth a rung they did not get.
+ *
+ * @returns null when the template's standing had no answer for some seat —
+ *          the same "this rollout produced no information" the caller already
+ *          handles for the evaluator.
  */
-function terminalValue(state, seat) {
-  const scoring = state.pack.scoring || state.pack.manifest?.scoring || {};
-  const sign = scoring.gameOver?.winner === 'highestScore' ? 1 : -1;
-  const scores = state.roundScores || {};
+function terminalValue(before, after, seat) {
+  let own = null;
   let others = 0;
   let n = 0;
-  for (let s = 0; s < state.seats; s++) {
-    if (s === seat) continue;
-    others += Number(scores[s] ?? 0) || 0;
-    n += 1;
+  for (let s = 0; s < after.seats; s++) {
+    const was = standingOf(before, s);
+    const now = standingOf(after, s);
+    if (was === null || now === null) return null;
+    if (s === seat) {
+      own = now - was;
+    } else {
+      others += now - was;
+      n += 1;
+    }
   }
-  const own = Number(scores[seat] ?? 0) || 0;
-  return sign * (own - (n ? others / n : 0));
+  return own - (n ? others / n : 0);
 }
 
 /**
@@ -468,16 +505,18 @@ function advance(run, spent, depth) {
 /**
  * What one rollout came to, in whichever of the two currencies applies.
  *
- * A FINISHED HAND IS ALWAYS READ FROM THE SCORE, never from the evaluator. The
- * round is over; there is no position left to have an opinion about, and the
- * pack has already said in points what happened.
+ * A FINISHED HAND IS ALWAYS READ FROM THE STANDING, never from the evaluator.
+ * The round is over; there is no position left to have an opinion about, and
+ * the pack has already said what happened — in rungs, or in points.
  *
- * @returns null when the template's evaluator returned something that is not a
- *          number, which is the same "this turn cannot be ranked this way"
- *          answer the one-ply scorer gives.
+ * @param before the position the rollout started from, for the difference
+ *               `terminalValue` takes across the round
+ * @returns null when the template's evaluator or standing returned something
+ *          that is not a number, which is the same "this turn cannot be ranked
+ *          this way" answer the one-ply scorer gives.
  */
-function valueOf(run, seat, evaluate) {
-  if (run.finished) return terminalValue(run.sim, seat);
+function valueOf(run, before, seat, evaluate) {
+  if (run.finished) return terminalValue(before, run.sim, seat);
   const value = evaluate(makeCtx(run.sim), seat);
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
@@ -498,8 +537,10 @@ function valueOf(run, seat, evaluate) {
  * not cover one rollout per candidate, and the whole turn falls back to one ply.
  *
  * TWO CURRENCIES, AND THE ONE RULE THAT KEEPS THEM FROM BEING ADDED UP. A
- * rollout that reached the end of the hand is worth its round score; one that
- * was cut off at `depth` is worth what `evaluateState` says the position is.
+ * rollout that reached the end of the hand is worth what it did to the seat's
+ * standing in the match (`terminalValue` — the round score, unless the
+ * template says the match is about something else); one that was cut off at
+ * `depth` is worth what `evaluateState` says the position is.
  * Those are different units — Milestones points against an arbitrary
  * per-template scale — and averaging them together builds a bot that prefers
  * whichever way the rollout happened to end, which is a bias with no meaning at
@@ -616,7 +657,7 @@ function scoreByRollout(state, seat, moves, cheap,
 
     const values = [];
     for (const run of runs) {
-      const value = valueOf(run, seat, evaluate);
+      const value = valueOf(run, state, seat, evaluate);
       if (value === null) break;
       values.push(value);
     }

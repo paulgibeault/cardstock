@@ -34,7 +34,9 @@
 // completion now, not an allowance for a live-lock.
 import { test } from "node:test";
 import assert from "node:assert";
-import { simulatePack, simulateProtocolPack, availableVariantIds } from "../tools/simulate.mjs";
+import {
+  simulatePack, simulateMatches, simulateProtocolPack, availableVariantIds,
+} from "../tools/simulate.mjs";
 
 // Small enough to keep `npm test` quick, large enough that a deadlock in any
 // ordinary line of play shows up. The full 1000-game run stays a manual tool.
@@ -131,4 +133,30 @@ test("the two floored packs have not got worse", async () => {
     assert.ok(rate >= floor,
       `${packId}: ${(rate * 100).toFixed(0)}% of rounds completed, below the ${floor * 100}% floor`);
   }
+});
+
+/* ------------------------------------------------------------------ *
+ * Past round one
+ * ------------------------------------------------------------------ */
+
+// EVERY BAR ABOVE PLAYS ROUND ONE AND STOPS, and for Milestones that is the
+// round whose contract is two sets. The runs and the colour group are rungs
+// four to eight, and that is where a second live-lock sat for as long as the
+// harness only ever dealt round one: with a run(8) owed nearly every pile top
+// has a neighbour in hand, so two seats took each other's discards every turn
+// and the deck never turned. Round one measured 1000/1000 the whole time;
+// more than half of two-seat matches never finished (#92).
+//
+// TWO SEATS, because that is the table where it binds — at four the pile
+// changes hands often enough to break the cycle by accident — and because the
+// contract-rummy heuristic's whole draw/discard vocabulary was measured at
+// four. Gated at 100%: the fix is a potential the round cannot raise forever
+// (src/templates/contract-rummy-bot.js, pileGain), not a tuning that happens
+// to work, and a stall here is that argument broken.
+test("Milestones matches finish at two seats, contract ladder and all", async () => {
+  const MATCHES = 12;
+  const { completed, stalled, errored } = await simulateMatches("milestones", MATCHES, { seats: 2, variants: [] });
+  assert.strictEqual(errored, 0, `milestones: ${errored} matches threw`);
+  assert.strictEqual(stalled, 0, `milestones: ${stalled} matches live-locked past round one`);
+  assert.strictEqual(completed, MATCHES, `milestones: only ${completed}/${MATCHES} matches finished`);
 });

@@ -45,6 +45,9 @@ const OPTIONAL_FUNCTIONS = [
   // one-ply lookahead in src/engine/bot.js — so a typo here is not a hook that
   // silently never fires, it is a whole search layer that silently never runs.
   "evaluateState",
+  // How far along the MATCH a seat is — what a finished rollout is graded by
+  // in src/engine/bot.js. Absent, the accumulated score stands in for it.
+  "matchStanding",
   "actingSeats", "enumerateAnnouncements", "applyAnnouncement",
   "interactionMode", "pendingChoice", "activeMatch", "scoreChip",
   "seatCounters",

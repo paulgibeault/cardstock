@@ -124,6 +124,66 @@ function playOne(pack, seats, seed, { choose = chooseBotMove } = {}) {
   return { outcome: 'complete', moves, effectCounts, roundScores };
 }
 
+/**
+ * A ceiling on how many rounds one simulated match may run.
+ *
+ * A match ends when the pack says so — a score threshold, the last contract,
+ * an empty stock — and every pack in the repo says so inside a couple of dozen
+ * rounds. A match still going at a hundred is a match whose game-over rule
+ * cannot be reached under bot play, which is the deadlock this tool exists to
+ * report rather than wait out.
+ */
+const MAX_ROUNDS = 100;
+
+/**
+ * The same loop as `playOne`, carried past the round boundary to `gameOver`.
+ *
+ * SEPARATE, NOT A FLAG ON playOne, because the two answer different questions
+ * and every bar in tests/simulate.test.js is a claim about the first: "does a
+ * hand terminate cleanly" is the rule-engine question, "who wins the match" is
+ * the bot-skill question this file's header always said was a different one.
+ * The move cap is per ROUND here — it is a live-lock detector, and a
+ * ten-round match legitimately plays ten rounds' worth of moves.
+ *
+ * @returns { outcome: 'complete', winner, rounds: [{ scores, moves }], totals }
+ *          or a stall/error shaped like playOne's.
+ */
+function playMatch(pack, seats, seed, { choose = chooseBotMove } = {}) {
+  const state = createState({ pack, seats, seed });
+  pack.template.setup(makeCtx(state));
+
+  const rounds = [];
+  let moves = 0;
+  let roundMoves = 0;
+  while (!state.gameOver) {
+    if (roundMoves >= MAX_MOVES) {
+      return { outcome: 'stall', moves, rounds, reason: `move cap exceeded in round ${rounds.length + 1}` };
+    }
+    if (rounds.length >= MAX_ROUNDS) {
+      return { outcome: 'stall', moves, rounds, reason: `match still running after ${MAX_ROUNDS} rounds` };
+    }
+    let move = null;
+    for (const seat of actingSeats(makeCtx(state))) {
+      move = choose(state, seat);
+      if (move) break;
+    }
+    if (!move) return { outcome: 'stall', moves, rounds, reason: `no legal move in round ${rounds.length + 1}, phase ${state.turn.phase}` };
+    try {
+      applyMove(state, move);
+    } catch (e) {
+      return { outcome: 'error', moves, rounds, reason: e.message };
+    }
+    moves++;
+    roundMoves++;
+    const over = state.events.find((e) => e.type === 'roundOver');
+    if (over) {
+      rounds.push({ scores: over.scores, moves: roundMoves });
+      roundMoves = 0;
+    }
+  }
+  return { outcome: 'complete', moves, rounds, winner: state.winner, totals: state.scores.slice() };
+}
+
 async function simulatePack(packId, games, { seats, variants, difficulty = null } = {}) {
   const pack = await loadPackFromDisk(packId, variants);
   const seatCount = seats ?? pack.manifest.players.best ?? pack.manifest.players.min;
@@ -153,6 +213,46 @@ async function simulatePack(packId, games, { seats, variants, difficulty = null 
   console.log(`\n=== ${label} (${seatCount} seats, ${games} games) ===`);
   console.log(`  completed: ${completed}  stalled: ${stalled}  errored: ${errored}`);
   console.log(`  avg moves/game: ${(totalMoves / games).toFixed(1)}`);
+  if (stallReasons.size) {
+    console.log('  stall/error reasons:');
+    for (const [reason, count] of stallReasons) console.log(`    (${count}x) ${reason}`);
+  }
+  return { completed, stalled, errored };
+}
+
+/**
+ * Do whole matches END — the completion bar `playMatch` exists for.
+ *
+ * Round one is the only round `simulatePack` ever plays, and Milestones'
+ * round one is two sets. The runs and the colour group come later, and that
+ * is where the two-seat live-lock lived: round 1 completed 1000/1000 while
+ * more than half of two-seat matches never got past rung six (#92). Same
+ * shape of report as simulatePack so the same test can read it.
+ */
+async function simulateMatches(packId, games, { seats, variants, difficulty = null } = {}) {
+  const pack = await loadPackFromDisk(packId, variants);
+  const seatCount = seats ?? pack.manifest.players.best ?? pack.manifest.players.min;
+  let completed = 0;
+  let stalled = 0;
+  let errored = 0;
+  let rounds = 0;
+  const stallReasons = new Map();
+  for (let i = 0; i < games; i++) {
+    const rng = createRng(`bot:${packId}:${i}`);
+    const result = playMatch(pack, seatCount, `sim:${packId}:${i}`, difficulty ? {
+      choose: (state, seat) => chooseBotMove(state, seat, { difficulty, random: rng.next }),
+    } : undefined);
+    rounds += result.rounds.length;
+    if (result.outcome === 'complete') completed++;
+    else {
+      if (result.outcome === 'stall') stalled++;
+      else errored++;
+      stallReasons.set(result.reason, (stallReasons.get(result.reason) || 0) + 1);
+    }
+  }
+  console.log(`\n=== ${packId} (${seatCount} seats, ${games} matches) ===`);
+  console.log(`  completed: ${completed}  stalled: ${stalled}  errored: ${errored}`);
+  console.log(`  avg rounds/match: ${(rounds / games).toFixed(1)}`);
   if (stallReasons.size) {
     console.log('  stall/error reasons:');
     for (const [reason, count] of stallReasons) console.log(`    (${count}x) ${reason}`);
@@ -225,13 +325,15 @@ function roundWinners(pack, scores, seatCount) {
  * in for the other.
  */
 async function tournamentPack(packId, games,
-  { seats, variants, contenders, budgetMoves, depth, confidence } = {}) {
+  { seats, variants, contenders, budgetMoves, depth, confidence, match = false } = {}) {
   const pack = await loadPackFromDisk(packId, variants);
   const seatCount = seats ?? Math.max(contenders.length, pack.manifest.players.min ?? 2);
   const wins = contenders.map(() => 0);
   const held = contenders.map(() => 0);
   let ties = 0;
   let unfinished = 0;
+  let roundsPlayed = 0;
+  const stallReasons = new Map();
   const budget = budgetMoves ? { budgetMs: Infinity, budgetMoves } : {};
   if (depth !== undefined) budget.depth = depth;
   if (confidence !== undefined) budget.confidence = confidence;
@@ -240,11 +342,33 @@ async function tournamentPack(packId, games,
     // Seeded per game, so the whole tournament replays move for move.
     const rng = createRng(`tour:${packId}:${i}`);
     const difficultyOf = (seat) => contenders[(seat + i) % contenders.length];
-    const result = playOne(pack, seatCount, `sim:${packId}:${i}`, {
-      choose: (state, seat) => chooseBotMove(state, seat, {
-        difficulty: difficultyOf(seat), random: rng.next, ...budget,
-      }),
+    const choose = (state, seat) => chooseBotMove(state, seat, {
+      difficulty: difficultyOf(seat), random: rng.next, ...budget,
     });
+
+    if (match) {
+      // WHO WON THE MATCH IS THE ENGINE'S ANSWER, not this file's: `state.winner`
+      // is whatever the pack's own game-over rule named — the seat that laid
+      // the last contract down, the lowest total at the threshold — and the
+      // bot being measured had no hand in resolving it. That is the whole
+      // point of the mode (#92): round score is a proxy, and in Milestones
+      // it is a proxy for nothing, because the ladder is what ends the match.
+      const result = playMatch(pack, seatCount, `sim:${packId}:${i}`, { choose });
+      if (result.outcome !== 'complete') {
+        unfinished++;
+        stallReasons.set(result.reason, (stallReasons.get(result.reason) || 0) + 1);
+        continue;
+      }
+      roundsPlayed += result.rounds.length;
+      for (let seat = 0; seat < seatCount; seat++) {
+        held[contenders.indexOf(difficultyOf(seat))] += Number(result.totals[seat] ?? 0) || 0;
+      }
+      if (result.winner === null || result.winner === undefined) { ties++; continue; }
+      wins[contenders.indexOf(difficultyOf(result.winner))] += 1;
+      continue;
+    }
+
+    const result = playOne(pack, seatCount, `sim:${packId}:${i}`, { choose });
     if (result.outcome !== 'complete') { unfinished++; continue; }
     for (let seat = 0; seat < seatCount; seat++) {
       held[contenders.indexOf(difficultyOf(seat))] += Number(result.roundScores?.[seat] ?? 0) || 0;
@@ -257,22 +381,25 @@ async function tournamentPack(packId, games,
 
   const decisive = wins.reduce((a, b) => a + b, 0);
   const played = games - unfinished;
-  console.log(`\n=== ${packId}: ${contenders.join(' vs ')} (${seatCount} seats, ${games} rounds`
+  const unit = match ? 'matches' : 'rounds';
+  console.log(`\n=== ${packId}: ${contenders.join(' vs ')} (${seatCount} seats, ${games} ${unit}`
     + `${budgetMoves ? `, budgetMoves=${budgetMoves}` : ', shipped clock'}`
     + `${depth === undefined ? '' : `, depth=${depth}`}`
     + `${confidence === undefined ? '' : `, confidence=${confidence}`}) ===`);
   contenders.forEach((name, i) => {
     const share = decisive ? ((wins[i] / decisive) * 100).toFixed(1) : '—';
-    // Mean round score is a DIAGNOSTIC, never the bar. Winning the hand is what
-    // the acceptance criterion counts, and it is what the line above reports;
-    // the average is here only because it moves on far fewer rounds than a
-    // win rate does, which is what tells you whether a change did nothing or
-    // did something the win column has not resolved yet.
+    // Mean score is a DIAGNOSTIC, never the bar. Winning is what the
+    // acceptance criterion counts, and it is what the line above reports; the
+    // average is here only because it moves on far fewer games than a win
+    // rate does, which is what tells you whether a change did nothing or did
+    // something the win column has not resolved yet.
     const mean = played ? (held[i] / (played * (seatCount / contenders.length))).toFixed(2) : '—';
-    console.log(`  ${name.padEnd(7)} ${String(wins[i]).padStart(4)} wins   ${share}% of decisive rounds`
-      + `   (mean round score ${mean})`);
+    console.log(`  ${name.padEnd(7)} ${String(wins[i]).padStart(4)} wins   ${share}% of decisive ${unit}`
+      + `   (mean ${match ? 'final total' : 'round score'} ${mean})`);
   });
-  console.log(`  ties: ${ties}   unfinished: ${unfinished}`);
+  console.log(`  ties: ${ties}   unfinished: ${unfinished}`
+    + (match && played ? `   rounds per match: ${(roundsPlayed / played).toFixed(1)}` : ''));
+  for (const [reason, count] of stallReasons) console.log(`    (${count}x) ${reason}`);
   return { wins, ties, unfinished, contenders };
 }
 
@@ -576,7 +703,7 @@ async function availableVariantIds(packId) {
   return (manifest.variants || []).filter((v) => v.available !== false).map((v) => v.id);
 }
 
-export { simulatePack, simulateProtocolPack, tournamentPack, availableVariantIds };
+export { simulatePack, simulateMatches, simulateProtocolPack, tournamentPack, availableVariantIds };
 
 async function main() {
   const args = process.argv.slice(2);
@@ -634,13 +761,19 @@ async function main() {
   // check, which is the build the confidence sweep is measured against.
   const confArg = args.find((a) => a.startsWith('--confidence='));
   const confidence = confArg ? Number(confArg.split('=')[1]) : undefined;
+  // `--match` plays whole matches to the pack's own game-over rule: with
+  // `--vs` it counts MATCHES won instead of hands, which is the only bar that
+  // means anything for a pack whose match is not decided by round score —
+  // Milestones' contract ladder (#92) — and on its own it is the completion
+  // run carried past round one, where that pack's runs and colour group are.
+  const match = args.includes('--match');
 
-  const run = protocol ? simulateProtocolPack : simulatePack;
+  const run = protocol ? simulateProtocolPack : (match ? simulateMatches : simulatePack);
 
   if (packIds.length === 0) {
     console.error('Usage: simulate.mjs <pack-id> [<pack-id>...] | --all [--games=N] [--protocol]\n'
       + '                          [--difficulty=easy|medium|hard] [--vs=hard,easy] [--seats=N]\n'
-      + '                          [--budget-moves=N] [--rollout-depth=N|inf] [--confidence=N]');
+      + '                          [--budget-moves=N] [--rollout-depth=N|inf] [--confidence=N] [--match]');
     process.exit(2);
   }
 
@@ -649,7 +782,7 @@ async function main() {
     try {
       if (contenders) {
         await tournamentPack(packId, games,
-          { seats, contenders, budgetMoves, depth, confidence });
+          { seats, contenders, budgetMoves, depth, confidence, match });
         continue;
       }
       const sets = variantSets === 'each'
