@@ -13,6 +13,18 @@
 // packLoader applies them. So a house rule is a manifest entry, not a code
 // change, and this sheet renders whatever a pack declares without knowing what
 // any of them mean.
+//
+// HOW HARD THE BOTS PLAY IS THE ONE THING HERE THAT IS NOT A RULE, and it is
+// asked here anyway because this is the moment a player is already deciding
+// what kind of game they want. It is a PREFERENCE, not an input to the deal:
+// it never reaches the reducer, a replay never re-runs the chooser
+// (src/engine/bot.js), and so — unlike the seat count and the house rules — it
+// is remembered globally and may be changed for the next hand without making
+// this one unreplayable. The sheet reads the saved value and hands the answer
+// back; src/ui/lobby.js is what writes it, so backing out changes nothing.
+
+import { SKILL_LEVELS, skillLevel } from './difficulty.js';
+import { loadSettings } from '../arcade/storage.js';
 
 const el = {
   overlay: document.getElementById('new-game-overlay'),
@@ -66,6 +78,12 @@ function heading(text) {
  * A sheet with one fixed seat count and no variants is a dialog whose only
  * honest button is "Deal", and putting one in front of every game would make
  * starting one slower for no decision gained.
+ *
+ * The bot difficulty below does NOT open this gate, deliberately. It is a
+ * remembered preference rather than a property of the deal, so a pack with
+ * nothing else to ask plays at whatever was last chosen instead of stopping to
+ * ask again. Every pack shipped today offers a seat range, so every one of them
+ * shows the row.
  */
 export function hasChoices(manifest) {
   const players = manifest.players || {};
@@ -90,7 +108,8 @@ function offeredVariants(manifest) {
  * Ask for this game's setup.
  *
  * @param manifest the pack's manifest (the lobby holds these; no deck needed).
- * @returns { variants: string[], seats: number } or null if the player backed out.
+ * @returns { variants: string[], seats: number, difficulty: string } or null if
+ *          the player backed out.
  */
 export function askNewGame(manifest) {
   const players = manifest.players || {};
@@ -147,6 +166,37 @@ export function askNewGame(manifest) {
     }
   }
 
+  // A SEGMENTED ROW RATHER THAN A DROPDOWN, matching the seat count directly
+  // above it: three options is fewer than the seat picker already shows, and a
+  // select would hide two thirds of the choice behind a tap.
+  el.body.appendChild(heading('Opponents'));
+  let difficulty = skillLevel(loadSettings().botDifficulty).id;
+  const skills = document.createElement('div');
+  skills.className = 'new-game__skills';
+  const skillDesc = document.createElement('span');
+  skillDesc.className = 'new-game__seat-count';
+  const paintSkill = () => {
+    skillDesc.textContent = skillLevel(difficulty).description;
+    for (const btn of skills.querySelectorAll('.new-game__skill')) {
+      btn.setAttribute('aria-pressed', String(btn.dataset.skill === difficulty));
+    }
+  };
+  for (const level of SKILL_LEVELS) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'new-game__skill';
+    btn.dataset.skill = level.id;
+    btn.textContent = level.label;
+    btn.addEventListener('click', () => {
+      difficulty = level.id;
+      paintSkill();
+    });
+    skills.appendChild(btn);
+  }
+  el.body.appendChild(skills);
+  el.body.appendChild(skillDesc);
+  paintSkill();
+
   el.overlay.hidden = false;
   el.deal.focus({ preventScroll: true });
 
@@ -155,6 +205,7 @@ export function askNewGame(manifest) {
     el.deal.onclick = () => close({
       seats,
       variants: [...boxes.entries()].filter(([, box]) => box.checked).map(([id]) => id),
+      difficulty,
     });
     el.cancel.onclick = () => close(null);
   });

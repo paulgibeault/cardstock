@@ -3210,7 +3210,12 @@ export function initTable({ onExit }) {
     clock: feltClock({ shared: () => !!session?.shared }),
     currentEpoch: () => epoch,
     botDelayMs: () => settings.botDelayMs,
-    difficulty: () => settings.botDifficulty,
+    // READ FRESH, NOT OFF THE SNAPSHOT. `settings` is loaded when the table is
+    // initialised and refreshed on a re-render, and the new-game sheet can
+    // change this between the two — deal a Sharp game straight after a Steady
+    // one and the snapshot would still say Steady. The driver asks at fire
+    // time (src/ui/botDriver.js) precisely so this can be answered late.
+    difficulty: () => loadSettings().botDifficulty,
     me,
     identityOf,
     actingSeatsOf,

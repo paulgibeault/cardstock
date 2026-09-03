@@ -15,7 +15,7 @@
 import { makeCardRenderer } from './cardStyles/index.js';
 import { fetchPackIndex, fetchPackManifest, fetchPack } from './packSource.js';
 import { safeAccent } from './css.js';
-import { listMatchSummaries, readStats, lastPlayedPack, clearMatch, recordForfeit } from '../arcade/storage.js';
+import { listMatchSummaries, readStats, lastPlayedPack, clearMatch, recordForfeit, loadSettings, saveSettings } from '../arcade/storage.js';
 import { buildSeating } from '../players/roster.js';
 import { confirmAction, closeConfirm } from './confirm.js';
 import { showRules } from './panels.js';
@@ -182,6 +182,7 @@ function buildTile(manifest, summary, { featured }) {
     }
     const setup = await askNewGame(manifest);
     if (!setup) return;
+    rememberDifficulty(setup);
     openTable(manifest.id, setup);
   });
   tile.appendChild(open);
@@ -267,12 +268,30 @@ function buildTile(manifest, summary, { featured }) {
       // Re-dealing is a NEW game, so it gets the same choices a new game gets.
       const setup = hasChoices(manifest) ? await askNewGame(manifest) : {};
       if (!setup) { renderLobby(); return; }   // backed out after abandoning
+      rememberDifficulty(setup);
       openTable(manifest.id, setup);
     });
     tile.appendChild(restart);
   }
 
   return tile;
+}
+
+/**
+ * Remember how hard the player asked the bots to play.
+ *
+ * WRITTEN HERE RATHER THAN IN THE SHEET, so that backing out of the sheet
+ * changes nothing — the answer is only kept by the gesture that actually deals.
+ * It is a preference and it outlives the match, exactly like `botDelayMs` beside
+ * it: the drivers read it at fire time (src/ui/botDriver.js), so the next hand
+ * plays at whatever was last chosen without anything having to be told.
+ */
+function rememberDifficulty(setup) {
+  const difficulty = setup?.difficulty;
+  if (!difficulty) return;
+  const settings = loadSettings();
+  if (settings.botDifficulty === difficulty) return;
+  saveSettings({ ...settings, botDifficulty: difficulty });
 }
 
 /** A pack whose manifest would not load still gets a tile, saying so. */
