@@ -157,4 +157,75 @@ player.
   The runner honours it now, and the four new seven-zero cases are the first
   tests in the repo that actually exercise a variant.
 
+## Round 4 — 2026-09-03
+
+Two clusters: the meld mechanic, and the player cards along the top.
+Triaged against the code in [MELD_SEATS_PLAN.md](MELD_SEATS_PLAN.md).
+
+### 9. The meld pile goes dead while other players take their turns
+
+There are states during gameplay where interacting with my hand and the
+meld pile is interrupted. It is frustrating to not be able to add to or
+remove from my meld pile while the other players/bots take their turns.
+
+- Type: feel / bug
+
+### 10. The meld pile still takes space after I have laid down
+
+The meld pile still takes up space even after I have already laid down. It
+should yield the space to my laid-down cards until the next round.
+
+- Type: feel
+
+### 11. The selected card sometimes sits behind its neighbours
+
+The selected card sometimes pops up behind the other cards, which looks
+strange. A z-order issue.
+
+- Type: bug / cosmetic
+
+### 12. Laid-down runs are not in order
+
+When laying down cards, or playing on other laid-down piles, the runs
+should be sorted, with the wilds in the correct space. This makes them
+easier to follow.
+
+- Type: feel
+
+### 13. On my turn, the next player should scroll into view
+
+When the turn is mine, the next player should scroll into view — I would
+likely want to see their played cards when deciding what to do.
+
+- Type: feel
+
+### 14. Two states of player card, not three
+
+Remove the middle option for minimized/maximized player cards.
+
+- Type: feel
+
+### 15. Player cards should default to maximized
+
+Default to maximized player cards, rather than only the current player
+being maximized.
+
+- Type: feel
+
+### 16. A card goes for a ride while the player cards scroll
+
+When scrolling between player cards (which works very well already),
+sometimes one of the cards appears to go for a ride to the neighbour's
+deck. Cosmetic only — the cards never actually change hands.
+
+- Type: bug / cosmetic
+
+### 17. Played cards move too fast to see
+
+When players/bots play their cards, the animation is too fast to notice.
+Make it smoother.
+
+- Type: feel
+
 <!-- Next items go here. -->
+
