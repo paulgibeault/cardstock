@@ -29,6 +29,7 @@
   --chrome-text: #ffffff;
   --chrome-bar: rgba(0, 0, 0, 0.25);
   --accent: #ffd166;
+  --hint: #7cc4ff;
   --glow: rgba(255, 255, 255, 0.3);
   --glow-strong: rgba(255, 255, 255, 0.9);
 
@@ -90,6 +91,7 @@
   --chrome-text: #14261c;
   --chrome-bar: rgba(255, 255, 255, 0.6);
   --accent: #9a6400;
+  --hint: #7cc4ff;
   --glow: rgba(20, 38, 28, 0.25);
   --glow-strong: rgba(20, 38, 28, 0.65);
 
@@ -1797,6 +1799,49 @@ body.is-dragging .card-face { cursor: grabbing; }
   transition: opacity 0.3s ease, visibility 0.3s;
 }
 #action-bar.action-bar--empty { opacity: 0; visibility: hidden; }
+
+/* THE HINT BUTTON, and what it lights.
+   A small pill at the end of the bar, in the hand-sort button's register:
+   present but quiet, because it is there every turn and the bar's words are
+   the thing to read. A suggestion replaces those words and is set in italics
+   so it reads as advice rather than as the turn's instruction — the token
+   and the action button are untouched, the Hint button itself steps aside
+   until the next move (src/ui/table.js renderActionBar says why), and the
+   rule that the bar never grows past two lines is held by
+   SUGGESTION_MAX_CHARS (src/ui/hint.js).
+   What the suggestion touches gets a ring in a colour of its own: the accent
+   already means "legal here", and a hint has to be tellable from that at a
+   glance — the ring says "this one", not "you may". Static, no pulse: it is
+   answering a question the player just asked, so it has their attention. */
+#hint-button {
+  font: inherit;
+  font-size: 0.7rem;
+  line-height: 1.2;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid var(--chip-border);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+  opacity: 0.75;
+}
+#hint-button:hover { opacity: 1; border-color: var(--hint); }
+#hint-button[hidden] { display: none; }
+#hint-button:focus-visible { outline: 2px solid var(--hint); outline-offset: 2px; }
+#action-bar.action-bar--hinted #action-hint { font-style: italic; }
+
+.card-face-wrap--hinted .card-face,
+.stage-card.card-face-wrap--hinted .card-face {
+  box-shadow: 0 0 0 3px var(--hint), 0 3px 4px var(--card-shadow);
+}
+.hand .card-face-wrap--hinted .card-face { transform: translateY(-8px); }
+.pile-stack--hinted .pile-stack__top {
+  border-radius: 8px;
+  box-shadow: 0 0 0 3px var(--hint);
+}
+.meld-chip--hinted { box-shadow: 0 0 0 2px var(--hint); }
+.seat--hinted { outline: 2px solid var(--hint); outline-offset: 2px; border-radius: 12px; }
 #action-bar:not(.action-bar--acting) .turn-token { display: none; }
 
 /* Pinned, not the UA's `normal`: the reserved height above counts two of

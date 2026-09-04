@@ -52,6 +52,7 @@ import { fetchPack } from './packSource.js';
 import { flyCard, landOn, motionAllowed, flightLayer, rectOf, cardSizedRect } from './flight.js';
 import { createSession, stopSession } from './session.js';
 import { createBotDriver, botVerb } from './botDriver.js';
+import { suggestMove } from './hint.js';
 import { schedule } from './clock.js';
 import { line, svgNode, clearSvgCache } from './dom.js';
 import { promptChoice, closeChoiceDialog } from './choiceDialog.js';
@@ -140,6 +141,7 @@ const el = {
   actionBar: document.getElementById('action-bar'),
   actionHint: document.getElementById('action-hint'),
   actionButton: document.getElementById('action-button'),
+  hintButton: document.getElementById('hint-button'),
   stageRow: document.getElementById('stage-row'),
   stageTray: document.getElementById('stage-tray'),
   handRow: document.getElementById('hand-row'),
@@ -714,6 +716,9 @@ function paintSeatHead(head, targeted) {
  * stay lit after the card that earned it was played.
  */
 function paintSeatTargets(state, ui) {
+  for (const plate of el.opponentsTop.querySelectorAll('.seat')) {
+    plate.classList.toggle('seat--hinted', session.hint?.targetSeat === Number(plate.dataset.seat));
+  }
   for (const plate of el.opponentsTop.querySelectorAll('.seat--collapsed')) {
     const targeted = seatHasReadyTarget(state, Number(plate.dataset.seat), ui);
     plate.classList.toggle('seat--target', targeted);
@@ -1046,7 +1051,7 @@ function buildSeatRow(state, stagger, acting, ui, { tier, carousel, mustOpen, sh
     const targeted = collapsed && seatHasReadyTarget(state, seat, ui);
 
     const wrap = document.createElement('div');
-    wrap.className = `seat ${active ? 'seat--active' : ''} ${collapsed ? 'seat--collapsed' : ''} ${targeted ? 'seat--target' : ''}`;
+    wrap.className = `seat ${active ? 'seat--active' : ''} ${collapsed ? 'seat--collapsed' : ''} ${targeted ? 'seat--target' : ''} ${session.hint?.targetSeat === seat ? 'seat--hinted' : ''}`;
     wrap.dataset.seat = String(seat);
 
     // Collapsed, the head IS the way into the plate, so it is a real button —
@@ -1496,7 +1501,7 @@ function renderStageTray(state, ui) {
   for (const cardId of staged) {
     const card = cardById(state, cardId);
     if (!card) continue;
-    const node = svgNode(art().face(card), 'stage-card');
+    const node = svgNode(art().face(card), `stage-card ${hintedCard(cardId) ? 'card-face-wrap--hinted' : ''}`);
     node.dataset.cardId = cardId;
     node.setAttribute('role', 'button');
     node.tabIndex = 0;
@@ -1540,7 +1545,7 @@ function renderHand(state, ui, stagger, draggable) {
     // unplayable. Only the hand does this: a pile or an opponent's card is not
     // yours to play, so there is nothing for it to say there.
     const wrapper = svgNode(art().face(card, !selectable),
-      `card-face-wrap ${selectable ? '' : 'card-face--disabled'} ${stagger ? 'card-deal' : ''} ${selected ? 'card-face-wrap--selected' : ''}`);
+      `card-face-wrap ${selectable ? '' : 'card-face--disabled'} ${stagger ? 'card-deal' : ''} ${selected ? 'card-face-wrap--selected' : ''} ${hintedCard(cardId) ? 'card-face-wrap--hinted' : ''}`);
     markEntry(wrapper, `hand:${cardId}`);
     wrapper.dataset.cardId = cardId;
     if (stagger) wrapper.style.animationDelay = `${i * 35}ms`;
@@ -1756,11 +1761,50 @@ function renderAnnounceBar(state) {
   }
 }
 
+/** Is this card part of the hint on the bar right now? */
+function hintedCard(cardId) {
+  return !!session?.hint?.cardIds?.has(cardId);
+}
+
+/**
+ * The Hint button: what a player at the chosen difficulty would do, from this
+ * exact position (src/ui/hint.js).
+ *
+ * THE SAME DIAL THE OPPONENTS ARE ON. The new-game sheet's difficulty is read
+ * fresh here, as the bot driver reads it, so "what would a Sharp player do" is
+ * a question about the bot the player is actually up against — and asking it
+ * at Easy gets Easy's answer, which is the honest one for a game being learnt.
+ *
+ * NOTHING IS LOGGED. A hint changes no state and a replay never learns one
+ * was asked for. The ranking happens synchronously on the tap: `hard` is
+ * capped at its think budget (src/engine/bot.js), so the longest a tap can
+ * stall for is the budget the bots already spend on every turn.
+ */
+function showHint() {
+  const state = liveState();
+  if (!state || state.isView || state.gameOver || !actingSeatsOf(state).some(isMySeat)) return;
+  const hint = suggestMove(state, mySeat(), { difficulty: loadSettings().botDifficulty });
+  if (!hint) return;
+  session.hint = hint;
+  session.hintsTaken += 1;
+  // The bar's text changing is silent to a screen reader; the log is the live
+  // region, and this is exactly the kind of thing it exists to say.
+  el.log.textContent = hint.text;
+  renderSelection(state);
+  // Counted, and the count is part of what a resume brings back.
+  persistMatch();
+}
+
 function renderActionBar(state, ui, humanActs) {
   const waitingOnPass = interactionMode(state) === 'pass'
     && !humanActs && !state.gameOver
     && committedSelectionOf(state, mySeat()) !== null;
-  const hint = humanActs ? ui.hint : (waitingOnPass ? 'Waiting for the other players to pass…' : '');
+  // A SUGGESTION STANDS IN FOR THE HINT, not beside it: the bar has room for
+  // one sentence, and the player asked for this one. It lasts exactly as long
+  // as the position does — every applied move clears it (applyStateChange).
+  const suggestion = humanActs && session?.hint ? session.hint : null;
+  const hint = humanActs ? (suggestion ? suggestion.text : ui.hint)
+    : (waitingOnPass ? 'Waiting for the other players to pass…' : '');
   // THE ONE TOKEN NOBODY REBUILDS. This bar's turn token is static markup in
   // index.html, so its finite pulse would have run itself out during boot and
   // never fired again (see "Finite pulses" above). Replayed on the transition
@@ -1786,7 +1830,19 @@ function renderActionBar(state, ui, humanActs) {
     return;
   }
   el.actionBar.classList.toggle('action-bar--acting', humanActs);
+  el.actionBar.classList.toggle('action-bar--hinted', !!suggestion);
   el.actionHint.textContent = hint;
+  // The button asks the engine to rank the position, so it is offered only
+  // where the felt HOLDS the position — a joiner's view has no opponents'
+  // hands to fork and gets no button rather than a guess (src/ui/hint.js) —
+  // and only where there is a choice to make. One legal move is not a hint.
+  // AND IT STEPS ASIDE WHILE ITS ANSWER IS SHOWING: the bar has room for one
+  // sentence and one action button in two lines at 360px, and measured with
+  // "Lay down" AND "Hint" beside it a 53-character suggestion wrapped to a
+  // third line and grew the bar (#13). The offer and the answer never share
+  // the row; the button is back the moment a move makes the answer stale.
+  el.hintButton.hidden = !(humanActs && !state.isView && !state.gameOver && !suggestion
+    && movesFor(state, mySeat()).length > 1);
   if (ui.action && humanActs) {
     el.actionButton.hidden = false;
     el.actionButton.textContent = ui.action.label;
@@ -1859,7 +1915,11 @@ function renderSelection(state) {
     const cardId = wrapper.dataset.cardId;
     const selected = isSelected(session.selection, handAddr, cardId) || committedPass.includes(cardId);
     wrapper.classList.toggle('card-face-wrap--selected', selected);
+    wrapper.classList.toggle('card-face-wrap--hinted', hintedCard(cardId));
     wrapper.setAttribute('aria-pressed', String(selected));
+  }
+  for (const node of el.stageTray.querySelectorAll('.stage-card[data-card-id]')) {
+    node.classList.toggle('card-face-wrap--hinted', hintedCard(node.dataset.cardId));
   }
   for (const stack of el.screen.querySelectorAll('.pile-stack[data-zone]')) zones.paintPileState(stack, ui);
   for (const chip of el.screen.querySelectorAll('.meld-chip[data-meld]')) zones.paintMeldState(chip, ui);
@@ -1882,6 +1942,10 @@ function render(state, message) {
   session.selection = pruneSelection(state, session.selection);
   const acting = actingSeatsOf(state);
   const humanActs = acting.some(isMySeat);
+  // A remote seat's move, a resumed match, a view swapped in: none of them
+  // pass through applyStateChange, so the hint is dropped here as well the
+  // moment the human is no longer the one acting.
+  if (!humanActs) session.hint = null;
   const humanMoves = humanActs ? movesFor(state, mySeat()) : [];
   const ui = buildUiModel(state, { seat: mySeat(), moves: humanMoves, acts: humanActs, selection: session.selection });
   const draggable = draggableSources(state, { seat: mySeat(), acts: humanActs });
@@ -2274,7 +2338,7 @@ function persistMatch() {
   // the lobby tile a "Start over" that dealt a private hand beside a table
   // other people were still sitting at.
   if (session?.shared) return;
-  const ok = saveMatch(state);
+  const ok = saveMatch(state, { hints: session.hintsTaken });
   if (ok !== false || saveFailureReported) return;
   saveFailureReported = true;
   reportTableError('This game could not be saved — it may not be here when you come back.');
@@ -2368,6 +2432,9 @@ function openScoreboard() {
 // during a move IS the shuffle, whoever's move surfaced it.
 function applyStateChange(state, move, { far }) {
   applyMove(state, move);
+  // A hint is advice about the position that was; this move made it a
+  // different one. Cleared before the render so nothing stale is painted.
+  if (session) session.hint = null;
   // Keeping a drawn card moves nothing, so it makes no sound. A card-on-felt
   // slap for a turn where no card was played is the table lying about what
   // happened — and the drawn card's own sound already played a beat ago.
@@ -2412,7 +2479,7 @@ function afterMove(state, move, from, message, { publish = true } = {}) {
     // `stats` is the surface whose formatting the game owns). The PANEL itself
     // waits: the last card is the thing worth watching, and it is still in the
     // air on this frame.
-    const ending = record.concludeMatch(state);
+    const ending = record.concludeMatch(state, { hints: session.hintsTaken });
     render(state, message);
     animateMove(state, move, from);
     if (trick) celebrateTrick(state, trick);
@@ -2722,7 +2789,9 @@ function scheduleAnnouncementBeats() { if (bots) bots.scheduleAnnouncementBeats(
  * the ritual (closeTable) forgot, so a persona's "did they remember to declare?"
  * roll could survive into a match that had not been dealt when it was made.
  */
-function adoptMatch(pack, state, message, { dealing = false, seats = null, seating = null, shared = false } = {}) {
+function adoptMatch(pack, state, message, {
+  dealing = false, seats = null, seating = null, shared = false, hints = 0,
+} = {}) {
   epoch += 1;
   stopSession(session);
   if (drag) drag.cancel();
@@ -2745,6 +2814,10 @@ function adoptMatch(pack, state, message, { dealing = false, seats = null, seati
     cardArt: makeCardRenderer(pack.manifest, pack.cardsById),
     handPrefs: loadHandPrefs(pack.id),
     shared,
+    // Handed in with the session rather than patched on afterwards, because
+    // this function persists the match before it returns and a count set
+    // after that write is a count the next reload has already lost.
+    hintsTaken: hints,
   });
   // Set on the NEW session, not before it exists: a fresh deal staggers its
   // cards in, a resumed match must not (the cards have been there all along).
@@ -3018,7 +3091,7 @@ export async function openTable(packId, { variants, seats } = {}) {
       if (rulesMoved) throw new Error(`pack version changed: ${stored.packVersion} → ${pack.manifest.version}`);
       const state = rehydrateMatch(pack, stored);
       if (!state.gameOver) {
-        adoptMatch(pack, state, `Resumed ${pack.manifest.name}.`);
+        adoptMatch(pack, state, `Resumed ${pack.manifest.name}.`, { hints: Number(stored.hints) || 0 });
         return;
       }
     } catch (err) {
@@ -3071,6 +3144,7 @@ export function rerenderTable() {
 export function initTable({ onExit }) {
   exitToLobby = onExit;
   settings = loadSettings();
+  el.hintButton.addEventListener('click', showHint);
 
   // AN OPEN SEAT PLATE IS DISMISSIBLE, by the two gestures every other overlay
   // on this screen already answers to. Wired once here rather than per render,

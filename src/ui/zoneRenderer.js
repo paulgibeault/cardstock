@@ -97,6 +97,9 @@ export function createZoneRenderer({
     stack.classList.toggle('pile-stack--ready', !!target);
     stack.classList.toggle('pile-stack--source', !!sourceTop);
     stack.classList.toggle('pile-stack--picked', !!sourceTop && isSelected(session().selection, address, sourceTop));
+    // The hint's pile — where the suggested move reaches for a card, or puts
+    // one — painted here so a selection change re-arms it with the rest.
+    stack.classList.toggle('pile-stack--hinted', !!session().hint?.zones?.has(address));
 
     if (target) {
       const verb = target.type === 'draw' ? 'Draw a card from'
@@ -118,6 +121,7 @@ export function createZoneRenderer({
     const move = ui.readyMelds.get(chip.dataset.meld) || null;
     const label = chip.dataset.meldLabel || '';
     chip.classList.toggle('meld-chip--ready', !!move);
+    chip.classList.toggle('meld-chip--hinted', session().hint?.meldKey === chip.dataset.meld);
     chip.disabled = !move;
     chip.setAttribute('aria-label', move ? `${label} Add your selected card.` : label);
   }

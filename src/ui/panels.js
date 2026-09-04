@@ -236,12 +236,15 @@ export function hideFinalLook() {
  * Game over
  * ------------------------------------------------------------------ */
 
-function statsInto(node, template, stats, seating, seats, winner) {
+function statsInto(node, template, stats, seating, seats, winner, { hints = 0, hintSeat = null } = {}) {
   node.replaceChildren();
   if (!stats) return;
 
   for (let s = 0; s < seats; s++) {
     const lines = statLinesFor(template, stats.perSeat[s]);
+    // Hints are not in the log (src/ui/hint.js), so they are not in `stats`;
+    // they are the one line added here, on the card of the seat that asked.
+    if (s === hintSeat && hints > 0) lines.push({ label: 'Hints taken', value: String(hints) });
     if (!lines.length) continue;
     const card = document.createElement('div');
     card.className = `stat-card ${s === winner ? 'stat-card--winner' : ''}`;
@@ -267,7 +270,7 @@ function statsInto(node, template, stats, seating, seats, winner) {
  * @param renderFace  card markup for one face — the open table's own renderer
  */
 export function showGameOver(state, {
-  seating, stats, recordText, heroFaces = [], renderFace,
+  seating, stats, recordText, heroFaces = [], renderFace, hints = 0, hintSeat = null,
 }) {
   el.gameOverFan.replaceChildren();
   for (const face of heroFaces) {
@@ -292,7 +295,7 @@ export function showGameOver(state, {
   }
 
   el.gameOverRecord.textContent = recordText || '';
-  statsInto(el.gameOverStats, state.pack.template, stats, seating, state.seats, winner);
+  statsInto(el.gameOverStats, state.pack.template, stats, seating, state.seats, winner, { hints, hintSeat });
 
   const rounds = stats ? stats.rounds : [];
   el.gameOverRoundsToggle.hidden = rounds.length === 0;

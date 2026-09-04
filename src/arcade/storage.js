@@ -229,8 +229,12 @@ export function saveHandPrefs(packId, prefs) {
  * which is why registerStorageErrorHandler exists rather than this checking
  * being sufficient on its own.
  */
-export function saveMatch(state) {
-  return Arcade.state.set(matchKey(state.pack.id), serializeMatch(state));
+export function saveMatch(state, { hints = 0 } = {}) {
+  // `hints` rides BESIDE the match, not in it: how many times the player asked
+  // the bar for a suggestion is not part of the game — replaying the log
+  // reproduces every card whether or not anybody was helped — but it is part
+  // of what a resume should bring back, and what the record counts at the end.
+  return Arcade.state.set(matchKey(state.pack.id), { ...serializeMatch(state), hints });
 }
 
 /**
@@ -476,6 +480,10 @@ const STATS_DEFAULTS = {
   forfeits: 0,
   streak: 0,
   bestStreak: 0,
+  // Hints taken across every match of this pack — the one number that says
+  // whether the Hint button is used at all (#93), and therefore whether it is
+  // worth extending to a joiner's seat.
+  hints: 0,
   // opponentKey -> { played, won }. The KEY IS NAMESPACED FROM THE FIRST WRITE
   // (`bot:juniper` today, `peer:<deviceId>` when Phase 8 lands) so a record
   // spanning both never needs a migration to tell them apart — see
@@ -501,8 +509,9 @@ function normalizeStats(prev) {
  * @param opponents  [{ key, beaten }] — per-opponent placement, so a
  *                   three-seat loss still records that you finished ahead of
  *                   one of them. See src/stats/matchStats.js placements().
+ * @param hints      how many hints the match handed out (src/ui/hint.js)
  */
-export function recordResult(packId, { won, forfeit = false, opponents = [] }) {
+export function recordResult(packId, { won, forfeit = false, opponents = [], hints = 0 }) {
   if (!isValidPackId(packId)) return;
   Arcade.stats.update(packId, (prev) => {
     const base = normalizeStats(prev);
@@ -512,6 +521,7 @@ export function recordResult(packId, { won, forfeit = false, opponents = [] }) {
       played: base.played + 1,
       won: base.won + (won ? 1 : 0),
       forfeits: base.forfeits + (forfeit ? 1 : 0),
+      hints: base.hints + (Number.isFinite(hints) && hints > 0 ? Math.floor(hints) : 0),
       streak,
       bestStreak: Math.max(base.bestStreak, streak),
       opponents: { ...base.opponents },
