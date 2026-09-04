@@ -28,7 +28,7 @@
  * @param cardArt  this pack's renderer (src/ui/cardStyles)
  * @param handPrefs the human's saved fan arrangement for this pack
  */
-export function createSession({ pack, state, seats, seating, cardArt, handPrefs, shared = false }) {
+export function createSession({ pack, state, seats, seating, cardArt, handPrefs, shared = false, hintsTaken = 0 }) {
   return {
     pack,
     state,
@@ -62,6 +62,12 @@ export function createSession({ pack, state, seats, seating, cardArt, handPrefs,
     // render where the human is no longer acting, so a suggestion can never
     // outlive the position it was made in.
     hint: null,
+    // How many hints this match has handed out so far. Not in the log — a
+    // hint is not a move and a replay must not know one was asked for — so
+    // it rides beside the saved match (src/arcade/storage.js saveMatch) and is
+    // counted into the pack's record when the match concludes, which is the
+    // one place the question "does anybody use this" can be answered from.
+    hintsTaken,
 
     // A render that landed mid-drag would replace the node the pointer is
     // holding, so renders are deferred while one is live and replayed after.

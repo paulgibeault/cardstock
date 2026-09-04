@@ -1786,10 +1786,13 @@ function showHint() {
   const hint = suggestMove(state, mySeat(), { difficulty: loadSettings().botDifficulty });
   if (!hint) return;
   session.hint = hint;
+  session.hintsTaken += 1;
   // The bar's text changing is silent to a screen reader; the log is the live
   // region, and this is exactly the kind of thing it exists to say.
   el.log.textContent = hint.text;
   renderSelection(state);
+  // Counted, and the count is part of what a resume brings back.
+  persistMatch();
 }
 
 function renderActionBar(state, ui, humanActs) {
@@ -2335,7 +2338,7 @@ function persistMatch() {
   // the lobby tile a "Start over" that dealt a private hand beside a table
   // other people were still sitting at.
   if (session?.shared) return;
-  const ok = saveMatch(state);
+  const ok = saveMatch(state, { hints: session.hintsTaken });
   if (ok !== false || saveFailureReported) return;
   saveFailureReported = true;
   reportTableError('This game could not be saved — it may not be here when you come back.');
@@ -2476,7 +2479,7 @@ function afterMove(state, move, from, message, { publish = true } = {}) {
     // `stats` is the surface whose formatting the game owns). The PANEL itself
     // waits: the last card is the thing worth watching, and it is still in the
     // air on this frame.
-    const ending = record.concludeMatch(state);
+    const ending = record.concludeMatch(state, { hints: session.hintsTaken });
     render(state, message);
     animateMove(state, move, from);
     if (trick) celebrateTrick(state, trick);
@@ -2786,7 +2789,9 @@ function scheduleAnnouncementBeats() { if (bots) bots.scheduleAnnouncementBeats(
  * the ritual (closeTable) forgot, so a persona's "did they remember to declare?"
  * roll could survive into a match that had not been dealt when it was made.
  */
-function adoptMatch(pack, state, message, { dealing = false, seats = null, seating = null, shared = false } = {}) {
+function adoptMatch(pack, state, message, {
+  dealing = false, seats = null, seating = null, shared = false, hints = 0,
+} = {}) {
   epoch += 1;
   stopSession(session);
   if (drag) drag.cancel();
@@ -2809,6 +2814,10 @@ function adoptMatch(pack, state, message, { dealing = false, seats = null, seati
     cardArt: makeCardRenderer(pack.manifest, pack.cardsById),
     handPrefs: loadHandPrefs(pack.id),
     shared,
+    // Handed in with the session rather than patched on afterwards, because
+    // this function persists the match before it returns and a count set
+    // after that write is a count the next reload has already lost.
+    hintsTaken: hints,
   });
   // Set on the NEW session, not before it exists: a fresh deal staggers its
   // cards in, a resumed match must not (the cards have been there all along).
@@ -3082,7 +3091,7 @@ export async function openTable(packId, { variants, seats } = {}) {
       if (rulesMoved) throw new Error(`pack version changed: ${stored.packVersion} → ${pack.manifest.version}`);
       const state = rehydrateMatch(pack, stored);
       if (!state.gameOver) {
-        adoptMatch(pack, state, `Resumed ${pack.manifest.name}.`);
+        adoptMatch(pack, state, `Resumed ${pack.manifest.name}.`, { hints: Number(stored.hints) || 0 });
         return;
       }
     } catch (err) {

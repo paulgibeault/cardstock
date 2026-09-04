@@ -341,3 +341,15 @@ test('a host slot carries the grace, and a slot without one says nothing', () =>
   saveHostMatch(TABLE_B, state, soloSeatTable(3));
   assert.equal(loadHostMatch(TABLE_B).graceMs, undefined);
 });
+
+test("a match saved with its hint count resumes with it, and replays without it", () => {
+  const state = playedMatch("milestones");
+  saveMatch(state, { hints: 3 });
+  const stored = loadMatch("milestones");
+  assert.ok(stored, "the match did not save");
+  assert.strictEqual(stored.hints, 3, "the hint count did not ride with the match");
+  // The count is BESIDE the game, never in it: the log is what it was.
+  assert.deepStrictEqual(stored.log, serializeMatch(state).log);
+  saveMatch(state);
+  assert.strictEqual(loadMatch("milestones").hints, 0, "a save with no count reads as none, not as undefined");
+});

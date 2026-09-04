@@ -72,7 +72,10 @@ export function createMatchRecord({ me, seating, art, onConclude }) {
       })
       .join(' · ');
     const streak = record.streak > 1 ? `${record.streak} in a row` : '';
-    return [overall, streak, head].filter(Boolean).join(' — ');
+    // Lifetime, so the sentence answers "is the Hint button used" at a glance;
+    // this match's own count is on its stat card.
+    const hints = record.hints > 0 ? `${record.hints} hint${record.hints === 1 ? '' : 's'} taken` : '';
+    return [overall, streak, head, hints].filter(Boolean).join(' — ');
   }
 
   /**
@@ -90,7 +93,7 @@ export function createMatchRecord({ me, seating, art, onConclude }) {
    * Returns everything showGameOver will need, so the wait does not have to hold
    * on to a live state to recompute it.
    */
-  function concludeMatch(state) {
+  function concludeMatch(state, { hints = 0 } = {}) {
     onConclude();
     // A finished match is not something to resume into.
     clearMatch(state.pack.id);
@@ -99,10 +102,15 @@ export function createMatchRecord({ me, seating, art, onConclude }) {
       won: me.holds(state.winner),
       forfeit: false,
       opponents: opponentOutcomes(state, stats),
+      hints,
     });
     return {
       seating: seating(),
       stats,
+      // This match's hints, and whose card they belong on: the seat this
+      // device holds, because that is who pressed the button.
+      hints,
+      hintSeat: me.seat(),
       recordText: recordSentence(state),
       heroFaces: heroFaces(state.pack.manifest),
       renderFace: (face) => art().face(face),

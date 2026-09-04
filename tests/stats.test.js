@@ -245,3 +245,13 @@ test("a stats replay is the same replay resuming uses", () => {
   const computed = computeMatchStats(pack, snapshot);
   assert.deepStrictEqual(computed.totals, resumed.scores);
 });
+
+test("hints taken accumulate in the pack's record, and never count negative", () => {
+  recordResult("milestones", { won: true, opponents: [], hints: 2 });
+  recordResult("milestones", { won: false, opponents: [] });
+  recordResult("milestones", { won: false, opponents: [], hints: 3 });
+  recordResult("milestones", { won: false, opponents: [], hints: -4 });
+  const record = readStats("milestones");
+  assert.strictEqual(record.hints, 5, "a match with no hints adds nothing, a negative count adds nothing");
+  assert.strictEqual(record.played, 4);
+});
