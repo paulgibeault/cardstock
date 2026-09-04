@@ -49,8 +49,20 @@ import { handValue } from '../engine/scoring.js';
 import { buildSeating } from '../players/roster.js';
 import { makeCardRenderer } from './cardStyles/index.js';
 import { fetchPack } from './packSource.js';
-import { flyCard, landOn, motionAllowed, flightLayer, rectOf, cardSizedRect } from './flight.js';
-import { createSession, stopSession } from './session.js';
+import {
+  flyCard, landOn, motionAllowed, flightLayer, rectOf, cardSizedRect,
+  scrollCorrectedRect, flightDurationMs,
+} from './flight.js';
+// Leaf logic, and the same import src/ui/zoneRenderer.js takes for the same
+// reason: a card that has just joined a meld has to be found in the chip, and
+// the chip draws its cards in this order rather than the engine's.
+import { meldDisplayOrder } from '../templates/melds.js';
+import {
+  createSession, stopSession,
+  // The opponent row's pure decisions live over there so a Node test can reach
+  // them — see the section header at the foot of session.js.
+  normalizeSeatView, nextSeatView, seatToggleOffered, seatToShow,
+} from './session.js';
 import { createBotDriver, botVerb } from './botDriver.js';
 import { suggestMove } from './hint.js';
 import { schedule } from './clock.js';
@@ -74,8 +86,8 @@ import {
   describeCard, cardAriaLabel, cardName,
 } from './describe.js';
 import {
-  interactionMode, stagingPhase, buildUiModel, dropCandidates, draggableSources, pruneSelection,
-  isSelected, handAddress, implicitLandingZone,
+  interactionMode, gathers, stagedSelection, buildUiModel, dropCandidates, draggableSources,
+  pruneSelection, toggleHandSelection, isSelected, handAddress, implicitLandingZone,
 } from './interaction.js';
 import {
   orderHand, reorder, nextMode, isSortMode, fanStep, classifyHandGesture, SORT_LABELS,
@@ -187,6 +199,13 @@ let onLocalMove = null;
 
 // The screen's own furniture, not the match's.
 let settings = null;
+// Where the seat row is smooth-scrolling TO, and when it set off:
+// { row, left, at }. Read by pendingSeatShift so a rect measured while the row
+// is still gliding can be corrected to where it is headed — see
+// scrollCorrectedRect in src/ui/flight.js. Deliberately NOT on `session`: it
+// describes the row on screen, it is time-boxed to well under a turn, and a
+// value that outlives a match is already stale by its own rule.
+let pendingSeatScroll = null;
 let exitToLobby = () => {};
 // Pointer choreography for lifting a card (src/ui/dragController.js), created
 // once at init and reused by every match.
@@ -610,6 +629,27 @@ function directionBadge(state) {
  *
  * The seat that may ACT never gives anything up, at any rung — whose turn it
  * is, and what they are holding, is what the row is read for.
+ *
+ * RUNGS NO VIEW CURRENTLY SELECTS, KEPT ON PURPOSE.
+ *
+ * The ladder is entered from exactly two places now, and neither of them walks
+ * its middle. 'all' builds at the top rung and buys room by scrolling instead
+ * of descending; 'minimized' starts at 'collapsed' and can only go further
+ * down. The rungs BETWEEN those two entry points are the ones the deleted
+ * 'auto' passed through on its way down, and nothing reaches them today.
+ *
+ * They stay, and note what "unreachable" does and does not mean: no view STOPS
+ * at these rungs, but their CSS still fires, because the tier classes are
+ * cumulative — a row that settled on 'collapsed' or 'faces' is wearing
+ * --compact and --tight as well. Deleting the rules would change how the rungs
+ * BELOW them draw. What deleting the entries would cost is different again and
+ * larger: the ORDER is the part that cost the debugging: what a row gives up
+ * first, and second, is a measured answer to the overflow above, not something
+ * rederivable from taste.
+ *
+ * The next view that wants a measured fit — a narrow-window rule, a pack that
+ * asks for one, 'auto' coming back because some table needs it — reaches for
+ * exactly these, and finding them intact is worth more than the lines saved.
  */
 const SEAT_TIERS = [
   // Everything: fan, name, score, counts, melds, piles.
@@ -631,8 +671,6 @@ const SEAT_TIERS = [
 ];
 const TIER_COLLAPSED = SEAT_TIERS.indexOf('collapsed');
 const TIER_FACES = SEAT_TIERS.indexOf('faces');
-/** Offer the "show everyone" toggle from this many opponents up. */
-const CAROUSEL_FROM_SEATS = 3;
 
 /**
  * Does this seat hold something the human's selected card can be played onto?
@@ -919,45 +957,38 @@ function placeOpenPlate() {
 }
 
 /**
- * HOW MUCH OF THE OTHER PLAYERS TO SHOW — the player's own three-way choice.
+ * HOW THE TWO RUNGS ARE DRAWN: one dot, two dots — how much of each player is
+ * on the felt, counted out.
  *
- * This was a two-state carousel toggle, and two states could not express what
- * a table actually needs. Fitting alone is not the whole question: Stockpile's
- * piles are small enough that five opponents' worth of them technically fit on
- * any desktop, so the automatic rule — give up only what will not fit — meant
- * that table never minimized at ANY width, however cluttered it read. The
- * answer is not a cleverer width threshold; it is that "is this too busy" is a
- * preference, and the player is the one holding it.
- *
- * HOW IT IS DRAWN: one dot, two dots, three dots — how much of each player is
- * on the felt, counted out. The states are ORDERED by that, least to most, and
- * the button cycles through them in order, so the control teaches itself: dots
- * go up, you see more; they wrap round to one, you see least. It replaced a set
- * of invented glyphs (⊞ ⊟ ⇥⇤) that had no relationship to each other and so had
- * to be learned three times over, once per state, with nothing carrying between
- * them.
+ * WHY there are two of them, and not the three there used to be, is in
+ * SEAT_VIEWS (src/ui/session.js). What matters here is that they are ORDERED,
+ * least to most, and that the dots count the same way: dots go up, you see
+ * more. That is the whole of the design, and it survives the middle rung's
+ * removal untouched — a scale reads as a scale at two marks as much as at
+ * three. It replaced a set of invented glyphs (⊞ ⊟ ⇥⇤) with no relationship to
+ * each other, which had to be learned once per state with nothing carrying
+ * between them.
  *
  *   1 dot   minimized  faces for everyone who cannot act, fit or no fit
- *   2 dots  auto       give up only what will not fit  (the default)
- *   3 dots  all        every plate open, the row scrolls sideways
+ *   2 dots  all        every plate open, the row scrolls sideways  (default)
  *
- * Only offered once there is a crowd, because on a small table every plate is
- * already open and all three states draw the same row.
+ * `pressed` is the ARIA state, not a second copy of the dots — see the toggle.
+ * There was a `title`/`note` pair here as well, for a hover panel that explained
+ * the glyphs; the dots need no explaining and the panel is gone.
  */
-const SEAT_VIEWS = ['minimized', 'auto', 'all'];
-// `label` is the whole of what this control says: it is the button's own
-// accessible name, and it names both the rung it is on and what a tap does
-// next. There was a `title`/`note` pair here as well, for a hover panel that
-// explained the glyphs — the dots need no explaining, and the panel is gone.
 const SEAT_VIEW_COPY = {
-  minimized: { dots: 1, label: 'Player cards: minimized. Tap to show as much as fits.' },
-  auto: { dots: 2, label: 'Player cards: as much as fits. Tap to open every player in full.' },
-  all: { dots: 3, label: 'Player cards: all open. Tap to go back to minimized.' },
+  minimized: { dots: 1, pressed: true },
+  all: { dots: 2, pressed: false },
 };
+/**
+ * The button's name, and it does not change with the state — see the toggle.
+ * Named after what the control DOES rather than after either rung, because a
+ * toggle's name has to stay true in both of its positions.
+ */
+const SEAT_VIEW_LABEL = 'Minimize player cards';
 
 function seatViewOf() {
-  const view = session?.seatView;
-  return SEAT_VIEWS.includes(view) ? view : 'auto';
+  return normalizeSeatView(session?.seatView);
 }
 
 function seatViewToggle() {
@@ -975,23 +1006,36 @@ function seatViewToggle() {
     dot.className = 'opponent-row__dot';
     button.appendChild(dot);
   }
-  // Not aria-pressed: this is a three-way cycle, and a pressed/unpressed
-  // boolean would describe two of the states and lie about the third. The
-  // label says which one it is in and what tapping does next, which also
-  // overrides the dots — they are a picture of what the label already says.
-  button.setAttribute('aria-label', copy.label);
+  // ARIA-PRESSED NOW — AND THE LABEL HELD STILL TO PAY FOR IT.
+  //
+  // The note that stood here refused aria-pressed because a pressed/unpressed
+  // boolean describes two states and would lie about the third. There is no
+  // third: this is a toggle, and a toggle is the thing aria-pressed exists for.
+  // What has to change alongside it is the label. A name that rewrote itself on
+  // every tap ("Player cards: all open. Tap to go back to minimized.") sat on
+  // top of a state that also flips, which is one fact announced twice in two
+  // vocabularies — and a screen reader reads both, so the player hears the
+  // change of position described and then contradicted in wording.
+  //
+  // So the name says what the button does and stays put, and `pressed` says
+  // which rung the row is standing on. Between them they still answer both
+  // halves of what the old label answered alone: pressed, the cards are
+  // minimized and a tap opens them; unpressed, they are open and a tap
+  // minimizes. The dots remain a picture of the same thing for everyone else,
+  // which is why they are aria-hidden by being empty spans with no text.
+  button.setAttribute('aria-pressed', String(copy.pressed));
+  button.setAttribute('aria-label', SEAT_VIEW_LABEL);
   button.addEventListener('click', () => {
     if (!session || !liveState()) return;
-    session.seatView = SEAT_VIEWS[(SEAT_VIEWS.indexOf(view) + 1) % SEAT_VIEWS.length];
+    session.seatView = nextSeatView(view);
     // The seat holding an open plate may not be minimized in the next view.
     session.openSeat = null;
     render(liveState());
   });
-  // NO INSPECTOR HERE EITHER. It existed to explain three invented glyphs;
-  // one, two and three dots are a scale that explains itself, and the button's
-  // own accessible name still says which rung it is on and what a tap does
-  // next. A panel that opens over the felt to describe a control in the corner
-  // is exactly the kind that was in the way.
+  // NO INSPECTOR HERE EITHER. It existed to explain three invented glyphs; a
+  // count of dots is a scale that explains itself, and the button's name and
+  // pressed state say the rest. A panel that opens over the felt to describe a
+  // control in the corner is exactly the kind that was in the way.
   return button;
 }
 
@@ -1202,7 +1246,9 @@ function seatRowOverflows() {
 
 function renderSeats(state, stagger, acting, ui) {
   const opponents = state.seats - 1;
-  // Three ways to show a crowd, and the player picks — see seatViewToggle.
+  // Two ways to show a crowd, and the player picks — see seatViewToggle here
+  // and SEAT_VIEWS in src/ui/session.js. 'all' is the default, so the carousel
+  // is the ordinary case now rather than the one somebody asked for.
   const view = seatViewOf();
   const carousel = view === 'all';
 
@@ -1245,10 +1291,13 @@ function renderSeats(state, stagger, acting, ui) {
     session.plateDismissed = false;
   }
 
-  // The toggle is a view control for a crowd; it is not offered on a table
-  // where every seat is already open and it would toggle between two identical
-  // rows. Its width is part of the row, so it is present for the measuring.
-  const showToggle = carousel || opponents >= CAROUSEL_FROM_SEATS;
+  // The toggle is a view control for a crowd, and it is a seat COUNT that says
+  // whether there is one — see seatToggleOffered (src/ui/session.js) for why
+  // the old "or the row is already scrolling" half had to go once 'all' became
+  // the default, and for the latch that keeps a minimized player from being
+  // stranded. Built before the fit loop runs so the row is measured with
+  // whatever furniture it will actually be drawn with.
+  const showToggle = seatToggleOffered(opponents, view);
 
   const build = (tier) => buildSeatRow(state, stagger, acting, ui, { tier, carousel, mustOpen, showToggle, actor });
 
@@ -1290,8 +1339,8 @@ function renderSeats(state, stagger, acting, ui) {
     closePlate();
   }
 
-  reserveSeatRowSpace(state, view, carousel);
-  scrollActingSeatIntoView();
+  reserveSeatRowSpace(state, view);
+  scrollActingSeatIntoView(state, acting);
 
   // Every seat is in the DOM now, so the open plate has a rect to hang off.
   placeOpenPlate();
@@ -1331,8 +1380,30 @@ function renderSeats(state, stagger, acting, ui) {
  *
  * The reserve is per configuration, so a resize or a change of view starts a
  * fresh one instead of inheriting a stale, too-large floor.
+ *
+ * IT APPLIES IN THE CAROUSEL TOO, AND IT DID NOT USE TO.
+ *
+ * There was an early return here, reasoned as "the carousel is a scroller the
+ * player drives; reserving inside it would pad the scrollable length for no
+ * one's benefit". That was true of the WIDTH spacer described above, and it
+ * stopped being true when the spacer went: a min-height does not lengthen a
+ * horizontal scroller by a single pixel.
+ *
+ * The other half of the argument for skipping it — every seat is the same size
+ * in carousel mode, so nothing moves — is about WIDTH. It comes from the acting
+ * seat no longer opening INSIDE the row. Height is a different fact and it
+ * still moves: in carousel mode nothing is collapsed, so every seat is showing
+ * its melds, the row is as tall as its tallest seat, and a seat holding melds
+ * is taller than one holding none. That is not a guess — it is the same
+ * observation `.opponent-row`'s `align-items: flex-start` was written for. A
+ * Milestones bot laying a run grows its seat, and therefore the row, and
+ * therefore pushes the whole felt below it down, on somebody ELSE's turn.
+ *
+ * With 'all' the default view, keeping the early return would have switched
+ * #13's protection off at nearly every table on the platform, which is the
+ * opposite of what defaulting to it was supposed to buy.
  */
-function reserveSeatRowSpace(state, view, carousel) {
+function reserveSeatRowSpace(state, view) {
   const row = el.opponentsTop;
   // DELIBERATELY COARSER THAN seatFitKey, which counts how many seats have to
   // stay open. That count is the difference between your turn and a bot's —
@@ -1343,13 +1414,20 @@ function reserveSeatRowSpace(state, view, carousel) {
   const held = session?.seatRowReserve;
   const reserve = held && held.key === key ? held : { key, height: 0 };
 
-  // The carousel is a scroller the player drives; reserving inside it would
-  // pad the scrollable length for no one's benefit.
-  if (carousel) {
-    row.style.minHeight = '';
-    if (session) session.seatRowReserve = null;
-    return;
-  }
+  // A NEW CONFIGURATION MEASURES A ROW WITH NO FLOOR UNDER IT.
+  //
+  // Starting a fresh reserve at zero is not enough on its own, because the
+  // measurement below reads a rect that ALREADY INCLUDES whatever min-height is
+  // currently applied — so the first thing a fresh reserve would do is adopt
+  // the outgoing view's mark and call it its own, and "per configuration" would
+  // be a promise this function does not keep.
+  //
+  // It hid while the carousel returned early: 'all' cleared the floor on its
+  // way past, so every transition through it was scrubbed. Now that both views
+  // reserve, the symptom is immediate — tap down to faces on a Milestones table
+  // and the row keeps the 163px it needed for open seats holding melds, leaving
+  // three-quarters of an inch of empty felt under a row of avatars.
+  if (reserve !== held) row.style.minHeight = '';
 
   // Measured, not summed: `getBoundingClientRect().height` already includes
   // whatever floor is currently applied, and content taller than the floor
@@ -1361,30 +1439,92 @@ function reserveSeatRowSpace(state, view, carousel) {
 }
 
 /**
- * Bring the seat that is playing into view, centred where the row allows it.
+ * Bring the seat worth watching into view, centred where the row allows it.
  *
  * Carousel only. It is the one view whose whole premise is a row longer than
  * the felt, which means it is the one view where the seat you most need to see
  * can be off the end of it — and a player watching a six-handed table should
- * not have to go looking for whose turn it is.
+ * not have to go looking for it.
  *
- * Every other view fits by construction (the fit ladder guarantees it), so
- * there is nothing to scroll and this stays out of the way.
+ * The other view fits by construction (the fit ladder guarantees it), so there
+ * is nothing to scroll and this stays out of the way.
+ *
+ * WHICH seat is worth watching is seatToShow's decision (src/ui/session.js),
+ * and it is over there rather than inlined here for a reason this function
+ * demonstrates: everything below is offsets and rects, none of it can be loaded
+ * by a Node test, and the rule it used to contain — "find .seat--active" — was
+ * silently wrong on the human's own turn for exactly as long as nobody could
+ * write a test that asked it a question.
  */
-function scrollActingSeatIntoView() {
+function scrollActingSeatIntoView(state, acting) {
   const row = el.opponentsTop;
-  if (!row.classList.contains('opponent-row--carousel')) return;
-  const seat = row.querySelector('.seat--active');
-  if (!seat) return;
+  // No carousel, no scrolling — and therefore no unfinished scroll for a rect
+  // to be corrected against. Dropped rather than left to time out, so a view
+  // change out of the carousel cannot leave a target nobody is travelling to.
+  if (!row.classList.contains('opponent-row--carousel')) {
+    pendingSeatScroll = null;
+    return;
+  }
+  const seat = seatToShow(state, mySeat(), acting);
+  if (seat === null) return;
+  const node = row.querySelector(`.seat[data-seat="${seat}"]`);
+  if (!node) return;
+  const left = seatScrollTarget(row, node);
+  if (left === null) return;
+  // RECORDED BEFORE THE SCROLL IS ISSUED, because every rect measured between
+  // here and the row coming to rest is measured off a moving row — see
+  // scrollCorrectedRect in src/ui/flight.js for the card that went for a ride.
+  // `Date.now` and not the session clock: this is a time-box on a browser
+  // animation, and a frozen clock would keep a stale target alive forever,
+  // which is the one outcome the box exists to prevent.
+  pendingSeatScroll = { row, left, at: Date.now() };
+  row.scrollTo({ left, behavior: motionAllowed() ? 'smooth' : 'auto' });
+}
+
+/**
+ * The seat row's unfinished scroll, as scrollCorrectedRect wants it, or null.
+ *
+ * `holds` is asked of the node rather than assumed, because the correction is
+ * applied by the general-purpose `liveRect` below and most of what that
+ * measures — the hand, the centre piles, the discard — is nowhere near the row.
+ */
+function pendingSeatShift(node) {
+  const pending = pendingSeatScroll;
+  if (!pending || !node) return null;
+  return {
+    left: pending.left,
+    scrollLeft: pending.row.scrollLeft,
+    elapsedMs: Date.now() - pending.at,
+    holds: pending.row.contains(node),
+  };
+}
+
+/** A node's rect, corrected for a seat row that is still gliding under it. */
+function liveRect(node) {
+  return scrollCorrectedRect(rectOf(node), pendingSeatShift(node));
+}
+
+/**
+ * Where the row has to be scrolled to put `node` in the middle of it, or null
+ * when it is already near enough that scrolling would be worse than not.
+ *
+ * SPLIT OUT OF THE SCROLL DELIBERATELY, and not because either half was long.
+ * This number is the row's destination, and it is known BEFORE the smooth
+ * scroll that chases it — which is precisely what a card in flight needs, since
+ * animateMove measures its landing rectangle off a row that is still moving
+ * under it. Whoever fixes that reads this value; leaving it computed inside the
+ * scrollTo call would have meant re-deriving it from a rect that has already
+ * gone stale.
+ */
+function seatScrollTarget(row, node) {
   const max = row.scrollWidth - row.clientWidth;
-  if (max <= 0) return;
-  const centred = seat.offsetLeft + (seat.offsetWidth / 2) - (row.clientWidth / 2);
+  if (max <= 0) return null;
+  const centred = node.offsetLeft + (node.offsetWidth / 2) - (row.clientWidth / 2);
   const left = Math.max(0, Math.min(max, Math.round(centred)));
   // Already there, near enough: re-issuing a smooth scroll every render would
   // restart the animation on each of a turn's several renders and leave the
   // row permanently gliding.
-  if (Math.abs(row.scrollLeft - left) < 2) return;
-  row.scrollTo({ left, behavior: motionAllowed() ? 'smooth' : 'auto' });
+  return Math.abs(row.scrollLeft - left) < 2 ? null : left;
 }
 
 /**
@@ -1400,8 +1540,12 @@ function scrollActingSeatIntoView() {
 function seatFitKey(state, mustOpen, view) {
   let open = 0;
   for (let seat = 0; seat < state.seats; seat++) if (!isMySeat(seat) && mustOpen(seat)) open += 1;
-  // `view` is in the key so switching back to 'auto' re-probes from the top
-  // rather than inheriting the floor 'minimized' was pinned to.
+  // `view` is in the key because a cached rung only means anything for the view
+  // that measured it. Only 'minimized' reaches the fit loop at all now ('all'
+  // scrolls instead of measuring), so in practice this is one value — kept
+  // because inheriting 'minimized's floor across a view change is a floor no
+  // measurement asked for, which was a live bug back when 'auto' existed to
+  // switch back to, and would be one again the moment a measured view returns.
   return `${el.opponentsTop.clientWidth}:${state.seats}:${open}:${view}`;
 }
 
@@ -1434,33 +1578,9 @@ function renderPlayerZones(state, ui, draggable) {
   }
 }
 
-/**
- * Which of the hand's cards are waiting in the tray rather than in the fan.
- *
- * Only in the modes that gather several cards before committing them — laying
- * down a contract, choosing a pass. Everywhere else a selection is a single
- * card that is about to be played somewhere, and lifting it out of the fan
- * would be motion for a card that is leaving anyway.
- */
+/** The tray's contents for the seat at this device — the rule is in interaction.js. */
 function stagedIds(state) {
-  // ASKED OF THE PHASE, NOT OF THE MOMENT.
-  //
-  // This used to gate on `ui.handMulti`, and that flips partway through a
-  // turn — a rummy turn is draw, then meld, then discard, and only the middle
-  // of those gathers. So the SAME picked cards were drawn two different ways
-  // depending on when you looked: sitting in the tray while gathering, and
-  // lifted out of the fan on either side of it. Nothing about the cards had
-  // changed; the display bounced because the mode had.
-  //
-  // `stagingPhase` is the stable question — its own note explains that it has
-  // to be, because the tray's SLOT is reserved on it and a slot that comes and
-  // goes moves the felt under the hand. Gating the CONTENTS on the same
-  // question means a pack that stages always stages, and a pack that never
-  // does (shedding) still shows its single selection in the fan, which is the
-  // only place it has.
-  if (!stagingPhase(state)) return [];
-  if (!session.selection || session.selection.from !== handAddress(mySeat())) return [];
-  return session.selection.cardIds;
+  return stagedSelection(state, mySeat(), session.selection);
 }
 
 /**
@@ -1479,12 +1599,21 @@ function stagedIds(state) {
  */
 function renderStageTray(state, ui) {
   const staged = stagedIds(state);
-  // The SLOT belongs to the phase, the CONTENTS belong to the human. Gating
-  // the row itself on `ui.handMulti` meant it left the felt's flex column
-  // every time the answer changed — twice a turn in contract rummy, once the
-  // bots start drawing and melding — and took a card's height of table with
-  // it (#13). A pack that never stages still gets no row at all.
-  el.stageRow.hidden = !stagingPhase(state);
+  // THE SLOT BELONGS TO THE SEAT'S STANDING IN THE ROUND, the contents to the
+  // human. Gating the row itself on `ui.handMulti` meant it left the felt's
+  // flex column every time the answer changed — twice a turn in contract rummy,
+  // once the bots start drawing and melding — and took a card's height of table
+  // with it (#13). A pack that never stages still gets no row at all.
+  //
+  // `gathers` moves the felt ONCE PER ROUND, at the moment the player lays
+  // down, and that is not the case #13 was about: the bug there was a strip
+  // flickering twice a turn for a whole match. Holding the slot after a
+  // lay-down bought nothing — the row is `opacity: 0; visibility: hidden` and
+  // inert (src/ui/table.css) — while a card's height of dead felt sat between
+  // the meld chips and the hand for the rest of the round, which is what a
+  // playtester saw. The board has just changed underneath the player anyway:
+  // their melds have arrived in #player-piles, and this is the space they take.
+  el.stageRow.hidden = !gathers(state, mySeat());
   // Empty and inert follow WHAT IS IN THE TRAY, not what mode the turn is in.
   // Keyed on `ui.handMulti` these disagreed with the tray's own contents the
   // moment stagedIds stopped asking that question — the row would go inert
@@ -1848,7 +1977,11 @@ function renderActionBar(state, ui, humanActs) {
     el.actionButton.textContent = ui.action.label;
     el.actionButton.onclick = () => {
       if (!liveState()) return;
-      performHumanMove(liveState(), ui.action.makeMove(), el.actionButton);
+      const move = ui.action.makeMove();
+      // The button is the third tap that was launching cards from the wrong
+      // place: "Lay down" and "Pass 3 cards" both carry cards that are sitting
+      // in the tray, and the flight was starting from the action bar.
+      performHumanMove(liveState(), move, tapOrigin(move));
     };
   } else {
     el.actionButton.hidden = true;
@@ -2193,15 +2326,27 @@ function seatRect(seat) {
   // this returned null with it: every card that seat drew or played crossed the
   // felt from nowhere, silently, on exactly the crowded tables where watching
   // WHO acted matters most. The face is where the player is looking anyway.
-  return (mini && (rectOf(mini.lastElementChild) || rectOf(mini)))
-    || rectOf(plate.querySelector('.seat__avatar'))
-    || rectOf(plate);
+  //
+  // Which NODE won matters as much as its rect now: every one of these lives
+  // inside the scrolling row, and liveRect has to be told what it measured to
+  // know whether the row's unfinished scroll applies to it.
+  const node = firstSized([mini?.lastElementChild, mini, plate.querySelector('.seat__avatar'), plate]);
+  return liveRect(node);
+}
+
+/** The first of `nodes` that has a rect — the fallback ladder, as a node. */
+function firstSized(nodes) {
+  for (const node of nodes) if (rectOf(node)) return node;
+  return null;
 }
 
 function zoneRect(address) {
   const node = zoneStackNode(address);
   if (!node) return null;
-  return rectOf(node.querySelector?.('.pile-stack__top') || node) || rectOf(node);
+  // Corrected like a seat's, and for the same reason: an opponent's meld strip
+  // carries `data-zone="melds.N"` and is drawn INSIDE the seat row, so a hit
+  // aimed at one mid-scroll landed on the neighbour's melds.
+  return liveRect(node.querySelector?.('.pile-stack__top') || node) || liveRect(node);
 }
 
 /**
@@ -2213,6 +2358,10 @@ function zoneRect(address) {
  */
 function animateMove(state, move, from) {
   if (!from) return;
+  // ONE DURATION FOR THE WHOLE TABLE, and it is the player's own pace setting
+  // rather than a distinction between their cards and a bot's — see
+  // flightDurationMs. `settings` is null for the instant before the first load.
+  const duration = flightDurationMs(settings?.botDelayMs);
   if (move.type === 'draw') {
     // A draw has no single landing slot in a fanned hand, so it dissolves on
     // arrival rather than pretending to become a particular card. The human's
@@ -2221,15 +2370,26 @@ function animateMove(state, move, from) {
     const card = isMySeat(move.actor)
       ? cardById(state, state.zones.cards(handAddress(mySeat())).at(-1) || '')
       : null;
-    flyCard(card ? art().face(card) : art().back(), from, to, { fade: true });
+    flyCard(card ? art().face(card) : art().back(), from, to, { fade: true, duration });
     return;
   }
   if (move.type === 'hit') {
     const card = cardById(state, move.cards?.[0]);
-    const to = cardSizedRect(zoneRect(`melds.${move.choice?.seat}`), from.width);
-    if (card && to) flyCard(art().face(card), from, to, { fade: true });
+    if (!card) return;
+    // IT USED TO DISSOLVE. `fade: true` was right while the destination was a
+    // whole meld strip with no slot to land on; the chip's card nodes are a
+    // stable target, so the copy now lands ON the card it is a copy of and the
+    // real one is held invisible underneath until it does — the same deal a
+    // played card gets, and the difference between "a card arrived here" and
+    // "a card evaporated near here".
+    const seat = move.choice?.seat;
+    const landing = meldCardNode(state, seat, move.cards[0]);
+    const to = liveRect(landing) || cardSizedRect(zoneRect(`melds.${seat}`), from.width);
+    if (!to) return;
+    landOn(landing, flyCard(art().face(card), from, to, { duration }));
     return;
   }
+  if (move.type === 'layDown') { animateLayDown(state, move, from, duration); return; }
   if (move.type !== 'playCard' && move.type !== 'discard') return;
   const card = cardById(state, move.cards && move.cards[0]);
   if (!card) return;
@@ -2237,7 +2397,93 @@ function animateMove(state, move, from) {
   if (!address) return;
   const node = zoneStackNode(address);
   const topNode = node ? node.querySelector('.pile-stack__top') : null;
-  landOn(topNode, flyCard(art().face(card), from, rectOf(topNode) || zoneRect(address)));
+  landOn(topNode, flyCard(art().face(card), from, liveRect(topNode) || zoneRect(address), { duration }));
+}
+
+/**
+ * How many cards of a lay-down are worth watching arrive.
+ *
+ * PENALTY_FLIGHT_MAX's reasoning (src/ui/celebrations.js) applied to the other
+ * end: a contract is three to six cards in every pack shipped, but the contract
+ * ladder is pack data and one that asks for four sets of four would buy sixteen
+ * timers and sixteen SVG copies for a moment that has stopped reading as a
+ * single event long before that. Cards past the cap are simply already there.
+ */
+const LAYDOWN_FLIGHT_MAX = 8;
+
+/** The beat between one laid-down card and the next. */
+const LAYDOWN_STAGGER_MS = 80;
+
+/**
+ * A contract, laid down and SEEN to be laid down.
+ *
+ * THE BIGGEST EVENT IN A MILESTONES ROUND HAD NO ANIMATION AT ALL. animateMove
+ * handled draw, hit, playCard and discard and returned for everything else, so
+ * a bot completing its contract put three to six cards on the felt between two
+ * frames — the one moment in the game where you most need to know who did what
+ * and it happened without a single pixel moving. tests/flight.test.js now
+ * derives the move vocabulary from the templates themselves and fails on any
+ * type that is neither animated nor deliberately silent, because a hardcoded
+ * list of four is exactly what let this sit unnoticed.
+ *
+ * Staggered card by card, in meld order, because the count is half the news:
+ * three cards arriving together are one event, three arriving in turn are three.
+ * Same judgement as animatePenaltyDraw's, for the same reason.
+ */
+function animateLayDown(state, move, from, duration) {
+  // BEFORE ANYTHING IS HIDDEN. Every card below is held invisible until its
+  // copy lands, and with motion off no copy is ever launched — so an early
+  // return here is the difference between "no animation" and "the meld you just
+  // laid down is blank". flyCard's own gate is too late to help.
+  if (!motionAllowed()) return;
+  const seat = move.actor;
+  const cardIds = (move.choice?.melds || []).flatMap((meld) => meld.cards || []);
+  const fallback = cardSizedRect(zoneRect(`melds.${seat}`), from.width);
+  const myEpoch = epoch;
+
+  cardIds.slice(0, LAYDOWN_FLIGHT_MAX).forEach((cardId, i) => {
+    const card = cardById(state, cardId);
+    const landing = meldCardNode(state, seat, cardId);
+    const to = liveRect(landing) || fallback;
+    if (!card || !to) return;
+    landOn(landing, new Promise((resolve) => {
+      // A PLAIN setTimeout, NOT Arcade.session.setTimeout, which is what the
+      // rest of this file staggers with. The session clock stops with a
+      // suspended frame, and a stagger that never fires here is not a missing
+      // flight — it is a meld card left at opacity 0 for the rest of the round.
+      // Same rule as animationSettled's backstop: the honest timer is the one
+      // that still runs in the background.
+      setTimeout(() => {
+        if (myEpoch !== epoch) { resolve(); return; }
+        flyCard(art().face(card), from, to, { duration }).then(resolve);
+      }, i * LAYDOWN_STAGGER_MS);
+    }));
+  });
+}
+
+/**
+ * Where a card that has just joined a meld now sits, as a node.
+ *
+ * The chip draws its cards in READING order rather than the order the engine
+ * stored them (meldDisplayOrder — a run held `6 3 W 5` reads `3 W 5 6`), so the
+ * slot a card landed in cannot be inferred from its position in the move. The
+ * group is found by searching for the card rather than by trusting the move's
+ * meld index, so this answers for a hit onto somebody else's meld and for a
+ * lay-down's own fresh groups without knowing which it was asked about.
+ */
+function meldCardNode(state, seat, cardId) {
+  if (!zones || seat === undefined || seat === null) return null;
+  const groups = zones.meldGroupsOf(state, seat) || [];
+  const index = groups.findIndex((group) => group.cards?.includes(cardId));
+  if (index < 0) return null;
+  const chip = meldChipNode(`${seat}:${index}`);
+  const cards = chip?.querySelector('.meld-chip__cards');
+  if (!cards) return null;
+  // Filtered exactly as buildMeldStrip filters, or a card the renderer skipped
+  // would shift every slot after it by one.
+  const ordered = meldDisplayOrder(makeCtx(state), groups[index])
+    .filter((id) => cardById(state, id));
+  return cards.children[ordered.indexOf(cardId)] || null;
 }
 
 /* ------------------------------------------------------------------ *
@@ -2400,10 +2646,18 @@ function finalPlaySentence(state, move) {
  * asks to be read — the bar arriving mid-flight would be the same interruption
  * the panel used to be, only smaller. The winner's seat pulses underneath, so
  * the answer to "who?" is on the table and not only in the sentence.
+ *
+ * THE BEAT IS MEASURED AGAINST THE FLIGHT, not against the 700 it used to be.
+ * That number was a comfortable margin over a fixed 260ms flight and became a
+ * dead heat the moment the flight could scale to 700 with the bot-speed
+ * setting — the one case where "the final card has landed" stopped being true.
+ * Floored at the old value so nobody waits longer than they already did unless
+ * they have asked for a slower table.
  */
 function offerFinalLook(state, move, ending) {
   const myEpoch = epoch;
   pulseSeat(state.winner, 'good');
+  const beat = Math.max(700, flightDurationMs(settings?.botDelayMs) + 280);
   Arcade.session.setTimeout(async () => {
     if (myEpoch !== epoch) return;
     const acknowledged = await awaitFinalLook(winnerSentence(state), finalPlaySentence(state, move));
@@ -2411,7 +2665,7 @@ function offerFinalLook(state, move, ending) {
     // results belong to a match that is no longer the one on screen.
     if (!acknowledged || myEpoch !== epoch) return;
     showGameOver(state, ending);
-  }, 700);
+  }, beat);
 }
 
 function openScoreboard() {
@@ -2590,6 +2844,10 @@ async function fillPendingChoices(state, move, myEpoch) {
  * The wild prompt used to live in the tap handler alone, which meant a dropped
  * wild would have bypassed it. Asking HERE is what lets both dressings stay
  * one code path.
+ *
+ * `sourceNode` is WHERE THE CARD IS COMING FROM, which for a drop is the node
+ * the finger released over and for a tap is emphatically not the node that was
+ * tapped — see tapOrigin.
  */
 async function performHumanMove(state, move, sourceNode) {
   const myEpoch = epoch;
@@ -2615,7 +2873,7 @@ async function performHumanMove(state, move, sourceNode) {
     render(state, `Can't do that: ${check.reason}`);
     return;
   }
-  const from = rectOf(sourceNode) || (move.from ? zoneRect(move.from) : null) || seatRect(mySeat());
+  const from = liveRect(sourceNode) || (move.from ? zoneRect(move.from) : null) || seatRect(mySeat());
   // NOT `selection = null`. The render inside afterMove prunes it per card
   // (pruneSelection), which drops exactly what this move consumed and leaves
   // the rest staged. Clearing wholesale is what made a Milestones meld
@@ -2623,6 +2881,39 @@ async function performHumanMove(state, move, sourceNode) {
   // discard took the tray with it.
   applyStateChange(state, move, { far: false });
   afterMove(state, move, from);
+}
+
+/**
+ * Where a TAPPED move leaves from, as a node — or null to let performHumanMove
+ * fall back through the move's own source zone.
+ *
+ * THE HUMAN'S OWN PLAYS DID NOT TRAVEL AT ALL, and this is why. A tap hands
+ * performHumanMove the node that was tapped, which for a drag is where the
+ * finger let go and is therefore honest, and for a tap is THE DESTINATION: the
+ * discard pile, the meld chip. Measured live in a browser, discarding by
+ * tapping the discard pile animated a card travelling `translate(0px, -1.75px)`
+ * over 260ms — a real flight, from the pile to the pile. Every complaint that
+ * the animation is "too fast to notice" was, for the player's own cards, a
+ * complaint that there was no animation.
+ *
+ * The card is where the player last saw it: staged in the tray, or still in the
+ * fan. Failing both — Stockpile taps a pile top onto another pile, and there is
+ * no hand card involved at all — null is the RIGHT answer rather than a
+ * shrugging fallback to the tapped node, because `move.from` names the source
+ * zone and gives the true origin.
+ *
+ * Only the tap sites call this. The drop handlers keep passing their own node.
+ */
+function tapOrigin(move) {
+  const cardId = (move?.cards && move.cards[0])
+    // A lay-down or a pass carries its cards in `choice`/`cards` shapes this
+    // module does not read; the selection is the same cards and is the platform's
+    // own record of what the player gathered to make this move.
+    || session?.selection?.cardIds?.[0]
+    || null;
+  if (!cardId) return null;
+  const selector = `[data-card-id="${CSS.escape(cardId)}"]`;
+  return el.stageTray.querySelector(selector) || el.hand.querySelector(selector) || null;
 }
 
 /** A tap on one of the human's own hand cards, interpreted per the UI model. */
@@ -2638,14 +2929,16 @@ function onHandCard(state, cardId, card, sourceNode, ui) {
     return;
   }
 
-  // Selection modes: toggle membership (multi) or replace (single).
+  // Selection modes: toggle membership (multi) or replace (single). The rule
+  // itself lives in interaction.js, where it can be pinned without a pointer —
+  // including the part that says a single-select tap may never discard more
+  // than the card it landed on.
   if (session.selection && session.selection.from !== handAddr) session.selection = null;
+  const held = session.selection ? session.selection.cardIds.length : 0;
+  session.selection = toggleHandSelection(session.selection, {
+    from: handAddr, cardId, multi: ui.handMulti,
+  });
   if (ui.handMulti) {
-    const ids = session.selection ? session.selection.cardIds.slice() : [];
-    const at = ids.indexOf(cardId);
-    if (at !== -1) ids.splice(at, 1);
-    else ids.push(cardId);
-    session.selection = ids.length ? { from: handAddr, cardIds: ids } : null;
     // The card moves between the fan and the tray, so the fan's child count
     // changes and it has to be rebuilt and re-measured — the fast path below
     // deliberately does neither. The flight covers the rebuild.
@@ -2654,9 +2947,12 @@ function onHandCard(state, cardId, card, sourceNode, ui) {
     flyToStage(state, cardId, from);
     return;
   }
-  session.selection = isSelected(session.selection, handAddr, cardId) ? null : { from: handAddr, cardIds: [cardId] };
-  // Nothing moved — repaint what is lit rather than rebuilding the table.
-  renderSelection(state);
+  // Nothing moved — repaint what is lit rather than rebuilding the table. The
+  // exception is a tap that arrives while several cards are staged, which no
+  // longer collapses the tray to nothing but does empty a slot in it, so the
+  // two rows have to be rebuilt.
+  if (held > 1) render(state);
+  else renderSelection(state);
 }
 
 /**
@@ -3223,16 +3519,19 @@ export function initTable({ onExit }) {
     art,
     cardById,
     markEntry,
-    onTarget: (move, node) => { if (liveState()) performHumanMove(liveState(), move, node); },
+    // `node` is the pile that was tapped — the card's DESTINATION — so it is
+    // dropped in favour of wherever the card actually is. See tapOrigin.
+    onTarget: (move) => { if (liveState()) performHumanMove(liveState(), move, tapOrigin(move)); },
     onPickUp: (address, top) => {
       session.selection = isSelected(session.selection, address, top)
         ? null
         : { from: address, cardIds: [top] };
       renderSelection(liveState());
     },
-    onMeld: (meldKey, node) => {
+    onMeld: (meldKey) => {
       const ready = session?.ui?.readyMelds.get(meldKey);
-      if (ready && liveState()) performHumanMove(liveState(), ready, node);
+      // The chip is the target, not the origin — same as onTarget above.
+      if (ready && liveState()) performHumanMove(liveState(), ready, tapOrigin(ready));
     },
     attachInspector,
     attachDrag: (node, handle) => { if (drag) drag.attach(node, handle); },

@@ -20,6 +20,8 @@
 // outlive would defeat them. Same for `settings`, `drag` and the element
 // lookups, which belong to the screen rather than to a match.
 
+import { makeCtx } from '../engine/context.js';
+
 /**
  * @param pack     the loaded pack
  * @param state    the live engine state
@@ -98,17 +100,11 @@ export function createSession({ pack, state, seats, seating, cardArt, handPrefs,
     // Which seat the plate last opened itself for, so a change of turn can be
     // told from a re-render on the same turn.
     plateActor: null,
-    // How the player wants the opponent row shown — 'auto' | 'minimized' |
-    // 'all'. Per match, deliberately: it is a way of looking at THIS table,
-    // not a setting to carry between them.
-    //
-    // 'auto' gives up only what will not fit (renderSeats' fit loop), which is
-    // right until it is not: Stockpile's piles are small enough that five
-    // opponents' worth of them technically fit on any desktop, so 'auto' alone
-    // meant that table never minimized at all no matter how cluttered it read.
-    // 'minimized' is the player saying they would rather see faces regardless,
-    // and 'all' is the opposite — every plate open, the row scrolling.
-    seatView: 'auto',
+    // How the player wants the opponent row shown — 'minimized' | 'all'. Per
+    // match, deliberately: it is a way of looking at THIS table, not a setting
+    // to carry between them. SEAT_VIEWS at the foot of this file says what the
+    // two rungs are, and why there is no longer a third.
+    seatView: DEFAULT_SEAT_VIEW,
     // Which rung of SEAT_TIERS the opponent row last fitted at, and what that
     // answer depended on. Cached so an ordinary turn rebuilds the row once
     // instead of probing the whole ladder from the top every time anybody
@@ -160,4 +156,134 @@ export function stopSession(session) {
   session.peek = null;
   session.pendingRender = null;
   session.selection = null;
+}
+
+/* ------------------------------------------------------------------ *
+ * The opponent row's policy — the half of it that is not a rectangle
+ * ------------------------------------------------------------------ */
+
+/**
+ * WHY THESE LIVE HERE AND NOT IN src/ui/table.js, WHERE THEY ARE USED.
+ *
+ * table.js touches `document` at import time, so no Node test can load it —
+ * tests/repo-gates.test.js says so at length, and has had to resort to grepping
+ * the source to pin behaviour it could not call. Everything below is a decision
+ * about seat numbers and view names with no rectangle anywhere in it, and a
+ * decision no test can reach is one that gets re-derived, differently, the next
+ * time somebody edits the renderer. This file is already the Node-clean half of
+ * the felt and already holds `seatView`'s default, so the vocabulary and the
+ * rules that read it sit together.
+ */
+
+/**
+ * HOW MUCH OF THE OTHER PLAYERS TO SHOW — the player's own two-way choice.
+ *
+ * It was a three-way cycle — minimized / auto / all — with `auto` the default:
+ * give up only what will not fit, measured by renderSeats' fit loop. Two things
+ * took the middle rung out.
+ *
+ * The first is what put `minimized` there in the first place, and it is still
+ * true: fitting is not the whole question. Stockpile's piles are small enough
+ * that five opponents' worth of them technically fit on any desktop, so `auto`
+ * meant that table never minimized at ANY width, however cluttered it read.
+ * "Is this too busy" is a preference and the player is the one holding it — so
+ * the rung where they say "faces, regardless" survives.
+ *
+ * The second is that the middle rung was hedging against a fear that turned out
+ * to be wrong. `all` was not the default because a row longer than the felt
+ * sounded unusable on a phone; tested on one, scrolling that row sideways is
+ * how the player checks everybody else's position, and they asked for the
+ * maximized row by default and for the middle option to go. So `all` IS the
+ * default, and the carousel is not a state to be rescued from: no width
+ * threshold, no fallback, nothing that takes it away.
+ *
+ * ORDERED LEAST TO MOST, which is the whole of how the control explains itself
+ * — see SEAT_VIEW_COPY in src/ui/table.js, where the rungs become dots.
+ */
+export const SEAT_VIEWS = ['minimized', 'all'];
+export const DEFAULT_SEAT_VIEW = 'all';
+
+/**
+ * A view name the row can actually draw.
+ *
+ * Deliberately tolerant rather than asserting. `seatView` is a mutable field on
+ * a live object, and 'auto' was a legitimate value of it one commit ago — a
+ * session built before this list shrank, or a hand-set value from a devtools
+ * poke, has to come back as the default rather than reach renderSeats as a view
+ * with no branch to catch it. Silently falling back is right here because the
+ * consequence of the fallback is visible on screen the moment it happens.
+ */
+export function normalizeSeatView(view) {
+  return SEAT_VIEWS.includes(view) ? view : DEFAULT_SEAT_VIEW;
+}
+
+/** The rung a tap moves to, wrapping round from the last to the first. */
+export function nextSeatView(view) {
+  const i = SEAT_VIEWS.indexOf(normalizeSeatView(view));
+  return SEAT_VIEWS[(i + 1) % SEAT_VIEWS.length];
+}
+
+/** Offer the "show everyone" toggle from this many opponents up. */
+export const CAROUSEL_FROM_SEATS = 3;
+
+/**
+ * Is the view toggle worth putting on the felt at all?
+ *
+ * A SEAT-COUNT QUESTION, and now only that. It used to also be offered whenever
+ * the row was already a carousel, which was free while the carousel was
+ * something the player had to ask for — and became meaningless the moment `all`
+ * was the default, because that clause is then true at every table on the
+ * platform. It would have put the control on a two-hander, where both rungs
+ * draw the same fully-open row and tapping it changes nothing a player would
+ * notice.
+ *
+ * THE SECOND CLAUSE IS A LATCH, not a second rule. A player standing on
+ * `minimized` keeps the way back out whatever the seat count says. Nothing can
+ * reach that state today — `state.seats` is fixed for the life of a match and
+ * `seatView` is reset with the session — so it costs a comparison against a
+ * failure mode (five faces on screen and no control anywhere to undo them) that
+ * has no way to announce itself if it ever does arrive.
+ */
+export function seatToggleOffered(opponents, view) {
+  return opponents >= CAROUSEL_FROM_SEATS || normalizeSeatView(view) === 'minimized';
+}
+
+/**
+ * WHICH SEAT THE OPPONENT ROW SHOULD SCROLL TO, or null to leave it where it is.
+ *
+ * "Centre whoever is acting" is the obvious rule and it has a hole in it
+ * exactly where the player is standing: on the HUMAN's turn the acting seat is
+ * the human's own, which is not in the opponent row at all. The lookup found
+ * nothing, the row stayed wherever the last bot had left it, and the player
+ * made their decision against whichever opponents happened to be parked on
+ * screen.
+ *
+ * On your own turn the seat worth reading is the one that plays AFTER you —
+ * their melds and piles are what your discard is about to be handed to.
+ * `nextSeat` honours a reversed direction, so a table that has been turned
+ * around scrolls the other way without this having to know how that happened.
+ *
+ * PENDING SKIPS ARE DELIBERATELY NOT MODELLED. The seat after you is the right
+ * answer for an ordinary turn, and the ordinary turn is what happens hundreds
+ * of times a match. Working out who a skip, a reverse-on-top-of-a-skip or a
+ * stacked penalty will actually land on means asking the template a question no
+ * template answers, and a confident wrong guess scrolls the row to a player the
+ * turn never reaches — worse than not scrolling, because the row LOOKS like it
+ * knows something.
+ *
+ * NULL WHEN SEVERAL SEATS ACT AT ONCE. Hearts' pass has every seat acting until
+ * it commits, and there is no single player to follow. renderSeats already
+ * refuses to open a plate in that phase for the same reason, and the row must
+ * not disagree with the plate about who the table is watching. Null too when
+ * nothing is acting, which is how `actingSeatsOf` reports a finished game.
+ */
+export function seatToShow(state, mySeat, acting) {
+  if (acting.length !== 1) return null;
+  const [actor] = acting;
+  if (actor !== mySeat) return actor;
+  const next = makeCtx(state).nextSeat(mySeat, state.direction);
+  // A one-seat table is not something anybody deals, but the answer it produces
+  // — scroll to yourself, who is not in this row — is worth refusing outright
+  // rather than handing on as a seat number that will never be found.
+  return next === mySeat ? null : next;
 }

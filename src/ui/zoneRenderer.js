@@ -27,6 +27,12 @@ import { isSelected, describeContractItem } from './interaction.js';
 import { describeZone, zoneAriaLabel, zoneBadge, cardName } from './describe.js';
 import { handValue } from '../engine/scoring.js';
 import { makeCtx } from '../engine/context.js';
+// A ui/ file reaching into templates/ the way lobby.js and cardStyles/ already
+// reach for templates/registry.js: melds.js is leaf logic (it imports only
+// engine/), so there is no cycle, and the alternative — hanging a display hook
+// off the template object — would put a purely visual concern in the rules
+// surface every future melding pack has to implement.
+import { meldDisplayOrder } from '../templates/melds.js';
 
 /** How many discards stay visible under the top one. Enough to read as a pile. */
 const DISCARD_DEPTH = 3;
@@ -364,9 +370,16 @@ export function createZoneRenderer({
       chip.className = 'meld-chip';
       chip.dataset.meld = meldKey;
 
+      // Sorted for reading, once, and used by BOTH the chip and its inspector
+      // below — a run drawn `3 W 5 6` whose inspector still numbered it `6 3 W 5`
+      // would make "Card 2" name a card that is not second on the felt, which is
+      // worse than either order on its own. See meldDisplayOrder: the stored
+      // array is match state and is deliberately left as the engine wrote it.
+      const ordered = meldDisplayOrder(makeCtx(state), group);
+
       const cards = document.createElement('span');
       cards.className = 'meld-chip__cards';
-      for (const cardId of group.cards) {
+      for (const cardId of ordered) {
         const card = cardById(state, cardId);
         if (card) cards.appendChild(svgNode(art().face(card), 'meld-chip__card'));
       }
@@ -382,7 +395,7 @@ export function createZoneRenderer({
       // impossible, so the inspector spells the whole thing out.
       attachInspector(chip, () => ({
         title: `${owner} ${what}`,
-        lines: group.cards
+        lines: ordered
           .map((cardId) => ({ cardId, card: cardById(state, cardId) }))
           .filter((entry) => entry.card)
           .map((entry, n) => ({

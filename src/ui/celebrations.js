@@ -66,6 +66,12 @@ export function createCelebrations({
     if (!count || count < 1 || !motionAllowed()) return;
     const from = zoneRect('draw');
     if (!from) return;
+    // MEASURED ONCE, FOR COPIES THAT LEAVE UP TO HALF A SECOND LATER. That is
+    // safe only because `seatRect` answers with where the seat will BE rather
+    // than where it is (scrollCorrectedRect, src/ui/flight.js): while the seat
+    // row was still smooth-scrolling, the first copy landed on the right plate
+    // and the last one landed on the neighbour's — which is the "sometimes one
+    // of the cards goes for a ride" the playtest reported.
     const to = cardSizedRect(seatRect(seat), from.width);
     if (!to) return;
 
@@ -130,6 +136,9 @@ export function createCelebrations({
     const bad = mine && ev.points > 0;
 
     const from = zoneRect('trick');
+    // One measurement, several copies, the last of them 550ms behind the first
+    // — see animatePenaltyDraw above for why that no longer scatters them
+    // across two plates.
     const to = from ? cardSizedRect(seatRect(ev.seat), from.width * 0.6) : null;
     if (from && to && motionAllowed()) {
       const myEpoch = currentEpoch();
@@ -249,9 +258,13 @@ export function createCelebrations({
     showBanner(session, said.text, said.tone);
     playActionCard({ against: me.holds(ev.seat) && said.tone === 'bad' });
 
-    // After the card that caused it has landed on the discard (animateMove's 260ms
+    // After the card that caused it has landed on the discard (animateMove's
     // flight, launched a beat before this): the play and the punishment are two
-    // events in that order, and overlapping them makes one blur.
+    // events in that order, and overlapping them makes one blur. 300ms was
+    // chosen against a 260ms flight and is now a little short of the 420ms
+    // default — deliberately left alone, because a penalty that begins as the
+    // card is still settling reads as a consequence, and one that waits for a
+    // full stop reads as an interruption.
     if (ev.type === 'penalty') animatePenaltyDraw(state, ev.seat, ev.drew, 300);
 
     // The pulse lands on the seat it happened to, not the seat that played it:

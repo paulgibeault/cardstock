@@ -372,6 +372,79 @@ export function resolveHit(ctx, group, kind, cardIds, declared) {
   return { ...resolved, item: `${kind}(${cards.length})`, cards };
 }
 
+/**
+ * The order a laid-down meld should be READ in — `3 W 5 6` for a run laid as
+ * `6 3 W 5`, with the wild sitting in the slot of the rank it was frozen to.
+ *
+ * ORDERED WHERE IT IS READ, NOT WHERE IT IS STORED. `group.cards` is match
+ * state: a replay rebuilds it move by move, the multiplayer wire ships it, and
+ * `move.choice.meld` indexes into the groups array. Sorting the stored array to
+ * win a purely visual property would change shapes the rules and the protocol
+ * depend on, and it still would not fix a single match already saved — the old
+ * order is in the log. A pure function over the group has neither problem: it
+ * fixes every meld ever laid, including the ones on disk, and the engine never
+ * sees it.
+ *
+ * TOTAL, AND IT MAY NOT LOSE A CARD. This is what the felt draws, so every
+ * degenerate group — a wild nobody has valued yet, a kind this file does not
+ * know, a card id that is not in the pack, no cards at all — comes back in the
+ * order it went in rather than as a short list or a throw. A chip that silently
+ * renders three cards of a four-card meld is a worse bug than an unsorted one,
+ * and the caller cannot tell the difference by looking.
+ *
+ * @param kind optional; derived from the group when omitted.
+ * @returns a permutation of `group.cards` — always the same ids, always the
+ *          same length.
+ */
+export function meldDisplayOrder(ctx, group, kind) {
+  const cards = group?.cards;
+  if (!Array.isArray(cards) || cards.length < 2) return Array.isArray(cards) ? cards.slice() : [];
+  try {
+    const meldKind = kind === undefined ? meldKindOf(ctx, group) : kind;
+    if (meldKind !== 'run' && meldKind !== 'set' && meldKind !== 'colorGroup') return cards.slice();
+
+    const entries = entriesOf(ctx, cards);
+    // A card the pack does not have cannot be valued, and guessing where it
+    // goes is how a sort turns into a scramble. Draw it as it was stored.
+    if (entries.some((e) => !e.card)) return cards.slice();
+
+    const wilds = pinnedWildsOf(ctx, group, meldKind);
+    // Decorated with the original index so the sort is stable regardless of the
+    // engine's sort implementation: equal keys keep the order they were laid in.
+    const decorated = entries.map((entry, i) => ({
+      id: entry.id,
+      i,
+      wild: isWildCard(ctx, entry.card),
+      value: meldValue(ctx, entry, meldKind, wilds),
+    }));
+
+    if (meldKind === 'run') {
+      const ranks = decorated.map((d) => Number(d.value));
+      // An unvalued wild has no slot to sit in — mid-hit, or a group assembled
+      // by a test that never went through applyMove. Rather than pile the
+      // nowhere-cards at one end and imply an order that is not there, leave the
+      // whole meld alone until every card knows what it is.
+      if (ranks.some((r) => !Number.isFinite(r))) return cards.slice();
+      decorated.forEach((d, i) => { d.key = ranks[i]; });
+      decorated.sort((a, b) => a.key - b.key || a.i - b.i);
+      return decorated.map((d) => d.id);
+    }
+
+    // A set shares a rank and a colour group shares a colour, so there is no
+    // "correct" order among them at all — sorting on the shared value would be
+    // sorting on a constant. Naturals first, wilds last is the one arrangement
+    // that says something true: it puts the cards that ARE what they show
+    // before the ones standing in for them, so a reader counts the real 7s
+    // without picking wilds out of the middle.
+    decorated.sort((a, b) => (a.wild === b.wild ? a.i - b.i : (a.wild ? 1 : -1)));
+    return decorated.map((d) => d.id);
+  } catch {
+    // Belt and braces over the checks above: no arrangement of match state is
+    // worth a blank table.
+    return cards.slice();
+  }
+}
+
 // Every value a wild could take on its way onto this meld, asked of
 // resolveHit itself so the list can never offer something a hit would then
 // refuse. A set or a colour group has exactly one answer; a run has its two

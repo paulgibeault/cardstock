@@ -50,6 +50,9 @@ const OPTIONAL_FUNCTIONS = [
   "matchStanding",
   "actingSeats", "enumerateAnnouncements", "applyAnnouncement",
   "interactionMode", "pendingChoice", "activeMatch", "scoreChip",
+  // Whether a SEAT is still assembling something — the question interactionMode
+  // cannot answer, because the mode comes from the table-wide turn.phase.
+  "gathers",
   "seatCounters",
   "committedSelection", "getMeldGroups", "describeEvent",
   "ruleLines", "endingLines", "statLines",

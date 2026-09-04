@@ -20,8 +20,9 @@ import { makeCtx } from "../src/engine/context.js";
 import { validateMove, enumerateLegalMoves, applyMove } from "../src/engine/movePipeline.js";
 import { ROOT } from "../tools/stage.mjs";
 import {
-  interactionMode, buildUiModel, dropCandidates, draggableSources,
-  pruneSelection, isSelected, handAddress, implicitLandingZone,
+  interactionMode, stagingPhase, gathers, buildUiModel, dropCandidates, draggableSources,
+  pruneSelection, toggleHandSelection, stagedSelection, smartSelection,
+  isSelected, handAddress, implicitLandingZone,
   shortContract, shortContractItem, describeContract, describeContractItem,
   ladderRungs, HINT_MAX_CHARS, HINT_MAX_CHARS_BARE,
 } from "../src/ui/interaction.js";
@@ -220,28 +221,177 @@ test("the UI model offers nothing at all when the human may not act", () => {
   assert.strictEqual(ui.action, null);
 });
 
-test("off-turn, a contract meld can still be arranged — and only that", () => {
-  // The one affordance that survives losing the turn: staging commits nothing
-  // and touches no zone, and it is the job a rummy player actually wants to do
-  // while the bots think. Laying down stays a turn-only move.
-  const state = tableFor("milestones", "off-turn-stage");
-  state.turn.phase = "meld";
-  state.playerVars[0].laidDown = false;
-  const ui = buildUiModel(state, { seat: 0, moves: [], acts: false, selection: null });
+/* ------------------------------------------------------------------ *
+ * Off-turn gathering — and the phase that must not be able to stop it
+ * ------------------------------------------------------------------ *
+ *
+ * `turn.phase` is ONE value for the whole table, so the interaction mode a
+ * template derives from it says what the TABLE is doing, never what this seat
+ * may do. Every test below therefore runs in BOTH phases: the previous version
+ * of this file set `turn.phase = "meld"` by hand and so pinned the single value
+ * where the affordance happened to work, while the reported bug — the tray
+ * going dead for the first half of every opponent's turn — lived entirely in
+ * the other one.
+ */
+for (const phase of ["draw", "meld"]) {
+  test(`off-turn in the ${phase} phase, a contract meld can still be arranged — and only that`, () => {
+    // The one affordance that survives losing the turn: staging commits nothing
+    // and touches no zone, and it is the job a rummy player actually wants to do
+    // while the bots think. Laying down stays a turn-only move.
+    const state = tableFor("milestones", "off-turn-stage");
+    state.turn.phase = phase;
+    state.turn.seat = 1;
+    state.playerVars[0].laidDown = false;
+    const ui = buildUiModel(state, { seat: 0, moves: [], acts: false, selection: null });
 
-  assert.ok(ui.handSelectable.size > 0, "cards can still be gathered");
-  assert.strictEqual(ui.handMulti, true, "the tray stays open");
-  assert.strictEqual(ui.action, null, "but Lay down is not offered off-turn");
-  assert.strictEqual(ui.readyTargets.size, 0, "and no pile is a target");
+    assert.ok(ui.handSelectable.size > 0, "cards can still be gathered");
+    assert.strictEqual(ui.handMulti, true, "the tray stays open");
+    assert.strictEqual(ui.action, null, "but Lay down is not offered off-turn");
+    assert.strictEqual(ui.readyTargets.size, 0, "and no pile is a target");
+  });
+
+  test(`off-turn staging stops once the contract is down (${phase} phase)`, () => {
+    const state = tableFor("milestones", "off-turn-laid");
+    state.turn.phase = phase;
+    state.turn.seat = 1;
+    state.playerVars[0].laidDown = true;
+    const ui = buildUiModel(state, { seat: 0, moves: [], acts: false, selection: null });
+    assert.strictEqual(ui.handSelectable.size, 0, "there is no meld left to arrange");
+    assert.strictEqual(ui.handMulti, false);
+    assert.strictEqual(ui.gathering, false, "and a hold gathers nothing either");
+  });
+
+  test(`hold-to-gather is armed off-turn in the ${phase} phase`, () => {
+    // What `smartSelectArmed` reads (src/ui/handGestures.js). Keyed on the mode
+    // string it disarmed the moment an opponent started their turn, so the
+    // fastest way to build a meld stopped working for half of every bot turn.
+    const state = tableFor("milestones", `off-turn-hold-${phase}`);
+    state.turn.phase = phase;
+    state.turn.seat = 1;
+    state.playerVars[0].laidDown = false;
+    const ui = buildUiModel(state, { seat: 0, moves: [], acts: false, selection: null });
+    assert.strictEqual(ui.gathering, true, "the hold has to survive the turn passing");
+
+    // And the gesture behind the flag answers off-turn too: the suggestion is a
+    // selection, never a move, so there is nothing about it to hold for a turn.
+    const held = state.zones.cards(handAddress(0));
+    const suggested = held.map((id) => smartSelection(state, 0, id, null)).filter(Boolean);
+    assert.ok(suggested.length > 0, "a ten-card Milestones hand has some group in it");
+  });
+}
+
+test("gathering is a fact about the seat's round, not about the table's phase", () => {
+  const state = tableFor("milestones", "gathers-hook");
+  state.turn.seat = 1;
+  for (const phase of ["draw", "meld"]) {
+    state.turn.phase = phase;
+    state.playerVars[0].laidDown = false;
+    assert.strictEqual(gathers(state, 0), true, `${phase}: still assembling a contract`);
+    state.playerVars[0].laidDown = true;
+    // The phase still stages — somebody at this table may be gathering — and
+    // this seat is nonetheless finished. That gap is the whole point of the
+    // hook, and it is what lets the tray hand its slot back (renderStageTray).
+    assert.strictEqual(stagingPhase(state), true, `${phase}: the mode still stages`);
+    assert.strictEqual(gathers(state, 0), false, `${phase}: but this seat is done`);
+    // A seat that is done gathering keeps a live hand — it can hit and discard.
+    assert.strictEqual(smartSelection(state, 0, state.zones.cards(handAddress(0))[0], null), null,
+      `${phase}: nothing left to gather, so a hold suggests nothing`);
+  }
 });
 
-test("off-turn staging stops once the contract is down", () => {
-  const state = tableFor("milestones", "off-turn-laid");
-  state.turn.phase = "meld";
+test("a tap never throws away a gathered meld", () => {
+  // THE SHARP ONE. A staged card keeps its click listener whatever the model
+  // says (src/ui/table.js), and the single-select branch used to answer a tap
+  // on an already-selected card with `null` — so one tap on the tray during an
+  // opponent's DRAW phase, when the mode had gone single-select under the
+  // player's feet, threw the entire gathered meld away.
+  const state = tableFor("milestones", "tray-clobber");
+  state.turn.phase = "draw";
+  state.turn.seat = 1;
+  state.playerVars[0].laidDown = false;
+  const handAddr = handAddress(0);
+  const [a, b, c] = state.zones.cards(handAddr);
+  const staged = { from: handAddr, cardIds: [a, b, c] };
+
+  // The model must not go single-select off-turn in the first place...
+  const ui = buildUiModel(state, { seat: 0, moves: [], acts: false, selection: staged });
+  assert.strictEqual(ui.handMulti, true, "the draw phase belongs to the table, not to this seat");
+
+  const multi = toggleHandSelection(staged, { from: handAddr, cardId: b, multi: ui.handMulti });
+  assert.deepStrictEqual(multi.cardIds, [a, c], "toggling one card out leaves the other two");
+
+  // ...and if it ever does again, one card is all a tap may cost.
+  const single = toggleHandSelection(staged, { from: handAddr, cardId: b, multi: false });
+  assert.ok(single, "a single-select tap must not throw the whole tray away");
+  assert.deepStrictEqual(single.cardIds, [a, c], "a single-select tap clears only the card it hit");
+  assert.strictEqual(toggleHandSelection({ from: handAddr, cardIds: [a] },
+    { from: handAddr, cardId: a, multi: false }), null, "the last card still deselects to nothing");
+  assert.deepStrictEqual(
+    toggleHandSelection(staged, { from: handAddr, cardId: b, multi: true }).cardIds, [a, c]);
+  assert.deepStrictEqual(
+    toggleHandSelection(null, { from: handAddr, cardId: b }), { from: handAddr, cardIds: [b] });
+});
+
+test("a pack with no gathers hook answers exactly as the mode does", () => {
+  // What the default is for. Hearts stages a pass and the other three never
+  // stage at all; none of them can finish gathering before the phase does, so
+  // none of them implements the hook, and none of them may notice it exists.
+  for (const packId of ["hearts", "crazy-eights", "wildfire", "stockpile"]) {
+    const state = tableFor(packId, `no-hook:${packId}`);
+    assert.strictEqual(state.pack.template.gathers, undefined,
+      `${packId} does not implement the hook — this test is about the default`);
+    for (let seat = 0; seat < 3; seat++) {
+      assert.strictEqual(gathers(state, seat), stagingPhase(state),
+        `${packId}: the default has to be today's answer, seat ${seat}`);
+    }
+  }
+});
+
+test("the tray hands its space back the moment the contract is down", () => {
+  // Two bugs in one gate. The tray's slot was reserved on the PHASE, so after a
+  // lay-down it went on holding a card's height of invisible, inert felt between
+  // the meld chips and the hand for the rest of the round. And its CONTENTS
+  // came from the same gate, so a post-lay-down single selection was drawn in
+  // the tray by a full render while the fast path lifted the same card in the
+  // fan — tap a card, watch a bot move, and the card had teleported.
+  const state = tableFor("milestones", "tray-yields");
+  const handAddr = handAddress(0);
+  const [a, b] = state.zones.cards(handAddr);
+  const gathered = { from: handAddr, cardIds: [a, b] };
+  const one = { from: handAddr, cardIds: [a] };
+
+  state.playerVars[0].laidDown = false;
+  assert.deepStrictEqual(stagedSelection(state, 0, gathered), [a, b], "a gathered meld waits in the tray");
+
   state.playerVars[0].laidDown = true;
-  const ui = buildUiModel(state, { seat: 0, moves: [], acts: false, selection: null });
-  assert.strictEqual(ui.handSelectable.size, 0, "there is no meld left to arrange");
+  assert.deepStrictEqual(stagedSelection(state, 0, one), [],
+    "a card picked to hit with stays in the fan, where the gesture expects it");
+  assert.deepStrictEqual(stagedSelection(state, 0, gathered), []);
+  // Hearts is the pack the default is for: its tray still follows the phase.
+  const hearts = tableFor("hearts", "tray-hearts");
+  const heartsHand = handAddress(hearts.turn.seat);
+  const [x, y] = hearts.zones.cards(heartsHand);
+  assert.deepStrictEqual(
+    stagedSelection(hearts, hearts.turn.seat, { from: heartsHand, cardIds: [x, y] }), [x, y]);
+});
+
+test("the off-turn tray is offered only to a template that answers per seat", () => {
+  // Hearts is why the DEFAULT cannot open a tray off-turn: everyone commits
+  // their pass at once, so a seat that has passed sits off-turn while the pass
+  // phase — and with it the staging mode — is still open. The default answers
+  // about the TABLE, and off-turn the difference between that and "I am still
+  // assembling something" is the entire question.
+  const state = tableFor("hearts", "committed-pass");
+  const passer = state.turn.seat;
+  const cards = state.zones.cards(handAddress(passer)).slice(0, 3);
+  applyMove(state, { actor: passer, type: "passCards", cards });
+  assert.strictEqual(interactionMode(state), "pass", "still the passing phase");
+  assert.strictEqual(gathers(state, passer), true, "the phase still stages, for somebody");
+
+  const ui = buildUiModel(state, { seat: passer, moves: [], acts: false, selection: null });
+  assert.strictEqual(ui.handSelectable.size, 0, "a committed pass is not re-arrangeable");
   assert.strictEqual(ui.handMulti, false);
+  assert.strictEqual(ui.gathering, false);
 });
 
 test("a played card's implicit landing zone is one the pack actually has", () => {
