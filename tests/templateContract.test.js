@@ -45,6 +45,9 @@ const OPTIONAL_FUNCTIONS = [
   // one-ply lookahead in src/engine/bot.js — so a typo here is not a hook that
   // silently never fires, it is a whole search layer that silently never runs.
   "evaluateState",
+  // How far along the MATCH a seat is — what a finished rollout is graded by
+  // in src/engine/bot.js. Absent, the accumulated score stands in for it.
+  "matchStanding",
   "actingSeats", "enumerateAnnouncements", "applyAnnouncement",
   "interactionMode", "pendingChoice", "activeMatch", "scoreChip",
   "seatCounters",
@@ -70,7 +73,7 @@ test("every template answers everything the engine calls unconditionally", () =>
 
 test("no template exports a hook name the platform does not call", () => {
   const known = new Set([
-    "id", "genreLabel", "defaultCardStyle", "playable", "botVerbs",
+    "id", "genreLabel", "defaultCardStyle", "playable", "botVerbs", "weights",
     ...REQUIRED, ...OPTIONAL_FUNCTIONS,
   ]);
   for (const id of TEMPLATE_IDS) {
@@ -265,4 +268,24 @@ test("the lobby loads no gameplay code", () => {
     assert.ok(!/^\.\.\/templates\/(?!registry\.js)/.test(spec),
       `lobby imports a template: ${spec} — presentation facts live in registry.js`);
   }
+});
+
+// `weights` is the one data member a hook READS: `botHeuristic(ctx, move, w)`
+// and `evaluateState(ctx, seat, w)` default `w` to it, and tools/tune.mjs
+// hands them copies. So it has to be a plain bag of finite numbers — a NaN in
+// it is a bot that ranks every move equal — and frozen, because the shipped
+// values are what every other seat is playing with.
+test("a template's weights are a frozen bag of finite numbers", () => {
+  let declared = 0;
+  for (const id of TEMPLATE_IDS) {
+    const weights = getTemplate(id).weights;
+    if (weights === undefined) continue;
+    declared++;
+    assert.ok(Object.isFrozen(weights), `${id}: weights are not frozen`);
+    assert.ok(Object.keys(weights).length > 0, `${id}: an empty weights object`);
+    for (const [key, value] of Object.entries(weights)) {
+      assert.ok(typeof value === "number" && Number.isFinite(value), `${id}: weights.${key} is ${value}`);
+    }
+  }
+  assert.ok(declared >= 3, `only ${declared} templates declare weights — the three with evaluateState should`);
 });

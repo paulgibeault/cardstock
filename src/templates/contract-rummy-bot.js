@@ -11,7 +11,7 @@
 import { cardValue } from '../engine/scoring.js';
 import {
   isWildCard, isMeldable, parseItem, resolveMeld, meldKindOf, meldValue,
-  getMeldGroups, pinnedAttr, wildHitValues,
+  getMeldGroups, pinnedAttr, wildHitValues, rankDomain,
 } from './melds.js';
 
 export function groupBy(items, keyFn) {
@@ -172,16 +172,34 @@ export function findHits(ctx, seat, validate) {
 const WILD_KEEP = 100;
 
 /**
- * How far above an unknown deck card the pile top has to grade before it is
- * worth taking.
+ * How much the pile top has to IMPROVE THE HAND before it is worth taking
+ * over an unknown card off the deck.
  *
- * Swept from 0 to 8 over three hundred rounds each: anything from 0 to 5 gives
- * the same answer, and 8 costs about a sixth of a round in length because the
- * bot starts refusing cards it should have taken. So this is a comfortable
- * middle of a wide flat, not a tuned edge — what matters is that a bar EXISTS,
- * not where in that range it sits. (At 0 it still works, but only because
- * `drawFrom` lists the deck first and the chooser keeps the first of equal
- * scores; that is an accident to be above, not to lean on.)
+ * Measured against the hand's total keep value after the swap — the top card
+ * in, the card it makes least wanted out — rather than against the top card's
+ * value on its own, and the difference is the second live-lock this bot had.
+ * The first cut graded the top card in isolation: "does it have a friend in
+ * my hand". With a run(8) or colorGroup(7) owed, nearly every card has one, so
+ * two seats took each other's discards every turn, the deck never turned, and
+ * the same twenty cards went round until the move cap — exactly the closed
+ * system phase 1 had fixed for round one, come back in round six. It never
+ * showed because tools/simulate.mjs played round one only, where the contract
+ * is two sets and a friend is a genuine duplicate (#92).
+ *
+ * The swap gain is what actually breaks the cycle: taking a card and throwing
+ * one of equal worth is a turn that turned nothing over, and grading it as a
+ * gain of nothing sends the seat to the deck, where a card it has not seen can
+ * arrive. A seat's total keep value can only rise by a take, and it is
+ * bounded, so a round cannot circulate the pile indefinitely.
+ *
+ * Swept from 0 to 5 at two seats over three hundred whole matches each, and
+ * again over three hundred four-seat rounds: every setting finishes every
+ * match, at the same 11.6 rounds and the same 53 moves a round. The bar is
+ * flat because the potential above is doing the work now — it is the swap
+ * gain being measured on the final hand that stops the cycle, not the height
+ * of the bar. So this stays where the original sweep put it, a comfortable
+ * middle, kept because a bar that EXISTS is what stops a swap worth exactly
+ * nothing from being decided by enumeration order.
  */
 const PILE_PICKUP_BAR = 1.5;
 
@@ -228,18 +246,24 @@ export function forgetPileTakes(ctx) {
  * wanted for their rank, for their place in a sequence, and for their colour.
  * Normalised, so a two-item contract of mixed kinds splits its attention.
  */
-function contractWants(ctx, seat) {
+function contractWants(ctx, seat, w) {
   const contract = ctx.rules.contracts[ctx.playerVar(seat, 'phase') - 1] || [];
   const wants = { set: 0, run: 0, colorGroup: 0 };
   let total = 0;
+  let runLength = 0;
   for (const item of contract) {
     const parsed = parseItem(item);
     if (!parsed || wants[parsed.kind] === undefined) continue;
     wants[parsed.kind] += parsed.n;
     total += parsed.n;
+    if (parsed.kind === 'run') runLength = Math.max(runLength, parsed.n);
   }
-  if (!total) return { set: 1, run: 0, colorGroup: 0 };
-  return { set: wants.set / total, run: wants.run / total, colorGroup: wants.colorGroup / total };
+  const domain = rankDomain(ctx);
+  if (!total) return { set: 1, run: 0, colorGroup: 0, runLength, domain, w };
+  return {
+    set: wants.set / total, run: wants.run / total, colorGroup: wants.colorGroup / total,
+    runLength, domain, w,
+  };
 }
 
 /** Rank/colour tallies of a hand, computed once and asked many questions. */
@@ -264,13 +288,23 @@ function handShape(ctx, handIds) {
  * throw this" have to be answered on the same scale or the bot picks a card up
  * and puts it straight back down.
  *
- * A run wants NEIGHBOURING RANKS, not repeats: this template's runs are checked
- * on rank alone (melds.js), a repeated rank is rejected outright, and a rank one
- * or two away is the card that closes a window. A duplicate is worth nothing to
- * a run and the old rank-mate count was scoring it as the best card in the hand.
+ * A run wants DISTINCT RANKS IN ONE WINDOW, not repeats and not only
+ * neighbours. This template's runs are checked on rank alone (melds.js) and a
+ * repeated rank is rejected outright, so under a run contract a second copy of
+ * a rank is dead weight — priced below a card with no friends at all, because
+ * a friendless card can still seed a run and a duplicate never can. The first
+ * cut of this counted neighbours one and two ranks away, and two-seat matches
+ * found both ways that is too near-sighted (#92): a seat holding eight tens
+ * under run(9) valued every ten at nothing and every fresh card at nothing,
+ * and threw the fresh card each turn because a ten would feed the opponent's
+ * run — and a seat holding five wilds with a 4 and a 5 threw away every 8, 9
+ * and 11 it drew, each of which the wilds could have bridged to. Grading a
+ * card by the fullest run-length window it sits in, rather than by what is
+ * adjacent to it, is what lets a hand START a run and finish one.
  */
 function keepValue(ctx, card, shape, wants, self) {
-  if (isWildCard(ctx, card)) return WILD_KEEP;
+  const w = wants.w;
+  if (isWildCard(ctx, card)) return w.WILD_KEEP;
   // A skip can never enter a meld (rules.meldForbidden) and costs 15 at the
   // end, so it is always the first card out of the hand — below even a card
   // with no friends at all, which is what the negative buys.
@@ -279,17 +313,48 @@ function keepValue(ctx, card, shape, wants, self) {
   const own = self === null ? 0 : 1;
   const rankMates = Math.max(0, (shape.ranks.get(card.rank) || 0) - own);
   const colorMates = Math.max(0, (shape.colors.get(card.color) || 0) - own);
-  const rank = Number(card.rank);
-  let neighbours = 0;
-  if (Number.isFinite(rank)) {
-    for (const step of [-2, -1, 1, 2]) {
-      if (shape.ranks.has(String(rank + step))) neighbours += Math.abs(step) === 1 ? 1 : 0.5;
-    }
-  }
 
-  return wants.set * rankMates * 3
-    + wants.run * neighbours * 2
-    + wants.colorGroup * colorMates * 1.5;
+  return wants.set * rankMates * w.SET_MATE_WORTH
+    + wants.run * runWorth(card, shape, wants, rankMates, own) * w.RUN_WINDOW_WORTH
+    + wants.colorGroup * colorMates * w.COLOUR_MATE_WORTH;
+}
+
+/**
+ * What one friend is worth, per kind of contract: a rank-mate toward a set, a
+ * distinct rank in the same window toward a run, a colour-mate toward a colour
+ * group. Sets pay most because a rank-mate is the rarest kind of friend — two
+ * copies of each rank per colour — and a run's window fills from twelve ranks.
+ */
+const SET_MATE_WORTH = 3;
+const RUN_WINDOW_WORTH = 2;
+const COLOUR_MATE_WORTH = 1.5;
+
+/** A duplicate rank under a run contract: below a card with no friends. */
+const RUN_DUPLICATE = -0.5;
+
+/**
+ * How many OTHER distinct ranks share the fullest run-length window this card
+ * can sit in, clipped to the ranks the deck actually holds — so a 12 is not
+ * credited with a window running up to 20. On the same scale the old
+ * neighbour count was: a card with one adjacent rank is still worth 1 here,
+ * and a card between two of them still 2.
+ */
+function runWorth(card, shape, wants, rankMates, own) {
+  if (wants.run <= 0) return 0;
+  const rank = Number(card.rank);
+  if (!Number.isFinite(rank)) return 0;
+  if (rankMates > 0) return wants.w.RUN_DUPLICATE;
+  const n = wants.runLength;
+  const { min, max } = wants.domain;
+  let best = 0;
+  for (let start = Math.max(min, rank - n + 1); start <= Math.min(rank, max - n + 1); start++) {
+    let others = 0;
+    for (let r = start; r < start + n; r++) {
+      if (r !== rank && shape.ranks.has(String(r))) others++;
+    }
+    if (others > best) best = others;
+  }
+  return best;
 }
 
 /**
@@ -363,7 +428,7 @@ function pileAppetite(ctx, seat, card) {
  * is worse than useless, because it spends the turn that would have turned a
  * fresh card off the deck.
  */
-export function scoreDraw(ctx, move) {
+export function scoreDraw(ctx, move, w = WEIGHTS) {
   if ((move.from ?? 'draw') !== 'discard') return 0;
   const topId = ctx.topOf('discard');
   if (topId === undefined) return -1;
@@ -376,9 +441,60 @@ export function scoreDraw(ctx, move) {
     return reaches(reach.mine, card) || reaches(reach.theirs, card) ? 4 : -1;
   }
 
+  return pileGain(ctx, seat, topId, w) - w.PILE_PICKUP_BAR;
+}
+
+/**
+ * What taking the pile top does to the hand: the total keep value of the hand
+ * with the card in and the card the seat would then throw out, minus the total
+ * as it stands. Zero for a swap that changes nothing; see PILE_PICKUP_BAR for
+ * why that is the number that matters.
+ *
+ * TOTALS, AND THE REAL DISCARD. Totals rather than "the top card's value minus
+ * the worst card's", because keepValue is relational — a 7 is worth more for
+ * the 6 and 8 beside it, and they are worth more for the 7 — so the honest
+ * gain of a swap is measured on the whole hand. And the card that leaves is
+ * the one `scoreDiscard` would actually choose, opponent terms included,
+ * rather than the least valuable one: a seat that will not feed the pile the
+ * card its opponent is collecting throws a better card instead, and a gain
+ * computed as if it had thrown the worst one is a gain it never gets. That
+ * gap was the last two-seat live-lock — a swap graded as progress that left
+ * the hand worse, over and over, with the deck untouched.
+ */
+function pileGain(ctx, seat, topId, w) {
   const handIds = ctx.cardIdsIn(ctx.zoneAddr('hand', seat));
-  const shape = handShape(ctx, handIds);
-  return keepValue(ctx, card, shape, contractWants(ctx, seat), null) - PILE_PICKUP_BAR;
+  const wants = contractWants(ctx, seat, w);
+  const reach = meldReach(ctx, seat);
+  const before = handShape(ctx, handIds);
+  let total = 0;
+  for (const id of handIds) total += keepValue(ctx, ctx.cardById(id), before, wants, id);
+
+  const taken = [...handIds, topId];
+  const after = handShape(ctx, taken);
+  let leaving = null;
+  let cheapest = Infinity;
+  for (const id of taken) {
+    const card = ctx.cardById(id);
+    const cost = discardCost(ctx, seat, card, keepValue(ctx, card, after, wants, id), reach, w);
+    if (cost < cheapest) {
+      cheapest = cost;
+      leaving = id;
+    }
+  }
+
+  // RE-SHAPED WITHOUT THE CARD THAT LEFT, not the after-shape minus one value.
+  // The card thrown was worth something to its neighbours too, and a gain that
+  // counted what the new card gives the hand but not what the old one takes
+  // with it rated BOTH halves of a two-card swap as progress — take the 3 for
+  // what it does for the 4s, throw the 7 the 6s were counting on, take the 7
+  // back next turn for the 6s, throw the 3 — forever. Valuing the hand it
+  // actually ends up holding is what makes this a quantity a round cannot
+  // raise indefinitely.
+  const kept = taken.filter((id) => id !== leaving);
+  const final = handShape(ctx, kept);
+  let sum = 0;
+  for (const id of kept) sum += keepValue(ctx, ctx.cardById(id), final, wants, id);
+  return sum - total;
 }
 
 /**
@@ -400,11 +516,10 @@ export function scoreDraw(ctx, move) {
  */
 const FEEDS_A_MELD = 2;
 const APPETITE_WORTH = 0.75;
-export function scoreDiscard(ctx, move) {
+export function scoreDiscard(ctx, move, w = WEIGHTS) {
   const seat = move.actor;
   const cardId = move.cards[0];
   const card = ctx.cardById(cardId);
-  const handIds = ctx.cardIdsIn(ctx.zoneAddr('hand', seat));
   const reach = meldReach(ctx, seat);
 
   let keep;
@@ -413,19 +528,32 @@ export function scoreDiscard(ctx, move) {
     // (enumeration offers hits first and they outscore any discard), so what is
     // left is judged on whether it can EVER hit: melds grow at the ends, so a
     // card that reaches one today is the card that goes out tomorrow.
-    keep = isWildCard(ctx, card) ? WILD_KEEP
+    keep = isWildCard(ctx, card) ? w.WILD_KEEP
       : (reaches(reach.mine, card) || reaches(reach.theirs, card)) ? 3
         : isMeldable(ctx, card) ? 0 : -1;
   } else {
-    keep = keepValue(ctx, card, handShape(ctx, handIds), contractWants(ctx, seat), cardId);
+    const handIds = ctx.cardIdsIn(ctx.zoneAddr('hand', seat));
+    keep = keepValue(ctx, card, handShape(ctx, handIds), contractWants(ctx, seat, w), cardId);
   }
+  return -discardCost(ctx, seat, card, keep, reach, w);
+}
 
-  // A card that reaches an opponent's meld is counted twice on purpose, once as
-  // worth holding and once as worth not giving away. Those pull the same way:
-  // anyone's meld is a meld this seat may hit once it has laid down, so the card
-  // is both a future exit and a gift, and it should be the last thing thrown.
-  const feedsThem = reaches(reach.theirs, card) ? FEEDS_A_MELD : 0;
-  return -(keep + feedsThem + pileAppetite(ctx, seat, card) * APPETITE_WORTH);
+/**
+ * What throwing this card costs: what it was worth keeping, plus what it hands
+ * the table. Shared by the discard scorer and by `pileGain`, which has to know
+ * which card WOULD leave after a pickup — and it has to be this answer, not
+ * "the least valuable card", or the two disagree and the bot picks a card up
+ * that it then throws a better one to keep.
+ *
+ * A card that reaches an opponent's meld is counted twice on purpose, once as
+ * worth holding (in `keep`) and once as worth not giving away. Those pull the
+ * same way: anyone's meld is a meld this seat may hit once it has laid down,
+ * so the card is both a future exit and a gift, and it should be the last
+ * thing thrown.
+ */
+function discardCost(ctx, seat, card, keep, reach, w) {
+  const feedsThem = reaches(reach.theirs, card) ? w.FEEDS_A_MELD : 0;
+  return keep + feedsThem + pileAppetite(ctx, seat, card) * w.APPETITE_WORTH;
 }
 
 /* ------------------------------------------------------------------ *
@@ -522,9 +650,9 @@ const OUT_WORTH = 1;
  * replaced.
  *
  * So a position where this seat still owes a discard is worth one more card out
- * of the hand, because that is what it is.
+ * of the hand, because that is what it is — priced at CARD_IN_HAND where it is
+ * read, not as a weight of its own.
  */
-const OWED_DISCARD = CARD_IN_HAND;
 
 /** How much the leader's position discounts your own. */
 const RIVAL_SHARE = 0.6;
@@ -533,19 +661,19 @@ const RIVAL_SHARE = 0.6;
  * What the table can see of a seat's position — asked about every seat,
  * including the one doing the asking.
  */
-function publicStanding(ctx, seat) {
-  const laid = ctx.playerVar(seat, 'laidDown') ? LAID_DOWN_WORTH : 0;
-  return laid - ctx.countIn(ctx.zoneAddr('hand', seat)) * CARD_IN_HAND;
+function publicStanding(ctx, seat, w) {
+  const laid = ctx.playerVar(seat, 'laidDown') ? w.LAID_DOWN_WORTH : 0;
+  return laid - ctx.countIn(ctx.zoneAddr('hand', seat)) * w.CARD_IN_HAND;
 }
 
-export function evaluateState(ctx, seat) {
+export function evaluateState(ctx, seat, w = WEIGHTS) {
   const handIds = ctx.cardIdsIn(ctx.zoneAddr('hand', seat));
   const scoring = ctx.pack.scoring || {};
 
   const reach = meldReach(ctx, seat);
-  let score = publicStanding(ctx, seat);
-  if (ctx.turn.seat === seat && ctx.turn.phase !== 'draw') score += OWED_DISCARD;
-  for (const id of handIds) score -= cardValue(ctx.cardById(id), scoring) * DEADWOOD_WORTH;
+  let score = publicStanding(ctx, seat, w);
+  if (ctx.turn.seat === seat && ctx.turn.phase !== 'draw') score += w.CARD_IN_HAND;
+  for (const id of handIds) score -= cardValue(ctx.cardById(id), scoring) * w.DEADWOOD_WORTH;
 
   // WHAT IS LYING FACE UP, which after a discard is the card this seat just
   // handed the table. Priced exactly as scoreDiscard prices it, because it is
@@ -558,8 +686,8 @@ export function evaluateState(ctx, seat) {
   const topId = ctx.topOf('discard');
   if (topId !== undefined) {
     const top = ctx.cardById(topId);
-    if (reaches(reach.theirs, top)) score -= FEEDS_A_MELD;
-    score -= pileAppetite(ctx, seat, top) * APPETITE_WORTH;
+    if (reaches(reach.theirs, top)) score -= w.FEEDS_A_MELD;
+    score -= pileAppetite(ctx, seat, top) * w.APPETITE_WORTH;
   }
 
   if (ctx.playerVar(seat, 'laidDown')) {
@@ -569,15 +697,15 @@ export function evaluateState(ctx, seat) {
     for (const id of handIds) {
       const card = ctx.cardById(id);
       if (isWildCard(ctx, card) || reaches(reach.mine, card) || reaches(reach.theirs, card)) {
-        score += OUT_WORTH;
+        score += w.OUT_WORTH;
       }
     }
   } else {
     const shape = handShape(ctx, handIds);
-    const wants = contractWants(ctx, seat);
+    const wants = contractWants(ctx, seat, w);
     for (const id of handIds) {
       const keep = keepValue(ctx, ctx.cardById(id), shape, wants, id);
-      score += Math.min(keep, PROGRESS_CAP) * PROGRESS_WORTH;
+      score += Math.min(keep, w.PROGRESS_CAP) * w.PROGRESS_WORTH;
     }
   }
 
@@ -587,7 +715,39 @@ export function evaluateState(ctx, seat) {
   let rival = -Infinity;
   for (let s = 0; s < ctx.seats; s++) {
     if (s === seat) continue;
-    rival = Math.max(rival, publicStanding(ctx, s));
+    rival = Math.max(rival, publicStanding(ctx, s, w));
   }
-  return Number.isFinite(rival) ? score - RIVAL_SHARE * rival : score;
+  return Number.isFinite(rival) ? score - w.RIVAL_SHARE * rival : score;
 }
+
+/**
+ * EVERY NUMBER THE STRATEGY IS MADE OF, in one object, with the shipped value
+ * of each — the constants above, gathered.
+ *
+ * The constants stay where they are because each one's comment is the record
+ * of how it was chosen, and this object exists so a caller can hand the hooks
+ * a DIFFERENT set: `botHeuristic(ctx, move, w)` and `evaluateState(ctx, seat,
+ * w)` read every weight through `w`, defaulting to this. That is what lets two
+ * seats in one simulated game play the same template with different opinions,
+ * which is what tools/tune.mjs seats against each other — and what keeps the
+ * hooks pure, so a tuning run cannot leave a weight changed behind it.
+ *
+ * Frozen: the shipped values are read, never written. A candidate is a copy.
+ */
+export const WEIGHTS = Object.freeze({
+  WILD_KEEP,
+  PILE_PICKUP_BAR,
+  SET_MATE_WORTH,
+  RUN_WINDOW_WORTH,
+  COLOUR_MATE_WORTH,
+  RUN_DUPLICATE,
+  FEEDS_A_MELD,
+  APPETITE_WORTH,
+  LAID_DOWN_WORTH,
+  CARD_IN_HAND,
+  DEADWOOD_WORTH,
+  PROGRESS_WORTH,
+  PROGRESS_CAP,
+  OUT_WORTH,
+  RIVAL_SHARE,
+});

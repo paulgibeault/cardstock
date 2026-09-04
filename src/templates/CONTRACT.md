@@ -48,11 +48,23 @@ than an error.
 | `startRound` | `(ctx) -> void` | **⚠ see the trap below** |
 | `scoreRound` | `(ctx) -> {seat: delta}` | `runRoundScore(ctx)` — the pack's declared strategy, or `{}` when it declares none |
 | `isGameOver` | `(ctx) -> boolean` | `false`. Only consulted when the pack's `scoring.gameOver` is absent or says `"template"`. |
-| `botHeuristic` | `(ctx, move) -> number` | every non-draw move scores equally |
-| `evaluateState` | `(ctx, seat) -> number` | none — the bot ranks by `botHeuristic` alone |
+| `botHeuristic` | `(ctx, move, weights?) -> number` | every non-draw move scores equally |
+| `evaluateState` | `(ctx, seat, weights?) -> number` | none — the bot ranks by `botHeuristic` alone |
+| `matchStanding` | `(ctx, seat) -> number` | the seat's accumulated score, signed by `scoring.gameOver.winner` — see *What the `hard` bot asks of you* |
 | `actingSeats` | `(ctx) -> seat[]` | `[ctx.turn.seat]`. Say so for a simultaneous-commit phase, or the table will schedule only one of the seats that may act. |
 | `enumerateAnnouncements` | `(ctx, seat) -> move[]` | none. Its presence is also what reserves the announce bar's slot on the felt. |
 | `applyAnnouncement` | `(ctx, announcement) -> void` | none — the rule-test harness's entry point only |
+
+> **The `weights` member.** A template whose strategy is made of tuned numbers
+> gathers them into one frozen object, `weights`, and reads every one of them
+> through the third argument of `botHeuristic` and `evaluateState` — which
+> defaults to that object, so ordinary play never notices. `rankMoves` passes
+> whatever a caller gave it, and a `hard` rollout plays every chair with the
+> deciding seat's set. That is what lets `tools/tune.mjs` seat a candidate set
+> against the shipped one in the same simulated game: two seats, one template,
+> two opinions, and no module-level state changed to do it. The constants keep
+> their own comments; the object is the shipped value of each, and tests hold
+> it to a frozen bag of finite numbers.
 
 > **⚠ The `evaluateState` contract.** `botHeuristic` grades a **move**;
 > `evaluateState` grades the **position** a move would leave behind — "how good
@@ -81,17 +93,30 @@ than an error.
 > layer (`src/engine/bot.js`) plays a hand out to its end and grades the result
 > with hooks you already implement, so no template has to know it exists:
 >
-> * **`scoreRound` is the terminal signal.** Whatever it returns for a finished
->   hand is what the search is trying to steer toward, so a template whose
->   `scoreRound` returns `{}` (Stockpile) gives every rollout the same answer.
+> * **The change in `matchStanding` across the hand is the terminal signal.**
+>   A finished rollout is graded by how much further along the match it left
+>   the seat, against how much further along it left everyone else. Without
+>   the hook the standing is the accumulated score, so the difference across
+>   one hand is exactly `scoreRound`'s answer — and a template whose
+>   `scoreRound` returns `{}` (Stockpile) gives every rollout the same value.
 >   The chooser detects that — every candidate tied means the scorer has no
 >   opinion — and drops back to one ply for that turn rather than ranking by
 >   enumeration order.
+> * **Export `matchStanding` when the match is not decided by points.**
+>   Contract-rummy does: a Milestones match is won by laying the last contract
+>   down, and the round score never decides it, so its standing is the rung
+>   reached, priced above anything a round's points can amount to, with the
+>   points behind it as a tie-break (#92). The rules are `evaluateState`'s:
+>   your own scale, seat-symmetric, public information only — and one more,
+>   because it is **differenced across a round boundary**: it must mean the
+>   same thing before and after the redeal. A standing that reads a per-round
+>   var the redeal resets is a signal that says every hand was a catastrophe.
 > * **The pack's manifest says which way is up**, via
 >   `scoring.gameOver.winner`: `highestScore` means points are the prize,
 >   anything else (including `"template"`) means they are the penalty. A pack
 >   that gets this wrong gets a bot that plays to lose, and nothing else in the
->   codebase would notice.
+>   codebase would notice. A `matchStanding` of your own is not read through
+>   it — higher is better, full stop.
 > * **`isRoundOver` has to be reachable from mid-hand under greedy play.** A
 >   rollout that never finishes is thrown away, so a template that can only end
 >   a hand through a move no heuristic would choose gets no search at all.
