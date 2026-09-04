@@ -314,33 +314,45 @@ export function describeContract(items) {
  * The per-render UI model
  * ------------------------------------------------------------------ */
 
+/* THERE IS NO HINT SENTENCE ANY MORE, and the budget that policed it is gone
+   with it. This model used to carry a line of phase guidance — "Draw from the
+   deck or the discard pile" — for a bar that stood between the felt and the
+   hand, and the bar's two reserved lines were the reason for HINT_MAX_CHARS
+   and HINT_MAX_CHARS_BARE: prose that wrapped to a third line pushed the whole
+   table down (#13, then #17).
+   The bar is now a rail at the fan's edge (index.html), and the words did not
+   fit anywhere that did not cost the felt height it does not have — a phone's
+   status bar gives a sentence 122px, and the shortest of these needed 166. So
+   the sentence was dropped rather than moved or truncated: what a player may
+   do is said by the cards and piles that light up, which is the same answer
+   the sentence was describing.
+   If guidance ever comes back, it needs a measured home before it needs
+   words. */
+
 /**
- * How long a hint may be before it costs the felt a line.
+ * How long an action button's label may be — the one piece of prose the felt
+ * still has, and now the only one with a layout to break.
  *
- * The action bar reserves TWO lines of text (src/ui/table.css) and the table
- * below it is laid out around that reservation, so a hint that wraps to three
- * pushes the deck, the discard and the hand down the screen — the shift #13
- * fixed, coming back through the words rather than through the box (#17).
+ * ONE LINE, NOT TWO, and this number was measured rather than reasoned. The
+ * button stands in the rail's thumb slot beside the turn token and the Hint
+ * lamp, and the rail may not grow taller than the fan or #hand-row grows with
+ * it and the felt shifts — #13 arriving through the words rather than the box,
+ * the same way HINT_MAX_CHARS used to be breached (#17). The first cut of this
+ * budgeted two lines and let "Pass 3 across" through; in a browser at 375px
+ * that wrapped, took the rail from 74px to 89px against a fan 84px tall, and
+ * pushed the row out by 14px. A one-line label leaves 10px of headroom on the
+ * same measurement.
  *
- * Two budgets because the action button eats the width the words would have
- * used: a hint standing beside a "Lay down" gets barely two thirds of the row.
- * Both are MEASURED at 360x780, the narrowest phone the felt is designed for —
- * at 66 and 90 the sample sentences fill two lines, a few characters further
- * they spill onto a third.
+ * The slot is 5rem wide with 0.25rem of padding each side, so a label has
+ * ~74px at 0.72rem semibold — eleven characters of ordinary mixed-case text,
+ * set below the width actually measured to absorb the difference between an
+ * `i` and a `W`.
  *
- * Characters are a proxy for pixels and a coarse one: they hold because every
- * hint is ordinary lower-case prose, and the numbers above are set below the
- * widths actually measured to absorb the difference between an `i` and a `W`.
- * A hint that wants capitals or digits en masse should be measured in a
- * browser rather than counted.
- *
- * Enforced by tests/interaction.test.js over every pack, because the one hint
- * that interpolates PACK DATA — the contract sentence — is the one a future
- * pack could lengthen without anyone touching this file.
+ * The label that interpolates PACK DATA is the passing one — the direction the
+ * pack rotates — so this is enforced over every pack in
+ * tests/interaction.test.js rather than eyeballed here.
  */
-export const HINT_MAX_CHARS = 66;
-/** …and what a hint gets when it has the row to itself. */
-export const HINT_MAX_CHARS_BARE = 90;
+export const ACTION_LABEL_MAX_CHARS = 11;
 
 /**
  * Everything a render needs to know about what is tappable, derived in one
@@ -357,7 +369,6 @@ export const HINT_MAX_CHARS_BARE = 90;
  *   readyTargets    Map zoneAddress -> move to apply when that pile is tapped
  *   readyMelds      Map "seat:index" -> hit move for that meld chip
  *   action          { label, makeMove() } for the action button, or null
- *   hint            the action bar's text
  */
 export function buildUiModel(state, { seat, moves = [], acts = false, selection = null } = {}) {
   const mode = interactionMode(state);
@@ -371,7 +382,6 @@ export function buildUiModel(state, { seat, moves = [], acts = false, selection 
     readyTargets: new Map(),
     readyMelds: new Map(),
     action: null,
-    hint: '',
   };
 
   const hand = state.zones.cards(handAddr);
@@ -412,10 +422,9 @@ export function buildUiModel(state, { seat, moves = [], acts = false, selection 
 
     if (mode === 'play-drawn') {
       // The whole answer to "how does a turn end after a draw": one button, in
-      // the bar that already holds exactly one hint and one button. No timeout,
-      // no auto-pass — and the pass is a real move, so tapping it is logged and
-      // replays (src/templates/shedding.js).
-      ui.hint = 'Play the card you drew, or keep it';
+      // the rail's thumb slot. No timeout, no auto-pass — and the pass is a
+      // real move, so tapping it is logged and replays
+      // (src/templates/shedding.js).
       const pass = moves.find((m) => m.type === 'pass');
       if (pass) ui.action = { label: 'Keep it', makeMove: () => ({ actor: seat, type: 'pass' }) };
       return ui;
@@ -432,19 +441,29 @@ export function buildUiModel(state, { seat, moves = [], acts = false, selection 
     if (draw && (state.pack.rules.mustPlayIfAble !== true || ui.handSelectable.size === 0)) {
       ui.readyTargets.set('draw', draw);
     }
-    ui.hint = 'Your turn';
     return ui;
   }
 
   if (mode === 'pass') {
     const count = state.pack.rules.passing?.count ?? 3;
-    const direction = { left: 'to the left', right: 'to the right', across: 'across' }[state.vars.passDirection] || '';
+    // WHICH WAY, ON THE BUTTON — AND THE COUNT MOVED TO THE STATUS BAR.
+    // The dropped phase sentence ("Pick 3 cards to pass to the left") was
+    // carrying both, and only one of them still needs saying HERE. Nothing on
+    // the felt says the direction: the seats are drawn as a row, not a circle,
+    // so it is not something a player can read off the table, and the button
+    // is the last place it can live. The COUNT is different — this button only
+    // exists once exactly that many cards are staged, and the tray beside it is
+    // showing them — so what a player needs the count for is BEFORE the button
+    // appears, which is why statusTextFor says "Passing — pick 3" instead
+    // (src/ui/table.js).
+    // Dropping it is also what makes the label fit: "Pass 3 across" wraps to
+    // two lines in the rail and grows it past the fan; "Pass across" does not.
+    const direction = { left: 'left', right: 'right', across: 'across' }[state.vars.passDirection] || '';
     for (const id of hand) ui.handSelectable.add(id);
     ui.handMulti = true;
-    ui.hint = `Pick ${count} cards to pass ${direction}`.trim();
     if (sel.length === count && selection.from === handAddr) {
       ui.action = {
-        label: `Pass ${count} cards`,
+        label: `Pass ${direction}`.trim(),
         makeMove: () => ({ actor: seat, type: 'passCards', cards: sel.slice() }),
       };
     }
@@ -455,9 +474,6 @@ export function buildUiModel(state, { seat, moves = [], acts = false, selection 
     for (const move of moves) {
       if (move.type === 'draw') ui.readyTargets.set(move.from ?? 'draw', move);
     }
-    ui.hint = ui.readyTargets.has('discard')
-      ? 'Draw from the deck or the discard pile'
-      : 'Draw from the deck';
     return ui;
   }
 
@@ -474,21 +490,16 @@ export function buildUiModel(state, { seat, moves = [], acts = false, selection 
     ui.gathering = gathering && holdGathers(state, seat);
 
     if (gathering) {
-      const contract = state.pack.rules.contracts?.[(state.playerVars[seat]?.phase ?? 1) - 1] || [];
-      // TWO CLAUSES, BOTH EARNING THEIR WORDS. The contract is what a
-      // contract-rummy player most needs on screen — it is the whole shape of
-      // the turn — and the hold is the fastest way to build a meld with
-      // nothing else on the felt to say it is there. What went is the padding
-      // around them: this used to run "tap cards to gather them, hold one to
-      // gather its whole meld, or discard", which wrapped to FOUR lines on a
-      // 360px phone and grew the action bar by ~30px on most Milestones turns
-      // — the table-shifting bug of #13 surviving inside the fix for it (#17).
-      // The discard clause is the one that went: the discard pile lights up as
-      // a target on its own, so it was the sentence explaining the affordance
-      // the felt was already showing.
-      // Keep it inside two lines — see the reserved slot in src/ui/table.css
-      // and the budget test in tests/interaction.test.js.
-      ui.hint = `Contract: ${describeContract(contract)} — tap to gather, hold for a meld`;
+      // THE LAST SENTENCE TO GO, and the only one that was carrying two
+      // things: "Contract: set of 3 + run of 4 — tap to gather, hold for a
+      // meld". The contract half is on the felt already — the ladder beside
+      // the piles draws every rung's requirement and marks the one this player
+      // is standing on (src/ui/contractLadder.js) — so it was the felt's own
+      // furniture, restated in words, in the row that cost the felt its
+      // height. The hold half is a gesture no pixel announces; it is taught by
+      // the pack's own "How to play" (src/ui/rules.js) and survives being
+      // discovered by holding a card, which is what a long press does
+      // everywhere else on this table anyway.
       if (sel.length && selection.from === handAddr && state.pack.template.arrangeContract) {
         const melds = state.pack.template.arrangeContract(ctx, seat, sel);
         if (melds) {
@@ -498,8 +509,6 @@ export function buildUiModel(state, { seat, moves = [], acts = false, selection 
           };
         }
       }
-    } else {
-      ui.hint = 'Hit any meld with a matching card, or discard to end your turn';
     }
 
     if (sel.length === 1 && selection.from === handAddr) {
@@ -545,9 +554,6 @@ export function buildUiModel(state, { seat, moves = [], acts = false, selection 
       ui.readyTargets.set(move.to, move);
     }
   }
-  if (!sel.length) ui.hint = 'Play from your stock, hand, or discard piles';
-  else if (selection.from === handAddr) ui.hint = 'Tap a build pile to play it — or one of your discard piles to end your turn';
-  else ui.hint = 'Tap a build pile to play it';
   return ui;
 }
 

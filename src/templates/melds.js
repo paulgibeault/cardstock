@@ -385,6 +385,31 @@ export function resolveHit(ctx, group, kind, cardIds, declared) {
  * fixes every meld ever laid, including the ones on disk, and the engine never
  * sees it.
  *
+ * AND THE DIVERGENCE IS THE PERMANENT ANSWER (#98). Stored order is dealing
+ * order — the order the cards arrived — and drawn order is reading order. That
+ * they disagree was raised as a question, and it was checked properly: sorting
+ * at lay-down WOULD be rules-safe today, because nothing indexes into a
+ * group's `cards` (every `cards[0]` in the tree is `move.cards`), and run
+ * validation is min/max over ranks, which has no opinion about order. Three
+ * things still argue against it, and they are not going to change:
+ *
+ *   1. THERE ARE TWO STORED ORDERS, not one. `getMeldGroups` reads the `melds`
+ *      playerVar when there is one and otherwise slices the melds ZONE as a
+ *      single group — and that zone array is appended to independently by
+ *      moveCards. Sorting the groups without sorting the zone leaves two
+ *      stored orders disagreeing with EACH OTHER, which is worse than one
+ *      disagreeing with the render.
+ *   2. IT WOULD BE EXTRA CODE, NOT A REPLACEMENT. Matches already on disk keep
+ *      the order they were logged with, so this function has to exist whatever
+ *      the store does.
+ *   3. `move.choice.meld` indexes the GROUPS array. Sorting within a group is
+ *      safe; the neighbouring temptation — sorting the groups themselves —
+ *      is not, and the two look alike from a distance.
+ *
+ * So: if a wire format, a rule, or a log a human reads ever needs the stored
+ * order to be canonical, that is the thing to weigh this against. Nothing does
+ * today.
+ *
  * TOTAL, AND IT MAY NOT LOSE A CARD. This is what the felt draws, so every
  * degenerate group — a wild nobody has valued yet, a kind this file does not
  * know, a card id that is not in the pack, no cards at all — comes back in the

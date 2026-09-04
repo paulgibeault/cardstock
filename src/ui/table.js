@@ -150,8 +150,7 @@ const el = {
   playerPiles: document.getElementById('player-piles'),
   announceBar: document.getElementById('announce-bar'),
   contractLadder: document.getElementById('contract-ladder'),
-  actionBar: document.getElementById('action-bar'),
-  actionHint: document.getElementById('action-hint'),
+  handRail: document.getElementById('hand-rail'),
   actionButton: document.getElementById('action-button'),
   hintButton: document.getElementById('hint-button'),
   stageRow: document.getElementById('stage-row'),
@@ -407,9 +406,9 @@ function turnToken() {
  *     `--ready` and `--target` classes on nodes they keep, so those rings fire
  *     on the genuine transition into "ready" and stay quiet across renders that
  *     do not change the answer.
- *   - Neither. The action bar's turn token is static markup in index.html
- *     (`#action-bar > .turn-token`). Left alone its three pulses would run out
- *     while the game was still booting and never fire again, so renderActionBar
+ *   - Neither. The rail's turn token is static markup in index.html
+ *     (`#hand-rail > .turn-token`). Left alone its three pulses would run out
+ *     while the game was still booting and never fire again, so renderRail
  *     replays it on the transition into the human's turn.
  */
 
@@ -1721,7 +1720,10 @@ function renderHand(state, ui, stagger, draggable) {
 
   el.handSort.textContent = SORT_LABELS[session.handPrefs.mode] || SORT_LABELS.auto;
   el.handSort.setAttribute('aria-label', `Hand order: ${SORT_LABELS[session.handPrefs.mode]}. Change it.`);
-  el.handSort.hidden = engineHand.length < 2;
+  // Whether it is SHOWN is renderRail's: the toggle shares its slot with the
+  // action button, and renderSelection reaches the rail without coming through
+  // here — so a `hidden` set from this side would survive the action that
+  // displaced it and the toggle would never come back.
   renderStageTray(state, ui);
   layoutHand();
 }
@@ -1763,8 +1765,13 @@ function layoutHand() {
   const styles = getComputedStyle(el.hand);
   const cardWidth = parseFloat(styles.getPropertyValue('--hand-card-w')) || 70;
   const padding = (parseFloat(styles.paddingLeft) || 0) + (parseFloat(styles.paddingRight) || 0);
-  // The sort toggle shares the row, so the fan may not have all of it.
-  const reserved = el.handSort.hidden ? 0 : el.handSort.offsetWidth + 12;
+  // The rail shares the row, so the fan may not have all of it. The RAIL is
+  // measured, not whichever control happens to be standing in it: its width is
+  // fixed in CSS precisely so this number does not move when the turn token
+  // lights, the Hint lamp appears, or the action button takes the thumb slot —
+  // a reserve that changed mid-turn would re-fan the hand under the player's
+  // finger (#13, in the inline axis).
+  const reserved = el.handRail.offsetWidth + 12;
   const available = Math.max(cardWidth, rowWidth - reserved - padding - 4);
 
   const step = fanStep({ count, cardWidth, available });
@@ -1868,8 +1875,8 @@ function renderAnnounceBar(state) {
   const options = humanAnnouncements(state).filter((a) => a.type === 'announce');
   // `hidden` is now the PACK's answer and nothing else; whether there is
   // anything to say right now is a class, so the bar keeps its slot in the
-  // felt's column either way. See #action-bar below for the full story — this
-  // is the same bug and the same fix (#13).
+  // felt's column either way — the same bug and the same fix as the row that
+  // used to stand above the hand, which is now the rail beside it (#13).
   el.announceBar.hidden = !packAnnounces(state);
   el.announceBar.classList.toggle('announce-bar--empty', options.length === 0);
   // The buttons are left standing while the bar fades out, so `inert` is what
@@ -1916,75 +1923,92 @@ function showHint() {
   if (!hint) return;
   session.hint = hint;
   session.hintsTaken += 1;
-  // The bar's text changing is silent to a screen reader; the log is the live
-  // region, and this is exactly the kind of thing it exists to say.
+  // THE SENTENCE OUTLIVED THE BAR THAT SHOWED IT. What a sighted player gets
+  // is the ring on the felt — the cards, the pile, the meld the suggestion
+  // touches — and a ring says nothing to a screen reader. #log is the live
+  // region, it sits below the felt where it costs the hand no room, and this
+  // is exactly the kind of thing it exists to say. It is the ONLY place the
+  // wording appears now, which is why suggestionText still exists.
   el.log.textContent = hint.text;
   renderSelection(state);
   // Counted, and the count is part of what a resume brings back.
   persistMatch();
 }
 
-function renderActionBar(state, ui, humanActs) {
-  const waitingOnPass = interactionMode(state) === 'pass'
-    && !humanActs && !state.gameOver
-    && committedSelectionOf(state, mySeat()) !== null;
-  // A SUGGESTION STANDS IN FOR THE HINT, not beside it: the bar has room for
-  // one sentence, and the player asked for this one. It lasts exactly as long
-  // as the position does — every applied move clears it (applyStateChange).
+/**
+ * The rail beside the hand: the turn token, the Hint lamp, and the thumb slot
+ * the action button and the sort toggle share (index.html says why it is a
+ * rail and not a bar).
+ *
+ * TWO INVARIANTS, AND NEITHER IS THIS FUNCTION'S TO BREAK.
+ *
+ * The rail's WIDTH is what the felt pays for it: the row centres the fan and
+ * the rail as a group and layoutHand subtracts the rail from the room the fan
+ * may use, so a rail that changed width would re-fan the hand under the
+ * player's finger — #13 in the inline axis. That is held in CSS by a fixed
+ * width, and held here by the action button and the sort toggle taking turns
+ * in one slot rather than stacking.
+ *
+ * The rail's HEIGHT costs the felt nothing — its own box is zero-height, so
+ * #hand-row is the fan's height whatever goes in the stack — but the stack
+ * still has to be STILL, because it is two controls under a thumb that is
+ * already reaching for them. That is why the token and the lamp are toggled
+ * by class and keep their slots, rather than by `hidden`.
+ */
+function renderRail(state, ui, humanActs) {
+  // A SUGGESTION IS A HIGHLIGHT NOW, NOT A SENTENCE. What the hint touches is
+  // ringed on the felt and its wording goes to #log for anyone who cannot see
+  // a ring (showHint); the rail itself only has to stop offering a hint whose
+  // answer is already showing. It lasts exactly as long as the position does —
+  // every applied move clears it (applyStateChange).
   const suggestion = humanActs && session?.hint ? session.hint : null;
-  const hint = humanActs ? (suggestion ? suggestion.text : ui.hint)
-    : (waitingOnPass ? 'Waiting for the other players to pass…' : '');
-  // THE ONE TOKEN NOBODY REBUILDS. This bar's turn token is static markup in
+  // THE ONE TOKEN NOBODY REBUILDS. The rail's turn token is static markup in
   // index.html, so its finite pulse would have run itself out during boot and
   // never fired again (see "Finite pulses" above). Replayed on the transition
   // INTO the human's turn — the single moment it has something new to say —
   // and not on the renders that follow within the same turn.
   if (session && humanActs && !session.humanActing) {
-    replayPulse(el.actionBar.querySelector('.turn-token'), 'turn-token');
+    replayPulse(el.handRail.querySelector('.turn-token'), 'turn-token');
   }
   if (session) session.humanActing = humanActs;
-  // NOT `hidden`. This bar sits in the felt's flex column, and a bar that
-  // leaves the column takes its height with it — which meant the turn cue
-  // moved the whole table every time the turn changed hands (#13). It keeps
-  // its slot now and only stops being visible; src/ui/table.css holds the
-  // reserved height and the reasoning.
-  el.actionBar.classList.toggle('action-bar--empty', !hint);
-  // Nothing else changes on the way out. The bar keeps its last words and its
-  // token while it fades — clearing them first would collapse the pill
-  // mid-fade — and `inert` is what makes those leftovers unreachable at once,
-  // by keyboard and by screen reader, rather than when the fade ends.
-  el.actionBar.inert = !hint;
-  if (!hint) {
-    el.actionButton.onclick = null;
-    return;
-  }
-  el.actionBar.classList.toggle('action-bar--acting', humanActs);
-  el.actionBar.classList.toggle('action-bar--hinted', !!suggestion);
-  el.actionHint.textContent = hint;
-  // The button asks the engine to rank the position, so it is offered only
-  // where the felt HOLDS the position — a joiner's view has no opponents'
-  // hands to fork and gets no button rather than a guess (src/ui/hint.js) —
-  // and only where there is a choice to make. One legal move is not a hint.
-  // AND IT STEPS ASIDE WHILE ITS ANSWER IS SHOWING: the bar has room for one
-  // sentence and one action button in two lines at 360px, and measured with
-  // "Lay down" AND "Hint" beside it a 53-character suggestion wrapped to a
-  // third line and grew the bar (#13). The offer and the answer never share
-  // the row; the button is back the moment a move makes the answer stale.
-  el.hintButton.hidden = !(humanActs && !state.isView && !state.gameOver && !suggestion
+  el.handRail.classList.toggle('hand-rail--acting', humanActs);
+
+  // The lamp asks the engine to rank the position, so it is offered only where
+  // the felt HOLDS the position — a joiner's view has no opponents' hands to
+  // fork and gets no button rather than a guess (src/ui/hint.js) — and only
+  // where there is a choice to make. One legal move is not a hint. It also
+  // steps aside once its answer is showing, so a player cannot ask the same
+  // question twice and have it counted twice.
+  //
+  // A CLASS, NOT `hidden`, for the same reason the token uses one: the lamp
+  // keeps its slot and only loses `visibility`, so the rail's stack is one
+  // height from the first deal to the last card and nothing in it ever shifts
+  // under the thumb. `visibility: hidden` takes it out of the tab order and
+  // off the screen reader too, which `hidden` was doing before.
+  el.handRail.classList.toggle('hand-rail--hintable',
+    humanActs && !state.isView && !state.gameOver && !suggestion
     && movesFor(state, mySeat()).length > 1);
-  if (ui.action && humanActs) {
-    el.actionButton.hidden = false;
+
+  // THE THUMB SLOT, and who has it. An action displaces the sort toggle rather
+  // than standing above it: the rail may not outgrow the fan (see above), and a
+  // player who has just staged a meld is not reaching for "By suit". Both
+  // conditions are answered here rather than half of them in renderHand:
+  // renderSelection repaints the rail without rebuilding the fan, so a
+  // `hidden` written from there would outlive the action that displaced it.
+  const acting = !!(ui.action && humanActs);
+  el.actionButton.hidden = !acting;
+  el.handSort.hidden = acting || state.zones.cards(handAddress(mySeat())).length < 2;
+  if (acting) {
     el.actionButton.textContent = ui.action.label;
     el.actionButton.onclick = () => {
       if (!liveState()) return;
       const move = ui.action.makeMove();
       // The button is the third tap that was launching cards from the wrong
-      // place: "Lay down" and "Pass 3 cards" both carry cards that are sitting
-      // in the tray, and the flight was starting from the action bar.
+      // place: "Lay down" and "Pass 3 left" both carry cards that are sitting
+      // in the tray, and the flight was starting from the button.
       performHumanMove(liveState(), move, tapOrigin(move));
     };
   } else {
-    el.actionButton.hidden = true;
     el.actionButton.onclick = null;
   }
 }
@@ -2006,7 +2030,14 @@ function renderStatusBar(state, acting) {
 function statusTextFor(state, acting) {
   if (state.gameOver) return `Game over — ${winnerSentence(state)}`;
   if (state.turn.phase === 'pass') {
-    return acting.some(isMySeat) ? 'Passing — your pick' : 'Waiting for passes…';
+    // HOW MANY, HERE, because nothing else says it in time. The pass button
+    // only appears once exactly this many cards are staged, so its label
+    // cannot be where a player learns the number — and the sentence that used
+    // to say it stood in a bar above the hand that no longer exists
+    // (src/ui/interaction.js). This slot is 122px at 375px, which is why the
+    // count replaces "your pick" rather than joining it.
+    const count = state.pack.rules.passing?.count ?? 3;
+    return acting.some(isMySeat) ? `Passing — pick ${count}` : 'Waiting for passes…';
   }
   return acting.some(isMySeat) ? 'Your turn' : `${seatLabel(state.turn.seat)}'s turn`;
 }
@@ -2057,7 +2088,7 @@ function renderSelection(state) {
   for (const stack of el.screen.querySelectorAll('.pile-stack[data-zone]')) zones.paintPileState(stack, ui);
   for (const chip of el.screen.querySelectorAll('.meld-chip[data-meld]')) zones.paintMeldState(chip, ui);
   paintSeatTargets(state, ui);
-  renderActionBar(state, ui, humanActs);
+  renderRail(state, ui, humanActs);
   // A selection change is the player acting, so the idle clock starts over.
   scheduleIdleNudge(humanActs);
 }
@@ -2102,7 +2133,7 @@ function render(state, message) {
   // leaves the column entirely for a pack that cannot announce, and a hint
   // long enough to wrap is still a taller bar. The order stays.
   renderAnnounceBar(state);
-  renderActionBar(state, ui, humanActs);
+  renderRail(state, ui, humanActs);
   renderHand(state, ui, stagger, draggable);
   session.dealAnimation = false;
   session.shownCardKeys = session.enteringKeys;

@@ -30,16 +30,20 @@ import { skillLevel } from './difficulty.js';
 /**
  * How long a suggestion may be.
  *
- * Shorter than `HINT_MAX_CHARS` (src/ui/interaction.js), which is the budget
- * for the bar's ordinary prose beside an action button, because a suggestion
- * is set in italics and carries a proper noun and a card name — wider
- * characters than "Draw from the deck or the discard pile" is made of, on
- * the same row and beside the same button. Measured at 360px like the two
- * budgets it sits under: 56 characters beside "Lay down", "Keep it" or "Pass
- * 3 cards" holds to two lines, with the Hint button stepped aside as
- * renderActionBar (src/ui/table.js) makes it while an answer is showing —
- * with the button still on the row, 53 already wrapped to a third. Enforced
- * by tests/hint.test.js over every pack and every difficulty.
+ * THIS SENTENCE IS NO LONGER ON THE FELT. It used to stand in the bar above
+ * the hand, in italics, beside the action button, and the budget was that
+ * row's two reserved lines. The bar is gone (index.html), the ring on the
+ * felt is what a sighted player reads, and the wording now goes only to #log
+ * — the live region below the table, for the player a hint is most for.
+ *
+ * So the budget is #log's line: 30rem wide at most, 0.8rem type, and at 375px
+ * the narrower of the two is the phone's own width. 56 characters of ordinary
+ * prose measure ~358px there, inside a 375px line, so a suggestion still says
+ * itself in one breath instead of wrapping mid-thought.
+ *
+ * Characters are a proxy for pixels and a coarse one; it holds because these
+ * are lower-case sentences carrying one proper noun and one card name.
+ * Enforced by tests/hint.test.js over every pack and every difficulty.
  */
 export const SUGGESTION_MAX_CHARS = 56;
 

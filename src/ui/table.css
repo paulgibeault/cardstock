@@ -413,6 +413,17 @@ body {
      stays empty and the seats stay centred; one-sided padding would just move
      the off-centre bug from the toggle to the padding. */
   padding: 4px 2.9rem 2px;
+  /* How far the toggle's box reaches down into this row: it is positioned
+     against #table at `top: 0.5rem` and stands 18px tall, and the row's own
+     top edge is 15px below #table's — 11px of reach, measured at 375px. The
+     row that SCROLLS reserves this in the block axis because it cannot reserve
+     the corner in the inline one (see .opponent-row--carousel).
+     IN `rem`, NOT PIXELS, and with 3px to spare. The toggle's height is its
+     font's, and the launcher scales the root font — so a pixel constant would
+     hold at the default scale and fail at the large one, which is the setting
+     the players who need it are using. 0.9rem tracks the thing it is clearing
+     instead of guessing at it. */
+  --toggle-clearance: 0.9rem;
   overscroll-behavior-x: contain;
   scrollbar-width: thin;
   scrollbar-color: transparent transparent;
@@ -501,10 +512,24 @@ body {
   justify-content: flex-start;
   justify-content: safe center;
   overflow-x: auto;
-  /* `overflow-x` alone still makes the block axis a scrollport, which would
-     clip .seat--active's 2px lift and its glow. The padding is the room for
-     them; the row is otherwise unchanged. */
-  padding: 4px 0 6px;
+  /* THE TOGGLE'S CORNER, KEPT CLEAR IN THE BLOCK AXIS — the inline reservation
+     above cannot do it here, and this row is now the default view (#96, #97).
+     `.opponent-row` reserves 2.9rem of inline padding on both sides so no seat
+     is laid under the toggle. That works for a row that sits still. This one
+     SCROLLS: inline padding only holds the corner open at the two scroll
+     extremes, and every seat passes under the toggle on its way past in
+     between — so restoring the padding would fix the picture at scrollLeft 0
+     and nowhere else. (It would also lengthen the scroll, which is presumably
+     why it was zeroed to begin with.)
+     Reserving in the BLOCK axis is the honest tool. The toggle's box ends 11px
+     below this row's top edge — measured at 375px, where it was overlapping
+     the seats by 22x7px — so the seats start below it and stay below it at
+     every scroll position. Block padding on a horizontal scroller adds nothing
+     to its scrollable length, which is the whole reason to prefer it.
+     The 6px at the bottom is the older job this padding already had: `overflow-x`
+     alone still makes the block axis a scrollport, which would clip
+     .seat--active's 2px lift and its glow. */
+  padding: var(--toggle-clearance) 0 6px;
   scroll-snap-type: x proximity;
   /* In carousel mode the bar is always shown, not shown on hover like the
      safety-net one above: here scrolling is the POINT — the player asked for a
@@ -512,7 +537,6 @@ body {
      going looking for it. Both spellings, since Firefox reads the standard
      properties and WebKit needs the pseudo-elements. */
   scrollbar-color: var(--chip-border) transparent;
-  padding-bottom: 6px;
 }
 .opponent-row--carousel::-webkit-scrollbar-thumb { background: var(--chip-border); }
 .opponent-row--carousel::-webkit-scrollbar-thumb:hover { background: var(--accent); }
@@ -928,7 +952,8 @@ body {
    the seat 29px taller for the two seconds it existed, and the opponent row is
    the top of the felt's flex column — so every pile below it slid down 15px
    and back at the exact moment the table was asking the player to react to
-   something (#13, the same rule as #action-bar). Out of flow it costs nothing
+   something (#13, the same rule the rail is laid out to). Out of flow it costs
+   nothing
    and moves nothing, and lying across the accused seat's own fan is where it
    belongs anyway: the eye goes to the seat being accused. */
 .seat__catch {
@@ -1403,21 +1428,74 @@ button.pile-stack:focus-visible { outline: 2px solid var(--accent); outline-offs
   gap: 0.5rem;
 }
 
-/* The sort toggle sits at the fan's edge, and flips sides with handedness
-   along with everything else that has a side.
+/* ------------------------------------------------------------------ *
+ * The rail
+ * ------------------------------------------------------------------ */
 
-   Its width is FIXED to the longest label it can wear. The row centres the fan
-   and the button as a group, and layoutHand subtracts the button's width from
-   the room the fan may use — so a label cycling "Deal order" → "By suit" →
-   "By rank" slid the whole hand sideways and re-fanned it, for pressing a
-   button that sorts cards. */
+/* EVERYTHING THAT USED TO STAND ABOVE THE HAND, STOOD BESIDE IT INSTEAD.
+   #action-bar was a full-width row between the felt and the fan holding a
+   turn token, a sentence of phase guidance, the Hint offer and the one action
+   button, and it reserved 53px of a 812px phone for the whole match whether
+   or not it had anything to say — directly above the cards the player was
+   reaching for. The felt is the thing that is short of room; the words were
+   the thing worth least. So the sentence is gone, the token and the offer are
+   icons, and all four sit in a column at the fan's edge.
+
+   THE RAIL OWES THE ROW A WIDTH AND NEVER A HEIGHT, and that is structural
+   rather than arithmetic. #hand-row sizes itself to its tallest item, so a
+   rail taller than the fan grows the row and moves the felt — #13 again, and
+   it did: measured at 320px the fan is 76px and a fully populated rail was
+   83px, so the row jumped 7px every time the turn came round. Keeping the
+   column "short enough" is a promise that has to be re-earned at every
+   viewport and by every control anyone adds. So the rail's own box is
+   ZERO-HEIGHT and the stack hangs off its bottom edge, out of flow: whatever
+   goes in it, #hand-row is exactly as tall as the fan.
+
+   ITS WIDTH IS FIXED for the mirror-image reason. The row centres the fan and
+   the rail as a group and layoutHand subtracts the rail from the room the fan
+   may use, so a rail that changed width would slide the hand sideways and
+   re-fan it — which is what a cycling "Deal order" → "By suit" → "By rank"
+   label did before its own width was pinned. Every control in here is laid out
+   to that fixed box, and the two that come and go share one slot rather than
+   stacking, so the width is a constant and not a maximum.
+
+   It flips sides with handedness along with everything else that has a side. */
+.hand-rail {
+  width: 5rem;
+  flex: none;
+  align-self: flex-end;
+  position: relative;
+  height: 0;
+}
+.hand-rail__stack {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0.6rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+/* THE STACK IS ONE HEIGHT, ALWAYS. The token and the lamp keep their slots and
+   only lose `visibility` — `display: none` would shuffle the column upward
+   every time the turn changed hands or an answer was given, moving the two
+   controls under the thumb while the thumb was reaching for them. (The rail's
+   own box is zero-height either way, so this is about the stack being still,
+   not about the felt moving.) `visibility` also takes both out of the tab
+   order and off the screen reader, which is what `hidden` was doing before. */
+.hand-rail:not(.hand-rail--acting) .turn-token { visibility: hidden; }
+.hand-rail:not(.hand-rail--hintable) #hint-button { visibility: hidden; }
+
+/* The sort toggle's width is FIXED to the longest label it can wear, and now
+   also to the rail that holds it. */
 .hand-sort {
   font: inherit;
   font-size: 0.7rem;
   min-width: 6.2em;
   text-align: center;
   padding: 0.2rem 0.55rem;
-  margin-bottom: 0.6rem;
   border-radius: 999px;
   border: 1px solid var(--chip-border);
   background: var(--chip-bg);
@@ -1631,7 +1709,7 @@ body.is-dragging .card-face { cursor: grabbing; }
  * ------------------------------------------------------------------ */
 
 /* THE BAR'S SLOT IS RESERVED, AND THAT IS THE POINT — same discipline as
-   #status-bar and #action-bar, for the same reason: this row is in the felt's
+   #status-bar and .hand-rail, for the same reason: this row is in the felt's
    flex column, so a bar that appears pushes everything below it.
    The moment it appears is the WORST possible moment to move the table: a
    seat has one card left, the window to say so is measured in seconds, and
@@ -1763,102 +1841,40 @@ body.is-dragging .card-face { cursor: grabbing; }
 
 
 /* ------------------------------------------------------------------ *
- * The action bar
+ * The rail's controls
  * ------------------------------------------------------------------ */
 
-/* One line of guidance plus at most one button, floating above the hand.
-   This is also where the human wears the turn token — the same chip the
-   seats wear, in the same place every game. */
-
-/* THE BAR'S SLOT IS RESERVED, AND THAT IS THE POINT.
-   Read #status-bar's note first — this is the same failure in the same flex
-   column, one row further down. This bar used to toggle `hidden`, so it left
-   normal flow the instant the turn passed to a bot and re-entered it when the
-   turn came back, and #center-piles (flex: 1) absorbed the difference by
-   sliding the deck and the discard up and down by ~19px on EVERY turn change.
-   The cue that says "it's your turn" was moving the cards you play it with.
-   So the row's height is now permanent and only its VISIBILITY changes. The
-   fade is opacity — a compositor property, no layout, no paint — never
-   height, margin, padding or display. If you are here to simplify this back
-   into `display: none`, that is the bug (#13).
-   `visibility: hidden` is doing accessibility work too: it takes the empty
-   bar's contents out of the tab order and off the screen reader, so nobody
-   lands on a ghost button in a bar they cannot see. It only lands at the end
-   of the fade, which is why renderActionBar also sets `inert`. */
-#action-bar {
-  /* Named because the reserved height is computed from it, and the mobile
-     block below changes it. */
-  --action-bar-pad: 0.35rem;
+/* THE HINT LAMP, and what it lights.
+   A quiet disc at the fan's edge, in the sort toggle's register: it is there
+   every turn and it is not the thing to look at. Icon only — the word "Hint"
+   bought nothing that a lamp beside your own hand does not already say, and
+   the words are what cost the felt its room.
+   ITS ANSWER IS THE FELT, NOT A SENTENCE. What the suggestion touches gets a
+   ring in a colour of its own: the accent already means "legal here", and a
+   hint has to be tellable from that at a glance — the ring says "this one",
+   not "you may". Static, no pulse: it is answering a question the player just
+   asked, so it has their attention. The sentence still exists and still goes
+   to #log, the live region below the felt, because a player who cannot see a
+   ring is exactly the player a hint is for (src/ui/table.js showHint). */
+#hint-button {
+  font: inherit;
+  font-size: 0.85rem;
+  line-height: 1;
+  width: 1.6rem;
+  height: 1.6rem;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 0.6rem;
-  margin: 0 auto;
-  width: fit-content;
-  max-width: 100%;
-  padding: var(--action-bar-pad) 0.9rem;
-  /* The slot is as tall as the TALLEST thing that can stand in it, and on a
-     phone that is TWO LINES OF HINT, not the button (#17). The first cut of
-     this reserved a single line, which held for "Your turn" and cost the felt
-     nothing — but a sentence long enough to wrap grew the bar anyway, and the
-     table shifted again on exactly the turns where the hint had something to
-     say. A second line is cheap — 2.4px on a phone, because the button was
-     already reserving more than one line of text — so every pack buys it
-     rather than the packs with long hints getting a special case.
-     The two terms, whichever is taller:
-       2 * 1.2em  two lines of hint. `em` is this bar's own font-size, so the
-                  mobile block's smaller type shrinks the slot with it, and
-                  #action-hint pins its line-height to 1.2 to match.
-       button     its 0.85rem label at line-height 1.2 (pinned there for the
-                  same reason) plus 0.35rem of padding top and bottom. Two
-                  lines of hint currently win at every width; the button stays
-                  in the arithmetic because it keeps FULL-SIZE type when the
-                  hint shrinks, so a smaller hint type would eventually leave
-                  a slot shorter than the button standing in it.
-     Then this bar's own padding and its 1px border on each edge.
-     TWO LINES IS A BUDGET, NOT A CEILING THE BROWSER ENFORCES: a hint that
-     wraps to three grows the bar and puts #13 back. tests/interaction.test.js
-     holds every hint the UI can build to the character count that fits. */
-  min-height: calc(max(2 * 1.2em, 1.2 * 0.85rem + 0.7rem)
-    + var(--action-bar-pad) * 2 + 2px);
-  border-radius: 999px;
-  background: var(--chip-bg);
-  border: 1px solid var(--chip-border);
-  font-size: 0.85rem;
-  transition: opacity 0.3s ease, visibility 0.3s;
-}
-#action-bar.action-bar--empty { opacity: 0; visibility: hidden; }
-
-/* THE HINT BUTTON, and what it lights.
-   A small pill at the end of the bar, in the hand-sort button's register:
-   present but quiet, because it is there every turn and the bar's words are
-   the thing to read. A suggestion replaces those words and is set in italics
-   so it reads as advice rather than as the turn's instruction — the token
-   and the action button are untouched, the Hint button itself steps aside
-   until the next move (src/ui/table.js renderActionBar says why), and the
-   rule that the bar never grows past two lines is held by
-   SUGGESTION_MAX_CHARS (src/ui/hint.js).
-   What the suggestion touches gets a ring in a colour of its own: the accent
-   already means "legal here", and a hint has to be tellable from that at a
-   glance — the ring says "this one", not "you may". Static, no pulse: it is
-   answering a question the player just asked, so it has their attention. */
-#hint-button {
-  font: inherit;
-  font-size: 0.7rem;
-  line-height: 1.2;
-  padding: 0.2rem 0.55rem;
-  border-radius: 999px;
+  padding: 0;
+  border-radius: 50%;
   border: 1px solid var(--chip-border);
   background: transparent;
   color: inherit;
   cursor: pointer;
-  white-space: nowrap;
   opacity: 0.75;
 }
-#hint-button:hover { opacity: 1; border-color: var(--hint); }
-#hint-button[hidden] { display: none; }
+#hint-button:hover { opacity: 1; border-color: var(--hint); color: var(--hint); }
 #hint-button:focus-visible { outline: 2px solid var(--hint); outline-offset: 2px; }
-#action-bar.action-bar--hinted #action-hint { font-style: italic; }
 
 .card-face-wrap--hinted .card-face,
 .stage-card.card-face-wrap--hinted .card-face {
@@ -1873,27 +1889,32 @@ body.is-dragging .card-face { cursor: grabbing; }
 }
 .meld-chip--hinted { box-shadow: 0 0 0 2px var(--hint); }
 .seat--hinted { outline: 2px solid var(--hint); outline-offset: 2px; border-radius: 12px; }
-#action-bar:not(.action-bar--acting) .turn-token { display: none; }
 
-/* Pinned, not the UA's `normal`: the reserved height above counts two of
-   these, and `normal` is the font's own suggestion — it changes with the
-   family and would drift the arithmetic out from under the slot. */
-#action-hint { line-height: 1.2; }
-
+/* THE THUMB SLOT, AND WHY IT IS ONE LINE.
+   The button is laid out to the rail's fixed width rather than to its own
+   label, and `nowrap` is the load-bearing declaration. Left to wrap, "Pass 3
+   across" took two lines, which measured 89px of rail against a fan 84px tall
+   — #hand-row grew by 14px and the felt shifted, which is the whole failure
+   the rail was built to end. A label is held to one line by the budget in
+   src/ui/interaction.js instead, and `nowrap` is the backstop: a label that
+   somehow breaches it spills sideways, which looks wrong and moves nothing,
+   rather than growing the column and moving everything.
+   It shares the slot with the sort toggle, which is the other reason neither
+   may grow the column (see .hand-rail). */
 #action-button {
   font: inherit;
-  font-size: 0.85rem;
-  /* Pinned, not inherited from the UA's `normal`: #action-bar's reserved
-     height is measured off this line. */
-  line-height: 1.2;
+  font-size: 0.72rem;
+  line-height: 1.15;
   font-weight: 600;
-  padding: 0.35rem 0.9rem;
+  width: 100%;
+  padding: 0.3rem 0.25rem;
   border-radius: 999px;
   border: none;
   cursor: pointer;
   background: var(--action-bg);
   color: var(--action-text);
   white-space: nowrap;
+  text-align: center;
 }
 #action-button:hover { background: var(--action-bg-hover); }
 #action-button[hidden] { display: none; }
@@ -2500,27 +2521,6 @@ body.is-dragging .card-face { cursor: grabbing; }
   #center-piles { gap: 0.4rem 0.7rem; }
   #player-piles { gap: 0.3rem 0.55rem; }
   .pile--mini { --pile-w: 24px; }
-  /* The hint is a sentence, and every line it wraps to is a line of felt the
-     reserved slot has to buy. Smaller type is what keeps the long ones inside
-     the two lines the slot reserves.
-     THIS BELONGS TO THE PHONE BREAKPOINT, NOT THE 360px ONE. It used to sit
-     with the 320px rules, which made 375px — the commonest phone there is —
-     the WORST case on the felt rather than a comfortable one: full-size type
-     in a row barely wider than a 360px phone's, so hints that fitted two lines
-     at 360 spilled onto a third at 375 and took ~16px of table with them
-     (#17). Every phone gets the small type now, and 360px is once again the
-     narrowest case the hint budget in src/ui/interaction.js is measured at.
-     Only the padding VARIABLE and the font-size move, and the reserved height
-     above is written in terms of both — `em` for the hint's two lines, the
-     button's own pinned 0.85rem for the button, whichever is taller. The
-     button keeps full-size type at every width, so a slot cut to the small
-     size alone would be shorter than the button standing in it. */
-  #action-bar {
-    --action-bar-pad: 0.3rem;
-    padding: var(--action-bar-pad) 0.7rem;
-    font-size: 0.78rem;
-    gap: 0.45rem;
-  }
 }
 
 /* The smallest phones still in the wild, 320px.

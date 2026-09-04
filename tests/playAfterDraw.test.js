@@ -171,8 +171,12 @@ test("the drawn-card turn has exactly two exits, and both are one tap", async ()
   assert.deepStrictEqual([...ui.handSelectable], ["red-5"],
     "the hand held before the draw is not tappable");
   assert.equal(ui.readyTargets.size, 0, "and there is no second draw to take");
-  assert.ok(ui.hint, "the bar says what the choice is");
 
+  // The two exits ARE the two assertions around this line: the drawn card is
+  // the only tappable thing in hand, and the button is the other way out. What
+  // used to sit here was a check that a sentence in the bar above the hand
+  // said so in words; there is no bar and no sentence now, and the button's
+  // own label is the whole of what the felt says about the choice.
   assert.equal(ui.action.label, "Keep it");
   const move = ui.action.makeMove();
   assert.ok(validateMove(state, move).legal, "the button must never offer an illegal move");
