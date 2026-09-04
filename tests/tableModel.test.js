@@ -262,6 +262,11 @@ test('A CLIENT BUILDS THE SAME UI MODEL AS THE HOST, for its own seat', async ()
       assert.equal(fromView.mode, fromState.mode, `${packId} seat ${seat}: interaction mode`);
       assert.equal(fromView.hint, fromState.hint, `${packId} seat ${seat}: hint`);
       assert.equal(fromView.handMulti, fromState.handMulti, `${packId} seat ${seat}: multi-select`);
+      // What arms hold-to-gather (src/ui/handGestures.js). It comes from the
+      // template's `gathers` hook, which reads a per-player var — so a joiner
+      // that is not sent its own vars would silently lose the gesture.
+      assert.equal(fromView.gathering, fromState.gathering,
+        `${packId} seat ${seat}: hold-to-gather arming`);
       assert.deepEqual(
         [...fromView.handSelectable].sort(),
         [...fromState.handSelectable].sort(),

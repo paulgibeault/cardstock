@@ -101,7 +101,20 @@ export function watchHandGestures({ hand, session, me, cardById, onSelect, onGat
    * construct an illegal lay-down than tapping the same cards could.
    */
   function smartSelectArmed() {
-    return !!session?.ui && session()?.ui.mode === 'rummy-meld' && session()?.ui.handMulti;
+    // ONE FLAG, ANSWERED BY THE MODEL. This used to read `session()?.ui.mode
+    // === 'rummy-meld'`, which is a question about the TABLE's phase — during
+    // an opponent's draw the mode is 'rummy-draw' for everybody, so the hold
+    // disarmed for the first half of every bot's turn. `ui.gathering` is asked
+    // of the seat instead (src/ui/interaction.js), and it is also what keeps
+    // the gesture out of Hearts' pass tray, where a long press still means
+    // "what is this card?".
+    //
+    // And the `!!session?.ui` this replaces was reading `ui` off the ACCESSOR
+    // FUNCTION rather than off the session it returns, so it was `undefined`
+    // every time: the whole hold-to-gather feature was switched off, silently,
+    // everywhere. Nothing downstream could notice — an unarmed hold is
+    // indistinguishable from a hold on a card with no group.
+    return !!session()?.ui?.gathering;
   }
 
   function disarmSmartSelect() {

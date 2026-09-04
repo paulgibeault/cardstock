@@ -135,6 +135,7 @@ platform file.
 | Member | Signature | Consumed by | Default |
 |---|---|---|---|
 | `interactionMode` | `(ctx) -> mode` | `src/ui/interaction.js` | `'tap'` |
+| `gathers` | `(ctx, seat) -> boolean` | `interaction.js`, `table.js` | whether the current mode is one that stages |
 | `pendingChoice` | `(ctx, move) -> Ask \| null` | `src/ui/table.js` | no question |
 | `activeMatch` | `(ctx) -> {address, attr, value, onCard} \| null` | `describe.js`, `table.js` | none |
 | `scoreChip` | `(ctx, seat) -> {short, long, aria} \| null` | `table.js` | the plain total |
@@ -176,6 +177,47 @@ how to render, exported as `INTERACTION_MODES` from `src/ui/interaction.js`).
 | `place` | select a card, then tap the pile it goes on |
 
 A mode this build does not know falls back to `tap`.
+
+## `gathers` — the question a mode cannot answer
+
+`interactionMode` says how a tap is READ. It cannot say whether a given seat is
+still assembling anything, because it is derived from `ctx.turn.phase` — and
+`turn.phase` is **one value for the whole table**. While any seat is drawing,
+contract-rummy's mode is `rummy-draw` for everybody, the human sitting off-turn
+with half a meld in the tray included.
+
+That is not a detail. Gating the off-turn staging tray on the mode switched it
+off for the first half of every opponent's turn and back on for the second —
+reported from a playtest as the hand and the meld pile being "interrupted" —
+and a tray that goes inert while still holding cards is worse than dead: taps
+on a staged card fell through to the single-select branch and threw the whole
+gathered meld away.
+
+```js
+gathers(ctx, seat) {
+  return !ctx.playerVar(seat, 'laidDown');
+}
+```
+
+**Say nothing about `ctx.turn` here.** Gathering is not a phase; it is a
+standing fact about that seat's ROUND, which is why it is asked per seat and
+why the answer may be `true` for a seat that cannot move a card. The platform
+consumes it in three places: the off-turn affordance and hold-to-gather arming
+in `buildUiModel`, and — issue #13's rule notwithstanding — whether the staging
+row reserves its slot at all (`renderStageTray`). A tray that yields its space
+the moment its owner lays down moves the felt once per round, at a moment the
+board changed anyway; #13 was about a strip flickering twice a turn all match.
+
+The default is the mode-based answer, which is exactly right for a pack that
+gathers for as long as the phase lasts: Hearts' pass tray opens and closes with
+the pass. Implement the hook when the seat can be finished before the phase is.
+
+One place the default is deliberately not consulted: the **off-turn** tray is
+offered only to a template that implements `gathers`. The default is a
+statement about the table, and off-turn the difference between "the table is in
+a staging phase" and "this seat is still assembling something" is the whole
+question — Hearts' passers commit simultaneously, so a seat that has passed is
+off-turn with the staging mode still open and nothing left to arrange.
 
 ## `pendingChoice` — the Ask shape
 

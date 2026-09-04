@@ -29,9 +29,9 @@ export function handAddress(seat) {
  * TEMPLATE'S.
  *
  * Every gesture surface downstream keys off these strings — the per-mode
- * branches in buildUiModel, stagingPhase, dropCandidates, draggableSources,
- * and the table's own smart-select arming. That is fine, and deliberate: they
- * are a closed set of INPUT SHAPES a table knows how to render. What was not
+ * branches in buildUiModel, stagingPhase, dropCandidates and draggableSources.
+ * That is fine, and deliberate: they are a closed set of INPUT SHAPES a table
+ * knows how to render. What was not
  * fine was the map from template id to mode living here, because it made
  * `interactionMode` the root of the whole coupling — a fifth template had to be
  * added to this file before any of the six downstream surfaces could see it.
@@ -46,6 +46,10 @@ export function handAddress(seat) {
  *                meld chips (hit) and the discard pile (end of turn).
  *   'place'      select one card from hand/stock/discard top, then tap a
  *                build pile (play) or an own discard pile (end of turn).
+ *
+ * And the question a mode must NEVER be asked: whether a given SEAT may be
+ * assembling something. A mode is derived from the table-wide `turn.phase`, so
+ * that answer is `gathers` below.
  */
 export const INTERACTION_MODES = Object.freeze([
   'tap', 'play-drawn', 'pass', 'rummy-draw', 'rummy-meld', 'place',
@@ -69,15 +73,143 @@ export function interactionMode(state) {
  * Could ANYBODY be gathering cards in this phase?
  *
  * Deliberately not "may the human gather cards right now" — that is
- * `ui.handMulti`, and it flips as the turn moves. This is the question the
- * staging tray's SLOT is reserved on, so it has to be stable across a turn
- * change or the felt moves under the hand every time one happens (#13). A
- * rummy turn is draw-then-meld, so both of its modes answer yes; a trick game
- * only stages while the pass is open; a shedding game never does.
+ * `ui.handMulti`, and it flips as the turn moves. What the staging tray's SLOT
+ * is reserved on has to be stable across a turn change, or the felt moves under
+ * the hand every time one happens (#13). A rummy turn is draw-then-meld, so
+ * both of its modes answer yes; a trick game only stages while the pass is
+ * open; a shedding game never does.
+ *
+ * Now reached through `gathers` below, which is the same answer for a template
+ * with no opinion and a better one for a template that has finished gathering
+ * before the phase has.
  */
 export function stagingPhase(state) {
   const mode = interactionMode(state);
   return mode === 'pass' || mode === 'rummy-draw' || mode === 'rummy-meld';
+}
+
+/**
+ * MAY THIS SEAT BE ASSEMBLING SOMETHING RIGHT NOW? — asked of the template, per
+ * seat, never stored.
+ *
+ * The question `interactionMode` cannot answer, and the bug that says why:
+ * `turn.phase` is ONE value for the whole table (src/engine/state.js), so while
+ * any seat is drawing, contract-rummy's mode is 'rummy-draw' for everybody —
+ * including the human sitting off-turn with half a meld in the tray. Gating the
+ * off-turn tray on the mode therefore switched it off for the first half of
+ * every bot's turn and back on for the second, which is the intermittent
+ * deadness a playtester reported as "interacting with my hand and the meld pile
+ * is interrupted". Worse, a tray that goes dead is not merely inert: taps on a
+ * staged card kept working, fell through to the single-select branch, and threw
+ * the whole gathered meld away.
+ *
+ * Gathering is not a phase. It is a standing fact about the seat's ROUND — in
+ * contract-rummy, whether it has laid its contract down — so the answer has to
+ * come from the template, per seat, and must not mention whose turn it is.
+ *
+ * The default is today's mode-based answer, which is right for every pack that
+ * gathers without ever finishing: Hearts' pass tray is open for exactly as long
+ * as the pass phase is.
+ */
+export function gathers(state, seat) {
+  const template = state.pack.template;
+  if (typeof template.gathers !== 'function') return stagingPhase(state);
+  return !!template.gathers(makeCtx(state), seat);
+}
+
+/**
+ * Whether a HOLD on a hand card gathers the group it belongs to, as opposed to
+ * meaning "what is this card?" (src/ui/inspector.js).
+ *
+ * Two conditions, and both are about capability rather than about the turn: the
+ * seat is still assembling, and the pack can answer "what goes with this one".
+ * Hearts stages a pass into the same tray and has no such answer, so a hold
+ * there keeps opening the inspector — the platform does not offer a gesture a
+ * template cannot serve (src/templates/CONTRACT.md).
+ */
+function holdGathers(state, seat) {
+  return typeof state.pack.template.suggestMeld === 'function' && gathers(state, seat);
+}
+
+/**
+ * The same question, asked off-turn — where the platform's DEFAULT is not good
+ * enough to answer it.
+ *
+ * The default is a statement about the TABLE ("the mode is one that stages"),
+ * and off-turn the difference between that and "this seat is still assembling
+ * something" is the entire question. Hearts is the live case: everyone commits
+ * their pass at once, so a seat that has passed sits off-turn while the pass
+ * phase — and with it the staging mode — is still open, with nothing left to
+ * arrange and no business re-opening its tray.
+ *
+ * So the off-turn tray is offered only to a template that answers PER SEAT. A
+ * pack that has not implemented the hook keeps exactly the behaviour it had.
+ */
+function gathersOffTurn(state, seat) {
+  return typeof state.pack.template.gathers === 'function' && gathers(state, seat);
+}
+
+/**
+ * The selection after a tap on a hand card — the one place the toggle rule
+ * lives, so it can be pinned without a pointer.
+ *
+ * `multi` adds or removes the tapped card, which is how a meld is gathered.
+ *
+ * SINGLE-SELECT MUST NEVER DISCARD MORE THAN THE CARD THAT WAS TAPPED. It used
+ * to answer a tap on an already-selected card with `null`, which is the right
+ * answer for the one card it was written for and a catastrophe for a tray
+ * holding five: one tap on a staged card while the model said single-select
+ * threw the entire gathered meld away. The model no longer says single-select
+ * while cards are staged (see `gathers` above), and this is the belt to that
+ * pair of braces — a future mode that gets the pairing wrong loses one card
+ * instead of the meld.
+ */
+export function toggleHandSelection(selection, { from, cardId, multi = false } = {}) {
+  const ids = selection && selection.from === from ? selection.cardIds.slice() : [];
+  const at = ids.indexOf(cardId);
+  if (at === -1) {
+    if (!multi) return { from, cardIds: [cardId] };
+    ids.push(cardId);
+    return { from, cardIds: ids };
+  }
+  ids.splice(at, 1);
+  return ids.length ? { from, cardIds: ids } : null;
+}
+
+/**
+ * Which of a seat's picked cards are waiting in the STAGING TRAY rather than
+ * lifted out of the fan.
+ *
+ * Only where several cards are gathered before anything is committed — laying a
+ * contract down, choosing a pass. Everywhere else a selection is a single card
+ * about to be played, and lifting it out of the fan would be motion for a card
+ * that is leaving anyway.
+ *
+ * ASKED OF THE SEAT'S STANDING, NOT OF THE MOMENT. This used to gate on
+ * `ui.handMulti`, and that flips partway through a turn — a rummy turn is draw,
+ * then meld, then discard, and only the middle of those gathers. So the SAME
+ * picked cards were drawn two different ways depending on when you looked:
+ * sitting in the tray while gathering, and lifted out of the fan on either side
+ * of it. Nothing about the cards had changed; the display bounced because the
+ * mode had.
+ *
+ * `gathers` is the stable question — stable across a turn change, because it
+ * asks the template about this SEAT's round rather than about the table's
+ * phase, and a pack with no opinion falls back to the mode, which is stable
+ * too. A pack that never gathers (shedding) still shows its single selection in
+ * the fan, which is the only place it has.
+ *
+ * Asking the PHASE had one more consequence, seen live: after the human laid
+ * down, a single selection was drawn in the TRAY by a full render and LIFTED IN
+ * THE FAN by the fast path (renderSelection), so tapping a card raised it in
+ * the fan and the next bot's move silently teleported it into the tray. Once
+ * the contract is down there is nothing to gather, so the selection stays in
+ * the fan — where the hit and discard gestures expect to find it.
+ */
+export function stagedSelection(state, seat, selection) {
+  if (!gathers(state, seat)) return [];
+  if (!selection || selection.from !== handAddress(seat)) return [];
+  return selection.cardIds;
 }
 
 export function selectedIds(selection) {
@@ -215,6 +347,11 @@ export const HINT_MAX_CHARS_BARE = 90;
  * place from the enumerated legal moves so the pile builders stay dumb:
  *   handSelectable  Set of hand card ids that respond to a tap
  *   handMulti       whether hand taps toggle membership or replace
+ *   gathering       this seat is assembling a meld, so a HOLD on a hand card
+ *                   gathers the group it belongs to. Deliberately narrower than
+ *                   `handMulti`: Hearts' pass multi-selects into the same tray,
+ *                   but no group stands behind a held card there, so the hold
+ *                   keeps meaning "what is this card?"
  *   sourceTops      Map zoneAddress -> top card id, for piles whose top can
  *                   be picked up as a source (Stockpile's stock/discards)
  *   readyTargets    Map zoneAddress -> move to apply when that pile is tapped
@@ -229,6 +366,7 @@ export function buildUiModel(state, { seat, moves = [], acts = false, selection 
     mode,
     handSelectable: new Set(),
     handMulti: false,
+    gathering: false,
     sourceTops: new Map(),
     readyTargets: new Map(),
     readyMelds: new Map(),
@@ -250,10 +388,16 @@ export function buildUiModel(state, { seat, moves = [], acts = false, selection 
   //
   // `action` stays null, so Lay down remains a turn-only button (and is
   // re-checked against humanActs where it is rendered).
+  //
+  // ASK `gathers`, NOT THE MODE. The mode is derived from `turn.phase`, which is
+  // the TABLE's phase and not this seat's, so "am I still assembling a meld?"
+  // used to be answered with "is somebody, somewhere, past their draw?" — and
+  // the affordance blinked out for the first half of every opponent's turn.
   if (!acts) {
-    if (mode === 'rummy-meld' && !state.playerVars[seat]?.laidDown) {
+    if (gathersOffTurn(state, seat)) {
       for (const id of meldStageable(state, seat, hand)) ui.handSelectable.add(id);
       ui.handMulti = true;
+      ui.gathering = holdGathers(state, seat);
     }
     return ui;
   }
@@ -319,11 +463,17 @@ export function buildUiModel(state, { seat, moves = [], acts = false, selection 
 
   if (mode === 'rummy-meld') {
     const ctx = makeCtx(state);
-    const laidDown = state.playerVars[seat]?.laidDown;
-    for (const id of laidDown ? hand : meldStageable(state, seat, hand)) ui.handSelectable.add(id);
-    ui.handMulti = !laidDown;
+    // A seat that is done gathering is not in a lesser version of this mode: its
+    // whole hand is live (anything can hit a meld or be discarded) and a tap
+    // means "this one", not "and this one too". Which of the two it is belongs
+    // to the template — this used to read the `laidDown` playerVar, a
+    // contract-rummy rule spelled out in platform code.
+    const gathering = gathers(state, seat);
+    for (const id of gathering ? meldStageable(state, seat, hand) : hand) ui.handSelectable.add(id);
+    ui.handMulti = gathering;
+    ui.gathering = gathering && holdGathers(state, seat);
 
-    if (!laidDown) {
+    if (gathering) {
       const contract = state.pack.rules.contracts?.[(state.playerVars[seat]?.phase ?? 1) - 1] || [];
       // TWO CLAUSES, BOTH EARNING THEIR WORDS. The contract is what a
       // contract-rummy player most needs on screen — it is the whole shape of
@@ -502,13 +652,14 @@ export function ladderRungs(count, { minePhase = null, occupied = [], maxRungs =
  * the button unarmed rather than offering an illegal move.
  *
  * Pure, and null for every pack whose template has no opinion (the hook is
- * optional), for a seat that has already laid down, and when nothing in hand
+ * optional), for a seat with nothing left to assemble (`gathers`, which for
+ * contract-rummy means it has laid its contract down), and when nothing in hand
  * fits — the caller's cue to do nothing rather than to guess.
  */
 export function smartSelection(state, seat, cardId, selection) {
   const template = state.pack.template;
   if (typeof template.suggestMeld !== 'function') return null;
-  if (state.playerVars[seat]?.laidDown) return null;
+  if (!gathers(state, seat)) return null;
 
   const from = handAddress(seat);
   const keep = selection && selection.from === from ? selection.cardIds : [];

@@ -305,6 +305,25 @@ const contractRummy = {
   },
 
   /**
+   * IS THIS SEAT STILL PUTTING A CONTRACT TOGETHER? — and note what is NOT in
+   * the answer: `ctx.turn`.
+   *
+   * Assembling a contract is the one thing at this table that is not a turn
+   * action. It commits nothing, touches no zone, and is exactly the job a
+   * player wants to be doing while three bots think. `interactionMode` cannot
+   * say so on its own because it is derived from `turn.phase`, and that phase
+   * belongs to the TABLE: while any seat is drawing, everyone's mode is
+   * 'rummy-draw', so a tray gated on the mode blinked out for half of every
+   * opponent's turn and took the gathered meld with it when tapped.
+   *
+   * Laying down is what ends it, once per round — `dealRound` clears `laidDown`,
+   * so nothing has to switch this back on.
+   */
+  gathers(ctx, seat) {
+    return !ctx.playerVar(seat, 'laidDown');
+  },
+
+  /**
    * The question a move still owes before it can be applied — asked in a loop
    * by the platform until it answers null.
    *
