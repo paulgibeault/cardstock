@@ -48,12 +48,23 @@ than an error.
 | `startRound` | `(ctx) -> void` | **⚠ see the trap below** |
 | `scoreRound` | `(ctx) -> {seat: delta}` | `runRoundScore(ctx)` — the pack's declared strategy, or `{}` when it declares none |
 | `isGameOver` | `(ctx) -> boolean` | `false`. Only consulted when the pack's `scoring.gameOver` is absent or says `"template"`. |
-| `botHeuristic` | `(ctx, move) -> number` | every non-draw move scores equally |
-| `evaluateState` | `(ctx, seat) -> number` | none — the bot ranks by `botHeuristic` alone |
+| `botHeuristic` | `(ctx, move, weights?) -> number` | every non-draw move scores equally |
+| `evaluateState` | `(ctx, seat, weights?) -> number` | none — the bot ranks by `botHeuristic` alone |
 | `matchStanding` | `(ctx, seat) -> number` | the seat's accumulated score, signed by `scoring.gameOver.winner` — see *What the `hard` bot asks of you* |
 | `actingSeats` | `(ctx) -> seat[]` | `[ctx.turn.seat]`. Say so for a simultaneous-commit phase, or the table will schedule only one of the seats that may act. |
 | `enumerateAnnouncements` | `(ctx, seat) -> move[]` | none. Its presence is also what reserves the announce bar's slot on the felt. |
 | `applyAnnouncement` | `(ctx, announcement) -> void` | none — the rule-test harness's entry point only |
+
+> **The `weights` member.** A template whose strategy is made of tuned numbers
+> gathers them into one frozen object, `weights`, and reads every one of them
+> through the third argument of `botHeuristic` and `evaluateState` — which
+> defaults to that object, so ordinary play never notices. `rankMoves` passes
+> whatever a caller gave it, and a `hard` rollout plays every chair with the
+> deciding seat's set. That is what lets `tools/tune.mjs` seat a candidate set
+> against the shipped one in the same simulated game: two seats, one template,
+> two opinions, and no module-level state changed to do it. The constants keep
+> their own comments; the object is the shipped value of each, and tests hold
+> it to a frozen bag of finite numbers.
 
 > **⚠ The `evaluateState` contract.** `botHeuristic` grades a **move**;
 > `evaluateState` grades the **position** a move would leave behind — "how good

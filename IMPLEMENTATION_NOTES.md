@@ -327,6 +327,42 @@ the only lever this pass has not pulled — priced, in the previous section, at
 a worker.
 
 
+## The weights are a parameter now, and a tuner found nothing to move
+
+Every number a template's bot is made of used to be a module constant, chosen
+by hand and swept by hand against whatever metric was to hand at the time.
+Each template with an evaluator now gathers them into a frozen `weights`
+object and reads every one through the third argument of `botHeuristic` and
+`evaluateState` (`src/templates/CONTRACT.md`), so two seats in one simulated
+game can hold two different opinions without any module-level state changing
+to do it — `tests/weights.test.js` pins that the default is the template's own,
+that every declared weight is actually read, and that nothing leaks between
+seats.
+
+`tools/tune.mjs` is the loop that made worth doing: coordinate search, each
+weight perturbed ±50% and seated against the incumbent in the same seeded
+games, accepted only when it wins by two standard errors, and the final set
+re-measured against the shipped one on a seed family the search never saw.
+Run over every tunable pack at `medium`, on the bar each pack is decided by:
+
+| pack | trials | best candidate | accepted |
+|---|---|---|---|
+| milestones, 200 matches per trial | 30 | RUN_WINDOW_WORTH 2 → 1, 54.5% ± 3.5 | none |
+| hearts, 300 rounds at four seats | 18 | HELD_LIABILITY_WORTH 1.2 → 0.6, 53.0% ± 3.2 | none |
+| wildfire, 300 rounds | 10 | DEADWOOD_WORTH 0.05 → 0.025, 54.2% ± 2.9 | none |
+| crazy-eights, 300 rounds | 10 | DEADWOOD_WORTH 0.05 → 0.025, 50.7% ± 2.9 | none |
+
+So the hand sweeps sit at local optima at this step size, and the tool's
+other half is what the table does not show: the shipped values are also
+sharply *right* where they matter. Milestones' PROGRESS_WORTH raised by half
+wins 1.5% of matches; LAID_DOWN_WORTH halved wins 9%; CARD_IN_HAND halved wins
+35%. That is a strategy with real structure, not a flat plateau, and it is
+the strongest evidence yet for the reading in the previous section: there is
+no headroom left in the numbers, so a stronger Milestones bot is a stronger
+rollout policy or nothing. The worker that would pay for one stays out of
+scope by decision, and the tuner stays so the next weight anybody adds can be
+asked the same question in a minute rather than a week.
+
 ## Arcade platform enhancements — shipped
 
 The four additive `Arcade.peer` changes this repo was waiting on (E0–E3:

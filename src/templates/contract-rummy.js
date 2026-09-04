@@ -22,7 +22,7 @@ import {
   getMeldGroups, meldKindOf, pinnedAttr, wildHitValues,
 } from './melds.js';
 import {
-  findContractLayDown, findHits, scoreDraw, scoreDiscard, evaluateState,
+  findContractLayDown, findHits, scoreDraw, scoreDiscard, evaluateState, WEIGHTS,
   rememberPileTake, forgetPileTakes, PILE_TAKEN_VAR,
 } from './contract-rummy-bot.js';
 import { arrangeContract, suggestMeld } from './contract-rummy-ui.js';
@@ -538,11 +538,11 @@ const contractRummy = {
    * strategy, where they can read the contract, the melds on the felt and the
    * table's memory of who has been taking from the pile.
    */
-  botHeuristic(ctx, move) {
-    if (move.type === 'draw') return scoreDraw(ctx, move);
+  botHeuristic(ctx, move, w) {
+    if (move.type === 'draw') return scoreDraw(ctx, move, w);
     if (move.type === 'layDown') return 100;
     if (move.type === 'hit') return 50;
-    return scoreDiscard(ctx, move);
+    return scoreDiscard(ctx, move, w);
   },
 
   /**
@@ -552,6 +552,9 @@ const contractRummy = {
    * refuses to.
    */
   evaluateState,
+
+  /** The strategy's numbers, for a caller that wants to play with different ones. */
+  weights: WEIGHTS,
 
   /**
    * How far along the match a seat is: the rung it has reached, and only then

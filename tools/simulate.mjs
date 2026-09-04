@@ -324,9 +324,28 @@ function roundWinners(pack, scores, seatCount) {
  * a busy laptop and an idle one. Both get reported; neither is allowed to stand
  * in for the other.
  */
+/**
+ * A contender is a difficulty name, or `{ name, difficulty, weights }` — the
+ * second form is how tools/tune.mjs seats a candidate set of strategy weights
+ * against the shipped ones at the same difficulty. Names are what the report
+ * prints and what `wins` is indexed by.
+ */
+function normalizeContender(contender) {
+  if (typeof contender === 'string') return { name: contender, difficulty: contender, weights: undefined };
+  return { name: contender.name ?? contender.difficulty, difficulty: contender.difficulty, weights: contender.weights };
+}
+
+/**
+ * @param opts.seedPrefix  the seed family the games are dealt from. A tuner
+ *                         that searched on one family must VALIDATE on another,
+ *                         or it reports the luck of the deals it searched.
+ * @param opts.quiet       return the numbers without printing them
+ */
 async function tournamentPack(packId, games,
-  { seats, variants, contenders, budgetMoves, depth, confidence, match = false } = {}) {
+  { seats, variants, contenders: given, budgetMoves, depth, confidence, match = false,
+    seedPrefix = 'tour', quiet = false } = {}) {
   const pack = await loadPackFromDisk(packId, variants);
+  const contenders = given.map(normalizeContender);
   const seatCount = seats ?? Math.max(contenders.length, pack.manifest.players.min ?? 2);
   const wins = contenders.map(() => 0);
   const held = contenders.map(() => 0);
@@ -337,13 +356,16 @@ async function tournamentPack(packId, games,
   const budget = budgetMoves ? { budgetMs: Infinity, budgetMoves } : {};
   if (depth !== undefined) budget.depth = depth;
   if (confidence !== undefined) budget.confidence = confidence;
+  const log = quiet ? () => {} : (line) => console.log(line);
 
   for (let i = 0; i < games; i++) {
     // Seeded per game, so the whole tournament replays move for move.
-    const rng = createRng(`tour:${packId}:${i}`);
-    const difficultyOf = (seat) => contenders[(seat + i) % contenders.length];
+    const rng = createRng(`${seedPrefix}:${packId}:${i}`);
+    const contenderOf = (seat) => contenders[(seat + i) % contenders.length];
+    const difficultyOf = (seat) => contenderOf(seat);
     const choose = (state, seat) => chooseBotMove(state, seat, {
-      difficulty: difficultyOf(seat), random: rng.next, ...budget,
+      difficulty: contenderOf(seat).difficulty, weights: contenderOf(seat).weights,
+      random: rng.next, ...budget,
     });
 
     if (match) {
@@ -353,7 +375,7 @@ async function tournamentPack(packId, games,
       // bot being measured had no hand in resolving it. That is the whole
       // point of the mode (#92): round score is a proxy, and in Milestones
       // it is a proxy for nothing, because the ladder is what ends the match.
-      const result = playMatch(pack, seatCount, `sim:${packId}:${i}`, { choose });
+      const result = playMatch(pack, seatCount, `${seedPrefix === 'tour' ? 'sim' : seedPrefix}:${packId}:${i}`, { choose });
       if (result.outcome !== 'complete') {
         unfinished++;
         stallReasons.set(result.reason, (stallReasons.get(result.reason) || 0) + 1);
@@ -368,7 +390,7 @@ async function tournamentPack(packId, games,
       continue;
     }
 
-    const result = playOne(pack, seatCount, `sim:${packId}:${i}`, { choose });
+    const result = playOne(pack, seatCount, `${seedPrefix === 'tour' ? 'sim' : seedPrefix}:${packId}:${i}`, { choose });
     if (result.outcome !== 'complete') { unfinished++; continue; }
     for (let seat = 0; seat < seatCount; seat++) {
       held[contenders.indexOf(difficultyOf(seat))] += Number(result.roundScores?.[seat] ?? 0) || 0;
@@ -382,11 +404,11 @@ async function tournamentPack(packId, games,
   const decisive = wins.reduce((a, b) => a + b, 0);
   const played = games - unfinished;
   const unit = match ? 'matches' : 'rounds';
-  console.log(`\n=== ${packId}: ${contenders.join(' vs ')} (${seatCount} seats, ${games} ${unit}`
+  log(`\n=== ${packId}: ${contenders.map((c) => c.name).join(' vs ')} (${seatCount} seats, ${games} ${unit}`
     + `${budgetMoves ? `, budgetMoves=${budgetMoves}` : ', shipped clock'}`
     + `${depth === undefined ? '' : `, depth=${depth}`}`
     + `${confidence === undefined ? '' : `, confidence=${confidence}`}) ===`);
-  contenders.forEach((name, i) => {
+  contenders.forEach(({ name }, i) => {
     const share = decisive ? ((wins[i] / decisive) * 100).toFixed(1) : '—';
     // Mean score is a DIAGNOSTIC, never the bar. Winning is what the
     // acceptance criterion counts, and it is what the line above reports; the
@@ -394,13 +416,13 @@ async function tournamentPack(packId, games,
     // rate does, which is what tells you whether a change did nothing or did
     // something the win column has not resolved yet.
     const mean = played ? (held[i] / (played * (seatCount / contenders.length))).toFixed(2) : '—';
-    console.log(`  ${name.padEnd(7)} ${String(wins[i]).padStart(4)} wins   ${share}% of decisive ${unit}`
+    log(`  ${name.padEnd(7)} ${String(wins[i]).padStart(4)} wins   ${share}% of decisive ${unit}`
       + `   (mean ${match ? 'final total' : 'round score'} ${mean})`);
   });
-  console.log(`  ties: ${ties}   unfinished: ${unfinished}`
+  log(`  ties: ${ties}   unfinished: ${unfinished}`
     + (match && played ? `   rounds per match: ${(roundsPlayed / played).toFixed(1)}` : ''));
-  for (const [reason, count] of stallReasons) console.log(`    (${count}x) ${reason}`);
-  return { wins, ties, unfinished, contenders };
+  for (const [reason, count] of stallReasons) log(`    (${count}x) ${reason}`);
+  return { wins, ties, unfinished, decisive, contenders: contenders.map((c) => c.name) };
 }
 
 /* ------------------------------------------------------------------ *

@@ -300,7 +300,19 @@ const PASS_VALUE_WORTH = 0.25;
 const PASS_LIABILITY_WORTH = 3;
 const PASS_VOID_WORTH = 1;
 
-function scorePass(ctx, move) {
+/**
+ * Every number the evaluator and the pass scorer are made of, gathered, so a
+ * caller can hand the hooks a different set (src/templates/CONTRACT.md,
+ * `weights`). The constants keep their comments; this is the shipped value of
+ * each, frozen. It sits here because this is the first line after the last of
+ * them is declared.
+ */
+export const WEIGHTS = Object.freeze({
+  TAKEN_WORTH, AT_RISK_WORTH, HELD_VALUE_WORTH, LOOSE_POINT_RISK, HELD_LIABILITY_WORTH,
+  RIVAL_SHARE, PASS_VALUE_WORTH, PASS_LIABILITY_WORTH, PASS_VOID_WORTH,
+});
+
+function scorePass(ctx, move, w = WEIGHTS) {
   const scoring = ctx.pack.scoring || {};
   const peril = perilRankBySuit(ctx);
   const going = new Set(move.cards);
@@ -309,14 +321,14 @@ function scorePass(ctx, move) {
   for (const id of move.cards) {
     const card = ctx.cardById(id);
     score += rankOrder(card);
-    score += cardValue(card, scoring) * PASS_VALUE_WORTH;
-    if (isLiability(ctx, card, peril)) score += PASS_LIABILITY_WORTH;
+    score += cardValue(card, scoring) * w.PASS_VALUE_WORTH;
+    if (isLiability(ctx, card, peril)) score += w.PASS_LIABILITY_WORTH;
   }
 
   const hand = ctx.cardIdsIn(ctx.zoneAddr('hand', move.actor));
   const before = suitCounts(ctx, hand);
   const after = suitCounts(ctx, hand.filter((id) => !going.has(id)));
-  for (const suit of before.keys()) if (!after.has(suit)) score += PASS_VOID_WORTH;
+  for (const suit of before.keys()) if (!after.has(suit)) score += w.PASS_VOID_WORTH;
 
   return score;
 }
@@ -662,11 +674,11 @@ const trickTaking = {
     ];
   },
 
-  botHeuristic(ctx, move) {
+  botHeuristic(ctx, move, w = WEIGHTS) {
     // A pass is N cards or it is nothing: scoring it by `cards[0]` was correct
     // only while the enumerator offered exactly one pass, and would now rank
     // five whole passes by an accident of sort order. playCard is untouched.
-    if (move.type === 'passCards') return scorePass(ctx, move);
+    if (move.type === 'passCards') return scorePass(ctx, move, w);
     const card = ctx.cardById(move.cards[0]);
     // Play low, and shed anything the pack charges you for holding. The second
     // clause used to be `card.tags?.includes('penalty')` — Hearts' own tag name,
@@ -706,7 +718,7 @@ const trickTaking = {
    * and it takes 7.2 against their 6.4, i.e. WORSE than the heuristic it
    * replaced. The pile on the table is the whole signal; the rest is bookkeeping.
    */
-  evaluateState(ctx, seat) {
+  evaluateState(ctx, seat, w = WEIGHTS) {
     const scoring = ctx.pack.scoring || {};
 
     // THE PASS IS A COMMIT, NOT A POSITION. Nothing has moved; the only thing
@@ -717,9 +729,9 @@ const trickTaking = {
     // people's hands, and the lookahead refuses to judge a position that
     // revealed cards this seat could not see.)
     const pending = ctx.playerVar(seat, '__pendingPass');
-    if (pending) return scorePass(ctx, { actor: seat, cards: pending });
+    if (pending) return scorePass(ctx, { actor: seat, cards: pending }, w);
 
-    let score = -handValue(ctx.cardsIn(ctx.zoneAddr('won', seat)), scoring) * TAKEN_WORTH;
+    let score = -handValue(ctx.cardsIn(ctx.zoneAddr('won', seat)), scoring) * w.TAKEN_WORTH;
 
     // The pile on the table, and whether it is heading your way. A provisional
     // win is not a certainty — the rest of the seats have yet to play — so it
@@ -732,14 +744,14 @@ const trickTaking = {
       for (const id of trickIds) inTrick += cardValue(ctx.cardById(id), scoring);
       const yetToPlay = Math.max(0, ctx.seats - trickIds.length);
       const holds = topRank > 0 ? Math.max(0, taking.rank) / topRank : 1;
-      score -= (inTrick * AT_RISK_WORTH + yetToPlay * LOOSE_POINT_RISK) * holds;
+      score -= (inTrick * w.AT_RISK_WORTH + yetToPlay * w.LOOSE_POINT_RISK) * holds;
     }
 
     // What is still in hand is a bill that has not come in yet.
     for (const id of ctx.cardIdsIn(ctx.zoneAddr('hand', seat))) {
       const card = ctx.cardById(id);
-      score -= cardValue(card, scoring) * HELD_VALUE_WORTH;
-      if (isLiability(ctx, card, peril)) score -= HELD_LIABILITY_WORTH;
+      score -= cardValue(card, scoring) * w.HELD_VALUE_WORTH;
+      if (isLiability(ctx, card, peril)) score -= w.HELD_LIABILITY_WORTH;
     }
 
     // Cheaper than the cheapest opponent is the only kind of ahead there is
@@ -749,8 +761,11 @@ const trickTaking = {
       if (s === seat) continue;
       rival = Math.min(rival, handValue(ctx.cardsIn(ctx.zoneAddr('won', s)), scoring));
     }
-    return Number.isFinite(rival) ? score + rival * RIVAL_SHARE : score;
+    return Number.isFinite(rival) ? score + rival * w.RIVAL_SHARE : score;
   },
+
+  /** The strategy's numbers, for a caller that wants to play with different ones. */
+  weights: WEIGHTS,
 };
 
 export default trickTaking;

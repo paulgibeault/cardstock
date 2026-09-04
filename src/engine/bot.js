@@ -178,7 +178,7 @@ function revealsHiddenCards(before, fork, seat) {
  * already rates a draw below every play, so the evaluator sorts the plays and
  * the draw stays where it was put.
  */
-function scoreByLookahead(state, seat, moves, cheap, evaluate) {
+function scoreByLookahead(state, seat, moves, cheap, evaluate, weights) {
   const shortlist = moves.map((move, i) => i);
   if (moves.length > LOOKAHEAD_WIDTH) {
     shortlist.sort((a, b) => cheap[b] - cheap[a] || a - b);
@@ -211,7 +211,7 @@ function scoreByLookahead(state, seat, moves, cheap, evaluate) {
       hidden.push(i);
       continue;
     }
-    const value = evaluate(makeCtx(fork), seat);
+    const value = evaluate(makeCtx(fork), seat, weights);
     if (typeof value !== 'number' || !Number.isFinite(value)) return null;
     values.set(i, value);
     if (value < lo) lo = value;
@@ -455,7 +455,7 @@ function terminalValue(before, after, seat) {
  *          the live-lock cap). A run that came back UNFINISHED was cut off at
  *          `depth` and is the caller's to either evaluate or resume.
  */
-function rollout(world, move, seat, spent, depth) {
+function rollout(world, move, seat, spent, depth, weights) {
   const sim = forkState(world);
   try {
     applyMove(sim, move);
@@ -464,7 +464,7 @@ function rollout(world, move, seat, spent, depth) {
   }
   spent.moves += 1;
   const run = { sim, played: 0, finished: sim.events.some((e) => e.type === 'roundOver') };
-  return advance(run, spent, depth) ? run : null;
+  return advance(run, spent, depth, weights) ? run : null;
 }
 
 /**
@@ -478,7 +478,7 @@ function rollout(world, move, seat, spent, depth) {
  * @returns false for a run that produced no information; true for one that
  *          either finished or stopped at the depth it was given.
  */
-function advance(run, spent, depth) {
+function advance(run, spent, depth, weights) {
   const sim = run.sim;
   const template = sim.pack.template;
   while (!run.finished && !sim.gameOver && run.played < ROLLOUT_MOVE_CAP) {
@@ -486,7 +486,11 @@ function advance(run, spent, depth) {
     const acting = template.actingSeats ? template.actingSeats(makeCtx(sim)) : [sim.turn.seat];
     let next = null;
     for (const s of acting) {
-      next = chooseBotMove(sim, s, { difficulty: 'easy', enumerate: enumerateLegalMoves });
+      // THE DECIDING SEAT'S WEIGHTS PLAY EVERY CHAIR. A rollout is this seat's
+      // model of how the hand goes, and it models the others as playing the
+      // way it would — which is also what keeps a tuning run honest: a
+      // candidate is judged by its own opinion of the game, not its rival's.
+      next = chooseBotMove(sim, s, { difficulty: 'easy', enumerate: enumerateLegalMoves, weights });
       if (next) break;
     }
     if (!next) return false;
@@ -515,9 +519,9 @@ function advance(run, spent, depth) {
  *          that is not a number, which is the same "this turn cannot be ranked
  *          this way" answer the one-ply scorer gives.
  */
-function valueOf(run, before, seat, evaluate) {
+function valueOf(run, before, seat, evaluate, weights) {
   if (run.finished) return terminalValue(before, run.sim, seat);
-  const value = evaluate(makeCtx(run.sim), seat);
+  const value = evaluate(makeCtx(run.sim), seat, weights);
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
@@ -610,7 +614,7 @@ function separated(rows, means, confidence) {
 }
 
 function scoreByRollout(state, seat, moves, cheap,
-  { random, budgetMs, budgetMoves, depth, confidence }) {
+  { random, budgetMs, budgetMoves, depth, confidence, weights }) {
   const shortlist = moves.map((move, i) => i);
   if (moves.length > ROLLOUT_WIDTH) {
     shortlist.sort((a, b) => cheap[b] - cheap[a] || a - b);
@@ -633,7 +637,7 @@ function scoreByRollout(state, seat, moves, cheap,
     const world = determinizeState(state, seat, random);
     const runs = [];
     for (const i of shortlist) {
-      const run = rollout(world, moves[i], seat, spent, cut);
+      const run = rollout(world, moves[i], seat, spent, cut, weights);
       if (!run) break;
       runs.push(run);
       // Checked INSIDE the sweep as well as between sweeps: the first sweep has
@@ -650,14 +654,14 @@ function scoreByRollout(state, seat, moves, cheap,
     if (finished > 0 && finished < runs.length) {
       let resumed = true;
       for (const run of runs) {
-        if (!run.finished && !advance(run, spent, Infinity)) { resumed = false; break; }
+        if (!run.finished && !advance(run, spent, Infinity, weights)) { resumed = false; break; }
       }
       if (!resumed) break;
     }
 
     const values = [];
     for (const run of runs) {
-      const value = valueOf(run, state, seat, evaluate);
+      const value = valueOf(run, state, seat, evaluate, weights);
       if (value === null) break;
       values.push(value);
     }
@@ -737,6 +741,10 @@ function scoreByRollout(state, seat, moves, cheap,
  * @param opts.enumerate  how to ask for the legal moves. Defaults to the memo,
  *                        which is who it was written for; a caller simulating
  *                        on a fork must pass the exact enumerator.
+ * @param opts.weights    the template's strategy numbers to rank with
+ *                        (src/templates/CONTRACT.md, `weights`). Defaults to
+ *                        the template's own; a tuning run (tools/tune.mjs)
+ *                        hands two seats two different sets.
  * @returns Array<{ move, score }> — a fresh array, safe to mutate.
  */
 export function rankMoves(state, seat, {
@@ -748,20 +756,23 @@ export function rankMoves(state, seat, {
   depth = ROLLOUT_DEPTH,
   confidence = SAMPLE_CONFIDENCE,
   enumerate = legalMovesFor,
+  weights = undefined,
 } = {}) {
   const moves = enumerate(state, seat);
   if (moves.length === 0) return [];
   const ctx = makeCtx(state);
-  const heuristic = state.pack.template.botHeuristic || defaultHeuristic;
-  const evaluate = state.pack.template.evaluateState;
+  const template = state.pack.template;
+  const heuristic = template.botHeuristic || defaultHeuristic;
+  const evaluate = template.evaluateState;
   const skill = normalizeDifficulty(difficulty);
+  const w = weights ?? template.weights;
 
-  const cheap = moves.map((move) => heuristic(ctx, move));
+  const cheap = moves.map((move) => heuristic(ctx, move, w));
   const scored = (skill === 'hard'
       && scoreByRollout(state, seat, moves, cheap,
-        { random, budgetMs, budgetMoves, depth, confidence }))
+        { random, budgetMs, budgetMoves, depth, confidence, weights: w }))
     || (skill !== 'easy' && evaluate
-      && scoreByLookahead(state, seat, moves, cheap, evaluate))
+      && scoreByLookahead(state, seat, moves, cheap, evaluate, w))
     || moves.map((move, i) => ({ move, score: cheap[i] }));
   if (persona) {
     let lo = Infinity;

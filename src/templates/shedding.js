@@ -27,6 +27,15 @@ const DEADWOOD_WORTH = 0.05;
 const RIVAL_SHARE = 2;
 
 /**
+ * The five numbers above, gathered, so a caller can hand `evaluateState` a
+ * different set (src/templates/CONTRACT.md, `weights`). The constants keep
+ * their comments; this is the shipped value of each, frozen.
+ */
+export const WEIGHTS = Object.freeze({
+  CARD_IN_HAND, EXIT_WORTH, WILD_WORTH, DEADWOOD_WORTH, RIVAL_SHARE,
+});
+
+/**
  * A card that plays on anything. Asked of the shared predicate rather than of
  * the effect type alone, so a pack that tags its wilds is understood here the
  * same way contract-rummy and sequencing understand theirs.
@@ -847,20 +856,20 @@ const shedding = {
    * the two exit terms are taken out. Crazy Eights is a wash at 25.2% — its
    * hands are short and its wilds few, so there is less position to read.
    */
-  evaluateState(ctx, seat) {
+  evaluateState(ctx, seat, w = WEIGHTS) {
     const scoring = ctx.pack.scoring || {};
     const hand = ctx.cardIdsIn(ctx.zoneAddr('hand', seat));
 
-    let score = -hand.length * CARD_IN_HAND;
+    let score = -hand.length * w.CARD_IN_HAND;
     for (const id of hand) {
       const card = ctx.cardById(id);
       // A wild is an exit AND an exit that chooses the next active value, so it
       // counts twice; anything matching the active value is one way out.
-      if (isWildCard(ctx, card)) score += EXIT_WORTH + WILD_WORTH;
-      else if (cardMatchesActive(ctx, card)) score += EXIT_WORTH;
+      if (isWildCard(ctx, card)) score += w.EXIT_WORTH + w.WILD_WORTH;
+      else if (cardMatchesActive(ctx, card)) score += w.EXIT_WORTH;
       // Left holding these when somebody goes out, they are what the round
       // costs (scoring.roundScore: hand-values-to-winner).
-      score -= cardValue(card, scoring) * DEADWOOD_WORTH;
+      score -= cardValue(card, scoring) * w.DEADWOOD_WORTH;
     }
 
     let rivalCards = Infinity;
@@ -868,8 +877,11 @@ const shedding = {
       if (s === seat) continue;
       rivalCards = Math.min(rivalCards, ctx.countIn(ctx.zoneAddr('hand', s)));
     }
-    return Number.isFinite(rivalCards) ? score + rivalCards * RIVAL_SHARE : score;
+    return Number.isFinite(rivalCards) ? score + rivalCards * w.RIVAL_SHARE : score;
   },
+
+  /** The evaluator's numbers, for a caller that wants to play with different ones. */
+  weights: WEIGHTS,
 };
 
 export default shedding;
