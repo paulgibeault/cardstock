@@ -395,7 +395,39 @@ both rewriting `scrollActingSeatIntoView`.
 
 ---
 
-# Left open
+# Closed (#97)
+
+Both blemishes below are fixed. Neither fix was the one the issue proposed,
+and the reasons are worth keeping:
+
+- **The 13px overflow was paid for by deleting a row rather than by shaving
+  the seats.** The bar that used to stand between the felt and the hand — the
+  turn token, a sentence of phase guidance, the action button, the Hint offer
+  — reserved 53px of a 812px phone for the whole match whether or not it had
+  anything to say. Those controls are a rail at the fan's edge now and the
+  sentence is gone, which returns the 53px to `#felt-middle`. Measured after:
+  `#table-screen` overflows by 0, and the opponent row can grow to **332px**
+  before the middle hits its floor at 160px — 169px of headroom above the
+  carousel's 163px worst case, where there used to be a 13px deficit.
+
+- **The toggle's corner is reserved in the BLOCK axis, not the inline one.**
+  The issue suggested `scroll-padding-inline`; measurement says no inline
+  reservation can work here. The row genuinely scrolls (scrollWidth 517 against
+  a 332px client), so inline padding only holds the corner open at the two
+  scroll extremes — every seat passes under the toggle on its way past in
+  between, which is the case the 22x7px measurement happened to catch. A
+  `padding-top` of `0.9rem` puts the seats below the toggle's box at *every*
+  scroll position, and block padding on a horizontal scroller adds nothing to
+  its scrollable length, which was the objection to the inline fix in the first
+  place. Verified at 21 scroll positions across four root font sizes (14-20px):
+  no overlap anywhere, 3-4px of clearance throughout, `scrollWidth` unchanged.
+
+  It is `rem` rather than pixels because the toggle's height is its font's, and
+  the launcher scales the root font — a pixel constant would have held at the
+  default scale and failed at the large one.
+
+<details>
+<summary>What was measured before the fix</summary>
 
 Two cosmetic blemishes measured at 375x812 with a full table in `'all'`, both
 found by the narrow-phone spike after the packages had landed:
@@ -412,3 +444,5 @@ found by the narrow-phone spike after the packages had landed:
 
 Neither was introduced by a package in this pass; both were pre-existing in the
 `'all'` view and only reach players now that `'all'` is the default.
+
+</details>

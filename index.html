@@ -170,25 +170,6 @@
            the whole feature is "let them know you saw that". -->
       <div id="emote-bar" class="emote-bar" hidden></div>
 
-      <!-- Phase-contextual guidance and the one action that needs a button
-           (passing, laying down). Carries the turn token when it is the
-           human's turn — the same token the seats wear.
-
-           Starts EMPTY, not `hidden`: this bar always holds its place in the
-           column and only fades in and out of view, because a bar that comes
-           and goes with the turn moves the whole table with it (#13, and the
-           reserved height in src/ui/table.css). -->
-      <div id="action-bar" class="action-bar--empty" inert>
-        <span class="turn-token" aria-hidden="true"></span>
-        <span id="action-hint"></span>
-        <button type="button" id="action-button" hidden></button>
-        <!-- What a player at the chosen difficulty would do (src/ui/hint.js).
-             Shown only while it is your turn and the felt holds the state a
-             ranking needs — a joiner at a shared table holds a view, and gets
-             no button rather than a guess. -->
-        <button type="button" id="hint-button" hidden>Hint</button>
-      </div>
-
       <!-- Cards you have picked out but not yet committed — a meld you are
            assembling, the three you are about to pass. They leave the fan and
            wait here, which is what makes the next pick easier: the fan opens
@@ -199,11 +180,57 @@
         <div id="stage-tray" role="group"></div>
       </div>
 
+      <!-- THE RAIL, and why nothing stands above the hand any more.
+           Everything that used to live in a bar between the felt and the fan
+           — the turn token, the phase sentence, the Hint offer, the one
+           action button — is here in a column at the fan's edge, or gone.
+           That bar reserved 53px of the felt's height on a phone whether or
+           not it had anything to say, and it said it directly above the cards
+           the player was reaching for; the felt is short enough that the room
+           was worth more than the words.
+
+           The token and the Hint offer are ICONS. A chip either lit or not,
+           and a lamp: the seats already wear the same chip, so "whose turn"
+           is read the same way here as it is up there, and neither needs a
+           label to be read.
+
+           WIDTH IS ALL THIS COSTS, and that is enforced rather than hoped
+           for: the rail's own box is zero-height, so #hand-row is exactly as
+           tall as the fan at every viewport, and layoutHand subtracts the
+           rail rather than the sort toggle it absorbed so the fan keeps the
+           room it had. -->
       <div id="hand-row">
         <div class="hand" id="hand"></div>
-        <!-- Arrange your own fan. Presentation only — src/ui/handOrder.js
-             explains at length why this never reaches the engine. -->
-        <button type="button" id="hand-sort" class="hand-sort" hidden></button>
+        <!-- Two elements, because the rail owes the row a WIDTH and must never
+             owe it a HEIGHT: the outer box is zero-height and the stack hangs
+             off its bottom edge, out of flow. See .hand-rail in table.css. -->
+        <div id="hand-rail" class="hand-rail">
+          <div class="hand-rail__stack">
+            <!-- THE turn marker, the same chip the seats wear. Never `hidden`:
+                 it keeps its slot and only stops being visible, so the column
+                 below it never shuffles upward when the turn changes hands —
+                 these are controls under a thumb that is already reaching. -->
+            <span class="turn-token" aria-hidden="true"></span>
+            <!-- What a player at the chosen difficulty would do
+                 (src/ui/hint.js). Offered only while it is your turn and the
+                 felt holds the state a ranking needs — a joiner at a shared
+                 table holds a view, and gets no lamp rather than a guess — and
+                 it keeps its slot the same way the token does. -->
+            <button type="button" id="hint-button" aria-label="Hint">
+              <span aria-hidden="true">&#9788;</span>
+            </button>
+            <!-- The thumb slot: the one action that needs a button (passing,
+                 laying down) while there is one, and otherwise the fan's own
+                 sort toggle. They SHARE it rather than stacking, because a
+                 player with a meld staged is not reaching for "By suit" — and
+                 because one slot is one height, which is what keeps the two
+                 controls under the thumb from moving under it. -->
+            <button type="button" id="action-button" hidden></button>
+            <!-- Arrange your own fan. Presentation only — src/ui/handOrder.js
+                 explains at length why this never reaches the engine. -->
+            <button type="button" id="hand-sort" class="hand-sort" hidden></button>
+          </div>
+        </div>
       </div>
     </div>
 
