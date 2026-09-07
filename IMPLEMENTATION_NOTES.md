@@ -650,19 +650,41 @@ bites (`tests/simulate.test.js`).
 |---|---|
 | `--vs=medium,easy --match --games=40` | **medium 36, easy 4** (90% of decisive matches), 0 unfinished, 11.3 rounds a match |
 | `--vs=hard,easy --match --games=60 --budget-moves=600` | **hard 10, easy 45**, 5 unfinished, 29.1 rounds a match |
+| `--vs=hard,easy hearts --games=60 --budget-moves=600` (control) | **hard 38, easy 21** — the same budget, the same rollout layer, at the pack it was measured on |
+
+The move-capped budget is the one an A/B may quote: two runs of it sample
+identically on a busy laptop and an idle one. The shipped-clock version of the
+Spades row (`--vs=hard,easy --match --games=20`, no cap) costs about ninety
+seconds a match at 120 ms a decision, which is why the cap is what is tabulated
+here.
 
 The first is the number this issue's work is answerable for: `medium` is the
 one-ply search over the new `evaluateContract`, and it beats the cheap
 heuristic nine matches in ten. The second is `hard` — the flat Monte Carlo
 layer, which is generic and was not touched here — and it is **worse than easy
-at this pack under a starved budget**. Two things are going on and neither is a
-rules fault: a 600-move cap buys two sweeps of eight candidates, which is far
-too few to separate anything (`SAMPLE_CONFIDENCE`), and choosing the rollout
-path means the one-ply evaluator that `medium` wins with is never consulted at
-all (`rankMoves`: a rollout answer, even a noisy one, wins over the lookahead).
+at this pack**.
+
+The diagnosis, and it is not the budget: the same 600-move cap at Hearts still
+has `hard` beating `easy` on 64.4% of decisive rounds (60 rounds, three seats),
+which is the gain this file has always recorded for it. What differs is what a
+rollout MEANS. **The rollout policy is the cheap heuristic**, and trick-taking's
+cheap heuristic at a pack with no card values is "play your lowest card" — a
+policy that has never heard of a contract. In Hearts that is roughly the right
+idea, because the points come from the cards you are made to take and playing
+low avoids taking them, so where a rolled-out hand ENDS is informative about the
+move that began it. In Spades the same policy plays out a hand nobody is trying
+to win, and the final score — which is entirely about promises kept — is close
+to orthogonal to the candidate being scored. Sampling harder samples noise.
+Choosing the rollout path also means the one-ply evaluator `medium` wins with is
+never consulted at all (`rankMoves`: a rollout answer, however noisy, wins over
+the lookahead).
+
 The felt's default difficulty is `medium`, so this is not what a player meets —
-but "hard is the difficulty that loses" is a real defect and belongs to the
-rollout layer rather than to this template. Worth its own issue.
+but "hard is the difficulty that loses" is a real defect, it belongs to the
+rollout layer rather than to this template, and a bidding game is the first pack
+in the repo to expose it. Worth its own issue: the fix is a rollout policy that
+consults `evaluateState`, or a template-declared policy hook, not a bigger
+budget.
 
 ### Two rule readings written down rather than left to be discovered
 

@@ -91,7 +91,11 @@ test("every available house rule also completes every round", async () => {
 // rounds are fifty-odd moves now, so it pays the same twelve as everyone else.
 const PROTOCOL_GAMES_DEFAULT = 12;
 
-for (const packId of ["crazy-eights", "hearts", "wildfire", "stockpile", "milestones"]) {
+// team-spades is here for the move shape as much as for the pack: a bid is the
+// first move in the repo that carries a NUMBER as its whole content
+// (`choice: {bid: n}`), and a wire validator that dropped it would leave the
+// table bidding zero and playing on regardless (#105).
+for (const packId of ["crazy-eights", "hearts", "wildfire", "stockpile", "milestones", "team-spades"]) {
   test(`${packId} plays the same over the protocol as it does in one process`, async () => {
     const games = PROTOCOL_GAMES_DEFAULT;
     const solo = await simulatePack(packId, games, { variants: [] });
