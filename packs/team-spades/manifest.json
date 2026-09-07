@@ -1,0 +1,47 @@
+{
+  "id": "team-spades",
+  "name": "Team Spades",
+  "version": "0.1.0",
+  "players": { "min": 4, "max": 4, "best": 4, "teams": 2 },
+  "deck": "standard-52",
+  "template": "trick-taking",
+  "tagline": "Say what you'll take. Then take it.",
+  "howToPlay": [
+    "You and the player opposite are one side, with one score. Before a card is played, everybody says how many of the thirteen tricks they will take — and your two numbers add up into one promise.",
+    "Make it and your side scores ten a trick. Fall one short and you lose the same amount instead, which is why bidding what the hand is really worth beats bidding what you would like it to be.",
+    "Spades are trump: any spade beats any card of the suit that was led. You may not LEAD one until somebody has been forced to play one, so the first few tricks are fought out in the other three suits.",
+    "Every trick past your bid is a bag. It is worth a point now and a hundred against you when ten of them have piled up. Bidding nothing at all — nil — pays a hundred if you take no trick, and costs a hundred the moment you take one."
+  ],
+  "accent": "#2f6f57",
+  "heroCards": [
+    { "rank": "A", "suit": "spades" },
+    { "rank": "10", "suit": "spades" },
+    { "rank": "K", "suit": "hearts" }
+  ],
+  "rules": {
+    "followSuit": "must",
+    "trump": "spades",
+    "trickWinner": "highest-trump-else-led",
+    "firstLead": "left-of-dealer",
+    "dealAll": true,
+    "leadConstraints": { "suit:spades": "untilBroken" },
+    "breaking": { "var": "spadesBroken", "when": "suit:spades played" },
+    "bidding": { "min": 0, "max": "hand", "blindNil": { "behind": 100 } }
+  },
+  "scoring": {
+    "roundScore": "bids-and-bags",
+    "bids": {
+      "perTrick": 10,
+      "overtrick": 1,
+      "nil": 100,
+      "blindNil": 200,
+      "bags": { "at": 10, "penalty": -100 }
+    },
+    "accumulate": true,
+    "gameOver": { "when": "anyScore >= 500", "winner": "highestScore" }
+  },
+  "ui": {
+    "cardBack": { "pattern": "lattice", "color": "#2f6f57", "emblem": "♠" }
+  },
+  "credits": "Traditional (public domain)."
+}

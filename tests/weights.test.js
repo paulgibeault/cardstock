@@ -23,7 +23,12 @@ import { chooseBotMove, rankMoves } from "../src/engine/bot.js";
 import { createRng } from "../src/engine/rng.js";
 import { loadPackFromDisk } from "../tools/pack-test.mjs";
 
-const TABLES = [["milestones", 3], ["hearts", 4], ["wildfire", 3]];
+// One table per template, plus a second for trick-taking — because that
+// template now houses two games with different currencies, and a weight only
+// speaks at a pack whose RULES reach the code that reads it. Hearts takes no
+// bid, so its ranking cannot possibly move when a contract weight is perturbed;
+// Team Spades is where those live (#105).
+const TABLES = [["milestones", 3], ["hearts", 4], ["wildfire", 3], ["team-spades", 4]];
 
 async function dealt(packId, seats, seed) {
   const pack = await loadPackFromDisk(packId);
@@ -89,27 +94,54 @@ function spreadContracts(state) {
   for (let s = 0; s < state.seats; s++) ctx.setPlayerVar(s, "phase", rungs[s % rungs.length]);
 }
 
+/**
+ * ASKED PER TEMPLATE, ACROSS EVERY TABLE THAT USES IT — which is a weaker claim
+ * than the per-pack one this started as, and the only true one.
+ *
+ * The per-pack version was right while every template had one shape of game
+ * under it. Trick-taking now has two: Hearts, which is scored in the points its
+ * cards charge, and Team Spades, which is scored on a promise and reads a
+ * different half of the same hooks (#105). A contract weight perturbed at a
+ * Hearts table cannot move anything, because Hearts never bids — and asserting
+ * that it does would only ever be satisfied by deleting the weight or by faking
+ * a bid in a pack that has none.
+ *
+ * What is still asserted, and is the thing worth asserting: a weight in the
+ * frozen bag must change SOME decision at SOME table. A knob no shipped pack
+ * can turn is still a lie to the tuner.
+ */
 test("every weight a template declares is one its hooks actually read", async () => {
+  const probes = new Map();   // `${templateId}.${key}` -> { moved, packs }
   for (const [packId, seats] of TABLES) {
     const template = (await dealt(packId, seats, "probe")).pack.template;
     for (const key of Object.keys(template.weights)) {
+      const id = `${template.id}.${key}`;
+      const probe = probes.get(id) || { moved: false, packs: [] };
+      probes.set(id, probe);
+      // Proven at an earlier table: nothing to learn from proving it twice, and
+      // the probe is the expensive half of this file.
+      if (probe.moved) continue;
+      probe.packs.push(packId);
       // Perturbed hard, in both directions, because a single direction can
       // land on a value the position happens to be indifferent to.
-      let moved = false;
       for (const factor of [0, 8]) {
         const weights = { ...template.weights, [key]: template.weights[key] * factor + (factor === 0 ? -5 : 0) };
         const state = await dealt(packId, seats, `weights:read:${packId}:${key}`);
         spreadContracts(state);
         walk(state, 200, (live, seat) => {
-          if (moved) return;
+          if (probe.moved) return;
           for (const difficulty of ["easy", "medium"]) {
-            if (ranking(live, seat, { difficulty, weights }) !== ranking(live, seat, { difficulty })) moved = true;
+            if (ranking(live, seat, { difficulty, weights }) !== ranking(live, seat, { difficulty })) probe.moved = true;
           }
         });
-        if (moved) break;
+        if (probe.moved) break;
       }
-      assert.ok(moved, `${packId}: weights.${key} was perturbed and no ranking changed — the hooks do not read it`);
     }
+  }
+  for (const [id, probe] of probes) {
+    assert.ok(probe.moved,
+      `weights.${id} was perturbed at ${probe.packs.join(", ")} and no ranking changed — `
+      + "the hooks do not read it at any table that exercises them");
   }
 });
 

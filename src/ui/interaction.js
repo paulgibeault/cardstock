@@ -46,13 +46,15 @@ export function handAddress(seat) {
  *                meld chips (hit) and the discard pile (end of turn).
  *   'place'      select one card from hand/stock/discard top, then tap a
  *                build pile (play) or an own discard pile (end of turn).
+ *   'bid'        no card answers a tap at all; the action button asks a
+ *                question and the answer IS the move.
  *
  * And the question a mode must NEVER be asked: whether a given SEAT may be
  * assembling something. A mode is derived from the table-wide `turn.phase`, so
  * that answer is `gathers` below.
  */
 export const INTERACTION_MODES = Object.freeze([
-  'tap', 'play-drawn', 'pass', 'rummy-draw', 'rummy-meld', 'place',
+  'tap', 'play-drawn', 'pass', 'rummy-draw', 'rummy-meld', 'place', 'bid',
 ]);
 
 /**
@@ -470,6 +472,23 @@ export function buildUiModel(state, { seat, moves = [], acts = false, selection 
     return ui;
   }
 
+  if (mode === 'bid') {
+    // A BID HAS NO CARD IN IT, which makes this the first mode where the hand
+    // is inert and the whole turn is one button. Nothing goes in
+    // `handSelectable`: a tap on a card during the bidding would light a card
+    // that cannot be played and there is no move to attach to it.
+    //
+    // The BARE move is what the button makes — no bid on it — because the
+    // number is a question the platform's own chooser asks
+    // (`pendingChoice`, src/ui/table.js), exactly as a wild is asked its
+    // colour. That is what keeps the felt free of anything that knows what a
+    // trick is: one button, one dialog, both generic.
+    if (moves.some((move) => move.type === 'bid')) {
+      ui.action = { label: 'Bid', makeMove: () => ({ actor: seat, type: 'bid' }) };
+    }
+    return ui;
+  }
+
   if (mode === 'rummy-draw') {
     for (const move of moves) {
       if (move.type === 'draw') ui.readyTargets.set(move.from ?? 'draw', move);
@@ -746,8 +765,10 @@ export function dropCandidates(state, { seat, moves = [], source }) {
   }
 
   // Passing is a commit-by-button phase; dragging inside the hand is
-  // rearranging, and there is nowhere on the felt to drop a card yet.
-  if (mode === 'pass' || mode === 'rummy-draw') return [];
+  // rearranging, and there is nowhere on the felt to drop a card yet. Bidding
+  // is the same answer for a stronger reason: no card is part of the move at
+  // all.
+  if (mode === 'pass' || mode === 'rummy-draw' || mode === 'bid') return [];
 
   // Every other mode already expresses its destinations as readyTargets /
   // readyMelds once a single card is selected — so ask the model the same

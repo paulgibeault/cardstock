@@ -2068,6 +2068,13 @@ function renderStatusBar(state, acting) {
 
 function statusTextFor(state, acting) {
   if (state.gameOver) return `Game over — ${winnerSentence(state)}`;
+  if (state.turn.phase === 'bid') {
+    // The bid goes round the table one seat at a time, so "whose turn" is
+    // already the right sentence — what this adds is WHICH KIND of turn, which
+    // is the whole difference between a phase where you tap a card and one
+    // where the only live control is a button in the rail.
+    return acting.some(isMySeat) ? 'Your bid' : `${seatLabel(state.turn.seat)} is bidding…`;
+  }
   if (state.turn.phase === 'pass') {
     // HOW MANY, HERE, because nothing else says it in time. The pass button
     // only appears once exactly this many cards are staged, so its label
