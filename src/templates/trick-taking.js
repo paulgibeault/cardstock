@@ -1240,6 +1240,14 @@ function holdsUp(ctx, taking) {
  * (`showsHeldValue`) because everybody watched those tricks being taken. The
  * bids and the melds are public by construction.
  */
+/**
+ * How much a point still in hand is worth against a point already taken, and
+ * how much of a point one rung of the ladder is worth. Both measured — see the
+ * `held` term inside `evaluatePointsContract`.
+ */
+const HELD_PRIZE_WORTH = 1;
+const HELD_RANK_WORTH = 4;
+
 function evaluatePointsContract(ctx, seat, w = WEIGHTS) {
   if (ctx.turn.phase === 'bid' || ctx.turn.phase === 'meld') return null;
   if (ctx.var('trickNumber') === 1 && ctx.countIn('trick') === 0) return null;
@@ -1252,17 +1260,49 @@ function evaluatePointsContract(ctx, seat, w = WEIGHTS) {
   const contract = contractSeat === null ? 0 : (bidOf(ctx, contractSeat) ?? 0);
 
   const taking = trickLeaderSoFar(ctx);
-  const holds = holdsUp(ctx, taking);
   const takingSide = taking.seat === null ? null : sideOfSeat(ctx.pack, ctx.seats, taking.seat);
+  const trickIds = ctx.cardIdsIn('trick');
   let onTable = 0;
-  for (const id of ctx.cardIdsIn('trick')) onTable += cardValue(ctx.cardById(id), scoring);
+  for (const id of trickIds) onTable += cardValue(ctx.cardById(id), scoring);
+
+  const holds = holdsUp(ctx, taking);
 
   const bankedBy = (side) => sides[side].reduce((sum, s) => sum
     + (Number(ctx.playerVar(s, 'meld')?.points) || 0)
     + handValue(ctx.cardsIn(ctx.zoneAddr('won', s)), scoring), 0);
 
+  /**
+   * WHAT IS STILL IN THIS SEAT'S OWN HAND, AND WHY THE EVALUATOR IS WRONG
+   * WITHOUT IT.
+   *
+   * Every other term here is about points that have already moved. Within one
+   * trick that makes the evaluator blind in a very specific way: whichever card
+   * I win with, the trick lands in the same pile, and the only difference the
+   * banked total sees is the value of the card I spent — so an ace scores
+   * ELEVEN BETTER than a ten for taking the identical trick. The bot cashed its
+   * aces at the first opportunity and had nothing left to win the counters at
+   * the end of the hand with, which is the classic beginner's mistake and it
+   * lost to the cheap heuristic because of it (`medium` took 41% of decisive
+   * rounds against `easy` before this term existed).
+   *
+   * A card kept is a card that can still take a trick, and a high card can take
+   * a trick full of somebody else's counters — so what is held is worth its
+   * face value PLUS its rank, which is what makes "win with the cheapest card
+   * that wins" fall out rather than being written as a rule.
+   *
+   * ONLY THIS SEAT'S HAND, never the partner's: `evaluateState` is asked of one
+   * seat and may read nothing it could not see.
+   */
+  const ladder = rankLadderOf(ctx.pack);
+  let held = 0;
+  for (const id of ctx.cardIdsIn(ctx.zoneAddr('hand', seat))) {
+    const card = ctx.cardById(id);
+    held += cardValue(card, scoring) + rankOrder(card, ladder) * HELD_RANK_WORTH;
+  }
+
   const valueOfSide = (side) => {
     let value = bankedBy(side);
+    if (side === mine) value += held * HELD_PRIZE_WORTH;
     // The pile on the table, discounted by how well the winning card holds —
     // the term the no-trump evaluator's own comment calls "the whole signal".
     if (takingSide === side) value += onTable * holds;

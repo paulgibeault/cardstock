@@ -788,24 +788,82 @@ the play improves.
 bid dialog was 42 buttons and filled the screen; nothing in 200 measured hands
 bid above 230, and a side reaching 300 needs 250 in cards plus fifty of meld.
 
+### The evaluator cashed its aces, and the measurement is what found it
+
+The first cut of `evaluatePointsContract` made the bot WORSE than no evaluator
+at all: `medium` — which is the one-ply lookahead over it, and the thing this
+issue is answerable for — took **22.5% of decisive matches** against `easy`.
+Since a bid is scored by `botHeuristic` at both difficulties, that gap was
+entirely in the play.
+
+The diagnosis, and it is a mistake worth writing down because the same shape
+will recur in any pack where the cards carry the points. Every term in the
+first cut was about points that had **already moved** — melded, banked, or
+provisionally won on the table. Within a single trick that is blind in one very
+specific way: whichever card I win with, the trick lands in the same pile, so
+the only difference the banked total can see is the value of the card I spent —
+and an ace therefore scored eleven better than a ten *for taking the identical
+trick*. The bot cashed its aces at the first opportunity and had nothing left
+to take the counters with at the end of the hand.
+
+Two things were tried first and both were wrong, which is why they are recorded
+rather than quietly dropped:
+
+- **Discounting the trick on the table once per seat still to play** (`holds`
+  raised to the number of seats behind you) made it *worse*, 41.4% → 37.5%.
+  Over-confidence about a half-won trick was not the problem.
+- **Reshaping the contract cliff** — dropping it, and replacing it with the
+  normalised shortfall `evaluateContract` uses — changed the outcome *not at
+  all*, byte for byte over 300 rounds. That is not a null result, it is a fact
+  about a two-sided game: within one trick a side's gain and its rival's are
+  perfectly anti-correlated, so **every positive-weighted combination of the
+  two has the same argmax**. The cliff can only change a decision at a table
+  with three or more sides.
+
+The fix is the missing term: **what is still in this seat's own hand.** A card
+kept can still take a trick, and a high card can take a trick full of somebody
+else's counters — so a held card is worth its face value plus its rank
+(`HELD_PRIZE_WORTH = 1`, `HELD_RANK_WORTH = 4`, both measured on a grid).
+"Win with the cheapest card that wins" falls out of that rather than being
+written as a rule. It reads only the seat's own hand, never the partner's.
+
+| medium vs easy | before | after |
+|---|---|---|
+| decisive rounds (200, same seeds) | 41.1% | 46.5% |
+| decisive rounds (600) | — | 47.7% (mean round score 47.96 against easy's 47.10) |
+| decisive **matches** (80) | 22.5% | **47.5%** (mean final total 420.25 against 413.94) |
+
+So `medium` is at parity with `easy` at this pack rather than behind it — a
+weaker claim than Spades' nine-in-ten, and an honest one. Pinochle is a harder
+game for a one-ply evaluator than Spades is: the currency is points rather than
+tricks, so a position's value depends on cards nobody can see, and the
+difference between a good and a bad discard is often only visible three tricks
+later.
+
 ### Measured
 
 ```
 node tools/simulate.mjs pinochle --games=500      500/500 rounds, 0 stalled, 0 errored, 56.0 moves/game
 node tools/simulate.mjs pinochle --games=200 --match
                                                   200/200 matches, 8.9 rounds/match
-pinochle: hard vs easy (4 seats, 300 rounds)      hard 44.0% of decisive rounds (mean 48.51)
-                                                  easy 56.0%                    (mean 50.83)
+pinochle: medium vs easy (4 seats, 600 rounds)    medium 47.7% of decisive rounds (mean 47.96)
+                                                  easy   52.3%                    (mean 47.10)
+pinochle: medium vs easy (4 seats, 80 matches)    medium 47.5% of decisive matches (mean total 420.25)
+                                                  easy   52.5%                     (mean total 413.94)
+pinochle: hard vs easy (4 seats, 200 rounds)      hard   50.5% of decisive rounds (mean 44.13)
+                                                  easy   49.5%                    (mean 45.42)
 ```
 
-**`hard` loses at Pinochle, exactly as it does at Spades — this is #114, not a
-Pinochle bug.** The diagnosis in the Team Spades section above transfers
-without amendment: the rollout policy is the cheap heuristic, and at a bidding
-game the cheap heuristic plays out a hand nobody is trying to win, so the final
-score is close to orthogonal to the candidate being scored. Choosing the rollout
-path also means the one-ply evaluator (`evaluatePointsContract`, which is what
-this issue is answerable for) is never consulted. Nothing here should be tuned
-to work around it; the fix is a rollout policy that consults `evaluateState`.
+**`hard` is at parity here rather than losing, and that is the evaluator's doing
+rather than a contradiction of #114.** Before the held-in-hand term it took
+44.0% of decisive rounds — the same shape as the Spades finding filed as #114,
+where the rollout policy is the cheap heuristic and plays out a hand nobody is
+trying to win. What changed is that a depth-limited rollout ends at
+`evaluateState`, so a better evaluator improves `hard` as well as `medium`. The
+underlying defect #114 names is untouched and was deliberately not worked on
+here: the rollout POLICY is still the cheap heuristic, and the fix for that is a
+policy that consults `evaluateState`, not a bigger budget and not anything in
+this pack.
 
 ### Rule readings written down rather than left to be discovered
 
