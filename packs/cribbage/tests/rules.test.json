@@ -1,0 +1,181 @@
+{
+  "pack": "cribbage",
+  "tests": [
+    {
+      "name": "the crib takes two from each seat, then the starter is cut",
+      "setup": {
+        "seats": 2,
+        "turn": { "seat": 1, "phase": "discard" },
+        "vars": { "dealer": 0, "count": 0, "run": [] },
+        "unlisted": "void",
+        "zones": {
+          "hand.0": ["clubs-2", "clubs-3", "clubs-4", "clubs-6", "clubs-7", "clubs-8"],
+          "hand.1": ["hearts-2", "hearts-3", "hearts-4", "hearts-6", "hearts-7", "hearts-8"],
+          "draw": ["diamonds-9", "spades-4"]
+        }
+      },
+      "assert": [
+        { "move": { "actor": 0, "type": "discard", "cards": ["clubs-2"] }, "legal": false, "rule": "crib-count" },
+        { "move": { "actor": 0, "type": "discard", "cards": ["hearts-2", "hearts-3"] }, "legal": false, "rule": "not-in-hand" },
+        { "apply": { "actor": 0, "type": "discard", "cards": ["clubs-2", "clubs-3"] } },
+        { "expect": { "zones": { "hand.0": 4, "crib": 2 }, "turn": { "phase": "discard" } } },
+        { "move": { "actor": 0, "type": "discard", "cards": ["clubs-4", "clubs-6"] }, "legal": false, "rule": "already-discarded" },
+        { "apply": { "actor": 1, "type": "discard", "cards": ["hearts-2", "hearts-3"] } },
+        {
+          "expect": {
+            "zones": { "crib": 4, "starter": ["spades-4"], "draw": 1 },
+            "turn": { "seat": 1, "phase": "play" },
+            "scores": { "0": 0, "1": 0 }
+          }
+        }
+      ]
+    },
+    {
+      "name": "his heels: a jack cut as the starter scores the DEALER two, not the cutter",
+      "setup": {
+        "seats": 2,
+        "turn": { "seat": 1, "phase": "discard" },
+        "vars": { "dealer": 0, "count": 0, "run": [] },
+        "unlisted": "void",
+        "zones": {
+          "hand.0": ["clubs-2", "clubs-3", "clubs-4", "clubs-6", "clubs-7", "clubs-8"],
+          "hand.1": ["hearts-2", "hearts-3", "hearts-4", "hearts-6", "hearts-7", "hearts-8"],
+          "draw": ["diamonds-9", "spades-J"]
+        }
+      },
+      "assert": [
+        { "apply": { "actor": 0, "type": "discard", "cards": ["clubs-2", "clubs-3"] } },
+        { "apply": { "actor": 1, "type": "discard", "cards": ["hearts-2", "hearts-3"] } },
+        {
+          "expect": {
+            "zones": { "starter": ["spades-J"] },
+            "scores": { "0": 2, "1": 0 },
+            "turn": { "seat": 1, "phase": "play" }
+          }
+        },
+        { "expect": { "playerVars": { "0": { "backPeg": 0 } } } }
+      ]
+    },
+    {
+      "name": "a go scores one to the seat that laid LAST, not to the seat that could not play",
+      "setup": {
+        "seats": 2,
+        "turn": { "seat": 0, "phase": "play" },
+        "vars": {
+          "dealer": 0,
+          "count": 24,
+          "run": ["clubs-4", "hearts-10", "spades-10"],
+          "lastPlayer": 1
+        },
+        "unlisted": "void",
+        "zones": {
+          "hand.0": ["diamonds-6", "clubs-9"],
+          "hand.1": ["spades-K"],
+          "play.0": ["hearts-10"],
+          "play.1": ["clubs-4", "spades-10"],
+          "starter": ["diamonds-2"],
+          "crib": ["clubs-2", "clubs-3", "hearts-2", "hearts-3"]
+        }
+      },
+      "assert": [
+        {
+          "move": { "actor": 0, "type": "playCard", "cards": ["clubs-9"] },
+          "legal": false,
+          "rule": "over-count"
+        },
+        { "apply": { "actor": 0, "type": "playCard", "cards": ["diamonds-6"] } },
+        {
+          "expect": {
+            "scores": { "0": 1, "1": 0 },
+            "vars": { "count": 0, "run": [] },
+            "turn": { "seat": 1 }
+          }
+        }
+      ]
+    },
+    {
+      "name": "thirty-one scores two and resets the count where it stands",
+      "setup": {
+        "seats": 2,
+        "turn": { "seat": 1, "phase": "play" },
+        "vars": {
+          "dealer": 0,
+          "count": 21,
+          "run": ["hearts-A", "spades-10", "clubs-10"],
+          "lastPlayer": 0
+        },
+        "unlisted": "void",
+        "zones": {
+          "hand.0": ["spades-4"],
+          "hand.1": ["diamonds-K", "clubs-3"],
+          "play.0": ["spades-10"],
+          "play.1": ["hearts-A", "clubs-10"],
+          "starter": ["diamonds-2"],
+          "crib": ["clubs-2", "hearts-2", "hearts-3", "hearts-4"]
+        }
+      },
+      "assert": [
+        { "apply": { "actor": 1, "type": "playCard", "cards": ["diamonds-K"] } },
+        {
+          "expect": {
+            "scores": { "0": 0, "1": 2 },
+            "vars": { "count": 0, "run": [] },
+            "turn": { "seat": 0 },
+            "zones": { "play.1": ["hearts-A", "clubs-10", "diamonds-K"] }
+          }
+        },
+        { "expect": { "playerVars": { "1": { "backPeg": 0 } } } }
+      ]
+    },
+    {
+      "name": "the show counts the NON-DEALER first, and a pone who goes out ends it there",
+      "setup": {
+        "seats": 2,
+        "turn": { "seat": 1, "phase": "play" },
+        "vars": { "dealer": 0, "count": 0, "run": [], "lastPlayer": 0 },
+        "scores": { "0": 118, "1": 118 },
+        "unlisted": "void",
+        "zones": {
+          "hand.0": [],
+          "hand.1": ["hearts-J"],
+          "play.0": ["clubs-J", "diamonds-J", "spades-Q", "clubs-10"],
+          "play.1": ["clubs-5", "diamonds-5", "spades-5"],
+          "starter": ["hearts-5"],
+          "crib": ["clubs-2", "hearts-2", "hearts-3", "hearts-4"]
+        }
+      },
+      "assert": [
+        { "apply": { "actor": 1, "type": "playCard", "cards": ["hearts-J"] } },
+        {
+          "expect": {
+            "scores": { "0": 118, "1": 148 },
+            "gameOver": true,
+            "winner": 1
+          }
+        }
+      ]
+    },
+    {
+      "name": "with nobody out, the show pays pone, then dealer, then the crib to the dealer",
+      "setup": {
+        "seats": 2,
+        "turn": { "seat": 1, "phase": "play" },
+        "vars": { "dealer": 0, "count": 0, "run": [], "lastPlayer": 0 },
+        "scores": { "0": 0, "1": 0 },
+        "unlisted": "void",
+        "zones": {
+          "hand.0": [],
+          "hand.1": ["hearts-J"],
+          "play.0": ["clubs-9", "diamonds-9", "spades-3", "clubs-7"],
+          "play.1": ["clubs-5", "diamonds-5", "spades-5"],
+          "starter": ["hearts-5"],
+          "crib": ["clubs-6", "hearts-4", "diamonds-4", "spades-6"]
+        }
+      },
+      "assert": [
+        { "apply": { "actor": 1, "type": "playCard", "cards": ["hearts-J"] } },
+        { "expect": { "gameOver": false, "scores": { "1": 30 } } }
+      ]
+    }
+  ]
+}

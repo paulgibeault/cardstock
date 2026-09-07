@@ -718,6 +718,96 @@ body {
 }
 
 /* ------------------------------------------------------------------ *
+ * A counter that is a POSITION, not a quantity
+ * ------------------------------------------------------------------ *
+ *
+ * A cribbage board: 121 holes and two pegs a side. The template says
+ * `kind: 'peg'` on its counter and src/ui/counterTrack.js draws this; nothing
+ * about the component knows which game asked for it, and a template that names
+ * a kind this build does not know gets the ordinary pill above.
+ *
+ * BATTERY (GAME_INTEGRATION §6d): there is deliberately NO @keyframes here.
+ * The pegs move with a one-shot transition on `left` and then sit still, which
+ * is what a peg does. Nothing on this component runs forever, so there is
+ * nothing for `--arcade-pulse-count` to cap.
+ *
+ * BOTH THEMES ARE PAINTED, not one plus a tint. The rail is a groove — darker
+ * than its surround in the dark theme, darker than paper in the light one —
+ * and the two pegs are the accent and a muted companion, which keeps the
+ * front/back distinction legible without relying on hue alone.
+ */
+.seat__track {
+  margin-left: auto;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 5.5rem;
+}
+
+.seat__track-rail {
+  position: relative;
+  flex: 1 1 auto;
+  height: 0.45rem;
+  min-width: 3.5rem;
+  border-radius: 999px;
+  background: var(--chip-bg);
+  border: 1px solid var(--chip-border);
+  /* The holes. A repeating gradient rather than 121 elements — the track is
+     sixty pixels wide on a phone, so the marks are TEXTURE and not geometry:
+     a peg at hole 60 sits halfway along because of its `left`, not because it
+     is over the thirtieth mark. The repeat is deliberately fine (3px, one
+     pixel of ink) — at 6px it read as a seven-segment progress bar, which is a
+     picture of a different quantity. */
+  background-image: repeating-linear-gradient(
+    to right,
+    var(--chip-border) 0 1px,
+    transparent 1px 3px
+  );
+}
+
+.seat__track-peg {
+  position: absolute;
+  top: 50%;
+  width: 0.42rem;
+  height: 0.42rem;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  /* The move itself. `left` and not a transform because the peg's position IS
+     a left offset in percent of the rail, and one shorthand that reads the way
+     the value does is worth more here than the compositor. */
+  transition: left 320ms ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .seat__track-peg { transition: none; }
+}
+
+.seat__track-peg--front {
+  background: var(--accent);
+  box-shadow: 0 0 0 1px var(--chip-border);
+  z-index: 1;
+}
+
+.seat__track-peg--back {
+  background: var(--chrome-text);
+  opacity: 0.45;
+}
+
+/* Both pegs on the same hole is where every seat starts. Nudged apart so the
+   back one is visible behind the front rather than exactly underneath it. */
+.seat__track[data-together="true"] .seat__track-peg--back {
+  transform: translate(-90%, -50%);
+}
+
+.seat__track-value {
+  font-size: 0.7rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  min-width: 1.6rem;
+  text-align: right;
+}
+
+/* ------------------------------------------------------------------ *
  * A seat put away, and the plate it opens
  * ------------------------------------------------------------------ *
  *

@@ -77,7 +77,8 @@
         "trick-taking",
         "shedding",
         "contract-rummy",
-        "sequencing"
+        "sequencing",
+        "cribbage"
       ]
     },
     "tagline": {
@@ -258,6 +259,22 @@
         "properties": {
           "rules": {
             "$ref": "#/$defs/rules-sequencing"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "template": {
+            "const": "cribbage"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "rules": {
+            "$ref": "#/$defs/rules-cribbage"
           }
         }
       }
@@ -1050,6 +1067,55 @@
             "first-empty-stock"
           ],
           "description": "DECLARATIVE ONLY. Win detection is fixed (first empty stock); this drives the wording on the rules page."
+        }
+      }
+    },
+    "rules-cribbage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "deal",
+        "crib",
+        "countTo",
+        "target",
+        "nobs"
+      ],
+      "description": "Cribbage (src/templates/cribbage.js). Every number the game is made of, so a five-card or a match-to-61 variant is a manifest edit rather than a code one. The COMBINATION table \u2014 fifteens, pairs, runs, flushes \u2014 is not parameterised: it is the genre, and lives in src/templates/cribbage-score.js.",
+      "properties": {
+        "deal": {
+          "type": "integer",
+          "description": "Cards dealt to each seat before the throw. Six, two-handed."
+        },
+        "crib": {
+          "type": "integer",
+          "description": "Cards each seat throws to the dealer's crib."
+        },
+        "countTo": {
+          "type": "integer",
+          "description": "The limit the running count in the play may not pass, and the count that scores two for making it exactly. Thirty-one."
+        },
+        "go": {
+          "type": "integer",
+          "default": 1,
+          "description": "Holes to the last player when nobody else can play."
+        },
+        "lastCard": {
+          "type": "integer",
+          "default": 1,
+          "description": "Holes for laying the last card of the hand, unless it made the count exactly (which already scored)."
+        },
+        "heels": {
+          "type": "integer",
+          "default": 2,
+          "description": "Holes to the DEALER when the starter is a `nobs` card \u2014 two for his heels."
+        },
+        "target": {
+          "type": "integer",
+          "description": "The board. First seat to reach it wins, the moment they reach it \u2014 which is why scoring.gameOver says \"template\"."
+        },
+        "nobs": {
+          "$ref": "#/$defs/selector",
+          "description": "Which card is \"the jack\": one held of the starter's suit is his nobs, and one turned as the starter is his heels. A selector rather than a literal J so a deck with differently-named face cards still plays."
         }
       }
     }

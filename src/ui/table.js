@@ -79,6 +79,7 @@ import { feltClock } from '../match/clock.js';
 import { createMatchRecord } from './matchRecord.js';
 import { watchHandGestures } from './handGestures.js';
 import { createZoneRenderer } from './zoneRenderer.js';
+import { renderCounterTrack } from './counterTrack.js';
 import { closeConfirm, confirmAction } from './confirm.js';
 import { createDragController } from './dragController.js';
 import { attachInspector, hideInspector } from './inspector.js';
@@ -87,6 +88,7 @@ import {
 } from './describe.js';
 import {
   interactionMode, gathers, stagedSelection, buildUiModel, dropCandidates, draggableSources,
+  commitPromptFor,
   pruneSelection, toggleHandSelection, isSelected, handAddress, implicitLandingZone,
 } from './interaction.js';
 import {
@@ -1169,6 +1171,18 @@ function buildSeatRow(state, stagger, acting, ui, { tier, carousel, mustOpen, sh
     // has to be the one the game is actually read for — see seatCountersFor.
     const counters = seatCountersFor(state, seat, { minimized: collapsed });
     counters.forEach((counter, i) => {
+      // A NUMBER THAT IS A POSITION GETS DRAWN AS ONE. Some counters are a
+      // quantity of things (cards in hand, cards left in stock) and a pill of
+      // digits says them completely; some are a place on a road — a cribbage
+      // board, 121 holes and two pegs — and a pill throws away the whole point.
+      // Which kinds are which is the PLATFORM's closed vocabulary
+      // (src/ui/counterTrack.js) and which kind this counter is, is the
+      // template's. An unrecognised kind falls through to the badge below.
+      const track = renderCounterTrack(counter);
+      if (track) {
+        head.appendChild(track);
+        return;
+      }
       const badge = document.createElement('span');
       // First is the primary badge; the rest are smaller marks beside it. The
       // kind is a TEMPLATE-chosen slug, never pack data reaching an attribute
@@ -2029,15 +2043,22 @@ function renderStatusBar(state, acting) {
 
 function statusTextFor(state, acting) {
   if (state.gameOver) return `Game over — ${winnerSentence(state)}`;
-  if (state.turn.phase === 'pass') {
-    // HOW MANY, HERE, because nothing else says it in time. The pass button
-    // only appears once exactly this many cards are staged, so its label
-    // cannot be where a player learns the number — and the sentence that used
-    // to say it stood in a bar above the hand that no longer exists
-    // (src/ui/interaction.js). This slot is 122px at 375px, which is why the
-    // count replaces "your pick" rather than joining it.
-    const count = state.pack.rules.passing?.count ?? 3;
-    return acting.some(isMySeat) ? `Passing — pick ${count}` : 'Waiting for passes…';
+  // HOW MANY, HERE, because nothing else says it in time. The commit button
+  // only appears once exactly that many cards are staged, so its label cannot
+  // be where a player learns the number — and the sentence that used to say it
+  // stood in a bar above the hand that no longer exists
+  // (src/ui/interaction.js). This slot is 122px at 375px, which is why the
+  // count replaces "your pick" rather than joining it.
+  //
+  // ASKED OF THE MODE, NOT THE PHASE NAME. `turn.phase === 'pass'` was a
+  // platform file knowing one template's word for its own phase; cribbage's is
+  // `discard` and means the same thing to this bar. Both sentences come from
+  // the template now (#107).
+  if (interactionMode(state) === 'pass') {
+    const mine = acting.some(isMySeat);
+    const seat = mine ? mySeat() : state.turn.seat;
+    const prompt = commitPromptFor(state, seat, legalMovesFor(state, seat));
+    return mine ? prompt.staging : prompt.waiting;
   }
   return acting.some(isMySeat) ? 'Your turn' : `${seatLabel(state.turn.seat)}'s turn`;
 }

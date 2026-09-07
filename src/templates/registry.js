@@ -44,6 +44,16 @@ export const TEMPLATE_INFO = Object.freeze({
     defaultCardStyle: 'vanilla',
     playable: true,
   },
+  // Playable the day it played a full match to 121 against the bot, and not
+  // before: it shipped absent from this table — the Preview badge and the
+  // neutral genre word, which is the right way for a new template to start —
+  // and earned the entry once `tools/simulate.mjs --match cribbage` finished
+  // every game it was given (#107).
+  cribbage: {
+    genreLabel: 'Cribbage',
+    defaultCardStyle: 'classic',
+    playable: true,
+  },
 });
 
 const UNKNOWN = Object.freeze({

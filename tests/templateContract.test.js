@@ -54,6 +54,10 @@ const OPTIONAL_FUNCTIONS = [
   // cannot answer, because the mode comes from the table-wide turn.phase.
   "gathers",
   "seatCounters",
+  // How many cards a simultaneous commit wants and what its button says — the
+  // two things src/ui/interaction.js used to read out of trick-taking's own
+  // `rules.passing` and `vars.passDirection` by name (#107).
+  "commitPrompt",
   "committedSelection", "getMeldGroups", "describeEvent",
   "ruleLines", "endingLines", "statLines",
   "arrangeContract", "suggestMeld",

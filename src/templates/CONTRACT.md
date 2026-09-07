@@ -140,6 +140,7 @@ platform file.
 | `activeMatch` | `(ctx) -> {address, attr, value, onCard} \| null` | `describe.js`, `table.js` | none |
 | `scoreChip` | `(ctx, seat) -> {short, long, aria} \| null` | `table.js` | the plain total |
 | `seatCounters` | `(ctx, seat) -> {text, aria, kind?}[] \| null` | `table.js` | the hand count |
+| `commitPrompt` | `(ctx, seat) -> {count, action, staging, waiting} \| null` | `interaction.js`, `table.js` | derived from the enumeration; the button says "Commit" |
 | `committedSelection` | `(ctx, seat) -> cardId[] \| null` | `table.js` | none |
 | `getMeldGroups` | `(ctx, seat) -> Group[]` | `table.js` | `[]` |
 | `describeEvent` | `(ev, {seatLabel, viewerSeat}) -> {text, tone} \| null` | `table.js` | the engine-effect vocabulary |
@@ -171,7 +172,7 @@ how to render, exported as `INTERACTION_MODES` from `src/ui/interaction.js`).
 |---|---|
 | `tap` | one tap plays the card; destination implicit |
 | `play-drawn` | as `tap`, but only the just-drawn card answers; the action button keeps it |
-| `pass` | multi-select exactly N, commit with the action button |
+| `pass` | multi-select exactly N, commit with the action button — N, the button's words and the status line all come from `commitPrompt` |
 | `rummy-draw` | tap a pile to draw from it |
 | `rummy-meld` | multi-select for a lay-down; one card arms meld chips and the discard |
 | `place` | select a card, then tap the pile it goes on |
@@ -277,6 +278,48 @@ rest showed stock, is the bug this rule exists to prevent.
 
 Return `null` or `[]` to take the default.
 
+### A counter that is a POSITION — the track kinds
+
+Most counters are a quantity of things and a pill of digits says them
+completely. A few are a place on a road, and a pill throws away the whole
+point: a cribbage board is 121 holes with two pegs a side, and "78" is a
+fraction of what it tells you.
+
+`kind` is what says which. **The set of kinds that render as a track is the
+PLATFORM'S** — a closed list, exported as `COUNTER_TRACK_KINDS` from
+`src/ui/counterTrack.js`, exactly like `INTERACTION_MODES` — and which kind a
+counter is remains the template's. A kind this build has never heard of gets
+the ordinary badge, which is the same fail-soft the mode vocabulary has.
+
+A track counter carries three numbers beyond the usual ones:
+
+| Field | Meaning |
+|---|---|
+| `value` | where the front marker is now |
+| `from` | where it was before this seat's last score — the BACK peg |
+| `of` | how long the road is |
+
+```js
+seatCounters(ctx, seat) {
+  const value = ctx.score(seat);
+  return [{
+    text: String(value), aria: `${value} of ${ctx.rules.target}`,
+    label: 'Pegs', kind: 'peg', value, from: ctx.playerVar(seat, 'backPeg') ?? 0,
+    of: ctx.rules.target,
+  }];
+}
+```
+
+`text` is still printed beside the track, so nothing is lost if the geometry
+is not readable at a glance; `aria` is still the whole truth in words, and the
+track's parts are `aria-hidden` so a screen reader hears one sentence rather
+than "peg, peg, 78".
+
+This is what a board that is not a zone looks like. No card is ever in it, so
+nothing on the felt could have drawn it, and the two obvious ways to add one —
+a `board` hook only one template will ever implement, or a `pack.id ===` in the
+seat renderer — are both the thing this file exists to prevent.
+
 ## Zone definition fields the platform reads
 
 Beyond `id`/`per`/`visibility`/`layout`/`order`/`facing`/`capacity`/`count`/`label`
@@ -320,6 +363,10 @@ And the audit itself, which is the part worth keeping:
 | `stock` | sequencing | `top`. The count is the whole race and is public anyway. |
 | `build` | sequencing | `top` + capacity. |
 | `recycled` | sequencing | `none`. Feeds the draw pile. |
+| `crib` | cribbage | `none` — including from the DEALER who owns it. A crib its owner could leaf through before the show is a different game. |
+| `show` | cribbage | `all`. Where the crib is turned face up to be counted; the MOVE into it is the reveal (see below). |
+| `play` | cribbage | `all`, per player. Laid face up in front of you during the count, and taken back for the show — which is why this template never has to remember who played what. |
+| `starter` | cribbage | `all`. Cut face up. |
 
 ### Vars
 
@@ -378,6 +425,13 @@ The vocabulary in use today:
 | `caught` | shedding | `{seat, target, drew, label}` |
 | `laidDown` | contract-rummy | `{seat, contract, melds}` |
 | `hit` | contract-rummy | `{seat, targetSeat, meld}` |
+| `laidToCrib` | cribbage | `{seat, count}` |
+| `starterCut` | cribbage | `{cards}` |
+| `hisHeels` | cribbage | `{seat}` |
+| `pegPlay` | cribbage | `{seat, count, points, parts}` |
+| `go` | cribbage | `{seat, closes?}` |
+| `pegged` | cribbage | `{seat, points, reason, total}` |
+| `showScored` | cribbage | `{seat, isCrib, points, parts, cards}` |
 
 An event may carry `say: {text, tone}` to name its own banner sentence; that is
 the cheapest seam for an effect the platform has never heard of.
@@ -389,3 +443,72 @@ Trick-taking's deal writes zone arrays directly rather than going through
 sanctioned *for the initial deal only* — there is nothing for a `zoneEmpty`
 reaction to respond to while the deck is being handed out, and the alternative
 is a recycle firing mid-deal. Everything after setup goes through `moveCards`.
+
+---
+
+## What a new template actually cost
+
+The claim at the top of this file — *a fifth template is a new file in
+`src/templates/` plus one entry in `registry.js`, and nothing else* — was
+written from four templates that had all grown up together. Every template
+added after it writes down here what it really took, whether or not that
+flatters the claim.
+
+### Cribbage (#107) — one file, one registry entry, and four platform edits
+
+**The claim held for the game itself.** `src/templates/cribbage.js` and its
+`registry.js` entry are the whole of the rules: four phases, a running count, a
+crib, a show, and a bot. Nothing in `src/engine/` changed. Nothing in the felt,
+the lobby, the card-art registry, the stats panel or the rules page needed to
+learn that cribbage exists. The `defaultZones`/`setup`/`validateMove`/
+`applyMove`/`enumerateLegalMoves`/`isRoundOver` surface carried a genre with a
+simultaneous commit, an auto-resolved "go", a second scoring pass over the same
+cards, and a match decided mid-hand, without a single new required member.
+
+**Two files beside it, both by choice.** `src/templates/cribbage-score.js` is
+the fifteen/pair/run/flush/nobs table as a pure function, split out so the whole
+12,994,800-hand distribution can be swept by a test that never loads the engine.
+`packs/cribbage/` is a manifest, as every pack is. Neither is a cost the
+contract did not predict; the second is the contract working.
+
+**Four platform edits, and they are the honest part.**
+
+1. **A new optional hook, `commitPrompt`** (`src/ui/interaction.js`,
+   `src/ui/table.js`). The `pass` interaction mode read `rules.passing.count`
+   and `vars.passDirection` — trick-taking's own two parameters, by name, in
+   two platform files — and the status bar branched on
+   `turn.phase === 'pass'`, one template's word for its own phase. That looked
+   harmless while trick-taking was the only template using the mode. Cribbage
+   wants two cards and a crib, not three and a direction, and its phase is
+   called `discard`. So the mode now asks the template how many cards it wants
+   and what to say, and the move type comes from the enumeration. **This was a
+   pre-existing leak that a second user of the mode exposed**, not a cost
+   cribbage imposed: trick-taking implements the hook and the felt says exactly
+   what it said before.
+2. **A new platform renderer, `src/ui/counterTrack.js`,** and its stylesheet
+   block. A cribbage board is a score drawn long, and it had nowhere to be
+   drawn. Keyed on a counter `kind` from a closed platform vocabulary — never
+   on a pack or a template id — so it is available to the next genre that
+   scores along a road. ~110 lines plus CSS.
+3. **A `$defs.rules-cribbage` block and an `allOf` clause** in
+   `schema/manifest.schema.json`, plus `cribbage` in the `template` enum. This
+   is per-template by construction (see the `rankLadder` note in that file) and
+   every template pays it.
+4. **A stub in `tests/cardStyles.test.js`'s `MANIFEST_STUBS`**, which is a test
+   fixture asserting each pack's card back is its own. Every new PACK pays this,
+   not every new template.
+
+**What it did NOT cost, which is the finding.** No engine change. No new
+interaction mode — the `pass` mode was reusable once it stopped reading one
+template's rules. No `template.id ===` or `pack.id ===` anywhere; the two gates
+in `tests/templateContract.test.js` stayed green throughout. No new required
+member. And the two genuinely novel demands — a score that moves mid-hand and a
+match that ends the instant it does — were met with `ctx.addScore`,
+`scoring.gameOver: "template"` and `isGameOver`, all of which already existed.
+
+**One rule deliberately not modelled as the issue described it.** Cribbage's
+`cut` is a step inside the move that completes the discard, not a phase. A
+phase in this engine is a state in which somebody has a decision, and cutting
+has none — modelling it as one would mean a move type, an interaction mode with
+no card to tap, and one unavoidable click per hand, thirty of them in a match.
+Reversing that decision is a move type and a mode; it is written up in the file.

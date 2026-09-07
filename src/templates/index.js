@@ -2,6 +2,7 @@ import shedding from './shedding.js';
 import trickTaking from './trick-taking.js';
 import contractRummy from './contract-rummy.js';
 import sequencing from './sequencing.js';
+import cribbage from './cribbage.js';
 import { templateInfo } from './registry.js';
 
 const TEMPLATES = {
@@ -9,6 +10,7 @@ const TEMPLATES = {
   'trick-taking': trickTaking,
   'contract-rummy': contractRummy,
   sequencing,
+  cribbage,
 };
 
 // The presentation facts (genre word, default card art, playable-to-the-end)
