@@ -9,6 +9,7 @@
 // a constraint.
 
 import { cardValue } from '../engine/scoring.js';
+import { rankAt, rankIndexOf, rankLadderOf } from '../engine/cards.js';
 import {
   isWildCard, isMeldable, parseItem, resolveMeld, meldKindOf, meldValue,
   getMeldGroups, pinnedAttr, wildHitValues, rankDomain,
@@ -59,10 +60,14 @@ export function findMeldForItem(ctx, parsed, available) {
   }
 
   if (parsed.kind === 'run') {
+    // Windows are enumerated in LADDER POSITIONS, not in `Number(rank)`, so the
+    // search sees the same run the rules do — on a standard 52 that is the
+    // difference between finding 10-J-Q-K and not knowing a jack exists.
+    const ladder = rankLadderOf(ctx.pack);
     const byRank = new Map();
     for (const c of naturals) {
-      const r = Number(c.card.rank);
-      if (!Number.isNaN(r) && !byRank.has(r)) byRank.set(r, c);
+      const r = rankIndexOf(ladder, c.card.rank);
+      if (r >= 0 && !byRank.has(r)) byRank.set(r, c);
     }
     const ranks = [...byRank.keys()];
     if (ranks.length === 0) return null;
@@ -259,10 +264,11 @@ function contractWants(ctx, seat, w) {
     if (parsed.kind === 'run') runLength = Math.max(runLength, parsed.n);
   }
   const domain = rankDomain(ctx);
-  if (!total) return { set: 1, run: 0, colorGroup: 0, runLength, domain, w };
+  const ladder = rankLadderOf(ctx.pack);
+  if (!total) return { set: 1, run: 0, colorGroup: 0, runLength, domain, ladder, w };
   return {
     set: wants.set / total, run: wants.run / total, colorGroup: wants.colorGroup / total,
-    runLength, domain, w,
+    runLength, domain, ladder, w,
   };
 }
 
@@ -341,8 +347,12 @@ const RUN_DUPLICATE = -0.5;
  */
 function runWorth(card, shape, wants, rankMates, own) {
   if (wants.run <= 0) return 0;
-  const rank = Number(card.rank);
-  if (!Number.isFinite(rank)) return 0;
+  // Positions on the pack's ladder throughout — the window, its clip to the
+  // deck, and the lookup back into the hand — because `wants.domain` is in
+  // those units and mixing the two would clip every window at the wrong end.
+  const ladder = wants.ladder;
+  const rank = rankIndexOf(ladder, card.rank);
+  if (rank < 0) return 0;
   if (rankMates > 0) return wants.w.RUN_DUPLICATE;
   const n = wants.runLength;
   const { min, max } = wants.domain;
@@ -350,7 +360,7 @@ function runWorth(card, shape, wants, rankMates, own) {
   for (let start = Math.max(min, rank - n + 1); start <= Math.min(rank, max - n + 1); start++) {
     let others = 0;
     for (let r = start; r < start + n; r++) {
-      if (r !== rank && shape.ranks.has(String(r))) others++;
+      if (r !== rank && shape.ranks.has(rankAt(ladder, r))) others++;
     }
     if (others > best) best = others;
   }
@@ -372,6 +382,7 @@ function runWorth(card, shape, wants, rankMates, own) {
  * meld, because this runs inside the most expensive scoring loop in the repo.
  */
 function meldReach(ctx, seat) {
+  const ladder = rankLadderOf(ctx.pack);
   const mine = { ranks: new Set(), colors: new Set() };
   const theirs = { ranks: new Set(), colors: new Set() };
   for (let s = 0; s < ctx.seats; s++) {
@@ -386,10 +397,12 @@ function meldReach(ctx, seat) {
       if (kind === 'colorGroup') into.colors.add(String(values[0]));
       else if (kind === 'set') into.ranks.add(String(values[0]));
       else {
-        const ranks = values.map(Number).filter(Number.isFinite);
+        const ranks = values.map((v) => rankIndexOf(ladder, v)).filter((r) => r >= 0);
         if (!ranks.length) continue;
-        into.ranks.add(String(Math.min(...ranks) - 1));
-        into.ranks.add(String(Math.max(...ranks) + 1));
+        const below = rankAt(ladder, Math.min(...ranks) - 1);
+        const above = rankAt(ladder, Math.max(...ranks) + 1);
+        if (below !== undefined) into.ranks.add(String(below));
+        if (above !== undefined) into.ranks.add(String(above));
       }
     }
   }

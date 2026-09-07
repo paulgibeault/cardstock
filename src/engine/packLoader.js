@@ -79,6 +79,12 @@ export function loadPack(manifest, { deckJson, variants } = {}) {
     id: patchedManifest.id,
     manifest: patchedManifest,
     rules: patchedManifest.rules,
+    // The declared rank/suit order, surfaced beside the deck it describes
+    // rather than left for every reader to dig out of the manifest. Undefined
+    // when the pack declares none, which is what makes `rankLadderOf` derive
+    // one from the deck (src/engine/cards.js).
+    rankLadder: patchedManifest.rankLadder,
+    suitLadder: patchedManifest.suitLadder,
     scoring: patchedManifest.scoring || {},
     reactions: patchedManifest.reactions || [],
     activeVariants,

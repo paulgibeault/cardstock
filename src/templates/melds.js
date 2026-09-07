@@ -12,7 +12,7 @@
 // wild became.
 
 import { selectorMatches } from '../engine/selectors.js';
-import { distinctValues, isWild } from '../engine/cards.js';
+import { distinctValues, isWild, rankAt, rankIndexOf, rankLadderOf } from '../engine/cards.js';
 
 export function isWildCard(ctx, card) {
   return isWild(card, ctx.rules.wilds);
@@ -69,22 +69,40 @@ export function isMeldable(ctx, card) {
 
 const RANK_DOMAINS = new WeakMap();
 
-// The ranks a run may occupy: the numeric ranks the pack's deck actually
-// holds. A frozen value has to be one a card could have had — without this
-// the window search below is free to run a meld off either end of the deck
-// (a "1, 2, wild" whose wild is a 0), and freezing a rank no card can ever
-// match makes a slot that is neither filled nor fillable.
+/**
+ * The ranks a run may occupy, as POSITIONS ON THE PACK'S LADDER
+ * (src/engine/cards.js). A frozen value has to be one a card could have had —
+ * without this the window search below is free to run a meld off either end of
+ * the deck (a "1, 2, wild" whose wild is a 0), and freezing a rank no card can
+ * ever match makes a slot that is neither filled nor fillable.
+ *
+ * It used to scan `Number(card.rank)` on its own, which meant the domain of a
+ * standard 52 was {2 … 10} and NO RUN WINDOW COULD HOLD A FACE CARD. Reading
+ * the ladder instead gets J Q K A back, and gets them in the order the pack
+ * declared rather than the one `Number()` happened to imply.
+ *
+ * Two kinds of card are left out, because neither is a rank a run can sit on:
+ * a WILD has no rank of its own (it takes one from the window), and a card the
+ * pack bars from melds (Milestones' skips, `rules.meldForbidden`) has a rank
+ * that is a word. Both are facts about the pack, like the deck itself, so the
+ * per-pack memo still holds.
+ */
 export function rankDomain(ctx) {
   let domain = RANK_DOMAINS.get(ctx.pack);
   if (!domain) {
-    const ranks = [];
+    const ladder = rankLadderOf(ctx.pack);
+    let min = Infinity;
+    let max = -Infinity;
     for (const card of ctx.pack.cardsById.values()) {
-      const r = card.rank === '' || card.rank == null ? NaN : Number(card.rank);
-      if (Number.isFinite(r)) ranks.push(r);
+      if (isWildCard(ctx, card) || !isMeldable(ctx, card)) continue;
+      const i = rankIndexOf(ladder, card.rank);
+      if (i < 0) continue;
+      if (i < min) min = i;
+      if (i > max) max = i;
     }
-    // An empty range for a deck with no numeric ranks: every window is then
+    // An empty range for a deck with no run-able ranks: every window is then
     // wider than the domain, so runs are rejected rather than mis-frozen.
-    domain = ranks.length ? { min: Math.min(...ranks), max: Math.max(...ranks) } : { min: 0, max: -1 };
+    domain = min <= max ? { min, max } : { min: 0, max: -1 };
     RANK_DOMAINS.set(ctx.pack, domain);
   }
   return domain;
@@ -160,12 +178,13 @@ export function assignWilds(ctx, kind, size, entries, pinned = {}) {
   }
 
   if (kind === 'run') {
+    const ladder = rankLadderOf(ctx.pack);
     const fixed = [
-      ...naturals.map((e) => Number(e.card.rank)),
-      ...Object.values(wilds).map((w) => Number(w.rank)),
+      ...naturals.map((e) => rankIndexOf(ladder, e.card.rank)),
+      ...Object.values(wilds).map((w) => rankIndexOf(ladder, w.rank)),
     ];
-    if (fixed.some((r) => !Number.isFinite(r))) {
-      return { ok: false, rule: 'invalid-meld', reason: 'Run cards must have numeric ranks.' };
+    if (fixed.some((r) => r < 0)) {
+      return { ok: false, rule: 'invalid-meld', reason: 'Run cards must have a rank on this deck\'s ladder.' };
     }
     if (!fixed.length) return noValue;
 
@@ -189,7 +208,7 @@ export function assignWilds(ctx, kind, size, entries, pinned = {}) {
     if (free.length < unassigned.length) {
       return { ok: false, rule: 'invalid-meld', reason: 'A run cannot repeat a rank.' };
     }
-    unassigned.forEach((entry, i) => { wilds[entry.id] = { rank: String(free[i]) }; });
+    unassigned.forEach((entry, i) => { wilds[entry.id] = { rank: String(rankAt(ladder, free[i])) }; });
     return { ok: true, wilds };
   }
 
@@ -232,9 +251,10 @@ export function checkMeldValues(ctx, parsed, entries, wilds) {
   }
 
   if (parsed.kind === 'run') {
-    const ranks = values.map((v) => Number(v));
-    if (ranks.some((r) => !Number.isFinite(r))) {
-      return { ok: false, rule: 'invalid-meld', reason: 'Run cards must have numeric ranks.' };
+    const ladder = rankLadderOf(ctx.pack);
+    const ranks = values.map((v) => rankIndexOf(ladder, v));
+    if (ranks.some((r) => r < 0)) {
+      return { ok: false, rule: 'invalid-meld', reason: 'Run cards must have a rank on this deck\'s ladder.' };
     }
     if (new Set(ranks).size !== ranks.length) {
       return { ok: false, rule: 'invalid-meld', reason: 'A run cannot repeat a rank.' };
@@ -444,12 +464,13 @@ export function meldDisplayOrder(ctx, group, kind) {
     }));
 
     if (meldKind === 'run') {
-      const ranks = decorated.map((d) => Number(d.value));
+      const ladder = rankLadderOf(ctx.pack);
+      const ranks = decorated.map((d) => rankIndexOf(ladder, d.value));
       // An unvalued wild has no slot to sit in — mid-hit, or a group assembled
       // by a test that never went through applyMove. Rather than pile the
       // nowhere-cards at one end and imply an order that is not there, leave the
       // whole meld alone until every card knows what it is.
-      if (ranks.some((r) => !Number.isFinite(r))) return cards.slice();
+      if (ranks.some((r) => r < 0)) return cards.slice();
       decorated.forEach((d, i) => { d.key = ranks[i]; });
       decorated.sort((a, b) => a.key - b.key || a.i - b.i);
       return decorated.map((d) => d.id);
@@ -480,9 +501,10 @@ export function wildHitValues(ctx, group, kind, cardId) {
   if (attr === 'color') {
     candidates = distinctValues(ctx.pack.cardsById, 'color');
   } else {
+    const ladder = rankLadderOf(ctx.pack);
     const domain = rankDomain(ctx);
     candidates = [];
-    for (let r = domain.min; r <= domain.max; r++) candidates.push(String(r));
+    for (let r = domain.min; r <= domain.max; r++) candidates.push(String(rankAt(ladder, r)));
   }
   return candidates.filter((value) => resolveHit(ctx, group, kind, [cardId], { [cardId]: { [attr]: value } }).ok);
 }

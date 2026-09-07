@@ -550,6 +550,49 @@ Both of the last two are visible in `packs/wildfire/tests/rules.test.json`,
 which grew five assertions covering the announcement window, the penalty,
 double-jeopardy, and the lapse.
 
+## The rank ladder (#101)
+
+What outranks what is now DECLARED per pack (`rankLadder` at the root of a
+manifest, `suitLadder` beside it) and resolved once in `src/engine/cards.js`,
+because the two places that used to guess were both wrong on the deck four of
+the five packs ship. The guesses and what they cost:
+
+- `rankOrder` put `Number(card.rank)` and the position in `RANKS` on one number
+  line, so the jack scored 9 and tied the nine, the queen tied the ten, and the
+  TEN OUTRANKED THE JACK. In Hearts, ♥10 played before ♥J took the trick — now
+  pinned in `packs/hearts/tests/rules.test.json`.
+- `rankDomain` (`src/templates/melds.js`) scanned `Number(card.rank)` alone, so
+  a standard 52's run window was {2 … 10} and no run could hold a face card.
+  Invisible only because Milestones ships a deck ranked 1–12.
+
+**Nothing about the five packs on disk moved except Hearts.** Milestones,
+Stockpile and Wildfire are all numerically ranked with word-ranked action
+cards, and the deck-derived default puts them exactly where they were: numbers
+ascending, then the ranks the standard ladder names, then the words in deck
+order. Milestones' run window is the same twelve ranks, now counted as ladder
+positions rather than as the numbers 1–12. Hearts' rule tests all still pass
+and its simulate run still completes 40/40 rounds, so no floor moved; what did
+change is the trick-taking bot's *arithmetic*, since `rankOrder` now returns a
+position on the ladder (the two is 0) rather than a face value.
+
+### One thing the fix exposed, in the sampler rather than in the ladder
+
+`separated()` in `src/engine/bot.js` asked `gap > confidence * error`, and
+those two are the SAME NUMBER whenever one sweep of n separates the top two
+candidates and the other n−1 tie them — the ordinary shape of an endgame. The
+algebra is exact: with n rows, one difference D and the rest zero, the mean is
+D/n and the standard error is also D/n. With the default confidence of 1 a bare
+`>` therefore handed those turns to whichever way the last bit of the z-scores
+rounded, which is how a change of *units* in `evaluateState` — something
+`tests/rollouts.test.js` exists to say no bot may feel — reached a different
+card. It is settled deterministically now, and settled toward *separated*: at
+exactly one standard error the sampler has an opinion and says so, because
+answering the other way makes it decline in the commonest endgame there is.
+
+This was latent, not introduced: the base tree flips the same way on the same
+Hearts hand under a different rescaling. The ladder fix only moved which
+decision sits on the knife edge, and the test happened to be pointed at it.
+
 ## Next steps
 
 Multiplayer (Phase 8), per-pack UI polish (per-pack `theme.css`, custom
