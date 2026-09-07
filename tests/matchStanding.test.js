@@ -86,7 +86,10 @@ test("a template with no matchStanding is graded by its round score, as before",
   // Installing a hook that says exactly that must change nothing, and
   // installing one that says the opposite must change something — otherwise
   // the equivalence is vacuous because the hook is never consulted.
-  for (const [packId, seats, sign] of [["hearts", 4, -1], ["crazy-eights", 2, +1]]) {
+  // Thirteen is here because #103 asked for it in as many words: its manifest
+  // says `winner: "lowestScore"`, so points are the PENALTY, and a sign read
+  // the other way ships a bot that plays to lose with nothing else noticing.
+  for (const [packId, seats, sign] of [["hearts", 4, -1], ["crazy-eights", 2, +1], ["thirteen", 4, -1]]) {
     const state = await dealt(packId, seats, `standing:${packId}`);
     const template = state.pack.template;
     assert.strictEqual(template.matchStanding, undefined,

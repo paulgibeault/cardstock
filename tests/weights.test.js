@@ -28,7 +28,7 @@ import { loadPackFromDisk } from "../tools/pack-test.mjs";
 // speaks at a pack whose RULES reach the code that reads it. Hearts takes no
 // bid, so its ranking cannot possibly move when a contract weight is perturbed;
 // Team Spades is where those live (#105).
-const TABLES = [["milestones", 3], ["hearts", 4], ["wildfire", 3], ["team-spades", 4]];
+const TABLES = [["milestones", 3], ["hearts", 4], ["wildfire", 3], ["team-spades", 4], ["thirteen", 4], ["pinochle", 4]];
 
 async function dealt(packId, seats, seed) {
   const pack = await loadPackFromDisk(packId);

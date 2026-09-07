@@ -54,7 +54,11 @@ const OPTIONAL_FUNCTIONS = [
   // cannot answer, because the mode comes from the table-wide turn.phase.
   "gathers",
   "seatCounters",
-  "committedSelection", "commitPrompt", "getMeldGroups", "describeEvent",
+  // How many cards a simultaneous commit wants and what its button says — the
+  // two things src/ui/interaction.js used to read out of trick-taking's own
+  // `rules.passing` and `vars.passDirection` by name (#107).
+  "commitPrompt",
+  "committedSelection", "getMeldGroups", "describeEvent",
   "ruleLines", "endingLines", "statLines",
   "arrangeContract", "suggestMeld",
   // Not called by the engine but by the per-seat view filter
@@ -317,5 +321,5 @@ test("a template's weights are a frozen bag of finite numbers", () => {
       assert.ok(typeof value === "number" && Number.isFinite(value), `${id}: weights.${key} is ${value}`);
     }
   }
-  assert.ok(declared >= 3, `only ${declared} templates declare weights — the three with evaluateState should`);
+  assert.ok(declared >= 4, `only ${declared} templates declare weights — the four with evaluateState should`);
 });

@@ -29,11 +29,13 @@ import { chooseBotMove } from "../src/engine/bot.js";
 import { buildUiModel, selectionLegality, interactionMode, handAddress } from "../src/ui/interaction.js";
 import { loadPackFromDisk } from "../tools/pack-test.mjs";
 import { cardOrder, rankLadderOf } from "../src/engine/cards.js";
+import { determinizeState } from "../src/engine/determinize.js";
+import { createRng } from "../src/engine/rng.js";
 
 const PACK = "thirteen";
 
-async function dealt(seats = 4, seed = "climbing") {
-  const pack = await loadPackFromDisk(PACK);
+async function dealt(seats = 4, seed = "climbing", variants = undefined) {
+  const pack = await loadPackFromDisk(PACK, variants);
   const state = createState({ pack, seats, seed });
   pack.template.setup(makeCtx(state));
   return state;
@@ -53,8 +55,14 @@ test("every move the enumerator offers is one the engine accepts", async () => {
   // The contract's own words: a bot picks from this list and every tap target
   // is derived from it, so a move on it that validateMove refuses is a move
   // that throws in front of a player.
+  //
+  // TWENTY-FOUR HANDS, WHERE #102 NEEDED TWELVE, and the reason is the whole
+  // point of #103: `evaluateState` keeps its runs together, so a hand ends in
+  // 36 moves where the greedy bot took 44 and each game offers the sweep
+  // fewer positions. The bar is a count of MOVES CHECKED and it stays where it
+  // was; what moved is how many deals it takes to reach it.
   let checked = 0;
-  for (let game = 0; game < 12; game++) {
+  for (let game = 0; game < 24; game++) {
     const state = await dealt(4, `enum:${game}`);
     for (let step = 0; step < 400 && !state.gameOver; step++) {
       const seat = acting(state)[0];
@@ -302,6 +310,214 @@ test("a leading seat is never offered a pass — somebody has to play", async ()
   assert.ok(!moves.some((m) => m.type === "pass"), "the leader was offered a pass");
   assert.strictEqual(
     validateMove(state, { actor: state.turn.seat, type: "pass" }).rule, "must-lead");
+});
+
+/* ------------------------------------------------------------------ *
+ * 5. The position evaluator, and the one thing it must not know (#103)
+ * ------------------------------------------------------------------ */
+
+test("the evaluator judges the position without seeing the hands it is judging against", async () => {
+  // THE FAIRNESS GATE FOR THE ONE-PLY PATH, and it has to live here because
+  // the one in tests/rollouts.test.js cannot reach it. That gate probes the
+  // `hard` chooser, which DEALS ITSELF AN IGNORANT WORLD before it looks at
+  // anything (src/engine/determinize.js) — so a peeking `evaluateState` is
+  // invisible to it by construction. `medium` is the path where the evaluator
+  // reads the real state, and `chooseBotMove(state, seat)` with no options is
+  // exactly that, deterministic and with no sampling in the way.
+  //
+  // The probe is the strongest form the rollout gate uses: resample EVERY card
+  // this seat cannot see into the slots it came from. Hand sizes, the pile and
+  // the discard are untouched by construction, so everything the seat is
+  // ENTITLED to know is identical and any change in the answer is a change in
+  // what was read. This game makes the temptation concrete — "can they chop my
+  // pig" is the question a Thirteen player most wants answered and the one
+  // that is not theirs to ask.
+  let probed = 0;
+  for (let game = 0; game < 8; game++) {
+    const state = await dealt(4, `blind:${game}`);
+    for (let step = 0; step < 400 && !state.gameOver; step++) {
+      const seat = acting(state)[0];
+      if (seat === undefined) break;
+      const chosen = JSON.stringify(chooseBotMove(state, seat));
+      for (const sample of [1, 2, 3]) {
+        const stranger = determinizeState(state, seat, createRng(`stranger:${game}:${step}:${sample}`).next);
+        assert.strictEqual(JSON.stringify(chooseBotMove(stranger, seat)), chosen,
+          `seat ${seat} played differently once every card it cannot see was dealt somewhere `
+          + "else — evaluateState is reading hands, not the position");
+      }
+      probed += 1;
+      applyMove(state, chooseBotMove(state, seat));
+      if (state.events.some((e) => e.type === "roundOver")) break;
+    }
+  }
+  assert.ok(probed > 200, `only ${probed} decisions probed — too few to conclude anything`);
+});
+
+/* ------------------------------------------------------------------ *
+ * 6. The two house rules that change what is LEGAL (#103)
+ * ------------------------------------------------------------------ *
+ *
+ * The rule TABLE for all three variants is in the pack, as always
+ * (packs/thirteen/tests/rules.test.json). What is here is the half a
+ * given-state table cannot reach: the DEAL-TIME check, which no constructed
+ * setup can invoke, and the ENUMERATOR, which is what a bot picks from.
+ */
+
+/** The ladder, low to high, as this pack declares it. */
+const LADDER = ["3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A", "2"];
+const rankOf = (id) => id.slice(id.indexOf("-") + 1);
+
+/**
+ * Is this hand one of the five tới trắng shapes?
+ *
+ * WRITTEN OUT LONGHAND AND FROM THE RULES DOC (THIRTEEN_RULES.md D-8), not
+ * from the template — a checker that called the template's own would agree
+ * with it about anything, including about being wrong.
+ */
+function instantHand(cards) {
+  const counts = new Map();
+  for (const id of cards) counts.set(rankOf(id), (counts.get(rankOf(id)) || 0) + 1);
+  const held = (rank, n) => (counts.get(rank) || 0) >= n;
+
+  // `slice(0, 12)` throughout: the 2 sits at the top of the ladder and no
+  // sequence may contain it, so every consecutive shape stops at the ace.
+  if (held("2", 4)) return "four 2s";
+  if ([...counts.values()].filter((n) => n >= 2).length >= 6) return "six pairs";
+  if (LADDER.slice(0, 12).every((rank) => held(rank, 1))) return "a dragon";
+  for (const [n, len, name] of [[2, 5, "five consecutive pairs"], [3, 3, "three consecutive triples"]]) {
+    for (let start = 0; start + len <= 12; start++) {
+      if (LADDER.slice(start, start + len).every((rank) => held(rank, n))) return name;
+    }
+  }
+  return null;
+}
+
+test("instant-wins: the deal that has already won is found, and its hand is the only move", async () => {
+  // THE CHECK IS AT THE DEAL, so it cannot be reached from a constructed
+  // position — the pack's rule table asserts what happens once the var is set
+  // and this asserts that it is ever set, and set for the right hands.
+  //
+  // A SWEEP RATHER THAN A STACKED DECK: `dealHands` shuffles, so the only way
+  // in is the seed, and roughly one deal in thirty-five at four seats is a tới
+  // trắng (measured: 587 of 20,000). Four hundred deals is comfortably enough
+  // to see a dozen and cheap enough to keep in the suite.
+  let fired = 0;
+  const shapes = new Set();
+  for (let game = 0; game < 400; game++) {
+    const state = await dealt(4, `instant:${game}`, ["instant-wins"]);
+    const declared = state.vars.instantWin;
+    for (let seat = 0; seat < 4; seat++) {
+      const hand = state.zones.cards(handAddress(seat));
+      const truth = instantHand(hand);
+      // Seat order settles a double, so a later seat may hold one and not be
+      // the one named. Anybody NAMED must be holding one.
+      if (declared && declared.seat === seat) {
+        assert.ok(truth, `seat ${seat} was declared an instant win holding ${hand.join(" ")}`);
+      } else if (!declared) {
+        assert.strictEqual(truth, null,
+          `seat ${seat} was dealt ${truth} and nothing fired: ${hand.join(" ")}`);
+      }
+    }
+    if (!declared) continue;
+    fired += 1;
+    shapes.add(declared.shape);
+
+    // ONE MOVE, AND IT IS THE WHOLE HAND. Everybody else is offered nothing —
+    // there is no trick to answer.
+    const hand = state.zones.cards(handAddress(declared.seat));
+    assert.strictEqual(state.turn.seat, declared.seat, "the hand that won is not on the turn");
+    const moves = enumerateLegalMoves(state, declared.seat);
+    assert.strictEqual(moves.length, 1, `the winner was offered ${moves.length} moves`);
+    assert.deepStrictEqual([...moves[0].cards].sort(), [...hand].sort());
+    for (let seat = 0; seat < 4; seat++) {
+      if (seat === declared.seat) continue;
+      assert.deepStrictEqual(enumerateLegalMoves(state, seat), [],
+        `seat ${seat} was offered a move while an instant win stood`);
+    }
+
+    // And it is scored and redealt through the ordinary round boundary.
+    const round = state.roundNumber;
+    applyMove(state, chooseBotMove(state, declared.seat));
+    assert.ok(state.roundNumber > round || state.gameOver,
+      "laying an instant win down did not end the hand");
+    assert.ok(state.scores[declared.seat] === 0,
+      `the seat that won on the deal was charged ${state.scores[declared.seat]}`);
+  }
+  assert.ok(fired >= 5, `only ${fired} of 400 deals were an instant win — too few to conclude anything`);
+  assert.ok(shapes.size >= 2, `only one shape (${[...shapes]}) ever fired`);
+
+  // THE OTHER HALF, and the half that makes this a variant rather than a rule:
+  // the same deals with the switch off are ordinary hands.
+  let checked = 0;
+  for (let game = 0; game < 400 && checked < 400; game++) {
+    const state = await dealt(4, `instant:${game}`, []);
+    assert.ok(!state.vars.instantWin, `seed ${game} won on the deal with the variant switched off`);
+    checked += 1;
+  }
+});
+
+test("no-ending-on-two: the bot is never offered the move the rule takes away", async () => {
+  // WHAT THE ENUMERATOR LEFT OUT, MEASURED AGAINST WHAT IT WOULD HAVE OFFERED.
+  // The comparison is the same position read through the pack loaded WITHOUT
+  // the variant — the deck and the card ids are identical, so swapping the
+  // pack under the state for the length of one call asks the same question of
+  // the same cards under the other rule set.
+  const plain = await loadPackFromDisk(PACK, []);
+  let omitted = 0;
+  let relaxed = 0;
+  let turns = 0;
+
+  for (let game = 0; game < 40; game++) {
+    const state = await dealt(4, `noteen:${game}`, ["no-ending-on-two"]);
+    const variant = state.pack;
+    for (let step = 0; step < 400 && !state.gameOver; step++) {
+      const seat = acting(state)[0];
+      if (seat === undefined) break;
+      const moves = enumerateLegalMoves(state, seat);
+      assert.ok(moves.length, `step ${step}: seat ${seat} is on the turn with no legal move`);
+      turns++;
+
+      state.pack = plain;
+      const all = enumerateLegalMoves(state, seat);
+      state.pack = variant;
+
+      const keys = new Set(moves.map((m) => JSON.stringify(m)));
+      const hand = state.zones.cards(handAddress(seat));
+      const dropped = all.filter((m) => !keys.has(JSON.stringify(m)));
+      for (const move of dropped) {
+        assert.strictEqual(move.type, "playCard", "the rule removed something that is not a play");
+        assert.strictEqual(move.cards.length, hand.length,
+          `a play of ${move.cards.join("+")} was removed and it was not the seat's last`);
+        assert.ok(move.cards.some((id) => rankOf(id) === "2"),
+          `a play of ${move.cards.join("+")} was removed and it holds no 2`);
+      }
+      omitted += dropped.length;
+
+      // THE RELAXATION, counted so the sweep can say it saw one: a leader
+      // holding nothing but pigs keeps the play, because a rule that stops the
+      // table is a stall and not a rule.
+      if (dropped.length === 0 && !state.vars.combo
+        && moves.every((m) => m.cards.length === hand.length
+          && m.cards.some((id) => rankOf(id) === "2"))) {
+        relaxed += 1;
+      }
+
+      const chosen = chooseBotMove(state, seat);
+      assert.ok(keys.has(JSON.stringify(chosen)), "the bot played a move the rule removed");
+      applyMove(state, chosen);
+      if (state.events.some((e) => e.type === "roundOver")) break;
+    }
+  }
+  assert.ok(turns > 500, `only ${turns} turns swept`);
+  // Measured on this sweep: 10 plays removed and 4 relaxations across 1,484
+  // turns of 40 hands. Both are small because both are endgame events — if a
+  // change to the bot moves them to zero, widen the sweep rather than dropping
+  // the bar, because a zero here is a rule that never applied.
+  assert.ok(omitted > 0,
+    `across ${turns} turns the rule never removed a single move, so nothing above is being tested`);
+  assert.ok(relaxed > 0,
+    `across ${turns} turns no seat was ever left holding nothing but the card it may not go out `
+    + "on, so the deadlock the relaxation exists for was never reached in this sweep");
 });
 
 /* ------------------------------------------------------------------ *
