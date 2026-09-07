@@ -532,6 +532,7 @@ const MANIFEST_STUBS = {
   stockpile: { accent: "#6b4fa8", ui: { cardStyle: "rankrun", cardBack: { pattern: "weave", color: "#6b4fa8", emblem: "S" } } },
   hearts: { accent: "#b03048", deck: "standard-52", ui: { cardBack: { pattern: "lattice", color: "#8c2740", emblem: "♥" } } },
   "crazy-eights": { accent: "#2f6fb0", deck: "standard-52", ui: { cardBack: { pattern: "pinstripe", color: "#2f6fb0", emblem: "8" } } },
+  thirteen: { accent: "#c2562a", deck: "standard-52", ui: { cardBack: { pattern: "sunburst", color: "#a8461f", emblem: "13" } } },
 };
 
 test("the shipped manifests still declare the identity the stubs describe", async () => {
