@@ -20,6 +20,7 @@ fifth template is a new file in `src/templates/` plus one entry in
 
 ---
 
+
 ## Required — called unconditionally
 
 The engine calls these without guarding; a template missing one is a crash, not
@@ -176,8 +177,19 @@ how to render, exported as `INTERACTION_MODES` from `src/ui/interaction.js`).
 | `rummy-draw` | tap a pile to draw from it |
 | `rummy-meld` | multi-select for a lay-down; one card arms meld chips and the discard |
 | `place` | select a card, then tap the pile it goes on |
+| `combination` | multi-select **any** number, commit with the action button — which arms only while the selection is a legal play |
 
 A mode this build does not know falls back to `tap`.
+
+`combination` is the one whose legality is a **live** answer rather than a
+count. `pass` commits at exactly N and the button can be armed by counting; a
+climbing play is one card, or a pair, or six cards that happen to be three
+consecutive pairs, and none of the selections on the way to any of those is a
+play. So the button asks `validateMove` on every tap (`selectionLegality`,
+`src/ui/interaction.js`), which is the one place the UI does not derive a target
+from `enumerateLegalMoves` — deliberately, and the comment there says why: a
+climbing enumerator is a shortlist by necessity, and refusing a move the engine
+accepts is a worse failure than the one that invariant guards against.
 
 ## `gathers` — the question a mode cannot answer
 
@@ -452,12 +464,59 @@ The claim at the top of this file — *a fifth template is a new file in
 `src/templates/` plus one entry in `registry.js`, and nothing else* — was
 written from four templates that had all grown up together. Every template
 added after it writes down here what it really took, whether or not that
-flatters the claim.
+flatters the claim. They are in the order they were built, because the second
+one is partly a test of whether the first one's findings were about the
+contract or about that one genre.
 
-### Cribbage (#107) — one file, one registry entry, and four platform edits
+### Climbing (#102) — six files, not two
+
+The claim above was written from four templates that all predate it, so it was
+a description of reverse-engineered code rather than a promise anything had
+kept. `climbing` is the first template built against it. **The claim is wrong
+as stated**, and it is worth being precise about how, because the shape of the
+error is more useful than the headline.
+
+It cost **six files, not two** — and one of them is a genuine platform edit:
+
+| File | What it needed | Fair? |
+|---|---|---|
+| `src/templates/climbing.js` | the template | promised |
+| `src/templates/registry.js` | its row (genre word, card art, playable) | promised |
+| `src/templates/index.js` | an import and a map entry | **the contract forgot this one.** It is the module that turns an id into a template; nothing can load without it, and it is not `registry.js`. Two entries, not one. |
+| `src/ui/interaction.js` | one new mode in `INTERACTION_MODES`, its `buildUiModel` and `dropCandidates` branches, and `selectionLegality` | **a real platform edit, and the contract already predicted it**: "the vocabulary is the platform's; which phase means which mode is the template's". A genre with a genuinely new input shape has to add one. A genre reusing an existing shape adds nothing. |
+| `schema/manifest.schema.json` | the `template` enum, a `$defs.rules-climbing`, a fifth `allOf` clause | mechanical, and the schema is normative, so it is not optional |
+| `src/templates/melds.js` | `groupByRank` and `rankWindow` lifted out and shared | a choice, not a cost — the alternative was a second definition of "consecutive" |
+
+And what it did **not** cost is the part that says the contract is mostly
+working. **`src/ui/table.js` — three thousand lines, and the file this document
+exists because of — needed no edit at all.** Neither did the lobby, the rules
+page, the card-style registry, the stats panel, the bot driver, the celebration
+banner, or `src/engine/` (not one line: #101 had already made the rank ladder an
+engine primitive, which is that policy paying for itself). The hooks carried
+everything: a new event vocabulary through `describeEvent`, a new turn shape
+through `actingSeats`, a genre's prose through `ruleLines`/`endingLines`, a new
+verb through `botVerbs`. `interactionMode` was the seam, and it held.
+
+Three more edits landed in `tests/`, and they are worth listing because they are
+the same class of thing and nobody counts them: `tests/interaction.test.js`
+keeps its own hardcoded copy of the mode vocabulary, and `tests/view.test.js`,
+`tests/simulate.test.js` and `tests/cardStyles.test.js` each keep a hand-written
+list of the packs on disk. A fifth PACK, not a fifth template, is what those
+cost.
+
+**So the honest sentence is:** a new template is a file in `src/templates/`, two
+entries (`registry.js` and `index.js`), a `rules-*` block in the schema — plus
+one entry in `INTERACTION_MODES` **only if** its input shape is genuinely new,
+which is the one thing the platform cannot infer. Everything else is hooks.
+
+### Cribbage (#107) — two entries, a schema block, and one genuinely new renderer
+
+Climbing's honest sentence above is a hypothesis, and this is the second
+measurement of it. It came out **cheaper than climbing on every line it
+predicted, and one line more expensive on a line it did not.**
 
 **The claim held for the game itself.** `src/templates/cribbage.js` and its
-`registry.js` entry are the whole of the rules: four phases, a running count, a
+`registry.js` + `index.js` entries are the whole of the rules: four phases, a running count, a
 crib, a show, and a bot. Nothing in `src/engine/` changed. Nothing in the felt,
 the lobby, the card-art registry, the stats panel or the rules page needed to
 learn that cribbage exists. The `defaultZones`/`setup`/`validateMove`/
@@ -471,7 +530,9 @@ the fifteen/pair/run/flush/nobs table as a pure function, split out so the whole
 `packs/cribbage/` is a manifest, as every pack is. Neither is a cost the
 contract did not predict; the second is the contract working.
 
-**Four platform edits, and they are the honest part.**
+**Four edits outside those, and they are the honest part.** Two of them are on
+climbing's list already (the schema block; the `tests/` fixture that is really
+a fifth-PACK cost). The other two are new information.
 
 1. **A new optional hook, `commitPrompt`** (`src/ui/interaction.js`,
    `src/ui/table.js`). The `pass` interaction mode read `rules.passing.count`
@@ -505,6 +566,19 @@ in `tests/templateContract.test.js` stayed green throughout. No new required
 member. And the two genuinely novel demands — a score that moves mid-hand and a
 match that ends the instant it does — were met with `ctx.addScore`,
 `scoring.gameOver: "template"` and `isGameOver`, all of which already existed.
+
+**What the second measurement says about the first.** Climbing's sentence — a
+file, two entries, a `rules-*` block, plus an `INTERACTION_MODES` entry only if
+the input shape is genuinely new — held exactly. Cribbage's input shapes are a
+multi-select commit and a tap, both of which already existed, and it added no
+mode. What the sentence does not yet cover is **output**: a genre can need a way
+of DRAWING something the felt has never drawn, without needing a new way of
+being played. A board is that, and `src/ui/counterTrack.js` is what it cost. So
+the sentence gains a clause — *plus one renderer keyed on a platform-owned
+vocabulary, only if the genre displays something the felt has no shape for* —
+and the reason both halves are stated the same way is that they are the same
+rule: the vocabulary is the platform's, and which entry in it a template wants
+is the template's.
 
 **One rule deliberately not modelled as the issue described it.** Cribbage's
 `cut` is a step inside the move that completes the discard, not a phase. A

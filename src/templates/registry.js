@@ -44,11 +44,33 @@ export const TEMPLATE_INFO = Object.freeze({
     defaultCardStyle: 'vanilla',
     playable: true,
   },
-  // Playable the day it played a full match to 121 against the bot, and not
-  // before: it shipped absent from this table — the Preview badge and the
-  // neutral genre word, which is the right way for a new template to start —
-  // and earned the entry once `tools/simulate.mjs --match cribbage` finished
-  // every game it was given (#107).
+  // The fifth (#102). It started life absent from this table — which is what
+  // gets a new template the neutral genre word, the vanilla card art and a
+  // Preview badge — and earned its row by playing a hand from deal to game
+  // over. 'Climbing' is the genre's own name (Big Two, President and Zheng
+  // Shangyou are the same engine); 'Shedding' is the neighbouring genre and
+  // means something else on this shelf already.
+  //
+  // `vanilla` rather than `classic` for the same reason trick-taking is
+  // vanilla: a standard deck already resolves to `classic` before the template
+  // is consulted at all (src/ui/cardStyles/index.js), so this line only ever
+  // answers for a climbing pack with a deck of its own — and a deck of its own
+  // is exactly the case where French pips would be the wrong guess.
+  climbing: {
+    genreLabel: 'Climbing',
+    defaultCardStyle: 'vanilla',
+    playable: true,
+  },
+  // The sixth (#107). Playable the day it played a full match to 121 against
+  // the bot, and not before: it shipped absent from this table — the Preview
+  // badge and the neutral genre word, which is the right way for a new
+  // template to start — and earned the entry once
+  // `tools/simulate.mjs --match cribbage` finished every game it was given.
+  //
+  // `classic` and not `vanilla`, which is the opposite call to climbing's
+  // above and for the same reason stated the other way round: a cribbage pack
+  // with a deck of its own is still a deck of French-suited cards being
+  // counted to fifteen, because the counting IS the genre.
   cribbage: {
     genreLabel: 'Cribbage',
     defaultCardStyle: 'classic',

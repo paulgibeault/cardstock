@@ -2,6 +2,7 @@ import shedding from './shedding.js';
 import trickTaking from './trick-taking.js';
 import contractRummy from './contract-rummy.js';
 import sequencing from './sequencing.js';
+import climbing from './climbing.js';
 import cribbage from './cribbage.js';
 import { templateInfo } from './registry.js';
 
@@ -10,6 +11,7 @@ const TEMPLATES = {
   'trick-taking': trickTaking,
   'contract-rummy': contractRummy,
   sequencing,
+  climbing,
   cribbage,
 };
 

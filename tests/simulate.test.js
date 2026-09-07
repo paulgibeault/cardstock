@@ -43,7 +43,7 @@ import {
 const GAMES = 40;
 
 test("the rules-complete packs complete every round", async () => {
-  for (const packId of ["crazy-eights", "wildfire", "hearts"]) {
+  for (const packId of ["crazy-eights", "wildfire", "hearts", "thirteen"]) {
     const { completed, stalled, errored } = await simulatePack(packId, GAMES, { variants: [] });
     assert.strictEqual(stalled, 0, `${packId}: ${stalled} stalled rounds`);
     assert.strictEqual(errored, 0, `${packId}: ${errored} rounds threw`);
@@ -56,7 +56,7 @@ test("the rules-complete packs complete every round", async () => {
 // phase — and every one of those is the shape of thing a deadlock hides in.
 // None had ever been simulated.
 test("every available house rule also completes every round", async () => {
-  for (const packId of ["crazy-eights", "wildfire", "hearts"]) {
+  for (const packId of ["crazy-eights", "wildfire", "hearts", "thirteen"]) {
     for (const id of await availableVariantIds(packId)) {
       const { completed, stalled, errored } = await simulatePack(packId, GAMES, { variants: [id] });
       assert.strictEqual(stalled + errored, 0, `${packId} + ${id}: ${stalled} stalled, ${errored} threw`);
@@ -91,7 +91,7 @@ test("every available house rule also completes every round", async () => {
 // rounds are fifty-odd moves now, so it pays the same twelve as everyone else.
 const PROTOCOL_GAMES_DEFAULT = 12;
 
-for (const packId of ["crazy-eights", "hearts", "wildfire", "stockpile", "milestones"]) {
+for (const packId of ["crazy-eights", "hearts", "wildfire", "stockpile", "milestones", "thirteen"]) {
   test(`${packId} plays the same over the protocol as it does in one process`, async () => {
     const games = PROTOCOL_GAMES_DEFAULT;
     const solo = await simulatePack(packId, games, { variants: [] });
@@ -105,7 +105,7 @@ for (const packId of ["crazy-eights", "hearts", "wildfire", "stockpile", "milest
 }
 
 test("the rules-complete packs are rules-complete over the wire too", async () => {
-  for (const packId of ["crazy-eights", "wildfire", "hearts"]) {
+  for (const packId of ["crazy-eights", "wildfire", "hearts", "thirteen"]) {
     const { completed, stalled, errored } =
       await simulateProtocolPack(packId, PROTOCOL_GAMES_DEFAULT, { variants: [] });
     assert.strictEqual(stalled + errored, 0, `${packId}: ${stalled} stalled, ${errored} errored over the protocol`);
@@ -159,6 +159,44 @@ test("Milestones matches finish at two seats, contract ladder and all", async ()
   assert.strictEqual(errored, 0, `milestones: ${errored} matches threw`);
   assert.strictEqual(stalled, 0, `milestones: ${stalled} matches live-locked past round one`);
   assert.strictEqual(completed, MATCHES, `milestones: only ${completed}/${MATCHES} matches finished`);
+});
+
+// THE FLOOR IS 100%, WHICH IS THE ONLY HONEST BAR FOR THIS PACK (#102).
+//
+// Thirteen has no draw pile to exhaust and no reaction to cascade: every trick
+// is opened by a seat that MUST play, so every trick sheds at least one card
+// and a hand cannot outlive the deck. That is an argument, and this is the
+// measurement that checks it — 1000/1000 rounds at four seats, and 200/200 at
+// two and at three, when it was written. So it joins the rules-complete list
+// above rather than getting an allowance, and the extra bar here is the one
+// round one cannot reach: a whole match, carried past the redeal to the
+// pack's own game-over rule.
+//
+// What it catches that round one cannot: `startRound`. The default round
+// boundary wipes every playerVars entry, and the seat that went out is
+// supposed to lead the next hand — so a template that took the default would
+// deal hand two with nobody carrying the lead. Round one never asks.
+test("Thirteen matches finish, redeal and all", async () => {
+  const MATCHES = 12;
+  const { completed, stalled, errored } = await simulateMatches("thirteen", MATCHES, { variants: [] });
+  assert.strictEqual(errored, 0, `thirteen: ${errored} matches threw`);
+  assert.strictEqual(stalled, 0, `thirteen: ${stalled} matches live-locked past round one`);
+  assert.strictEqual(completed, MATCHES, `thirteen: only ${completed}/${MATCHES} matches finished`);
+});
+
+test("Thirteen is rules-complete short-handed too", async () => {
+  // D-11: two and three players are 13 cards each with the remainder out of
+  // play, which is a different deal shape from the one every bar above uses —
+  // at three seats a third of the deck is never seen, so the bot is reasoning
+  // about cards that will never come out.
+  for (const seats of [2, 3]) {
+    const { completed, stalled, errored } =
+      await simulatePack("thirteen", GAMES, { seats, variants: [] });
+    assert.strictEqual(stalled + errored, 0,
+      `thirteen at ${seats} seats: ${stalled} stalled, ${errored} threw`);
+    assert.strictEqual(completed, GAMES,
+      `thirteen at ${seats} seats: only ${completed}/${GAMES} rounds completed`);
+  }
 });
 
 /* ------------------------------------------------------------------ *
