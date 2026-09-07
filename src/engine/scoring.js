@@ -3,6 +3,7 @@
 // scoring.defaultValue -> 0.
 
 import { resolveSelectorMap, selectorMatches } from './selectors.js';
+import { sidesOf, foldToSides, representativeSeat } from './sides.js';
 
 export function cardValue(card, scoring) {
   const fromMap = scoring.cardValues ? resolveSelectorMap(card, scoring.cardValues, undefined) : undefined;
@@ -119,22 +120,36 @@ export function runRoundScore(ctx) {
   throw new Error(`Unknown roundScore strategy: ${strategy}`);
 }
 
-// Handles the common "anyScore >= N" / lowestScore|highestScore gameOver shape
-// (Crazy Eights, Wildfire, Hearts). Returns null when scoring.gameOver is absent or
-// says "template" — the template owns game-over/winner logic itself in that case
-// (Milestones: "first to complete all contracts", not a score threshold).
+/**
+ * Handles the common "anyScore >= N" / lowestScore|highestScore gameOver shape
+ * (Crazy Eights, Wildfire, Hearts). Returns null when scoring.gameOver is absent
+ * or says "template" — the template owns game-over/winner logic itself in that
+ * case (Milestones: "first to complete all contracts", not a score threshold).
+ *
+ * `anyScore` MEANS ANY SIDE'S SCORE, and for every pack that shipped before
+ * partnerships that is the same sentence it always was: a teamless pack has one
+ * side per seat (`src/engine/sides.js`), so the fold below is the identity and
+ * the loop compares exactly the numbers it used to.
+ *
+ * With sides it is the only reading that is not nonsense. Spades plays to 500
+ * as a PARTNERSHIP; comparing each partner's own half of the pile to the
+ * threshold would run the match to roughly a thousand and call it 500. And the
+ * winner is a SIDE, reported as its canonical seat — see `representativeSeat`
+ * for why `state.winner` stays a seat.
+ */
 export function evaluateGameOver(ctx) {
   const cfg = ctx.pack.scoring.gameOver;
   if (!cfg || cfg.when === 'template') return null;
   const m = /^anyScore\s*>=\s*(\d+)$/.exec(cfg.when);
   if (!m) return null;
   const threshold = Number(m[1]);
-  const over = Array.from({ length: ctx.seats }, (_, s) => ctx.score(s)).some((s) => s >= threshold);
-  if (!over) return { over: false };
+  const sides = sidesOf(ctx.pack, ctx.seats);
+  const totals = foldToSides(Array.from({ length: ctx.seats }, (_, s) => ctx.score(s)), sides);
+  if (!totals.some((total) => total >= threshold)) return { over: false };
   let winner = 0;
-  for (let s = 1; s < ctx.seats; s++) {
-    if (cfg.winner === 'lowestScore' && ctx.score(s) < ctx.score(winner)) winner = s;
-    else if (cfg.winner === 'highestScore' && ctx.score(s) > ctx.score(winner)) winner = s;
+  for (let side = 1; side < totals.length; side++) {
+    if (cfg.winner === 'lowestScore' && totals[side] < totals[winner]) winner = side;
+    else if (cfg.winner === 'highestScore' && totals[side] > totals[winner]) winner = side;
   }
-  return { over: true, winner };
+  return { over: true, winner: representativeSeat(ctx.pack, ctx.seats, winner) };
 }

@@ -57,6 +57,7 @@ import {
   setLocalMoveListener, afterRemoteMove, setTablePaused, rerenderTable,
 } from './table.js';
 import { createSeatTable, createSeatLens, deserializeSeatTable } from '../players/seats.js';
+import { sidesOf } from '../engine/sides.js';
 import { createTableSightings } from './tableSightings.js';
 import { nextFocus } from './partyFocus.js';
 import {
@@ -394,6 +395,7 @@ function model() {
     sessions: sessions.all(),
     stubs: seatStubs(),
     packNameOf: (packId) => packNames.get(packId) || null,
+    packTeamsOf: (packId) => packTeams.get(packId) ?? null,
     focusedKey: activeKey,
     now: Date.now(),
     beliefs,
@@ -790,6 +792,27 @@ function renderSeats(view) {
     name.textContent = identity.name;
     row.append(name);
 
+    // WHO THIS CHAIR PLAYS WITH. At a partnership table choosing a seat is
+    // choosing a partner, and a grid that lists four names in a column says
+    // nothing about which two of them share a score. The side index is also on
+    // the row as data, so the stylesheet can group the pairs without this
+    // module deciding how.
+    if (identity.side !== null && identity.side !== undefined) {
+      row.dataset.side = String(identity.side);
+      const withWhom = identity.partnerSeats
+        .map((s) => view.seats.find((other) => other.seat === s)?.name)
+        .filter(Boolean)
+        .join(' & ');
+      if (withWhom) {
+        const pair = document.createElement('span');
+        pair.className = 'party-seat__partner';
+        // textContent — a partner's name is a string somebody else chose, the
+        // same rule the name above follows.
+        pair.textContent = `with ${withWhom}`;
+        row.append(pair);
+      }
+    }
+
     row.append(chip(identity.presence));
     // THIS TABLE'S FAILED SENDS. It read `ourTable()`'s set, so a host browsing
     // a neighbour's seats saw its OWN unreachable marks on their chairs.
@@ -911,6 +934,16 @@ function renderStrip(view = attachedView()) {
 /** packId -> the manifest's own name, fetched once per pack we are offered. */
 const packNames = new Map();
 
+/**
+ * packId -> `players.teams`, filled from the SAME fetch as the name above.
+ *
+ * The seat picker has to say which chairs are a pair before anything is dealt,
+ * and the only place that is written down is the manifest. Kept beside the name
+ * rather than fetched separately so there is one request per pack and one
+ * moment at which both facts become known.
+ */
+const packTeams = new Map();
+
 /** What to call a game in a sentence, before its manifest has landed. */
 const packName = (packId) => packNames.get(packId) || packId;
 
@@ -918,7 +951,11 @@ function rememberPackName(packId) {
   if (!packId || packNames.has(packId)) return;
   packNames.set(packId, null); // in flight; never ask twice
   fetchPackManifest(packId)
-    .then((manifest) => { packNames.set(packId, manifest?.name || packId); repaint(); })
+    .then((manifest) => {
+      packNames.set(packId, manifest?.name || packId);
+      packTeams.set(packId, manifest?.players?.teams ?? null);
+      repaint();
+    })
     .catch(() => { packNames.set(packId, packId); });
 }
 
@@ -1491,9 +1528,13 @@ function ourLobbyFrame(session) {
  *
  * Bots by default so the table is playable the moment it is dealt whether or
  * not anybody turns up. A seat is opened by tapping it, not by default.
+ *
+ * `manifest` is here for one field: which chairs are a pair. The picker has to
+ * say "you would be partnering Nell" before a card is dealt, and the panel has
+ * a manifest at exactly this moment and never a loaded pack.
  */
-function buildSeatTable(count, me) {
-  const seats = createSeatTable({ seats: count, localDeviceId: me });
+function buildSeatTable(count, me, manifest) {
+  const seats = createSeatTable({ seats: count, localDeviceId: me, sides: sidesOf(manifest, count) });
   seats.claim(0, { deviceId: me });
   for (let seat = 1; seat < count; seat++) seats.seatBot(seat);
   return seats;
@@ -1694,6 +1735,7 @@ export async function hostGame(packId) {
   const manifest = await fetchPackManifest(packId);
   const count = Math.max(2, manifest?.players?.best ?? manifest?.players?.min ?? 2);
   packNames.set(packId, manifest?.name || packId);
+  packTeams.set(packId, manifest?.players?.teams ?? null);
 
   // THE TABLE IS BORN HERE, and everything it owns is born with it. The seat
   // table, the pack, the minted id and (after the deal) the state all belong to
@@ -1704,7 +1746,7 @@ export async function hostGame(packId) {
     packId,
     packName: manifest?.name || packId,
     variants: [],
-    seats: buildSeatTable(count, me),
+    seats: buildSeatTable(count, me, manifest),
   });
   session.host.start();
   session.lobbyFrame = ourLobbyFrame(session);
@@ -1847,8 +1889,9 @@ async function rehydrateOne(tableId) {
   // here rather than producing a table in a state those rules could never have
   // reached. That is the same door the payload went out of.
   const state = rehydrateMatch(pack, snapshot);
-  const seats = deserializeSeatTable(snapshot.seatBindings, { localDeviceId: selfId() })
-    || createSeatTable({ seats: snapshot.seats, localDeviceId: selfId() });
+  const sides = sidesOf(pack, snapshot.seats);
+  const seats = deserializeSeatTable(snapshot.seatBindings, { localDeviceId: selfId(), sides })
+    || createSeatTable({ seats: snapshot.seats, localDeviceId: selfId(), sides });
 
   const session = openHostSession({
     tableId,

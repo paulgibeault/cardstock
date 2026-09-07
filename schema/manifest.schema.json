@@ -49,6 +49,12 @@
           "type": "integer",
           "minimum": 1,
           "maximum": 8
+        },
+        "teams": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 4,
+          "description": "This game is played in partnerships: seats are dealt round-robin into this many sides, so seat s plays for side s % teams and a partner sits `seats / teams` chairs away — opposite, at the four-seat two-side table this is for. One score per SIDE: a template still returns per-seat deltas and the engine folds them (src/engine/sides.js). Every seat count the pack offers must divide by it, or the pairing is not honest and the platform plays the pack as a free-for-all. Omit for a game where every seat plays for itself."
         }
       }
     },

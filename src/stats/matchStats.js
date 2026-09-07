@@ -21,6 +21,7 @@ import { makeCtx } from '../engine/context.js';
 import { applyMove } from '../engine/movePipeline.js';
 import { handValue } from '../engine/scoring.js';
 import { baseId } from '../engine/selectors.js';
+import { sidesOf, sideOfSeat, foldToSides } from '../engine/sides.js';
 
 function emptySeatStats() {
   return {
@@ -164,23 +165,55 @@ export function statLinesFor(template, seat) {
 }
 
 /**
+ * How each SIDE finished, best first.
+ *
+ * The end-of-match sheet has to be able to name a winning PAIR, which it cannot
+ * do from a per-seat ranking that happens to put two seats at the top. So the
+ * ordering is computed here, over sides, and `placements` below is this answer
+ * spread back across the chairs.
+ *
+ * Ranking follows the pack's own direction — lowest score wins in Hearts,
+ * highest in Wildfire — with the declared winner's side pinned to first
+ * regardless, since that is what the engine actually decided.
+ *
+ * @returns Array<{ side, seats, total }> in finishing order. A teamless pack
+ *          returns one entry per seat, which is the seat ordering this function
+ *          replaced.
+ */
+export function sideStandings(pack, { totals, winner, seats }) {
+  const sides = sidesOf(pack, seats);
+  const sideTotals = foldToSides(totals, sides);
+  const winningSide = winner === null || winner === undefined
+    ? null
+    : sideOfSeat(pack, seats, winner);
+  const lowWins = pack.scoring?.gameOver?.winner !== 'highestScore';
+  const order = sides.map((_, i) => i).sort((a, b) => {
+    if (a === winningSide) return -1;
+    if (b === winningSide) return 1;
+    return lowWins ? sideTotals[a] - sideTotals[b] : sideTotals[b] - sideTotals[a];
+  });
+  return order.map((side) => ({ side, seats: sides[side].slice(), total: sideTotals[side] }));
+}
+
+/**
  * Who beat whom, for the head-to-head record.
  *
  * "Beat" is placement, not just victory: in a three-seat game a loss can still
  * be a win against one of the two opponents, and a record that only counted
  * outright wins would tell a player nothing about the bot they consistently
- * finish ahead of. Ranking follows the pack's own direction — lowest score
- * wins in Hearts, highest in Wildfire — with the declared winner pinned to
- * first regardless, since that is what the engine actually decided.
+ * finish ahead of.
+ *
+ * PARTNERS SHARE A PLACE, and share it because they share the only number the
+ * ranking reads. Two seats on one side finished together by construction — a
+ * record that claimed you had beaten your own partner would be counting the
+ * seat you were sitting next to as an opponent. The shape is unchanged (a rank
+ * per seat), so every caller keeps working and a teamless pack ranks exactly as
+ * it always did.
  */
 export function placements(pack, { totals, winner, seats }) {
-  const lowWins = pack.scoring?.gameOver?.winner !== 'highestScore';
-  const order = Array.from({ length: seats }, (_, s) => s).sort((a, b) => {
-    if (a === winner) return -1;
-    if (b === winner) return 1;
-    return lowWins ? totals[a] - totals[b] : totals[b] - totals[a];
-  });
   const rank = new Array(seats).fill(0);
-  order.forEach((seat, i) => { rank[seat] = i; });
+  sideStandings(pack, { totals, winner, seats }).forEach((entry, place) => {
+    for (const seat of entry.seats) rank[seat] = place;
+  });
   return rank;
 }

@@ -43,6 +43,7 @@
 
 import { botById, initialsOf, pickBotIds } from '../players/roster.js';
 import { seatStatus } from '../match/host.js';
+import { sidesFor } from '../engine/sides.js';
 
 /** The grace a table falls back to when its host never chose (party.js §7). */
 const DEFAULT_GRACE_MS = 60_000;
@@ -330,6 +331,8 @@ function viewOf({ tableId, frame, stub, session, lastSeenAt }, ctx) {
   const presence = frame ? presenceBySeat(frame, session, ctx) : new Map();
   const unreachable = session?.unreachable || new Set();
   const deadlines = deadlinesOf(session);
+  const seatCount = frame?.seatCount || seating.length;
+  const sides = sidesFor(ctx.packTeamsOf(packId), seatCount);
 
   return {
     tableId,
@@ -374,7 +377,7 @@ function viewOf({ tableId, frame, stub, session, lastSeenAt }, ctx) {
     stage: frame?.started ? 'in progress' : 'waiting to deal',
     graceMs: frame?.graceMs || (hosted ? session.graceMs : null) || DEFAULT_GRACE_MS,
     variants: frame?.variants || [],
-    seatCount: frame?.seatCount || seating.length,
+    seatCount,
     openSeats: openSeatsOf(frame),
     mySeat: seat,
     // A SEAT WE HOLD IS NOT THE SAME AS A CLIENT THAT HOLDS IT. The tile asks
@@ -384,8 +387,20 @@ function viewOf({ tableId, frame, stub, session, lastSeenAt }, ctx) {
     // A hosted table that has been dealt and is running behind the felt: the
     // "Back to the table" door, which is a different offer from "Deal".
     hasState: hosted ? !!session.state : false,
+    // WHICH CHAIRS ARE A PAIR, before a card is dealt. A player picking a seat
+    // at a partnership table is picking a partner, and the picker cannot say so
+    // from a roster alone — the pairing is the PACK's, out of `players.teams`.
+    // The number comes in as a ctx lookup for the reason `packNameOf` does: the
+    // panel has manifests and never a loaded pack.
+    teams: ctx.packTeamsOf(packId),
     seats: seating.map((identity) => Object.freeze({
       ...identity,
+      // A seat's side, and the OTHER chairs on it. Both null/empty at a table
+      // with no partnerships, which is every table until Spades (#105).
+      side: sides.length < seatCount ? sides.findIndex((s) => s.includes(identity.seat)) : null,
+      partnerSeats: sides.length < seatCount
+        ? (sides.find((s) => s.includes(identity.seat)) || []).filter((s) => s !== identity.seat)
+        : [],
       kind: (frame?.seats || []).find((s) => s.seat === identity.seat)?.kind || 'empty',
       deviceId: (frame?.seats || []).find((s) => s.seat === identity.seat)?.deviceId || null,
       // A BLIP IS NOT A DEPARTURE. connected → interrupted → gone only lands
@@ -422,6 +437,10 @@ function viewOf({ tableId, frame, stub, session, lastSeenAt }, ctx) {
  * @param stubs        the stored seat stubs (`seatStubs()`)
  * @param packNameOf   (packId) => display name, or null while the manifest is
  *                     in flight. NOT a fetch: the model never causes IO.
+ * @param packTeamsOf  (packId) => the pack's `players.teams`, or null. Same
+ *                     contract as `packNameOf` and for the same reason: the
+ *                     picker has to pair the chairs while it only has a
+ *                     manifest, and the model must not fetch one to find out.
  * @param focusedKey   the table the panel is about, or null
  */
 export function partyModel({
@@ -434,6 +453,7 @@ export function partyModel({
   sessions = [],
   stubs = [],
   packNameOf = () => null,
+  packTeamsOf = () => null,
   focusedKey = null,
   now = Date.now(),
   beliefs = emptyBeliefs(),
@@ -448,7 +468,9 @@ export function partyModel({
     at: null,
     pending(when) { memo.at = memo.at === null ? when : Math.min(memo.at, when); },
   };
-  const ctx = { self, myName, publishedName, peers, presence, packNameOf, focusedKey, memo };
+  const ctx = {
+    self, myName, publishedName, peers, presence, packNameOf, packTeamsOf, focusedKey, memo,
+  };
   const sessionFor = (tableId) => sessions.find((s) => s.tableId === tableId) || null;
 
   const live = sightings.map((entry) => viewOf({
