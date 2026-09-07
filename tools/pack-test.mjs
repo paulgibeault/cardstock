@@ -105,10 +105,34 @@ export async function validatePackFiles(packId) {
     note(`manifest.json (variant "${variant.id}")`, validate(patched, s.manifest));
   }
 
-  if (fsSync.existsSync(path.join(dir, 'deck.json'))) {
-    note('deck.json', validate(await readJson(path.join(dir, 'deck.json')), s.deck));
-  } else if (!/^standard-5\d(x\d+)?$/.test(manifest.deck)) {
-    problems.push(`${packId}/manifest.json: deck "${manifest.deck}" is neither a built-in nor a deck.json on disk`);
+  /**
+   * `deck` IS A FILENAME OR A BUILT-IN NAME, AND NOTHING ELSE — checked against
+   * what is actually on disk.
+   *
+   * This used to accept any string at all as long as a deck.json existed
+   * beside it, which is a hole with one very specific shape: every headless
+   * caller (this file, tools/simulate.mjs) reads `packs/<id>/deck.json`
+   * unconditionally and never looks at the field, while the BROWSER
+   * (src/ui/packSource.js) fetches only when the field names a `*.json` file
+   * and otherwise hands the loader nothing. So a pack that named its deck by
+   * the deck's own id passed every test in this repo and failed on the felt,
+   * with "Cannot read properties of undefined (reading 'cards')" and no game.
+   * Pinochle did exactly that (#106).
+   */
+  const deckFile = manifest.deck;
+  if (/^[\w-]+\.json$/.test(deckFile || '')) {
+    const onDisk = path.join(dir, deckFile);
+    if (!fsSync.existsSync(onDisk)) {
+      problems.push(`${packId}/manifest.json: deck "${deckFile}" is not a file in the pack directory`);
+    } else {
+      note(deckFile, validate(await readJson(onDisk), s.deck));
+    }
+  } else if (!/^standard-5\d(x\d+)?$/.test(deckFile || '')) {
+    problems.push(`${packId}/manifest.json: deck "${deckFile}" is neither a built-in `
+      + 'nor a deck file in this pack — the browser fetches this field by name and would load no deck at all');
+  } else if (fsSync.existsSync(path.join(dir, 'deck.json'))) {
+    problems.push(`${packId}/manifest.json: deck "${deckFile}" names a built-in, but the pack ships a `
+      + 'deck.json the felt would never fetch');
   }
 
   const testPath = path.join(dir, 'tests', 'rules.test.json');

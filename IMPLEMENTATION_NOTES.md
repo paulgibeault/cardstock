@@ -698,6 +698,157 @@ budget.
   at least `blindNil.behind` points down) and the doubled stakes. A felt that
   wanted the ritual would have to bid before the deal.
 
+## Pinochle — a doubled deck, an auction in points, and a meld that scores (#106)
+
+The eighth pack, and the third thing `trick-taking` has grown rather than the
+sixth template. Three parameters carry all of it:
+
+| Declared | What it does |
+|---|---|
+| `rules.followSuit: "must-beat"` | follow the led suit AND beat the winning card if you hold one; void, trump, and over-trump when somebody already has |
+| `rules.bidding.unit: "points"` | the seats compete for ONE contract instead of each making their own — `increment`, `namesTrump`, and the last speaker stuck with the floor |
+| `rules.melds` | a declared meld vocabulary, whose presence creates the `meld` phase between the auction and the first lead |
+
+plus `scoring.roundScore: "meld-and-tricks"` and `scoring.tricks.lastTrick`.
+
+### The meld is a DECLARATION, and that decided the privacy question
+
+Contract rummy's meld leaves the hand. Pinochle's does not: you show the table
+a marriage, it is worth two, and you still have to win tricks with the king and
+the queen. So the phase is the PASS's shape (a simultaneous commit, `turn.seat`
+frozen, `actingSeats` answering per seat) with none of its consequences — no
+card changes zone, and the size is whatever the hand happens to hold, from
+nothing to the lot.
+
+**What is published is the record, not the cards.** `meld` is a public per-seat
+var carrying `{ points, melds: [{id, label, points, suit?}] }` and no card ids
+at all, which is what a player calls out at a table. The cards stay in a hand
+that is still `visibility: 'owner'`. That is not squeamishness — at a real
+table those cards genuinely are shown — it is that the platform's whole privacy
+invariant is "a hidden zone's ids do not reach another device", and the sweeps
+enforce it structurally. Publishing the ids trips `tests/view.test.js` and the
+per-move audit in `tools/simulate.mjs`, and it should: the same ids are in a
+hand nobody else may read for the rest of the round. Carving a per-pack
+exception into a security gate to be faithful to a flourish is the wrong trade.
+The reversible version if the felt ever wants the cards face up is a real
+`meld` ZONE with `visibility: 'all'` that the cards return from before the first
+lead — a bigger change, and one the declaration record does not block.
+
+The felt shows the number on every seat's badge (`seatCounters`, `kind: 'meld'`)
+with the meld names in the aria text, for every seat, open or minimized.
+
+### `commitPrompt`, so the second commit phase did not cost a sixth mode
+
+`pass` is the gesture for every simultaneous commit. What was Hearts-specific
+was the button: `passCards`, "Pass across", exactly `rules.passing.count`. Those
+three moved onto a template hook (`src/templates/CONTRACT.md`), so a meld
+commits at any size — zero included, which the platform now handles — under a
+button that says "Declare". Adding a mode instead would have meant teaching six
+downstream surfaces a new string to render an identical gesture.
+
+### The auction, and the two numbers in it that were measured
+
+Bids run 100 to 300 in tens; a seat passes with 0; a bid must beat the standing
+one; the winner names trump (`trumpSuit`, the `trump: "chosen"` hook #105 left
+unfilled). `pendingChoice` asks twice — the number, then the suit — which is the
+first time any template has used the platform's Ask LOOP for real.
+
+**`TRICK_CONFIDENCE = 0.55` is measured, and the honest part of this pack.**
+`expectedTricks` prices a card by its distance from the top of the ladder, which
+over-counts badly on a deck with two of everything: a rank step is eight cards
+rather than four, and "I hold an ace, that is a trick" is wrong twice over when
+there are eight aces. Taken at face value the four seats counted about twice the
+twelve tricks that exist, bid 228 into a 250-point deck, and were set on 98% of
+hands. Damped:
+
+| damping | winning bid | contract made | hands nobody opened |
+|---|---|---|---|
+| 0.75 | 170 | 18% | 0% |
+| 0.65 | 150 | 47% | 0% |
+| **0.55** | **130** | **72%** | **36%** |
+| 0.45 | 106 | 87% | 74% |
+
+(160-hand samples per row; the shipped 0.55 row re-measured over 400 hands at
+the shipped floor and ceiling — mean bid 130, median 130, highest 230, contract
+made 72%, and the bidding side averaging 75 a hand against the other side's
+118.)
+
+The right fix one day is a trick count that reads the deck's own copy count.
+That is a change to a function Spades depends on and was measured against, so it
+was not made here.
+
+**The bid floor is 100, and the classic minimum is 250.** A floor these bots
+cannot clear is a floor that makes every hand the stuck-dealer game — at 250
+nobody opened and every contract was set. 100 is where the auction is a
+contest: somebody volunteers on about two hands in three, and makes the
+contract about seven times in ten. It is one line of the manifest to raise when
+the play improves.
+
+**The ceiling is 300 for the felt's sake, and it is a real cap too.** At 500 the
+bid dialog was 42 buttons and filled the screen; nothing in 200 measured hands
+bid above 230, and a side reaching 300 needs 250 in cards plus fifty of meld.
+
+### Measured
+
+```
+node tools/simulate.mjs pinochle --games=500      500/500 rounds, 0 stalled, 0 errored, 56.0 moves/game
+node tools/simulate.mjs pinochle --games=200 --match
+                                                  200/200 matches, 8.9 rounds/match
+pinochle: hard vs easy (4 seats, 300 rounds)      hard 44.0% of decisive rounds (mean 48.51)
+                                                  easy 56.0%                    (mean 50.83)
+```
+
+**`hard` loses at Pinochle, exactly as it does at Spades — this is #114, not a
+Pinochle bug.** The diagnosis in the Team Spades section above transfers
+without amendment: the rollout policy is the cheap heuristic, and at a bidding
+game the cheap heuristic plays out a hand nobody is trying to win, so the final
+score is close to orthogonal to the candidate being scored. Choosing the rollout
+path also means the one-ply evaluator (`evaluatePointsContract`, which is what
+this issue is answerable for) is never consulted. Nothing here should be tuned
+to work around it; the fix is a rollout policy that consults `evaluateState`.
+
+### Rule readings written down rather than left to be discovered
+
+- **The last trick is worth 10, not 1.** The issue said "cards taken + last
+  trick 1" and also "the classic 250-point deck". Those disagree: A 11 · 10 10 ·
+  K 4 · Q 3 · J 2 · 9 0 across a doubled deck is 240, and it is the last trick's
+  ten that makes the 250 the deck is named for. The checkable claim won. It is
+  declared (`scoring.tricks.lastTrick`), so a table that plays it differently
+  changes one number.
+- **A card may be counted in melds of different GROUPS but never twice in one.**
+  This is the classic rule stated exactly ("not twice in melds of the same
+  class"), and the pack's grouping is what makes the two familiar consequences
+  fall out: the queen of spades counts in a marriage AND in a pinochle
+  (different groups), while the trump king-queen inside a run is not paid for
+  again as a royal marriage (the pack puts `run` and both marriages in
+  `marriage`). It also makes the arithmetic decompose group by group instead of
+  needing a search.
+- **One circuit of bidding, not an auction that goes round until three pass.**
+  Each seat speaks once, in order, hearing everything said before it. A seat
+  with a monster hand therefore gets one chance to name its number rather than
+  climbing a ladder against a rival. The multi-round auction is a bigger change
+  to the phase — it needs a "still in" state per seat and a variable number of
+  turns — and the single circuit is the smaller reversible choice.
+- **The last seat may not pass out an empty auction.** Every table has this
+  rule; here it is also load-bearing, because a passing seat names no trump.
+  Letting it pass left one deal in twenty at the first lead with `trumpSuit`
+  null (caught by the new meld bar in `tests/simulate.test.js`, not by any rule
+  test).
+- **The non-bidding side always banks what it made**, set or not. It promised
+  nothing and cannot fail. The consequence is measurable and is the real
+  incentive shape of the game: over 200 hands the bidding side averaged 73 a
+  hand and the other side 118.
+
+### A gate that only the browser was enforcing
+
+`manifest.deck` is a filename the FELT fetches by name
+(`src/ui/packSource.js`), while every headless caller reads
+`packs/<id>/deck.json` unconditionally and never looks at the field. So a pack
+naming its deck by the deck's own id passed the whole suite and failed on the
+felt with "Cannot read properties of undefined (reading 'cards')" and no game.
+Pinochle did exactly that. `validatePackFiles` (`tools/pack-test.mjs`) now
+checks the field against what is on disk in both directions.
+
 ## Next steps
 
 Multiplayer (Phase 8), per-pack UI polish (per-pack `theme.css`, custom

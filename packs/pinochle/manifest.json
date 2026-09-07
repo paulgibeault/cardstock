@@ -3,7 +3,7 @@
   "name": "Pinochle",
   "version": "0.1.0",
   "players": { "min": 4, "max": 4, "best": 4, "teams": 2 },
-  "deck": "pinochle-48",
+  "deck": "deck.json",
   "rankLadder": ["9", "J", "Q", "K", "10", "A"],
   "template": "trick-taking",
   "tagline": "Show what you hold. Then take what you promised.",
@@ -28,7 +28,7 @@
     "bidding": {
       "unit": "points",
       "min": 100,
-      "max": 500,
+      "max": 300,
       "increment": 10,
       "namesTrump": true
     },
