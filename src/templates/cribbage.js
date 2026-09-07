@@ -785,14 +785,19 @@ const cribbage = {
    * would say something out loud, which is the test for whether it earns a
    * banner: "fifteen two", "go", "two for his heels".
    */
-  describeEvent(ev, { seatLabel }) {
+  describeEvent(ev, { seatLabel, seatPossessive }) {
     if (ev.type === 'pegPlay' && ev.points) {
       return { text: `${seatLabel(ev.seat)} pegs ${ev.points} — the count is ${ev.count}.`, tone: 'good' };
     }
     if (ev.type === 'go' && ev.closes) return { text: `Go — one for ${seatLabel(ev.seat)}.`, tone: 'neutral' };
     if (ev.type === 'hisHeels') return { text: `Two for his heels — ${seatLabel(ev.seat)}.`, tone: 'good' };
     if (ev.type === 'showScored') {
-      const whose = ev.isCrib ? `${seatLabel(ev.seat)}'s crib` : `${seatLabel(ev.seat)}'s hand`;
+      // `seatPossessive`, not `${seatLabel(seat)}'s`. This table calls the local
+      // player "You", and "You" is the one label in the vocabulary that does not
+      // take an apostrophe-s — so the hand-built possessive said "You's hand is
+      // worth 2." on the felt, in this issue's own screenshot. Whose name it is
+      // and how to inflect it are both the table's business (src/ui/table.js).
+      const whose = ev.isCrib ? `${seatPossessive(ev.seat)} crib` : `${seatPossessive(ev.seat)} hand`;
       return { text: `${whose} is worth ${ev.points}.`, tone: ev.points ? 'good' : 'neutral' };
     }
     return null;

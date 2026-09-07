@@ -144,7 +144,7 @@ platform file.
 | `commitPrompt` | `(ctx, seat) -> {count, action, staging, waiting} \| null` | `interaction.js`, `table.js` | derived from the enumeration; the button says "Commit" |
 | `committedSelection` | `(ctx, seat) -> cardId[] \| null` | `table.js` | none |
 | `getMeldGroups` | `(ctx, seat) -> Group[]` | `table.js` | `[]` |
-| `describeEvent` | `(ev, {seatLabel, viewerSeat}) -> {text, tone} \| null` | `table.js` | the engine-effect vocabulary |
+| `describeEvent` | `(ev, {seatLabel, seatPossessive, viewerSeat}) -> {text, tone} \| null` | `table.js` | the engine-effect vocabulary |
 | `ruleLines` | `(rules) -> string[]` | `src/ui/rules.js` | none |
 | `endingLines` | `(pack) -> string[]` | `src/ui/rules.js` | none |
 | `statLines` | `(seatStats) -> {label, value, always?}[]` | `src/stats/matchStats.js` | moves + cards played |
@@ -251,6 +251,31 @@ question with one answer is not a question.
 
 `apply` is the whole point: the platform renders a chooser and knows nothing
 about effect schemas, so a pack-defined effect gets one for free.
+
+## Naming a seat in a sentence — `seatLabel` and `seatPossessive`
+
+`describeEvent` is handed both, and a template that narrates a seat should use
+them rather than building a name itself. WHAT A SEAT IS CALLED is the table's
+business: it depends on the roster, on what the player typed as their name, and
+on whether the seat is the one reading the sentence.
+
+| Helper | Answers | Local seat |
+|---|---|---|
+| `seatLabel(seat)` | the name to put in a sentence | `You` |
+| `seatPossessive(seat)` | that name in the possessive | `Your` |
+
+**Do not write `${seatLabel(seat)}'s`.** It is correct for every proper noun at
+the table and wrong for the one label that is a pronoun, so it reads perfectly
+while you watch an opponent and says **"You's hand is worth 2."** the moment the
+sentence is about the reader. That shipped in #107 and is visible in that
+issue's own screenshot; `tests/possessive.test.js` is the gate, and it checks
+the rule, the sentence, and that no template has started spelling one by hand
+again.
+
+`viewerSeat` is still there for the wording that is not a name at all — a
+sentence that is *different* in the second person rather than merely inflected
+("Skipped — your turn is gone" against "Ada is skipped"). Reach for the helpers
+first; reach for `viewerSeat` when the whole clause changes.
 
 ## `seatCounters` — what a minimized seat is worth showing
 

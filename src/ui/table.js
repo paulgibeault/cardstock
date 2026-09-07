@@ -85,6 +85,7 @@ import { createDragController } from './dragController.js';
 import { attachInspector, hideInspector } from './inspector.js';
 import {
   describeCard, cardAriaLabel, cardName,
+  possessive,
 } from './describe.js';
 import {
   interactionMode, gathers, stagedSelection, buildUiModel, dropCandidates, draggableSources,
@@ -246,6 +247,30 @@ function identityOf(seat) {
 function seatLabel(seat) {
   const identity = identityOf(seat);
   return isMySeat(seat) ? 'You' : identity.name;
+}
+
+/**
+ * The same name in the POSSESSIVE — "Your hand", "Delphine's hand".
+ *
+ * It lives here, beside `seatLabel`, because it is the other half of one fact:
+ * this table calls the local player "You", and "You" is the one label in the
+ * vocabulary that does not take an apostrophe-s. A template that builds
+ * `${seatLabel(seat)}'s hand` gets "You's hand" — which shipped, and is visible
+ * in #107's own screenshot.
+ *
+ * Owned by the platform for exactly the reason `seatLabel` is: WHAT A SEAT IS
+ * CALLED is the table's business (it depends on the roster, on whether the seat
+ * is mine, and on what the player typed as their name), and no template can
+ * answer it. Every template that narrates a seat's possession gets the right
+ * answer without knowing the rule.
+ *
+ * Deliberately not a general English pluraliser: a name ending in `s` takes a
+ * plain apostrophe by most style guides and `'s` by others, and picking a side
+ * for names players type themselves is a worse bet than the one rule that is
+ * unambiguous — second person is "Your".
+ */
+function seatPossessive(seat) {
+  return possessive(seatLabel(seat));
 }
 
 /**
@@ -2060,7 +2085,7 @@ function statusTextFor(state, acting) {
     const prompt = commitPromptFor(state, seat, legalMovesFor(state, seat));
     return mine ? prompt.staging : prompt.waiting;
   }
-  return acting.some(isMySeat) ? 'Your turn' : `${seatLabel(state.turn.seat)}'s turn`;
+  return acting.some(isMySeat) ? 'Your turn' : `${seatPossessive(state.turn.seat)} turn`;
 }
 
 /**
@@ -3609,6 +3634,7 @@ export function initTable({ onExit }) {
   });
 
   moments = createCelebrations({
+    seatPossessive,
     me,
     seatLabel,
     currentEpoch: () => epoch,
