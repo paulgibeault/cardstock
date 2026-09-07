@@ -1,0 +1,70 @@
+{
+  "id": "cribbage",
+  "name": "Cribbage",
+  "version": "0.1.0",
+  "players": { "min": 2, "max": 2, "best": 2 },
+  "deck": "standard-52",
+  "template": "cribbage",
+  "rankLadder": ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"],
+  "tagline": "Fifteen two, fifteen four, and one for his nobs.",
+  "howToPlay": [
+    "Throw two cards into the crib — the dealer's extra hand — then play cards one at a time, calling the running total out loud. Fifteen scores two, thirty-one scores two, and pairs and runs score as you make them.",
+    "Then everyone counts the four cards they kept, plus the cut card, all over again. The non-dealer counts first, and that order is the whole game: at 118 apiece, whoever counts first wins."
+  ],
+  "accent": "#3f6f4a",
+  "heroCards": [
+    { "rank": "5", "suit": "hearts" },
+    { "rank": "J", "suit": "spades" },
+    { "rank": "5", "suit": "clubs" }
+  ],
+  "rules": {
+    "deal": 6,
+    "crib": 2,
+    "countTo": 31,
+    "go": 1,
+    "lastCard": 1,
+    "heels": 2,
+    "target": 121,
+    "nobs": "rank:J"
+  },
+  "scoring": {
+    "defaultValue": 0,
+    "cardValues": {
+      "rank:A": 1,
+      "rank:2": 2,
+      "rank:3": 3,
+      "rank:4": 4,
+      "rank:5": 5,
+      "rank:6": 6,
+      "rank:7": 7,
+      "rank:8": 8,
+      "rank:9": 9,
+      "rank:10": 10,
+      "rank:J": 10,
+      "rank:Q": 10,
+      "rank:K": 10
+    },
+    "accumulate": true,
+    "gameOver": { "when": "template", "winner": "template" }
+  },
+  "variants": [
+    {
+      "id": "short-game",
+      "name": "Once around (61)",
+      "description": "A match to 61 — once around the board instead of twice.",
+      "default": false,
+      "patch": { "rules.target": 61 }
+    },
+    {
+      "id": "no-heels",
+      "name": "No heels",
+      "description": "A jack turned as the starter scores the dealer nothing.",
+      "default": false,
+      "patch": { "rules.heels": 0 }
+    }
+  ],
+  "ui": {
+    "cardBack": { "pattern": "weave", "color": "#2f5a3b", "emblem": "✦" }
+  },
+  "credits": "Traditional (public domain). Attributed to Sir John Suckling, c. 1630."
+}

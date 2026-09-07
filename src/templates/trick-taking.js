@@ -1209,6 +1209,30 @@ const trickTaking = {
   },
 
   /**
+   * HOW MANY CARDS THE PASS WANTS AND WHICH WAY IT GOES — said here, because
+   * they are this genre's two parameters and were being read by name out of
+   * `rules.passing` and `vars.passDirection` inside src/ui/interaction.js and
+   * src/ui/table.js. Nothing changes on the felt: the button still says
+   * "Pass left" and the status bar still says "Passing — pick 3". What changes
+   * is that a second template using the same mode no longer inherits a count of
+   * three and a direction it does not have (#107).
+   *
+   * The label stays under ACTION_LABEL_MAX_CHARS — "Pass across" is eleven —
+   * which is why the count is in the status line and not on the button.
+   */
+  commitPrompt(ctx) {
+    if (ctx.turn.phase !== 'pass') return null;
+    const count = ctx.rules.passing?.count ?? 3;
+    const direction = { left: 'left', right: 'right', across: 'across' }[ctx.var('passDirection')] || '';
+    return {
+      count,
+      action: `Pass ${direction}`.trim(),
+      staging: `Passing — pick ${count}`,
+      waiting: 'Waiting for passes…',
+    };
+  },
+
+  /**
    * The question a bid still owes: HOW MANY.
    *
    * The felt's affordance for a bid is one button and this Ask — no new dialog,

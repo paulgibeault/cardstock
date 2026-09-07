@@ -534,6 +534,11 @@ const MANIFEST_STUBS = {
   "crazy-eights": { accent: "#2f6fb0", deck: "standard-52", ui: { cardBack: { pattern: "pinstripe", color: "#2f6fb0", emblem: "8" } } },
   "team-spades": { accent: "#2f6f57", deck: "standard-52", ui: { cardBack: { pattern: "lattice", color: "#2f6f57", emblem: "♠" } } },
   thirteen: { accent: "#c2562a", deck: "standard-52", ui: { cardBack: { pattern: "sunburst", color: "#a8461f", emblem: "13" } } },
+  // Seventh pack, seventh back. The five original patterns were taken by the
+  // five that shipped and Thirteen took a sixth by re-using sunburst in its own
+  // ink, so this one re-uses Stockpile's weave and separates itself on ink and
+  // emblem — which is what the assertion below actually compares.
+  cribbage: { accent: "#3f6f4a", deck: "standard-52", ui: { cardBack: { pattern: "weave", color: "#2f5a3b", emblem: "✦" } } },
 };
 
 test("the shipped manifests still declare the identity the stubs describe", async () => {

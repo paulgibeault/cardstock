@@ -20,48 +20,6 @@ fifth template is a new file in `src/templates/` plus one entry in
 
 ---
 
-## What the fifth template actually cost (#102, `climbing`)
-
-The claim above was written from four templates that all predate it, so it was
-a description of reverse-engineered code rather than a promise anything had
-kept. `climbing` is the first template built against it. **The claim is wrong
-as stated**, and it is worth being precise about how, because the shape of the
-error is more useful than the headline.
-
-It cost **six files, not two** — and one of them is a genuine platform edit:
-
-| File | What it needed | Fair? |
-|---|---|---|
-| `src/templates/climbing.js` | the template | promised |
-| `src/templates/registry.js` | its row (genre word, card art, playable) | promised |
-| `src/templates/index.js` | an import and a map entry | **the contract forgot this one.** It is the module that turns an id into a template; nothing can load without it, and it is not `registry.js`. Two entries, not one. |
-| `src/ui/interaction.js` | one new mode in `INTERACTION_MODES`, its `buildUiModel` and `dropCandidates` branches, and `selectionLegality` | **a real platform edit, and the contract already predicted it**: "the vocabulary is the platform's; which phase means which mode is the template's". A genre with a genuinely new input shape has to add one. A genre reusing an existing shape adds nothing. |
-| `schema/manifest.schema.json` | the `template` enum, a `$defs.rules-climbing`, a fifth `allOf` clause | mechanical, and the schema is normative, so it is not optional |
-| `src/templates/melds.js` | `groupByRank` and `rankWindow` lifted out and shared | a choice, not a cost — the alternative was a second definition of "consecutive" |
-
-And what it did **not** cost is the part that says the contract is mostly
-working. **`src/ui/table.js` — three thousand lines, and the file this document
-exists because of — needed no edit at all.** Neither did the lobby, the rules
-page, the card-style registry, the stats panel, the bot driver, the celebration
-banner, or `src/engine/` (not one line: #101 had already made the rank ladder an
-engine primitive, which is that policy paying for itself). The hooks carried
-everything: a new event vocabulary through `describeEvent`, a new turn shape
-through `actingSeats`, a genre's prose through `ruleLines`/`endingLines`, a new
-verb through `botVerbs`. `interactionMode` was the seam, and it held.
-
-Three more edits landed in `tests/`, and they are worth listing because they are
-the same class of thing and nobody counts them: `tests/interaction.test.js`
-keeps its own hardcoded copy of the mode vocabulary, and `tests/view.test.js`,
-`tests/simulate.test.js` and `tests/cardStyles.test.js` each keep a hand-written
-list of the packs on disk. A fifth PACK, not a fifth template, is what those
-cost.
-
-**So the honest sentence is:** a new template is a file in `src/templates/`, two
-entries (`registry.js` and `index.js`), a `rules-*` block in the schema — plus
-one entry in `INTERACTION_MODES` **only if** its input shape is genuinely new,
-which is the one thing the platform cannot infer. Everything else is hooks.
-
----
 
 ## Required — called unconditionally
 
@@ -185,9 +143,10 @@ platform file.
 | `activeMatch` | `(ctx) -> {address, attr, value, onCard} \| null` | `describe.js`, `table.js` | none |
 | `scoreChip` | `(ctx, seat) -> {short, long, aria} \| null` | `table.js` | the SIDE's total (the seat's own, where there are no sides) |
 | `seatCounters` | `(ctx, seat) -> {text, aria, kind?}[] \| null` | `table.js` | the hand count |
+| `commitPrompt` | `(ctx, seat) -> {count, action, staging, waiting} \| null` | `interaction.js`, `table.js` | derived from the enumeration; the button says "Commit" |
 | `committedSelection` | `(ctx, seat) -> cardId[] \| null` | `table.js` | none |
 | `getMeldGroups` | `(ctx, seat) -> Group[]` | `table.js` | `[]` |
-| `describeEvent` | `(ev, {seatLabel, viewerSeat}) -> {text, tone} \| null` | `table.js` | the engine-effect vocabulary |
+| `describeEvent` | `(ev, {seatLabel, seatPossessive, viewerSeat}) -> {text, tone} \| null` | `table.js` | the engine-effect vocabulary |
 | `ruleLines` | `(rules) -> string[]` | `src/ui/rules.js` | none |
 | `endingLines` | `(pack) -> string[]` | `src/ui/rules.js` | none |
 | `statLines` | `(seatStats) -> {label, value, always?}[]` | `src/stats/matchStats.js` | moves + cards played |
@@ -216,7 +175,7 @@ how to render, exported as `INTERACTION_MODES` from `src/ui/interaction.js`).
 |---|---|
 | `tap` | one tap plays the card; destination implicit |
 | `play-drawn` | as `tap`, but only the just-drawn card answers; the action button keeps it |
-| `pass` | multi-select exactly N, commit with the action button |
+| `pass` | multi-select exactly N, commit with the action button — N, the button's words and the status line all come from `commitPrompt` |
 | `rummy-draw` | tap a pile to draw from it |
 | `rummy-meld` | multi-select for a lay-down; one card arms meld chips and the discard |
 | `place` | select a card, then tap the pile it goes on |
@@ -296,6 +255,31 @@ question with one answer is not a question.
 `apply` is the whole point: the platform renders a chooser and knows nothing
 about effect schemas, so a pack-defined effect gets one for free.
 
+## Naming a seat in a sentence — `seatLabel` and `seatPossessive`
+
+`describeEvent` is handed both, and a template that narrates a seat should use
+them rather than building a name itself. WHAT A SEAT IS CALLED is the table's
+business: it depends on the roster, on what the player typed as their name, and
+on whether the seat is the one reading the sentence.
+
+| Helper | Answers | Local seat |
+|---|---|---|
+| `seatLabel(seat)` | the name to put in a sentence | `You` |
+| `seatPossessive(seat)` | that name in the possessive | `Your` |
+
+**Do not write `${seatLabel(seat)}'s`.** It is correct for every proper noun at
+the table and wrong for the one label that is a pronoun, so it reads perfectly
+while you watch an opponent and says **"You's hand is worth 2."** the moment the
+sentence is about the reader. That shipped in #107 and is visible in that
+issue's own screenshot; `tests/possessive.test.js` is the gate, and it checks
+the rule, the sentence, and that no template has started spelling one by hand
+again.
+
+`viewerSeat` is still there for the wording that is not a name at all — a
+sentence that is *different* in the second person rather than merely inflected
+("Skipped — your turn is gone" against "Ada is skipped"). Reach for the helpers
+first; reach for `viewerSeat` when the whole clause changes.
+
 ## `seatCounters` — what a minimized seat is worth showing
 
 A crowded opponent row minimizes the seats that cannot act to a face
@@ -333,6 +317,48 @@ won pile that holds them. Do NOT use it for the primary number: a row that read
 rest showed stock, is the bug this rule exists to prevent.
 
 Return `null` or `[]` to take the default.
+
+### A counter that is a POSITION — the track kinds
+
+Most counters are a quantity of things and a pill of digits says them
+completely. A few are a place on a road, and a pill throws away the whole
+point: a cribbage board is 121 holes with two pegs a side, and "78" is a
+fraction of what it tells you.
+
+`kind` is what says which. **The set of kinds that render as a track is the
+PLATFORM'S** — a closed list, exported as `COUNTER_TRACK_KINDS` from
+`src/ui/counterTrack.js`, exactly like `INTERACTION_MODES` — and which kind a
+counter is remains the template's. A kind this build has never heard of gets
+the ordinary badge, which is the same fail-soft the mode vocabulary has.
+
+A track counter carries three numbers beyond the usual ones:
+
+| Field | Meaning |
+|---|---|
+| `value` | where the front marker is now |
+| `from` | where it was before this seat's last score — the BACK peg |
+| `of` | how long the road is |
+
+```js
+seatCounters(ctx, seat) {
+  const value = ctx.score(seat);
+  return [{
+    text: String(value), aria: `${value} of ${ctx.rules.target}`,
+    label: 'Pegs', kind: 'peg', value, from: ctx.playerVar(seat, 'backPeg') ?? 0,
+    of: ctx.rules.target,
+  }];
+}
+```
+
+`text` is still printed beside the track, so nothing is lost if the geometry
+is not readable at a glance; `aria` is still the whole truth in words, and the
+track's parts are `aria-hidden` so a screen reader hears one sentence rather
+than "peg, peg, 78".
+
+This is what a board that is not a zone looks like. No card is ever in it, so
+nothing on the felt could have drawn it, and the two obvious ways to add one —
+a `board` hook only one template will ever implement, or a `pack.id ===` in the
+seat renderer — are both the thing this file exists to prevent.
 
 ## Zone definition fields the platform reads
 
@@ -377,6 +403,10 @@ And the audit itself, which is the part worth keeping:
 | `stock` | sequencing | `top`. The count is the whole race and is public anyway. |
 | `build` | sequencing | `top` + capacity. |
 | `recycled` | sequencing | `none`. Feeds the draw pile. |
+| `crib` | cribbage | `none` — including from the DEALER who owns it. A crib its owner could leaf through before the show is a different game. |
+| `show` | cribbage | `all`. Where the crib is turned face up to be counted; the MOVE into it is the reveal (see below). |
+| `play` | cribbage | `all`, per player. Laid face up in front of you during the count, and taken back for the show — which is why this template never has to remember who played what. |
+| `starter` | cribbage | `all`. Cut face up. |
 
 ### Vars
 
@@ -489,6 +519,13 @@ The vocabulary in use today:
 | `caught` | shedding | `{seat, target, drew, label}` |
 | `laidDown` | contract-rummy | `{seat, contract, melds}` |
 | `hit` | contract-rummy | `{seat, targetSeat, meld}` |
+| `laidToCrib` | cribbage | `{seat, count}` |
+| `starterCut` | cribbage | `{cards}` |
+| `hisHeels` | cribbage | `{seat}` |
+| `pegPlay` | cribbage | `{seat, count, points, parts}` |
+| `go` | cribbage | `{seat, closes?}` |
+| `pegged` | cribbage | `{seat, points, reason, total}` |
+| `showScored` | cribbage | `{seat, isCrib, points, parts, cards}` |
 
 An event may carry `say: {text, tone}` to name its own banner sentence; that is
 the cheapest seam for an effect the platform has never heard of.
@@ -503,6 +540,134 @@ is a recycle firing mid-deal. Everything after setup goes through `moveCards`.
 
 ---
 
+## What a new template actually cost
+
+The claim at the top of this file — *a fifth template is a new file in
+`src/templates/` plus one entry in `registry.js`, and nothing else* — was
+written from four templates that had all grown up together. Every template
+added after it writes down here what it really took, whether or not that
+flatters the claim. They are in the order they were built, because the second
+one is partly a test of whether the first one's findings were about the
+contract or about that one genre.
+
+### Climbing (#102) — six files, not two
+
+The claim above was written from four templates that all predate it, so it was
+a description of reverse-engineered code rather than a promise anything had
+kept. `climbing` is the first template built against it. **The claim is wrong
+as stated**, and it is worth being precise about how, because the shape of the
+error is more useful than the headline.
+
+It cost **six files, not two** — and one of them is a genuine platform edit:
+
+| File | What it needed | Fair? |
+|---|---|---|
+| `src/templates/climbing.js` | the template | promised |
+| `src/templates/registry.js` | its row (genre word, card art, playable) | promised |
+| `src/templates/index.js` | an import and a map entry | **the contract forgot this one.** It is the module that turns an id into a template; nothing can load without it, and it is not `registry.js`. Two entries, not one. |
+| `src/ui/interaction.js` | one new mode in `INTERACTION_MODES`, its `buildUiModel` and `dropCandidates` branches, and `selectionLegality` | **a real platform edit, and the contract already predicted it**: "the vocabulary is the platform's; which phase means which mode is the template's". A genre with a genuinely new input shape has to add one. A genre reusing an existing shape adds nothing. |
+| `schema/manifest.schema.json` | the `template` enum, a `$defs.rules-climbing`, a fifth `allOf` clause | mechanical, and the schema is normative, so it is not optional |
+| `src/templates/melds.js` | `groupByRank` and `rankWindow` lifted out and shared | a choice, not a cost — the alternative was a second definition of "consecutive" |
+
+And what it did **not** cost is the part that says the contract is mostly
+working. **`src/ui/table.js` — three thousand lines, and the file this document
+exists because of — needed no edit at all.** Neither did the lobby, the rules
+page, the card-style registry, the stats panel, the bot driver, the celebration
+banner, or `src/engine/` (not one line: #101 had already made the rank ladder an
+engine primitive, which is that policy paying for itself). The hooks carried
+everything: a new event vocabulary through `describeEvent`, a new turn shape
+through `actingSeats`, a genre's prose through `ruleLines`/`endingLines`, a new
+verb through `botVerbs`. `interactionMode` was the seam, and it held.
+
+Three more edits landed in `tests/`, and they are worth listing because they are
+the same class of thing and nobody counts them: `tests/interaction.test.js`
+keeps its own hardcoded copy of the mode vocabulary, and `tests/view.test.js`,
+`tests/simulate.test.js` and `tests/cardStyles.test.js` each keep a hand-written
+list of the packs on disk. A fifth PACK, not a fifth template, is what those
+cost.
+
+**So the honest sentence is:** a new template is a file in `src/templates/`, two
+entries (`registry.js` and `index.js`), a `rules-*` block in the schema — plus
+one entry in `INTERACTION_MODES` **only if** its input shape is genuinely new,
+which is the one thing the platform cannot infer. Everything else is hooks.
+
+### Cribbage (#107) — two entries, a schema block, and one genuinely new renderer
+
+Climbing's honest sentence above is a hypothesis, and this is the second
+measurement of it. It came out **cheaper than climbing on every line it
+predicted, and one line more expensive on a line it did not.**
+
+**The claim held for the game itself.** `src/templates/cribbage.js` and its
+`registry.js` + `index.js` entries are the whole of the rules: four phases, a running count, a
+crib, a show, and a bot. Nothing in `src/engine/` changed. Nothing in the felt,
+the lobby, the card-art registry, the stats panel or the rules page needed to
+learn that cribbage exists. The `defaultZones`/`setup`/`validateMove`/
+`applyMove`/`enumerateLegalMoves`/`isRoundOver` surface carried a genre with a
+simultaneous commit, an auto-resolved "go", a second scoring pass over the same
+cards, and a match decided mid-hand, without a single new required member.
+
+**Two files beside it, both by choice.** `src/templates/cribbage-score.js` is
+the fifteen/pair/run/flush/nobs table as a pure function, split out so the whole
+12,994,800-hand distribution can be swept by a test that never loads the engine.
+`packs/cribbage/` is a manifest, as every pack is. Neither is a cost the
+contract did not predict; the second is the contract working.
+
+**Four edits outside those, and they are the honest part.** Two of them are on
+climbing's list already (the schema block; the `tests/` fixture that is really
+a fifth-PACK cost). The other two are new information.
+
+1. **A new optional hook, `commitPrompt`** (`src/ui/interaction.js`,
+   `src/ui/table.js`). The `pass` interaction mode read `rules.passing.count`
+   and `vars.passDirection` — trick-taking's own two parameters, by name, in
+   two platform files — and the status bar branched on
+   `turn.phase === 'pass'`, one template's word for its own phase. That looked
+   harmless while trick-taking was the only template using the mode. Cribbage
+   wants two cards and a crib, not three and a direction, and its phase is
+   called `discard`. So the mode now asks the template how many cards it wants
+   and what to say, and the move type comes from the enumeration. **This was a
+   pre-existing leak that a second user of the mode exposed**, not a cost
+   cribbage imposed: trick-taking implements the hook and the felt says exactly
+   what it said before.
+2. **A new platform renderer, `src/ui/counterTrack.js`,** and its stylesheet
+   block. A cribbage board is a score drawn long, and it had nowhere to be
+   drawn. Keyed on a counter `kind` from a closed platform vocabulary — never
+   on a pack or a template id — so it is available to the next genre that
+   scores along a road. ~110 lines plus CSS.
+3. **A `$defs.rules-cribbage` block and an `allOf` clause** in
+   `schema/manifest.schema.json`, plus `cribbage` in the `template` enum. This
+   is per-template by construction (see the `rankLadder` note in that file) and
+   every template pays it.
+4. **A stub in `tests/cardStyles.test.js`'s `MANIFEST_STUBS`**, which is a test
+   fixture asserting each pack's card back is its own. Every new PACK pays this,
+   not every new template.
+
+**What it did NOT cost, which is the finding.** No engine change. No new
+interaction mode — the `pass` mode was reusable once it stopped reading one
+template's rules. No `template.id ===` or `pack.id ===` anywhere; the two gates
+in `tests/templateContract.test.js` stayed green throughout. No new required
+member. And the two genuinely novel demands — a score that moves mid-hand and a
+match that ends the instant it does — were met with `ctx.addScore`,
+`scoring.gameOver: "template"` and `isGameOver`, all of which already existed.
+
+**What the second measurement says about the first.** Climbing's sentence — a
+file, two entries, a `rules-*` block, plus an `INTERACTION_MODES` entry only if
+the input shape is genuinely new — held exactly. Cribbage's input shapes are a
+multi-select commit and a tap, both of which already existed, and it added no
+mode. What the sentence does not yet cover is **output**: a genre can need a way
+of DRAWING something the felt has never drawn, without needing a new way of
+being played. A board is that, and `src/ui/counterTrack.js` is what it cost. So
+the sentence gains a clause — *plus one renderer keyed on a platform-owned
+vocabulary, only if the genre displays something the felt has no shape for* —
+and the reason both halves are stated the same way is that they are the same
+rule: the vocabulary is the platform's, and which entry in it a template wants
+is the template's.
+
+**One rule deliberately not modelled as the issue described it.** Cribbage's
+`cut` is a step inside the move that completes the discard, not a phase. A
+phase in this engine is a state in which somebody has a decision, and cutting
+has none — modelling it as one would mean a move type, an interaction mode with
+no card to tap, and one unavoidable click per hand, thirty of them in a match.
+Reversing that decision is a move type and a mode; it is written up in the file.
 ## What a template's BOT cost, on the same template (#103, `climbing`)
 
 The section at the top of this file priced a fifth template. This one prices

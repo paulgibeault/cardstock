@@ -26,6 +26,35 @@ const SUIT_GLYPH = { clubs: '♣', diamonds: '♦', hearts: '♥', spades: '♠'
  * deliberately DOM-free (see the header) and the rules page is its only other
  * reader.
  */
+/**
+ * What this table calls the seat the person reading it is sitting in.
+ *
+ * A literal in `seatLabel` (src/ui/table.js) until it needed a second reader.
+ * Exported so the possessive rule below and the table agree by construction
+ * rather than by both happening to spell it the same way.
+ */
+export const SECOND_PERSON = 'You';
+
+/**
+ * A seat label in the POSSESSIVE — "Your hand", "Delphine's hand".
+ *
+ * THE ONE IRREGULAR CASE IS THE ONE THAT MATTERS. Every seat label at this
+ * table is a proper noun and takes an apostrophe-s, except the local player's,
+ * which is the pronoun "You" and takes "Your". A template building
+ * `${seatLabel(seat)}'s hand` therefore reads correctly for every opponent and
+ * says "You's hand is worth 2." to the person actually playing — which shipped
+ * in #107 and is visible in that issue's own screenshot.
+ *
+ * Deliberately NOT a general English pluraliser. A name ending in `s` takes a
+ * bare apostrophe by some style guides and `'s` by others, and players type
+ * their own names; guessing there would trade a bug that is always wrong for
+ * one that is sometimes wrong and much harder to see. This handles the case
+ * that has a single right answer and leaves proper nouns alone.
+ */
+export function possessive(label) {
+  return label === SECOND_PERSON ? 'Your' : `${label}'s`;
+}
+
 export function titleCase(word) {
   const s = String(word || '');
   return s ? s[0].toUpperCase() + s.slice(1) : s;

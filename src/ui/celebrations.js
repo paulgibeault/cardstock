@@ -24,6 +24,7 @@ import { playTrickTaken, playActionCard } from '../arcade/audio.js';
  * @param me          the seat lens (src/players/seats.js); everything is worded
  *                    from the point of view of the seat it names
  * @param seatLabel   (seat) => the name to put in a sentence
+ * @param seatPossessive (seat) => that name in the possessive ("Your", "Ada's")
  * @param currentEpoch () => the table's epoch; a delayed flight checks it
  * @param elements    { table, eventBanner, log, hand, opponentsTop }
  * @param art         () => the open match's card renderer
@@ -33,7 +34,7 @@ import { playTrickTaken, playActionCard } from '../arcade/audio.js';
  * @param cardById    (state, id) => card
  */
 export function createCelebrations({
-  me, seatLabel, currentEpoch, el, art, zoneRect, seatRect, pulseSeat, cardById,
+  me, seatLabel, seatPossessive, currentEpoch, el, art, zoneRect, seatRect, pulseSeat, cardById,
 }) {
   /**
    * How many penalty cards are worth watching arrive.
@@ -232,7 +233,7 @@ export function createCelebrations({
     if (ev.say && typeof ev.say.text === 'string') {
       return { text: ev.say.text, tone: ev.say.tone || 'neutral' };
     }
-    return state.pack.template.describeEvent?.(ev, { seatLabel, viewerSeat: me.seat() })
+    return state.pack.template.describeEvent?.(ev, { seatLabel, seatPossessive, viewerSeat: me.seat() })
       ?? defaultEventText(ev);
   }
 

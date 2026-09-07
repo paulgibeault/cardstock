@@ -232,3 +232,65 @@ test("Thirteen is rules-complete short-handed too", async () => {
       `thirteen at ${seats} seats: only ${completed}/${GAMES} rounds completed`);
   }
 });
+
+/* ------------------------------------------------------------------ *
+ * Cribbage, which is a MATCH game and has to be measured as one (#107)
+ * ------------------------------------------------------------------ */
+
+// A cribbage HAND is ten moves — two throws to the crib and eight cards laid —
+// so the round bar above is a weak claim about it: it barely reaches the play
+// and never reaches the show at all. Both bars are here, and the second is the
+// one that matters, because everything cribbage does that could deadlock
+// happens near the end of a hand: the count reopening after a thirty-one, a go
+// scored to the seat that laid last, and the show stopping the instant
+// somebody passes 121.
+//
+// THE ROUND BAR FOUND A REAL DEADLOCK, which is why it is gated at 100% rather
+// than floored. Twenty-three games in a thousand stalled with "no legal move
+// for seat 1, phase play": a count that closed while one seat still held cards
+// and the other did not reopened on the empty seat, whose enumeration is
+// nothing (see `openNextCount` in src/templates/cribbage.js). Roughly one hand
+// in forty-three — common enough to meet in an evening, rare enough that a
+// forty-game bar could have missed it, which is why the manual run is 1000.
+test("cribbage completes every hand it is dealt", async () => {
+  const { completed, stalled, errored } = await simulatePack("cribbage", GAMES, { variants: [] });
+  assert.strictEqual(errored, 0, `cribbage: ${errored} hands threw`);
+  assert.strictEqual(stalled, 0, `cribbage: ${stalled} hands stalled`);
+  assert.strictEqual(completed, GAMES, `cribbage: only ${completed}/${GAMES} hands completed`);
+});
+
+test("every cribbage house rule completes every hand too", async () => {
+  // A shorter board and a starter jack that pays nothing are both rule changes
+  // at the two moments the game can end early.
+  for (const id of await availableVariantIds("cribbage")) {
+    const { completed, stalled, errored } = await simulatePack("cribbage", GAMES, { variants: [id] });
+    assert.strictEqual(stalled + errored, 0, `cribbage + ${id}: ${stalled} stalled, ${errored} threw`);
+    assert.strictEqual(completed, GAMES, `cribbage + ${id}: only ${completed}/${GAMES} completed`);
+  }
+});
+
+// THE HONEST BAR, and the reason it is a separate test: a cribbage match is
+// first to 121 and takes about nine hands, so "did a hand terminate" says
+// nothing about whether the board can be pegged out at all. Gated at 100%
+// rather than floored — a match that does not finish is a rule that cannot be
+// reached, not variance. The manual run is 100 matches; this is a dozen, for
+// the same reason every other bar in this file is small.
+test("cribbage matches peg all the way out to 121", async () => {
+  const MATCHES = 12;
+  const { completed, stalled, errored } = await simulateMatches("cribbage", MATCHES, { seats: 2, variants: [] });
+  assert.strictEqual(errored, 0, `cribbage: ${errored} matches threw`);
+  assert.strictEqual(stalled, 0, `cribbage: ${stalled} matches never reached 121`);
+  assert.strictEqual(completed, MATCHES, `cribbage: only ${completed}/${MATCHES} matches finished`);
+});
+
+test("cribbage plays the same over the protocol as it does in one process", async () => {
+  // Equality, not a floor — see the block above. A simultaneous commit is the
+  // shape of move that has failed this gate before (Milestones' meld choices
+  // were refused as malformed), and the throw to the crib is one.
+  const games = PROTOCOL_GAMES_DEFAULT;
+  const solo = await simulatePack("cribbage", games, { variants: [] });
+  const wire = await simulateProtocolPack("cribbage", games, { variants: [] });
+  assert.strictEqual(wire.errored, 0, `cribbage: ${wire.errored} hands hit a protocol fault`);
+  assert.deepStrictEqual(wire, solo,
+    "cribbage: the protocol changed the outcome of a hand the rules already decided");
+});

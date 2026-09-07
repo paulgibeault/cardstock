@@ -398,6 +398,35 @@ export function describeContract(items) {
 export const ACTION_LABEL_MAX_CHARS = 11;
 
 /**
+ * WHAT A SIMULTANEOUS COMMIT WANTS, AND WHAT IT IS CALLED — the template's
+ * answer, with a generic fallback that says nothing it cannot know.
+ *
+ * The `pass` mode is "multi-select exactly N, commit with the action button",
+ * and everything specific about it — how many N is, what the button says, what
+ * the status bar says while you are choosing and while you are waiting — is
+ * per-genre. Hearts wants three cards passed left; cribbage wants two thrown to
+ * somebody's crib. Neither of those belongs in this file.
+ *
+ * THE MOVE TYPE COMES FROM THE ENUMERATION, not from the prompt: the template
+ * has already said what the commit move is called by offering one, and reading
+ * it back is one fewer thing for a template to get out of step with itself.
+ * `moveType` is null when the seat has nothing left to commit, which is exactly
+ * when the button should not exist.
+ */
+export function commitPromptFor(state, seat, moves = []) {
+  const declared = state.pack.template.commitPrompt?.(makeCtx(state), seat) || null;
+  const commit = moves.find((m) => Array.isArray(m.cards) && m.cards.length > 0) || null;
+  const count = declared?.count ?? commit?.cards.length ?? 0;
+  return {
+    count,
+    moveType: commit?.type ?? null,
+    action: declared?.action ?? 'Commit',
+    staging: declared?.staging ?? `Pick ${count}`,
+    waiting: declared?.waiting ?? 'Waiting…',
+  };
+}
+
+/**
  * Everything a render needs to know about what is tappable, derived in one
  * place from the enumerated legal moves so the pile builders stay dumb:
  *   handSelectable  Set of hand card ids that respond to a tap
@@ -488,7 +517,6 @@ export function buildUiModel(state, { seat, moves = [], acts = false, selection 
   }
 
   if (mode === 'pass') {
-    const count = state.pack.rules.passing?.count ?? 3;
     // WHICH WAY, ON THE BUTTON — AND THE COUNT MOVED TO THE STATUS BAR.
     // The dropped phase sentence ("Pick 3 cards to pass to the left") was
     // carrying both, and only one of them still needs saying HERE. Nothing on
@@ -501,13 +529,24 @@ export function buildUiModel(state, { seat, moves = [], acts = false, selection 
     // (src/ui/table.js).
     // Dropping it is also what makes the label fit: "Pass 3 across" wraps to
     // two lines in the rail and grows it past the fan; "Pass across" does not.
-    const direction = { left: 'left', right: 'right', across: 'across' }[state.vars.passDirection] || '';
+    //
+    // BOTH OF THOSE ARE THE TEMPLATE'S TO SAY NOW. This block used to read
+    // `rules.passing.count` and `vars.passDirection` — trick-taking's own two
+    // parameters, by name, in a platform file — which looked harmless while
+    // trick-taking was the only template using this mode. The second one wants
+    // two cards and a crib, not three and a direction (#107). See
+    // `commitPromptFor` and `commitPrompt` in src/templates/CONTRACT.md.
+    const prompt = commitPromptFor(state, seat, moves);
     for (const id of hand) ui.handSelectable.add(id);
     ui.handMulti = true;
-    if (sel.length === count && selection.from === handAddr) {
+    // `moveType` null means this seat has already committed and the enumerator
+    // is offering nothing — so there is no button, however many cards are
+    // selected. That is a stricter gate than the old one, which built a
+    // `passCards` move out of a literal and would have offered a second pass.
+    if (prompt.moveType && prompt.count > 0 && sel.length === prompt.count && selection.from === handAddr) {
       ui.action = {
-        label: `Pass ${direction}`.trim(),
-        makeMove: () => ({ actor: seat, type: 'passCards', cards: sel.slice() }),
+        label: prompt.action,
+        makeMove: () => ({ actor: seat, type: prompt.moveType, cards: sel.slice() }),
       };
     }
     return ui;
@@ -841,6 +880,20 @@ export function dropCandidates(state, { seat, moves = [], source }) {
   // is the same answer for a stronger reason: no card is part of the move at
   // all.
   if (mode === 'pass' || mode === 'rummy-draw' || mode === 'bid') return [];
+
+  // A DRAG IS A ONE-CARD COMMIT. Dragging is a gesture for one card, and a
+  // combination of several is what the button is for — so the drop is offered
+  // only where that single card is a legal play on its own, which is the
+  // commonest move in a climbing game and the one worst served by having to
+  // tap twice. Asked of the same live verdict the button uses.
+  if (mode === 'combination') {
+    if ((source.from ?? handAddr) !== handAddr) return [];
+    if (!selectionLegality(state, seat, [source.cardId]).legal) return [];
+    const move = { actor: seat, type: 'playCard', cards: [source.cardId] };
+    const address = implicitLandingZone(state, move);
+    if (address) out.push({ kind: 'zone', address, move });
+    return out;
+  }
 
   // A DRAG IS A ONE-CARD COMMIT. Dragging is a gesture for one card, and a
   // combination of several is what the button is for — so the drop is offered
