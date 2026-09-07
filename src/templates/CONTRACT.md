@@ -20,6 +20,49 @@ fifth template is a new file in `src/templates/` plus one entry in
 
 ---
 
+## What the fifth template actually cost (#102, `climbing`)
+
+The claim above was written from four templates that all predate it, so it was
+a description of reverse-engineered code rather than a promise anything had
+kept. `climbing` is the first template built against it. **The claim is wrong
+as stated**, and it is worth being precise about how, because the shape of the
+error is more useful than the headline.
+
+It cost **six files, not two** — and one of them is a genuine platform edit:
+
+| File | What it needed | Fair? |
+|---|---|---|
+| `src/templates/climbing.js` | the template | promised |
+| `src/templates/registry.js` | its row (genre word, card art, playable) | promised |
+| `src/templates/index.js` | an import and a map entry | **the contract forgot this one.** It is the module that turns an id into a template; nothing can load without it, and it is not `registry.js`. Two entries, not one. |
+| `src/ui/interaction.js` | one new mode in `INTERACTION_MODES`, its `buildUiModel` and `dropCandidates` branches, and `selectionLegality` | **a real platform edit, and the contract already predicted it**: "the vocabulary is the platform's; which phase means which mode is the template's". A genre with a genuinely new input shape has to add one. A genre reusing an existing shape adds nothing. |
+| `schema/manifest.schema.json` | the `template` enum, a `$defs.rules-climbing`, a fifth `allOf` clause | mechanical, and the schema is normative, so it is not optional |
+| `src/templates/melds.js` | `groupByRank` and `rankWindow` lifted out and shared | a choice, not a cost — the alternative was a second definition of "consecutive" |
+
+And what it did **not** cost is the part that says the contract is mostly
+working. **`src/ui/table.js` — three thousand lines, and the file this document
+exists because of — needed no edit at all.** Neither did the lobby, the rules
+page, the card-style registry, the stats panel, the bot driver, the celebration
+banner, or `src/engine/` (not one line: #101 had already made the rank ladder an
+engine primitive, which is that policy paying for itself). The hooks carried
+everything: a new event vocabulary through `describeEvent`, a new turn shape
+through `actingSeats`, a genre's prose through `ruleLines`/`endingLines`, a new
+verb through `botVerbs`. `interactionMode` was the seam, and it held.
+
+Three more edits landed in `tests/`, and they are worth listing because they are
+the same class of thing and nobody counts them: `tests/interaction.test.js`
+keeps its own hardcoded copy of the mode vocabulary, and `tests/view.test.js`,
+`tests/simulate.test.js` and `tests/cardStyles.test.js` each keep a hand-written
+list of the packs on disk. A fifth PACK, not a fifth template, is what those
+cost.
+
+**So the honest sentence is:** a new template is a file in `src/templates/`, two
+entries (`registry.js` and `index.js`), a `rules-*` block in the schema — plus
+one entry in `INTERACTION_MODES` **only if** its input shape is genuinely new,
+which is the one thing the platform cannot infer. Everything else is hooks.
+
+---
+
 ## Required — called unconditionally
 
 The engine calls these without guarding; a template missing one is a crash, not
@@ -175,8 +218,19 @@ how to render, exported as `INTERACTION_MODES` from `src/ui/interaction.js`).
 | `rummy-draw` | tap a pile to draw from it |
 | `rummy-meld` | multi-select for a lay-down; one card arms meld chips and the discard |
 | `place` | select a card, then tap the pile it goes on |
+| `combination` | multi-select **any** number, commit with the action button — which arms only while the selection is a legal play |
 
 A mode this build does not know falls back to `tap`.
+
+`combination` is the one whose legality is a **live** answer rather than a
+count. `pass` commits at exactly N and the button can be armed by counting; a
+climbing play is one card, or a pair, or six cards that happen to be three
+consecutive pairs, and none of the selections on the way to any of those is a
+play. So the button asks `validateMove` on every tap (`selectionLegality`,
+`src/ui/interaction.js`), which is the one place the UI does not derive a target
+from `enumerateLegalMoves` — deliberately, and the comment there says why: a
+climbing enumerator is a shortlist by necessity, and refusing a move the engine
+accepts is a worse failure than the one that invariant guards against.
 
 ## `gathers` — the question a mode cannot answer
 

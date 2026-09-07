@@ -108,6 +108,48 @@ export function rankDomain(ctx) {
   return domain;
 }
 
+/* ------------------------------------------------------------------ *
+ * The two shapes every melding template has, over the pack's ladder
+ * ------------------------------------------------------------------ *
+ *
+ * Neither of these knows anything about wilds, contracts or item strings, and
+ * that is why they live at the top of the file rather than inside the run
+ * branch that used to hold them: a SET is "these cards share a rank" and a RUN
+ * is "these ladder positions are an unbroken window", in any template that has
+ * either. src/templates/climbing.js is the second caller — a pair, a triple and
+ * a four of a kind are sets of 2, 3 and 4, and both a run and a strip of
+ * consecutive pairs are rank windows — and it reaches them here rather than
+ * writing a second copy that could disagree about what consecutive means.
+ */
+
+/** The cards of `cards` grouped by rank, in first-seen order. */
+export function groupByRank(cards) {
+  const groups = new Map();
+  for (const card of cards) {
+    const rank = card?.rank;
+    if (!groups.has(rank)) groups.set(rank, []);
+    groups.get(rank).push(card);
+  }
+  return groups;
+}
+
+/**
+ * Are these ladder positions an unbroken window with no repeats?
+ *
+ * @returns { ok: true, low, high } | { ok: false, why: 'repeat' | 'gap' }
+ *          — the two failures are separated because they are different
+ *          sentences to a player: a run that repeats a rank and a run with a
+ *          hole in it are not the same mistake.
+ */
+export function rankWindow(indices) {
+  if (!indices.length) return { ok: false, why: 'gap' };
+  if (new Set(indices).size !== indices.length) return { ok: false, why: 'repeat' };
+  const low = Math.min(...indices);
+  const high = Math.max(...indices);
+  if (high - low + 1 !== indices.length) return { ok: false, why: 'gap' };
+  return { ok: true, low, high };
+}
+
 // A run or a set pins a wild's RANK; a colour group pins its COLOUR. Nothing
 // else about the card is decided — a run in this template never constrains
 // colour, so a wild in one is a rank and no more.
@@ -256,16 +298,17 @@ export function checkMeldValues(ctx, parsed, entries, wilds) {
     if (ranks.some((r) => r < 0)) {
       return { ok: false, rule: 'invalid-meld', reason: 'Run cards must have a rank on this deck\'s ladder.' };
     }
-    if (new Set(ranks).size !== ranks.length) {
-      return { ok: false, rule: 'invalid-meld', reason: 'A run cannot repeat a rank.' };
-    }
-    const low = Math.min(...ranks);
-    const high = Math.max(...ranks);
     // Every card's rank is known, so a run is either unbroken or it is not —
-    // there is no longer a hole for a later card to claim.
-    if (high - low + 1 !== parsed.n) {
-      return { ok: false, rule: 'invalid-meld', reason: 'Run cards do not fit within the meld size.' };
+    // there is no longer a hole for a later card to claim. `ranks.length` is
+    // `parsed.n` by the time this runs (checkMeldQuota has already matched the
+    // card count), so an unbroken window of the right length IS the size check.
+    const window = rankWindow(ranks);
+    if (!window.ok) {
+      return window.why === 'repeat'
+        ? { ok: false, rule: 'invalid-meld', reason: 'A run cannot repeat a rank.' }
+        : { ok: false, rule: 'invalid-meld', reason: 'Run cards do not fit within the meld size.' };
     }
+    const { low, high } = window;
     const domain = rankDomain(ctx);
     if (low < domain.min || high > domain.max) {
       return { ok: false, rule: 'invalid-meld', reason: 'A run cannot carry on past the ends of the deck.' };

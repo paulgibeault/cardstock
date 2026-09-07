@@ -83,7 +83,8 @@
         "trick-taking",
         "shedding",
         "contract-rummy",
-        "sequencing"
+        "sequencing",
+        "climbing"
       ]
     },
     "tagline": {
@@ -264,6 +265,22 @@
         "properties": {
           "rules": {
             "$ref": "#/$defs/rules-sequencing"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "template": {
+            "const": "climbing"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "rules": {
+            "$ref": "#/$defs/rules-climbing"
           }
         }
       }
@@ -1056,6 +1073,115 @@
             "first-empty-stock"
           ],
           "description": "DECLARATIVE ONLY. Win detection is fixed (first empty stock); this drives the wording on the rules page."
+        }
+      }
+    },
+    "rules-climbing": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The climbing genre (Thirteen, Big Two, President): play a SET of cards that beats the previous set of the same shape and size, or pass. Every table below is a declaration rather than a constant in src/templates/climbing.js — the combination vocabulary, the chopping ladder, whether a pass is final and which card opens the first hand are exactly what differs between the games of the genre.",
+      "required": [
+        "deal",
+        "combinations",
+        "matchShape"
+      ],
+      "properties": {
+        "deal": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Cards per player, the same number at every seat count — the hand size is the name of the game and short-handed tables simply leave the remainder out of play (THIRTEEN_RULES.md D-11). A flat integer rather than `countOrByPlayers` for that reason."
+        },
+        "combinations": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "pattern": "^(single|pair|triple|quad|run|consecutive-pairs)(\\([0-9]+\\+\\))?$"
+          },
+          "description": "What counts as a play, and NOTHING ELSE DOES. 'single', 'pair', 'triple' and 'quad' are fixed sizes; a variable-length shape names a FLOOR and must carry the '+' that says so ('run(3+)') \u2014 there is no such thing as a run of exactly five and nothing longer, so the schema does not let a pack write one. (A `bombs` shape below is the opposite and takes an exact size: a chopping ladder rung IS one specific shape.) A run's size is counted in CARDS and a strip of consecutive pairs' in PAIRS, which is also how `matchShape` and the `bombs` tokens below read them."
+        },
+        "runExcludes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/selector"
+          },
+          "description": "Cards no sequence may contain — Thirteen's 2, which sits at the TOP of the ladder and so has no neighbour above it ('K-A-2' is not a run and '2-2 A-A K-K' is not a bomb). Applies to runs and to consecutive pairs alike."
+        },
+        "matchShape": {
+          "enum": [
+            "same-type-same-size"
+          ],
+          "description": "How an answer must match what is on the table. 'same-type-same-size' is the genre's rule and the only one implemented: a five-card run is not a legal answer to a four-card run, it is simply not an answer (THIRTEEN_RULES.md D-7)."
+        },
+        "bombs": {
+          "type": "array",
+          "description": "The OUT-OF-SHAPE ladder, low to high in declaration order. A bomb may be played on somebody else's turn-to-answer against a combination it does not match the shape of — which is what makes holding the highest card in the game something other than a free win. A bomb LED is an ordinary combination of its own shape and is answered in shape, so nothing here describes that case.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "shape",
+              "beats"
+            ],
+            "properties": {
+              "shape": {
+                "type": "string",
+                "pattern": "^(single|pair|triple|quad|run|consecutive-pairs)(\\([0-9]+\\))?$"
+              },
+              "beats": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "string",
+                  "description": "A shape, optionally narrowed by a card selector after a colon ('single:rank:2' is a lone 2; 'pair:rank:2' is a pair of them, and the selector must match EVERY card), or '*' for a bomb that chops anything."
+                }
+              }
+            }
+          }
+        },
+        "passIsFinal": {
+          "type": "boolean",
+          "default": true,
+          "description": "Once you have passed you are out of the trick and may not re-enter, even when the play comes back around below you. This is what makes the acting seats SHRINK as a trick goes on (`actingSeats`)."
+        },
+        "firstLead": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "card"
+          ],
+          "description": "Who opens hand one, and with what. Unlike trick-taking's `firstLead` this is an object, because the card names the LEADER and may also be required to be IN the combination they lead.",
+          "properties": {
+            "card": {
+              "type": "string",
+              "description": "Card id ('spades-3'). Its holder leads the first hand of a match."
+            },
+            "mustInclude": {
+              "type": "boolean",
+              "default": false,
+              "description": "The opening combination must contain that card — the bare single, or it inside a pair, a run, anything legal."
+            }
+          }
+        },
+        "laterLead": {
+          "enum": [
+            "trick-winner"
+          ],
+          "description": "Who leads once hand one's opening is spent: 'trick-winner' is the last player to have played, both within a hand (when everybody else has passed the trick clears to them) and across one (the seat that went out leads the next deal)."
+        },
+        "direction": {
+          "enum": [
+            "clockwise",
+            "counterclockwise"
+          ],
+          "default": "clockwise",
+          "description": "Which way the turn goes (`state.direction`). Counter-clockwise is the traditional Vietnamese direction and a real fact about the game, so the seat ring honours it."
+        },
+        "winner": {
+          "enum": [
+            "first-empty-hand"
+          ],
+          "description": "DECLARATIVE ONLY. Win detection is fixed (first empty hand); this drives the wording on the rules page."
         }
       }
     }

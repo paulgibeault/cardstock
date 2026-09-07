@@ -1,0 +1,67 @@
+{
+  "id": "thirteen",
+  "name": "Thirteen",
+  "version": "0.1.0",
+  "players": { "min": 2, "max": 4, "best": 4 },
+  "deck": "standard-52",
+  "rankLadder": ["3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A", "2"],
+  "suitLadder": ["spades", "clubs", "diamonds", "hearts"],
+  "template": "climbing",
+  "tagline": "Beat it, bomb it, or pass.",
+  "howToPlay": [
+    "The 2 is the highest card in the game and the 3 is the lowest, which is the opposite of nearly every other game on this shelf. Suits break every tie — spades lowest, then clubs, diamonds, hearts — so no two cards are equal and there is always an answer or a pass.",
+    "A pass is final. Once you are out of a trick you stay out of it, so passing early to keep a run together is a real decision and not a shrug.",
+    "The bombs are the point of the game. Three consecutive pairs kill a lone 2, four of a kind kills a pair of them, and a chop can itself be chopped — which is why holding the highest card in the deck is not the free win the ladder makes it look."
+  ],
+  "accent": "#c2562a",
+  "heroCards": [
+    { "rank": "2", "suit": "hearts" },
+    { "rank": "3", "suit": "spades" },
+    { "rank": "A", "suit": "diamonds" }
+  ],
+  "rules": {
+    "deal": 13,
+    "combinations": ["single", "pair", "triple", "run(3+)", "consecutive-pairs(3+)", "quad"],
+    "runExcludes": ["rank:2"],
+    "matchShape": "same-type-same-size",
+    "bombs": [
+      { "shape": "consecutive-pairs(3)", "beats": ["single:rank:2"] },
+      { "shape": "quad", "beats": ["single:rank:2", "pair:rank:2", "consecutive-pairs(3)"] },
+      { "shape": "consecutive-pairs(4)", "beats": ["single:rank:2", "pair:rank:2", "consecutive-pairs(3)", "quad"] },
+      { "shape": "consecutive-pairs(5)", "beats": ["*"] }
+    ],
+    "passIsFinal": true,
+    "firstLead": { "card": "spades-3", "mustInclude": true },
+    "laterLead": "trick-winner",
+    "direction": "counterclockwise",
+    "winner": "first-empty-hand"
+  },
+  "scoring": {
+    "defaultValue": 1,
+    "roundScore": "leftover-hand-values",
+    "accumulate": true,
+    "gameOver": { "when": "anyScore >= 50", "winner": "lowestScore" }
+  },
+  "variants": [
+    {
+      "id": "instant-wins",
+      "name": "Instant wins",
+      "description": "Four 2s, six pairs, a 3-to-A dragon, five consecutive pairs or three consecutive triples end the hand on the deal.",
+      "default": false,
+      "available": false,
+      "patch": { "rules.instantWins": true }
+    },
+    {
+      "id": "no-ending-on-two",
+      "name": "No ending on a pig",
+      "description": "A 2 may not be the last card you play, so a won position can become a trap.",
+      "default": false,
+      "available": false,
+      "patch": { "rules.lastCardExcludes": ["rank:2"] }
+    }
+  ],
+  "ui": {
+    "cardBack": { "pattern": "sunburst", "color": "#a8461f", "emblem": "13" }
+  },
+  "credits": "Tiến lên — traditional Vietnamese game (public domain). Southern (Tiến lên Miền Nam) ruleset."
+}
