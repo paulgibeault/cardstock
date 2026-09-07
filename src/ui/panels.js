@@ -13,6 +13,7 @@
 // markup anywhere in this file, which is the rule §17.8 exists for.
 
 import { statLinesFor } from '../stats/matchStats.js';
+import { sideScoreOf, sideScores } from '../engine/sides.js';
 import { line } from './dom.js';
 
 const el = {
@@ -86,7 +87,13 @@ export function showRoundSummary(state, ev, seating) {
     row.className = `round-scores__row ${seating[s] && !seating[s].isBot ? 'round-scores__row--you' : ''}`;
     row.appendChild(nameCell('round-scores__name', seating[s]));
     row.appendChild(line('round-scores__delta', signed(delta)));
-    row.appendChild(line('round-scores__total', `${ev.totals[s]}`));
+    // A DELTA IS PER SEAT AND A TOTAL IS PER SIDE. What a seat took this hand is
+    // genuinely that seat's — "you took four, your partner took eight" is the
+    // conversation a partnership actually has — but the running total is the
+    // side's, or this sheet says thirteen while the chip on the felt says
+    // twenty-six and one of them is wrong. For a game with no partnerships both
+    // are the seat's, exactly as before (src/engine/sides.js).
+    row.appendChild(line('round-scores__total', `${sideScoreOf(state.pack, state.seats, ev.totals, s)}`));
     el.roundScores.appendChild(row);
   }
   el.roundContinue.textContent = `Deal round ${state.roundNumber}`;
@@ -110,7 +117,8 @@ function targetSentence(state, ev) {
   const m = /^anyScore\s*>=\s*(\d+)$/.exec(when || '');
   if (!m) return '';
   const target = Number(m[1]);
-  const leader = Math.max(...ev.totals);
+  // The threshold is a SIDE's, the same reading `evaluateGameOver` takes.
+  const leader = Math.max(...sideScores(state.pack, state.seats, ev.totals));
   const togo = target - leader;
   if (togo <= 0) return '';
   return `First to ${target} wins — ${togo} to go.`;
@@ -124,7 +132,7 @@ export function hideRoundSummary() {
  * Scoreboard — the same sheet, every round of it
  * ------------------------------------------------------------------ */
 
-function roundHistoryInto(node, rounds, seating, seats) {
+function roundHistoryInto(node, rounds, seating, seats, pack = null) {
   node.replaceChildren();
   if (!rounds.length) {
     node.appendChild(line('round-history__empty', 'No rounds have been scored yet.'));
@@ -147,7 +155,8 @@ function roundHistoryInto(node, rounds, seating, seats) {
   table.appendChild(line('round-history__label round-history__label--total', 'Total'));
   const last = rounds[rounds.length - 1];
   for (let s = 0; s < seats; s++) {
-    table.appendChild(line('round-history__cell round-history__cell--total', `${last.totals[s]}`));
+    table.appendChild(line('round-history__cell round-history__cell--total',
+      `${pack ? sideScoreOf(pack, seats, last.totals, s) : last.totals[s]}`));
   }
   node.appendChild(table);
 }
@@ -166,10 +175,11 @@ export function showScoreboard(state, seating, stats) {
     row.className = `round-scores__row ${seating[s] && !seating[s].isBot ? 'round-scores__row--you' : ''}`;
     row.appendChild(nameCell('round-scores__name', seating[s]));
     row.appendChild(line('round-scores__delta', seating[s]?.isBot ? (seating[s].persona?.label || '') : ''));
-    row.appendChild(line('round-scores__total', `${state.scores[s]}`));
+    row.appendChild(line('round-scores__total',
+      `${sideScoreOf(state.pack, state.seats, state.scores, s)}`));
     el.scoreTotals.appendChild(row);
   }
-  roundHistoryInto(el.scoreHistory, stats ? stats.rounds : [], seating, state.seats);
+  roundHistoryInto(el.scoreHistory, stats ? stats.rounds : [], seating, state.seats, state.pack);
   el.scoreOverlay.hidden = false;
 }
 
@@ -270,7 +280,7 @@ function statsInto(node, template, stats, seating, seats, winner, { hints = 0, h
  * @param renderFace  card markup for one face — the open table's own renderer
  */
 export function showGameOver(state, {
-  seating, stats, recordText, heroFaces = [], renderFace, hints = 0, hintSeat = null,
+  seating, stats, recordText, heroFaces = [], renderFace, hints = 0, hintSeat = null, sides = null,
 }) {
   el.gameOverFan.replaceChildren();
   for (const face of heroFaces) {
@@ -285,13 +295,23 @@ export function showGameOver(state, {
   // This panel is only ever the ENGINE's ending — a game the player abandons
   // never reaches a table, it is dropped from the lobby (src/ui/lobby.js).
   const winner = state.winner;
-  const won = seating[winner] && !seating[winner].isBot;
+  // A MATCH IS WON BY A SIDE, and at every table without partnerships a side is
+  // one seat — so this is the sentence it always was, with the pair spelled out
+  // where there is one. `sides` is `sideStandings` output (src/stats/matchStats.js),
+  // best first; without it the winning seat stands alone as before.
+  const champions = (sides?.[0]?.seats || [winner]).filter((seat) => seating[seat]);
+  const won = champions.some((seat) => seating[seat] && !seating[seat].isBot);
   el.gameOverMessage.replaceChildren();
   if (won) {
-    el.gameOverMessage.textContent = 'You win! \u{1F389}';
+    el.gameOverMessage.textContent = champions.length > 1 ? 'Your side wins! \u{1F389}' : 'You win! \u{1F389}';
+  } else if (champions.length === 0) {
+    el.gameOverMessage.textContent = 'Match over.';
   } else {
-    el.gameOverMessage.appendChild(nameCell('', seating[winner]));
-    el.gameOverMessage.appendChild(document.createTextNode(' wins.'));
+    champions.forEach((seat, i) => {
+      if (i > 0) el.gameOverMessage.appendChild(document.createTextNode(' & '));
+      el.gameOverMessage.appendChild(nameCell('', seating[seat]));
+    });
+    el.gameOverMessage.appendChild(document.createTextNode(champions.length > 1 ? ' win.' : ' wins.'));
   }
 
   el.gameOverRecord.textContent = recordText || '';
@@ -301,7 +321,7 @@ export function showGameOver(state, {
   el.gameOverRoundsToggle.hidden = rounds.length === 0;
   el.gameOverRounds.hidden = true;
   el.gameOverRoundsToggle.setAttribute('aria-expanded', 'false');
-  roundHistoryInto(el.gameOverRounds, rounds, seating, state.seats);
+  roundHistoryInto(el.gameOverRounds, rounds, seating, state.seats, state.pack);
 
   el.gameOverOverlay.classList.toggle('game-over--won', won);
   el.gameOverOverlay.hidden = false;

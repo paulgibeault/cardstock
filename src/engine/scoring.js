@@ -3,6 +3,7 @@
 // scoring.defaultValue -> 0.
 
 import { resolveSelectorMap, selectorMatches } from './selectors.js';
+import { sidesOf, foldToSides, representativeSeat } from './sides.js';
 
 export function cardValue(card, scoring) {
   const fromMap = scoring.cardValues ? resolveSelectorMap(card, scoring.cardValues, undefined) : undefined;
@@ -95,10 +96,106 @@ export function roundScorePenaltyCardsTaken(ctx) {
   return raw;
 }
 
+/* ------------------------------------------------------------------ *
+ * BIDS AND BAGS
+ * ------------------------------------------------------------------ *
+ *
+ * What you said you would take, against what you took (Spades, and Pinochle
+ * after it). Everything above scores CARDS; this scores a promise, so none of
+ * `cardValue` appears in it and a pack using it declares no card values at all.
+ *
+ * THE NUMBERS ARE THE PACK'S. Ten a trick, one a bag, a hundred for a nil and
+ * a hundred back at ten bags are Spades' own arithmetic and they are declared
+ * (`scoring.bids`), not written here — a template that hardcoded them would be
+ * the pack knowledge in the platform this repo does not allow. The defaults
+ * below are what the shape means if a key is missing, not a game.
+ *
+ * A SIDE'S CONTRACT, A SEAT'S NIL. The contract is the side's — partners' bids
+ * add up and the side's tricks pay them off, which is what makes overtaking
+ * your partner pointless and is the whole reason #104 came first. A nil is the
+ * opposite: one seat promised to take nothing, and only that seat's own tricks
+ * can break it.
+ *
+ * ONE SIMPLIFICATION, NAMED. A trick a nil bidder is forced to take counts
+ * toward its partner's contract here; at some tables it counts as a bag and
+ * leaves the partner short. The two only differ when the partner would have
+ * been set without it, and the more forgiving reading is the commoner one at a
+ * kitchen table — a house rule can differ later, in a variant.
+ *
+ * WHERE THE POINTS LAND. The side's whole contract score goes on its canonical
+ * seat and a nil's bonus on the seat that bid it. The engine folds seats into
+ * sides (src/engine/sides.js), so the side's total is right either way; what
+ * this must NOT do is split a contract in half and hand each partner one, which
+ * would round differently and make two seats disagree with their own sum.
+ */
+function num(value, fallback) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+}
+
+export function roundScoreBidsAndBags(ctx) {
+  const cfg = ctx.pack.scoring?.bids || {};
+  const perTrick = num(cfg.perTrick, 10);
+  const perOvertrick = num(cfg.overtrick, 1);
+  const nilValue = num(cfg.nil, 100);
+  const blindValue = num(cfg.blindNil, nilValue * 2);
+  const bagsAt = num(cfg.bags?.at, 10);
+  const bagPenalty = num(cfg.bags?.penalty, -100);
+
+  const sides = sidesOf(ctx.pack, ctx.seats);
+  const result = {};
+  for (let seat = 0; seat < ctx.seats; seat++) result[seat] = 0;
+
+  // Every trick is one card per seat, so a won pile's height says how many
+  // tricks it is without the template having to count them separately.
+  const tricksOf = (seat) => Math.floor(ctx.countIn(ctx.zoneAddr('won', seat)) / ctx.seats);
+
+  for (const members of sides) {
+    const banker = members[0];
+    let contract = 0;
+    let tricks = 0;
+    for (const seat of members) {
+      const bid = ctx.playerVar(seat, 'bid');
+      tricks += tricksOf(seat);
+      if (Number.isInteger(bid) && bid > 0) contract += bid;
+    }
+
+    for (const seat of members) {
+      if (ctx.playerVar(seat, 'bid') !== 0) continue;
+      const value = ctx.playerVar(seat, 'bidSight') === 'blind' ? blindValue : nilValue;
+      result[seat] += tricksOf(seat) === 0 ? value : -value;
+    }
+
+    let bags = members.reduce((sum, seat) => sum + (Number(ctx.playerVar(seat, 'bags')) || 0), 0);
+    if (tricks >= contract) {
+      result[banker] += contract * perTrick + (tricks - contract) * perOvertrick;
+      bags += tricks - contract;
+    } else {
+      // SET. The contract goes negative whole — the tricks it did take are
+      // worth nothing, which is what makes overbidding the expensive mistake
+      // and is exactly what the bot's bidding heuristic is priced against.
+      result[banker] -= contract * perTrick;
+    }
+
+    // Ten bags cost a hundred, and the eleventh starts the next ten. A `while`
+    // rather than an `if` because a side that took every trick can pile up
+    // more than ten in one hand.
+    while (bagsAt > 0 && bags >= bagsAt) {
+      result[banker] += bagPenalty;
+      bags -= bagsAt;
+    }
+    // The side's bag count, kept on the same canonical seat the contract is —
+    // it is a SIDE's number, and the template carries it across the round
+    // boundary (trick-taking's `startRound`) because the default wipes it.
+    for (const seat of members) ctx.setPlayerVar(seat, 'bags', seat === banker ? bags : 0);
+  }
+  return result;
+}
+
 export const ROUND_SCORE_STRATEGIES = {
   'hand-values-to-winner': roundScoreHandValuesToWinner,
   'leftover-hand-values': roundScoreLeftoverHandValues,
   'penalty-cards-taken': roundScorePenaltyCardsTaken,
+  'bids-and-bags': roundScoreBidsAndBags,
 };
 
 /**
@@ -119,22 +216,36 @@ export function runRoundScore(ctx) {
   throw new Error(`Unknown roundScore strategy: ${strategy}`);
 }
 
-// Handles the common "anyScore >= N" / lowestScore|highestScore gameOver shape
-// (Crazy Eights, Wildfire, Hearts). Returns null when scoring.gameOver is absent or
-// says "template" — the template owns game-over/winner logic itself in that case
-// (Milestones: "first to complete all contracts", not a score threshold).
+/**
+ * Handles the common "anyScore >= N" / lowestScore|highestScore gameOver shape
+ * (Crazy Eights, Wildfire, Hearts). Returns null when scoring.gameOver is absent
+ * or says "template" — the template owns game-over/winner logic itself in that
+ * case (Milestones: "first to complete all contracts", not a score threshold).
+ *
+ * `anyScore` MEANS ANY SIDE'S SCORE, and for every pack that shipped before
+ * partnerships that is the same sentence it always was: a teamless pack has one
+ * side per seat (`src/engine/sides.js`), so the fold below is the identity and
+ * the loop compares exactly the numbers it used to.
+ *
+ * With sides it is the only reading that is not nonsense. Spades plays to 500
+ * as a PARTNERSHIP; comparing each partner's own half of the pile to the
+ * threshold would run the match to roughly a thousand and call it 500. And the
+ * winner is a SIDE, reported as its canonical seat — see `representativeSeat`
+ * for why `state.winner` stays a seat.
+ */
 export function evaluateGameOver(ctx) {
   const cfg = ctx.pack.scoring.gameOver;
   if (!cfg || cfg.when === 'template') return null;
   const m = /^anyScore\s*>=\s*(\d+)$/.exec(cfg.when);
   if (!m) return null;
   const threshold = Number(m[1]);
-  const over = Array.from({ length: ctx.seats }, (_, s) => ctx.score(s)).some((s) => s >= threshold);
-  if (!over) return { over: false };
+  const sides = sidesOf(ctx.pack, ctx.seats);
+  const totals = foldToSides(Array.from({ length: ctx.seats }, (_, s) => ctx.score(s)), sides);
+  if (!totals.some((total) => total >= threshold)) return { over: false };
   let winner = 0;
-  for (let s = 1; s < ctx.seats; s++) {
-    if (cfg.winner === 'lowestScore' && ctx.score(s) < ctx.score(winner)) winner = s;
-    else if (cfg.winner === 'highestScore' && ctx.score(s) > ctx.score(winner)) winner = s;
+  for (let side = 1; side < totals.length; side++) {
+    if (cfg.winner === 'lowestScore' && totals[side] < totals[winner]) winner = side;
+    else if (cfg.winner === 'highestScore' && totals[side] > totals[winner]) winner = side;
   }
-  return { over: true, winner };
+  return { over: true, winner: representativeSeat(ctx.pack, ctx.seats, winner) };
 }

@@ -67,6 +67,7 @@ import { makeCtx } from './context.js';
 import { forkState } from './fork.js';
 import { determinizeState } from './determinize.js';
 import { visibleCardIds } from './view.js';
+import { sidesOf, sideOfSeat } from './sides.js';
 
 function defaultHeuristic(ctx, move) {
   return move.type === 'draw' ? -1 : 1;
@@ -397,6 +398,49 @@ function standingOf(state, seat) {
 }
 
 /**
+ * THE HONEST QUESTION WITH PARTNERS IS "HOW FAR ALONG IS MY SIDE", and it is
+ * the same question as before wherever there are none.
+ *
+ * `matchStanding` is documented per seat and stays per seat — a template
+ * answers about a chair, which is the only thing it can see — so the fold to a
+ * side happens here, in the one place that was already asking "how good is this
+ * for me". A teamless pack has one seat per side (`src/engine/sides.js`), so
+ * this sum is over a single term and every existing bot decision is arithmetic
+ * for arithmetic what it was.
+ *
+ * A BOT THAT STEERS BY ITS OWN HALF PLAYS AGAINST ITS PARTNER. In Spades a
+ * trick your partner takes is a trick your side took, and a seat maximising its
+ * own count will overtake a partner who had the trick won — the classic bad
+ * partner, and it is exactly what the un-folded standing would reward.
+ *
+ * @returns a finite number, or null when the template's hook had no answer for
+ *          any seat on the side
+ */
+function sideStandingOf(state, side) {
+  let total = 0;
+  for (const seat of side) {
+    const value = standingOf(state, seat);
+    if (value === null) return null;
+    total += value;
+  }
+  return total;
+}
+
+/**
+ * How far along the match the side `seat` plays for is.
+ *
+ * EXPORTED SO IT CAN BE PINNED DIRECTLY. It is the same number the rollout
+ * grades with, and the honest test of a fold is arithmetic rather than a
+ * stochastic probe: whether silencing a partner changes what a sampling bot
+ * happens to play is a question about sample noise, and a probe that answers it
+ * passes for the wrong reason as readily as the right one. See
+ * tests/partnerships.test.js.
+ */
+export function sideStanding(state, seat) {
+  return sideStandingOf(state, sidesOf(state.pack, state.seats)[sideOfSeat(state.pack, state.seats, seat)]);
+}
+
+/**
  * How a finished hand turned out for `seat`: how much further along the match
  * it left the seat, against how much further along it left everyone else.
  *
@@ -414,19 +458,32 @@ function standingOf(state, seat) {
  * ladder it is the same reading: going out before the opponent lays down is
  * worth a rung they did not get.
  *
+ * AGAINST THE OTHER SIDES, NOT THE OTHER SEATS. With partners the average below
+ * would otherwise include the partner's own gain as something to beat, which is
+ * the same defect `sideStandingOf` fixes one level down and would undo it: a
+ * hand where the side took everything would grade as mediocre because half of
+ * "everyone else" did well. A teamless pack has one seat per side, so this loop
+ * is the seat loop it replaced, term for term.
+ *
+ * EXPORTED FOR THE SAME REASON `sideStanding` IS: this is the arithmetic that
+ * decides whether a bot plays with its partner or against it, and the honest
+ * test of it is two states and a number, not a sampling run.
+ *
  * @returns null when the template's standing had no answer for some seat —
  *          the same "this rollout produced no information" the caller already
  *          handles for the evaluator.
  */
-function terminalValue(before, after, seat) {
+export function terminalValue(before, after, seat) {
+  const sides = sidesOf(after.pack, after.seats);
+  const mine = sideOfSeat(after.pack, after.seats, seat);
   let own = null;
   let others = 0;
   let n = 0;
-  for (let s = 0; s < after.seats; s++) {
-    const was = standingOf(before, s);
-    const now = standingOf(after, s);
+  for (let i = 0; i < sides.length; i++) {
+    const was = sideStandingOf(before, sides[i]);
+    const now = sideStandingOf(after, sides[i]);
     if (was === null || now === null) return null;
-    if (s === seat) {
+    if (i === mine) {
       own = now - was;
     } else {
       others += now - was;

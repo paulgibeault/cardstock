@@ -47,6 +47,8 @@ export function handAddress(seat) {
  *                meld chips (hit) and the discard pile (end of turn).
  *   'place'      select one card from hand/stock/discard top, then tap a
  *                build pile (play) or an own discard pile (end of turn).
+ *   'bid'        no card answers a tap at all; the action button asks a
+ *                question and the answer IS the move.
  *   'combination' multi-select ANY number, commit with the action button, which
  *                arms only while the selection is a legal play. The count is
  *                not fixed and legality is not a property of the cards one at a
@@ -57,7 +59,7 @@ export function handAddress(seat) {
  * that answer is `gathers` below.
  */
 export const INTERACTION_MODES = Object.freeze([
-  'tap', 'play-drawn', 'pass', 'rummy-draw', 'rummy-meld', 'place', 'combination',
+  'tap', 'play-drawn', 'pass', 'rummy-draw', 'rummy-meld', 'place', 'bid', 'combination',
 ]);
 
 /**
@@ -511,6 +513,23 @@ export function buildUiModel(state, { seat, moves = [], acts = false, selection 
     return ui;
   }
 
+  if (mode === 'bid') {
+    // A BID HAS NO CARD IN IT, which makes this the first mode where the hand
+    // is inert and the whole turn is one button. Nothing goes in
+    // `handSelectable`: a tap on a card during the bidding would light a card
+    // that cannot be played and there is no move to attach to it.
+    //
+    // The BARE move is what the button makes — no bid on it — because the
+    // number is a question the platform's own chooser asks
+    // (`pendingChoice`, src/ui/table.js), exactly as a wild is asked its
+    // colour. That is what keeps the felt free of anything that knows what a
+    // trick is: one button, one dialog, both generic.
+    if (moves.some((move) => move.type === 'bid')) {
+      ui.action = { label: 'Bid', makeMove: () => ({ actor: seat, type: 'bid' }) };
+    }
+    return ui;
+  }
+
   if (mode === 'combination') {
     // EVERY CARD LIFTS. A card that cannot be part of any play is still a card
     // you may pick up and put back — the same rule `draggableSources` states
@@ -818,8 +837,24 @@ export function dropCandidates(state, { seat, moves = [], source }) {
   }
 
   // Passing is a commit-by-button phase; dragging inside the hand is
-  // rearranging, and there is nowhere on the felt to drop a card yet.
-  if (mode === 'pass' || mode === 'rummy-draw') return [];
+  // rearranging, and there is nowhere on the felt to drop a card yet. Bidding
+  // is the same answer for a stronger reason: no card is part of the move at
+  // all.
+  if (mode === 'pass' || mode === 'rummy-draw' || mode === 'bid') return [];
+
+  // A DRAG IS A ONE-CARD COMMIT. Dragging is a gesture for one card, and a
+  // combination of several is what the button is for — so the drop is offered
+  // only where that single card is a legal play on its own, which is the
+  // commonest move in a climbing game and the one worst served by having to
+  // tap twice. Asked of the same live verdict the button uses.
+  if (mode === 'combination') {
+    if ((source.from ?? handAddr) !== handAddr) return [];
+    if (!selectionLegality(state, seat, [source.cardId]).legal) return [];
+    const move = { actor: seat, type: 'playCard', cards: [source.cardId] };
+    const address = implicitLandingZone(state, move);
+    if (address) out.push({ kind: 'zone', address, move });
+    return out;
+  }
 
   // A DRAG IS A ONE-CARD COMMIT. Dragging is a gesture for one card, and a
   // combination of several is what the button is for — so the drop is offered

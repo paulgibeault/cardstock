@@ -13,7 +13,8 @@
 // is, which is why the payload here still carries `forfeit: false` explicitly.
 
 import { serializeMatch } from '../engine/replay.js';
-import { computeMatchStats, placements } from '../stats/matchStats.js';
+import { computeMatchStats, placements, sideStandings } from '../stats/matchStats.js';
+import { sideOfSeat } from '../engine/sides.js';
 import { recordResult, readStats, clearMatch } from '../arcade/storage.js';
 
 /** Display-only faces from the manifest; see schema `heroCards`. */
@@ -59,6 +60,24 @@ export function createMatchRecord({ me, seating, art, onConclude }) {
       }));
   }
 
+  /**
+   * DID MY SIDE WIN — which is the same question as "did I win" at every table
+   * with no partnerships, and a different one at a partnership table.
+   *
+   * `state.winner` is a seat and stays one (src/engine/sides.js says why), so
+   * asking `me.holds(winner)` would record a loss for the player whose PARTNER
+   * was named as the winning side's representative. That is not a cosmetic
+   * miss: it goes straight into the lifetime record and the streak.
+   */
+  function wonBySide(state) {
+    const seat = state.winner;
+    if (seat === null || seat === undefined) return false;
+    if (me.holds(seat)) return true;
+    const mine = me.seat();
+    if (mine === null || mine === undefined) return false;
+    return sideOfSeat(state.pack, state.seats, mine) === sideOfSeat(state.pack, state.seats, seat);
+  }
+
   function recordSentence(state) {
     const record = readStats(state.pack.id);
     const overall = record.played
@@ -99,7 +118,7 @@ export function createMatchRecord({ me, seating, art, onConclude }) {
     clearMatch(state.pack.id);
     const stats = safeStats(state);
     recordResult(state.pack.id, {
-      won: me.holds(state.winner),
+      won: wonBySide(state),
       forfeit: false,
       opponents: opponentOutcomes(state, stats),
       hints,
@@ -107,6 +126,13 @@ export function createMatchRecord({ me, seating, art, onConclude }) {
     return {
       seating: seating(),
       stats,
+      // HOW THE SIDES FINISHED, so the end-of-match sheet can name a winning
+      // PAIR rather than one seat that happened to be listed first. One entry
+      // per seat for a game with no partnerships, which is the ordering the
+      // sheet already draws.
+      sides: stats
+        ? sideStandings(state.pack, { totals: stats.totals, winner: state.winner, seats: state.seats })
+        : null,
       // This match's hints, and whose card they belong on: the seat this
       // device holds, because that is who pressed the button.
       hints,
