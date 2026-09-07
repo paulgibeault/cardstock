@@ -49,6 +49,12 @@
           "type": "integer",
           "minimum": 1,
           "maximum": 8
+        },
+        "teams": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 4,
+          "description": "This game is played in partnerships: seats are dealt round-robin into this many sides, so seat s plays for side s % teams and a partner sits `seats / teams` chairs away — opposite, at the four-seat two-side table this is for. One score per SIDE: a template still returns per-seat deltas and the engine folds them (src/engine/sides.js). Every seat count the pack offers must divide by it, or the pairing is not honest and the platform plays the pack as a free-for-all. Omit for a game where every seat plays for itself."
         }
       }
     },
@@ -533,6 +539,43 @@
         "roundScore": {
           "$ref": "#/$defs/strategyOrHook"
         },
+        "bids": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "What a promise is worth, for the 'bids-and-bags' round score (src/engine/scoring.js). Read only by that strategy; a pack that does not bid has no business declaring it.",
+          "properties": {
+            "perTrick": {
+              "type": "number",
+              "description": "Per trick of the contract, made — and the same number taken away when the side falls short."
+            },
+            "overtrick": {
+              "type": "number",
+              "description": "Per trick past the contract. Worth almost nothing now and a bag on the sheet, which is the point."
+            },
+            "nil": {
+              "type": "number",
+              "description": "For a bid of nothing, kept — and the same, negative, for taking a single trick."
+            },
+            "blindNil": {
+              "type": "number",
+              "description": "The same promise made blind. Defaults to twice `nil`."
+            },
+            "bags": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "Overtricks accumulate per SIDE across the whole match and are paid for in lumps.",
+              "properties": {
+                "at": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "penalty": {
+                  "type": "number"
+                }
+              }
+            }
+          }
+        },
         "accumulate": {
           "type": "boolean",
           "default": true
@@ -922,6 +965,63 @@
               ]
             }
           }
+        },
+        "trump": {
+          "type": "string",
+          "description": "'none' (the default, and what every no-trump pack says by omission), a suit the deck holds ('spades'), or 'chosen' — a round that names its own trump in the `trumpSuit` var. Declaring a trump suit does not on its own change who wins a trick: `trickWinner` says whether the resolution reads it."
+        },
+        "trickWinner": {
+          "enum": [
+            "highest-of-led",
+            "highest-trump-else-led"
+          ],
+          "default": "highest-of-led",
+          "description": "How a trick resolves. 'highest-of-led' is the shape every pack shipped with: the highest card of the suit that was led, on the pack's own rank ladder. 'highest-trump-else-led' puts any card of the `trump` suit above every card of the led suit, however high."
+        },
+        "dealAll": {
+          "const": true,
+          "description": "The whole deck goes out, and the pack is promising it divides evenly among every seat count it offers. Omit it and a deck that does not divide leaves its remainder undealt rather than giving one seat an extra card — at a trick game that is an extra trick. Hearts keeps its hands equal the other way, by removing cards (`dealAdjust`)."
+        },
+        "bidding": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "A sequential bidding phase before the first lead: each seat in turn, starting where the lead will, says how many tricks it will take. Its presence is what creates the phase; the scoring of what was promised is `scoring.roundScore` (see 'bids-and-bags').",
+          "properties": {
+            "min": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "description": "The smallest bid. 0 is nil — a promise to take no trick at all."
+            },
+            "max": {
+              "oneOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                {
+                  "const": "hand",
+                  "description": "As many tricks as the seat holds cards, which is the most it could possibly take."
+                }
+              ],
+              "default": "hand"
+            },
+            "blindNil": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "A nil at double stakes, offered only to a side far enough behind. The platform models the wager and its entry condition; it cannot enforce the 'without looking' part, because the hand is dealt before any bid is possible.",
+              "required": [
+                "behind"
+              ],
+              "properties": {
+                "behind": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "description": "How far behind the leading side a side must be before its seats may bid blind."
+                }
+              }
+            }
+          }
         }
       }
     },
@@ -1193,6 +1293,18 @@
             "first-empty-hand"
           ],
           "description": "DECLARATIVE ONLY. Win detection is fixed (first empty hand); this drives the wording on the rules page."
+        },
+        "lastCardExcludes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/selector"
+          },
+          "description": "Cards you may not go out on — Thirteen's 'no ending on a pig' house rule (THIRTEEN_RULES.md D-4), which turns a won position into a trap because the 2 that was going to take the last trick has to be spent before it. `enumerateLegalMoves` omits the play and `validateMove` refuses it with a sentence. It RELAXES where it would deadlock (a seat on lead holding nothing else), the same way trick-taking's lead constraints do."
+        },
+        "instantWins": {
+          "type": "boolean",
+          "default": false,
+          "description": "Tới trắng: a hand that wins on the deal (D-8). Read against the pack's own tables rather than against Thirteen — four of the ladder's top rank, `deal`/2 pairs, one card of every rank a sequence may contain, the longest strip the `bombs` ladder declares, and triples in as many consecutive ranks as a run needs. The seat it names lays the whole hand down as its one legal move, so the hand is scored and redealt through the ordinary round boundary."
         }
       }
     },

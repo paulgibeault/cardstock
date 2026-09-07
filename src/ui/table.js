@@ -47,6 +47,10 @@ import { rehydrateMatch, packVersionChanged } from '../engine/replay.js';
 import { baseId } from '../engine/selectors.js';
 import { handValue } from '../engine/scoring.js';
 import { buildSeating } from '../players/roster.js';
+import { sidesOf, sideScores, sideScoreOf, hasSides } from '../engine/sides.js';
+import {
+  opponentRing, scoreBearers, defaultScoreChip, seatSideMarks,
+} from './seatRing.js';
 import { makeCardRenderer } from './cardStyles/index.js';
 import { fetchPack } from './packSource.js';
 import {
@@ -601,14 +605,19 @@ function showsScores(state) {
  * `typeof playerVars[seat].phase === 'number'`, written out twice in this file,
  * beside three more direct reads of the same private var.
  *
+ * A PARTNERSHIP HAS ONE SCORE, so the default is the SIDE's total
+ * (src/ui/seatRing.js) — which for every pack that has no sides is the seat's
+ * own number, unchanged. Which chairs draw a chip at all is `scoreBearers`'
+ * question, one rung out in buildSeatRow: this one only says what the chip on a
+ * chair says.
+ *
  * @returns { short, long, aria } — `short` fits an opponent's plate, `long` is
  *          the human's own chip, which has room for both numbers.
  */
 function scoreChipFor(state, seat) {
   const declared = state.pack.template.scoreChip?.(makeCtx(state), seat);
   if (declared) return declared;
-  const score = String(state.scores[seat]);
-  return { short: score, long: score, aria: `${score} points` };
+  return defaultScoreChip(state.pack, state.seats, state.scores, seat);
 }
 
 function seatScoreChip(state, seat) {
@@ -1108,10 +1117,19 @@ function buildSeatRow(state, stagger, acting, ui, { tier, carousel, mustOpen, sh
   const reversed = directionBadge(state);
   if (reversed) el.opponentsTop.appendChild(reversed);
   const scored = showsScores(state);
+  // THE ROW IS A RING, not seat order with a hole in it — see src/ui/seatRing.js.
+  // Clockwise from the chair on your left, so a partner (`seats / teams` chairs
+  // along) is drawn in the middle of the row, across the table from you.
+  const ring = opponentRing(state.seats, mySeat());
+  // One chip per SIDE. Your own side's number is on your own chip in the status
+  // bar, so your partner's chair carries none; everybody else's side is borne by
+  // the first of its chairs the ring reaches.
+  const bearers = scoreBearers(state.pack, state.seats, mySeat());
   const challenges = humanAnnouncements(state).filter((a) => a.type === 'challenge');
-  for (let seat = 0; seat < state.seats; seat++) {
+  for (const seat of ring) {
     if (isMySeat(seat)) continue;
     const identity = identityOf(seat);
+    const marks = seatSideMarks(state.pack, state.seats, mySeat(), seat);
     const count = state.zones.count(`hand.${seat}`);
     const active = acting.includes(seat);
     const collapsed = isCollapsed(seat);
@@ -1121,8 +1139,14 @@ function buildSeatRow(state, stagger, acting, ui, { tier, carousel, mustOpen, sh
     const targeted = collapsed && seatHasReadyTarget(state, seat, ui);
 
     const wrap = document.createElement('div');
-    wrap.className = `seat ${active ? 'seat--active' : ''} ${collapsed ? 'seat--collapsed' : ''} ${targeted ? 'seat--target' : ''} ${session.hint?.targetSeat === seat ? 'seat--hinted' : ''}`;
+    wrap.className = `seat ${active ? 'seat--active' : ''} ${collapsed ? 'seat--collapsed' : ''} ${targeted ? 'seat--target' : ''} ${session.hint?.targetSeat === seat ? 'seat--hinted' : ''} ${marks.partner ? 'seat--partner' : ''}`;
     wrap.dataset.seat = String(seat);
+    // A number the STYLESHEET may dress, chosen by the engine and never by pack
+    // data (§7b). The word itself goes in the head below, as text rather than
+    // as an aria-only attribute: a partner is a fact everybody at the table
+    // needs, not an accessibility footnote, and `aria-description` is not
+    // reliably announced anyway.
+    if (marks.side !== null) wrap.dataset.side = String(marks.side);
 
     // Collapsed, the head IS the way into the plate, so it is a real button —
     // not a div with a click handler. A span-only child list keeps it valid
@@ -1186,7 +1210,14 @@ function buildSeatRow(state, stagger, acting, ui, { tier, carousel, mustOpen, sh
     name.dataset.name = identity.name;
     head.appendChild(name);
 
-    if (scored) head.appendChild(seatScoreChip(state, seat));
+    if (marks.partner) {
+      const tag = document.createElement('span');
+      tag.className = 'seat__partner';
+      tag.textContent = 'Partner';
+      head.appendChild(tag);
+    }
+
+    if (scored && bearers.has(seat)) head.appendChild(seatScoreChip(state, seat));
 
     // WHAT SURVIVES BEING MINIMIZED, and it is the pack that decides.
     //
@@ -2061,13 +2092,28 @@ function renderStatusBar(state, acting) {
   const scored = showsScores(state);
   el.scoreChip.hidden = !scored;
   if (scored) {
-    el.scoreChipValue.textContent = scoreChipFor(state, mySeat()).long;
-    el.scoreChip.setAttribute('aria-label', `Your score: ${state.scores[mySeat()]}. Open the scoreboard.`);
+    // ONE READING, TWO RENDERINGS. The digits and the spoken label used to be
+    // computed separately — the chip through `scoreChipFor` and the aria off
+    // `state.scores` — which agreed for as long as nothing folded. In a
+    // partnership they are two different numbers and the screen reader gets the
+    // wrong one.
+    const chip = scoreChipFor(state, mySeat());
+    el.scoreChipValue.textContent = chip.long;
+    el.scoreChip.setAttribute('aria-label',
+      `Your ${hasSides(state.pack, state.seats) ? "side's score" : 'score'}: ${chip.long}. `
+      + 'Open the scoreboard.');
   }
 }
 
 function statusTextFor(state, acting) {
   if (state.gameOver) return `Game over — ${winnerSentence(state)}`;
+  if (state.turn.phase === 'bid') {
+    // The bid goes round the table one seat at a time, so "whose turn" is
+    // already the right sentence — what this adds is WHICH KIND of turn, which
+    // is the whole difference between a phase where you tap a card and one
+    // where the only live control is a button in the rail.
+    return acting.some(isMySeat) ? 'Your bid' : `${seatLabel(state.turn.seat)} is bidding…`;
+  }
   // HOW MANY, HERE, because nothing else says it in time. The commit button
   // only appears once exactly that many cards are staged, so its label cannot
   // be where a player learns the number — and the sentence that used to say it
@@ -2599,8 +2645,11 @@ async function endMatchFromSummary() {
   if (!liveState()) return;
   const state = liveState();
   const myEpoch = epoch;
-  const leader = Math.max(...state.scores);
-  const ahead = state.scores[mySeat()] >= leader;
+  // AHEAD IS A SIDE'S QUESTION. Walking away while your partner is carrying the
+  // score is not walking away from a loss, and the sentence has to say so.
+  const totals = sideScores(state.pack, state.seats, state.scores);
+  const leader = Math.max(...totals);
+  const ahead = sideScoreOf(state.pack, state.seats, state.scores, mySeat()) >= leader;
   const ok = await confirmAction(
     `End this ${state.pack.manifest.name} match after ${state.roundNumber - 1} `
     + `${state.roundNumber - 1 === 1 ? 'round' : 'rounds'}?`
@@ -3175,7 +3224,12 @@ function adoptMatch(pack, state, message, {
     // and bots in the rest — which is the whole reason ownership is a table
     // rather than the number zero, because a HOSTED deal arrives with its
     // seats already decided in the party panel and passes them in.
-    seats: seats || soloSeatTable(state.seats, { humanSeat: SOLO_HUMAN_SEAT }),
+    // `sides` is which chairs are a pair (src/engine/sides.js) — the pack's
+    // declaration, handed to the table that answers "whose seat is it" so the
+    // two never disagree about who is partnering whom.
+    seats: seats || soloSeatTable(state.seats, {
+      humanSeat: SOLO_HUMAN_SEAT, sides: sidesOf(pack, state.seats),
+    }),
     // Who is at this table — derived from the match SEED, so a resumed game
     // re-seats the same opponents and a fresh deal brings new ones. A hosted
     // deal overrides it: some of those chairs hold people, and a seed knows
@@ -3290,7 +3344,9 @@ export function adoptSharedView({ view, pack, seating, client, message = '' }) {
   sharedTable = client || sharedTable;
   const model = modelFromView(view, pack);
 
-  const seats = createSeatTable({ seats: view.seats, localDeviceId: LOCAL_VIEWER });
+  const seats = createSeatTable({
+    seats: view.seats, localDeviceId: LOCAL_VIEWER, sides: sidesOf(pack, view.seats),
+  });
   if (view.seat !== null && view.seat !== undefined) {
     seats.claim(view.seat, { deviceId: LOCAL_VIEWER });
   }
@@ -3399,7 +3455,11 @@ export function rebaseSeats(localDeviceId) {
   for (const owner of payload.owners) {
     if (owner.kind === 'device' && owner.deviceId === LOCAL_VIEWER) owner.deviceId = localDeviceId;
   }
-  const rebased = deserializeSeatTable(payload, { localDeviceId });
+  // The pairing is not in the payload (src/players/seats.js says why), so it is
+  // re-derived from the pack the session is already holding.
+  const rebased = deserializeSeatTable(payload, {
+    localDeviceId, sides: sidesOf(session.pack, payload.seats),
+  });
   if (!rebased) return null;
   session.seats = rebased;
   return rebased;

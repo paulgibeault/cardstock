@@ -149,6 +149,46 @@ test("a contract-rummy round resets the deal but never the contract progression"
 });
 
 /* ------------------------------------------------------------------ *
+ * Team Spades (trick-taking): bags survive the round boundary, bids do not
+ * ------------------------------------------------------------------ */
+
+// THE OTHER SIDE OF THE `startRound` TRAP (#105). The default boundary wipes
+// every playerVars entry, which is right for a bid — it is this hand's promise
+// and the next hand has its own — and wrong for a bag, which is a running tally
+// on the side's sheet that only settles at ten. The pack's rule tests can prove
+// that a bag carried IN is counted; only the boundary itself can prove one
+// survives being crossed.
+test("a Spades round takes the bids away with it and leaves the bags standing", async () => {
+  const pack = await loadPackFromDisk("team-spades");
+  const state = createState({ pack, seats: 4, seed: "rounds-test" });
+  put(state, "trick", ["clubs-4", "clubs-J", "clubs-9"]);
+  put(state, "hand.3", ["clubs-2"]);
+  // Seats 0 and 2 are one side: two tricks between them against a bid of one,
+  // so the hand ends one bag heavier than the seven it opened with.
+  put(state, "won.0", ["hearts-2", "hearts-3", "hearts-4", "hearts-5",
+    "hearts-6", "hearts-7", "hearts-8", "hearts-9"]);
+  state.playerVars[0] = { bid: 1, bags: 7 };
+  state.playerVars[1] = { bid: 1 };
+  state.playerVars[2] = { bid: 0 };
+  state.playerVars[3] = { bid: 1 };
+  Object.assign(state.vars, { led: "clubs", leader: 0, spadesBroken: true, trickNumber: 13 });
+  state.turn.seat = 3;
+  state.turn.phase = "play";
+  applyMove(state, { actor: 3, type: "playCard", cards: ["clubs-2"] });
+
+  assert.equal(state.roundNumber, 2, "the next hand was dealt");
+  assert.equal(state.playerVars[0].bags, 8, "the side's bag count crossed the boundary");
+  // It sits on ONE seat, so the side's sum is eight — and the partner carries
+  // no count at all rather than a zero, which is what keeps a pack that never
+  // bags serialising exactly the bytes it always did.
+  assert.equal(state.playerVars[2].bags ?? 0, 0);
+  assert.equal(state.playerVars[0].bid, undefined, "last hand's promise is gone");
+  assert.equal(state.playerVars[2].bid, undefined);
+  assert.equal(state.turn.phase, "bid", "and the new hand opens by asking for new ones");
+  for (let s = 0; s < 4; s++) assert.equal(state.zones.count(`hand.${s}`), 13, "a fresh whole deck");
+});
+
+/* ------------------------------------------------------------------ *
  * Stockpile (sequencing): reactions announce themselves
  * ------------------------------------------------------------------ */
 

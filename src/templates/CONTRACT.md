@@ -51,7 +51,7 @@ than an error.
 | `isGameOver` | `(ctx) -> boolean` | `false`. Only consulted when the pack's `scoring.gameOver` is absent or says `"template"`. |
 | `botHeuristic` | `(ctx, move, weights?) -> number` | every non-draw move scores equally |
 | `evaluateState` | `(ctx, seat, weights?) -> number` | none — the bot ranks by `botHeuristic` alone |
-| `matchStanding` | `(ctx, seat) -> number` | the seat's accumulated score, signed by `scoring.gameOver.winner` — see *What the `hard` bot asks of you* |
+| `matchStanding` | `(ctx, seat) -> number` | the seat's accumulated score, signed by `scoring.gameOver.winner` — see *What the `hard` bot asks of you*. Asked per SEAT even in a partnership; the engine folds it — see *Partnerships* |
 | `actingSeats` | `(ctx) -> seat[]` | `[ctx.turn.seat]`. Say so for a simultaneous-commit phase, or the table will schedule only one of the seats that may act. |
 | `enumerateAnnouncements` | `(ctx, seat) -> move[]` | none. Its presence is also what reserves the announce bar's slot on the felt. |
 | `applyAnnouncement` | `(ctx, announcement) -> void` | none — the rule-test harness's entry point only |
@@ -126,7 +126,9 @@ than an error.
 > round boundary, which **wipes every `playerVars` entry** before re-running
 > `setup`. Any template with meta-state that outlives a round — contract-rummy's
 > `phase` is the whole game — **must** implement `startRound`, or that state
-> silently resets at the first round change.
+> silently resets at the first round change. Trick-taking's is a BAG: a bid is
+> this hand's and goes with it, while an overtrick sits on the side's sheet
+> until ten of them have cost a hundred points, several hands later.
 
 ### Presentation — what the platform asks a template about itself
 
@@ -139,7 +141,7 @@ platform file.
 | `gathers` | `(ctx, seat) -> boolean` | `interaction.js`, `table.js` | whether the current mode is one that stages |
 | `pendingChoice` | `(ctx, move) -> Ask \| null` | `src/ui/table.js` | no question |
 | `activeMatch` | `(ctx) -> {address, attr, value, onCard} \| null` | `describe.js`, `table.js` | none |
-| `scoreChip` | `(ctx, seat) -> {short, long, aria} \| null` | `table.js` | the plain total |
+| `scoreChip` | `(ctx, seat) -> {short, long, aria} \| null` | `table.js` | the SIDE's total (the seat's own, where there are no sides) |
 | `seatCounters` | `(ctx, seat) -> {text, aria, kind?}[] \| null` | `table.js` | the hand count |
 | `commitPrompt` | `(ctx, seat) -> {count, action, staging, waiting} \| null` | `interaction.js`, `table.js` | derived from the enumeration; the button says "Commit" |
 | `committedSelection` | `(ctx, seat) -> cardId[] \| null` | `table.js` | none |
@@ -177,6 +179,7 @@ how to render, exported as `INTERACTION_MODES` from `src/ui/interaction.js`).
 | `rummy-draw` | tap a pile to draw from it |
 | `rummy-meld` | multi-select for a lay-down; one card arms meld chips and the discard |
 | `place` | select a card, then tap the pile it goes on |
+| `bid` | no card answers a tap; the action button asks a question and the answer is the move |
 | `combination` | multi-select **any** number, commit with the action button — which arms only while the selection is a legal play |
 
 A mode this build does not know falls back to `tap`.
@@ -425,6 +428,59 @@ simply never published it. A fifth template that declares nothing leaks nothing.
 |---|---|---|
 | `publicVars` | `string[] \| (rules) -> string[]` | Optional. A FUNCTION when the names come from the rules: shedding publishes one `active<Attr>` per attribute the pack matches on, and trick-taking publishes whichever var the manifest named for "hearts are broken". |
 
+## Partnerships
+
+A pack may declare `players.teams: N` and be played in **sides**: seats deal
+round-robin into `N` of them, so seat *s* plays for side `s % N` and a partner
+sits `seats / N` chairs away — opposite, at the four-seat two-side table this
+was built for. `src/engine/sides.js` is the whole vocabulary and every answer is
+computed from the pack on demand, so a game whose partners ROTATE grows a shape
+there and nothing else moves.
+
+**A template still scores per seat.** `scoreRound` returns `{seat: delta}` as it
+always did and the engine folds the seats into their side — so a bids-and-bags
+scorer may hand a side's whole 120 to one partner or split it sixty each, and a
+scorer that has never heard of partnerships gets the right answer for free.
+`state.scores` stays per seat and the side's total is derived; nothing was added
+to the match payload, which is why `MATCH_FORMAT_VERSION` did not move.
+
+What the platform folds for you:
+
+| Question | Answered for |
+|---|---|
+| `scoring.gameOver`'s `anyScore >= N` | the SIDE's total |
+| `placements` / `sideStandings` (`src/stats/matchStats.js`) | the SIDE; partners share a place |
+| the `hard` bot's terminal signal | the SIDE's change in standing, against the other SIDES |
+| the felt's score chip, and one chip per side | `src/ui/seatRing.js` |
+
+**A pack with no `players.teams` has one side per seat**, so every fold above is
+the identity and nothing in this table is a new behaviour for it —
+`tests/replayIdentity.test.js` holds the five shipped packs to serializing the
+same bytes they did before any of it existed.
+
+Two things a template still owns:
+
+* **`matchStanding` is asked per SEAT**, because a chair is all a template can
+  see, and the engine sums it over the side. A hook that tries to answer for the
+  side itself will be counted twice.
+* **`scoreChip`, if you override it,** owes its own fold. The default is the
+  side's total; a template that replaces it and reports one partner's half will
+  disagree with every other number on the screen.
+
+`state.winner` is a **seat** and stays one — the canonical (lowest-numbered)
+member of the winning side. Nothing asks `winner === mySeat` to mean "did I
+win"; it asks whether the winner is on your side.
+
+**Which way is up is the pack's, and an evaluator must read it.** The bot's
+match standing already signs the accumulated score by
+`scoring.gameOver.winner`, and `evaluateState` owes the same reading: Hearts
+prices a won pile as a bill because its points are the penalty, and the same
+pile at a pack whose `winner` is `highestScore` is an asset. Trick-taking
+writes both of its evaluators in the direction the SCORE moves and turns the
+answer round once (`prizeSign`), which is why adding a points-are-the-prize
+game to it changed no number Hearts was measured on. Get this wrong and the
+bot plays to lose while every test stays green.
+
 ## Ending a round
 
 `ctx.endRound(winnerSeat)` — **this hand is finished**. Whether the *match* is
@@ -451,6 +507,7 @@ The vocabulary in use today:
 | `pileCleared` | state reactions | `{zone, to, count}` |
 | `trickWon` | trick-taking | `{seat, cards, points, trickNumber}` |
 | `cardsPassed` | trick-taking | `{direction}` |
+| `bidMade` | trick-taking | `{seat, bid, blind}` |
 | `skipped` | shedding effects | `{by, seat}` |
 | `reversed` | shedding effects | `{by, direction}` |
 | `penalty` | shedding effects | `{by, seat, drew, asked}` |
@@ -611,3 +668,43 @@ phase in this engine is a state in which somebody has a decision, and cutting
 has none — modelling it as one would mean a move type, an interaction mode with
 no card to tap, and one unavoidable click per hand, thirty of them in a match.
 Reversing that decision is a move type and a mode; it is written up in the file.
+## What a template's BOT cost, on the same template (#103, `climbing`)
+
+The section at the top of this file priced a fifth template. This one prices
+the other half — giving it an `evaluateState`, a frozen `weights` bag and three
+house-rule variants — because the contract makes claims about all three and
+only one of them had ever been tested by somebody following it rather than
+somebody documenting it.
+
+**It cost one file.** `src/templates/climbing.js` grew a `weights` object of
+eight numbers, an `evaluateState`, and the two rules keys the variants needed;
+`schema/manifest.schema.json` grew those two keys because the schema is
+normative and closed. Nothing in `src/engine/` and nothing in `src/ui/` was
+touched. The bot layer, the tuner and the variant machinery all consumed it
+without knowing which template had arrived — which is the claim the `weights`
+note above makes, now with a second template behind it.
+
+**Two things are worth knowing before you write the fourth one.**
+
+**The fairness gate does not cover the one-ply path.**
+`tests/rollouts.test.js` probes the `hard` chooser, and `hard` deals itself an
+ignorant world before it reads anything (`src/engine/determinize.js`) — so an
+`evaluateState` that reads an opponent's hand is *invisible* to that gate. It
+is `medium` where the evaluator sees the real state. A template offering the
+hook should carry its own probe (`tests/climbing.test.js`, "the evaluator
+judges the position without seeing the hands it is judging against"):
+determinize the position and demand `chooseBotMove(state, seat)` — no options,
+so no sampling in the way — answers the same. Note also that a read of an
+opponent's hand which does not vary with the acting seat's own cards cannot
+change a one-ply ranking at all, so a probe has to break something the
+candidates actually differ on; a hand-count term is the honest example of the
+same shape, and is why this evaluator has none.
+
+**A `startRound`-time end has nothing to end it.** `maybeFinishRound`
+(`src/engine/movePipeline.js`) runs after an applied MOVE and nothing else
+runs it, so a template that discovers during the deal that the hand is already
+decided cannot call `ctx.endRound` there — the round sits unresolved until
+somebody plays, and is then scored one card into a hand that had already
+started. The shape that works is to leave the fact in a var, offer the seat it
+names exactly one legal move, and let the ordinary round boundary do the rest.
+Climbing's `instantWins` (tới trắng) is the worked example.

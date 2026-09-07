@@ -1,0 +1,295 @@
+{
+  "pack": "team-spades",
+  "tests": [
+    {
+      "name": "a spade beats the highest card of the suit that was led",
+      "setup": {
+        "seats": 4,
+        "turn": { "seat": 3, "phase": "play" },
+        "zones": {
+          "trick": ["hearts-A", "hearts-3", "spades-2"],
+          "hand.0": ["clubs-2"],
+          "hand.1": ["clubs-3"],
+          "hand.2": ["clubs-4"],
+          "hand.3": ["hearts-4"]
+        },
+        "vars": { "led": "hearts", "leader": 0, "spadesBroken": true, "trickNumber": 5 }
+      },
+      "assert": [
+        { "apply": { "actor": 3, "type": "playCard", "cards": ["hearts-4"] } },
+        {
+          "expect": {
+            "zones": { "won.2": ["hearts-A", "hearts-3", "spades-2", "hearts-4"], "won.0": 0 },
+            "vars": { "leader": 2 }
+          }
+        }
+      ]
+    },
+    {
+      "name": "the higher spade takes it from the lower one, and the led suit never comes back into it",
+      "setup": {
+        "seats": 4,
+        "turn": { "seat": 3, "phase": "play" },
+        "zones": {
+          "trick": ["clubs-K", "spades-3", "clubs-A"],
+          "hand.0": ["hearts-2"],
+          "hand.1": ["hearts-3"],
+          "hand.2": ["hearts-4"],
+          "hand.3": ["spades-4"]
+        },
+        "vars": { "led": "clubs", "leader": 0, "spadesBroken": true, "trickNumber": 6 }
+      },
+      "assert": [
+        { "apply": { "actor": 3, "type": "playCard", "cards": ["spades-4"] } },
+        {
+          "expect": {
+            "zones": { "won.3": 4, "won.1": 0, "won.2": 0 },
+            "vars": { "leader": 3 }
+          }
+        }
+      ]
+    },
+    {
+      "name": "spades cannot be led until they have been broken",
+      "setup": {
+        "seats": 4,
+        "turn": { "seat": 1, "phase": "play" },
+        "zones": { "hand.1": ["spades-K", "hearts-7"] },
+        "vars": { "led": null, "leader": 1, "spadesBroken": false, "trickNumber": 2 }
+      },
+      "assert": [
+        {
+          "move": { "actor": 1, "type": "playCard", "cards": ["spades-K"] },
+          "legal": false,
+          "rule": "lead-constraint"
+        },
+        { "move": { "actor": 1, "type": "playCard", "cards": ["hearts-7"] }, "legal": true }
+      ]
+    },
+    {
+      "name": "a hand with nothing but spades in it may lead one, broken or not",
+      "setup": {
+        "seats": 4,
+        "turn": { "seat": 1, "phase": "play" },
+        "zones": { "hand.1": ["spades-K", "spades-5"] },
+        "vars": { "led": null, "leader": 1, "spadesBroken": false, "trickNumber": 12 }
+      },
+      "assert": [
+        { "move": { "actor": 1, "type": "playCard", "cards": ["spades-5"] }, "legal": true }
+      ]
+    },
+    {
+      "name": "playing a spade breaks them",
+      "setup": {
+        "seats": 4,
+        "turn": { "seat": 2, "phase": "play" },
+        "zones": {
+          "trick": ["hearts-9"],
+          "hand.0": ["clubs-2"],
+          "hand.1": ["clubs-3"],
+          "hand.2": ["spades-6"],
+          "hand.3": ["clubs-4"]
+        },
+        "vars": { "led": "hearts", "leader": 1, "spadesBroken": false, "trickNumber": 3 }
+      },
+      "assert": [
+        { "apply": { "actor": 2, "type": "playCard", "cards": ["spades-6"] } },
+        { "expect": { "vars": { "spadesBroken": true } } }
+      ]
+    },
+    {
+      "name": "the bid goes round the table before a card is led, one seat at a time",
+      "setup": {
+        "seats": 4,
+        "turn": { "seat": 1, "phase": "bid" },
+        "zones": {
+          "hand.0": ["spades-2", "spades-3"],
+          "hand.1": ["clubs-2", "clubs-3"],
+          "hand.2": ["hearts-2", "hearts-3"],
+          "hand.3": ["diamonds-2", "diamonds-3"]
+        },
+        "unlisted": "void"
+      },
+      "assert": [
+        {
+          "move": { "actor": 1, "type": "playCard", "cards": ["clubs-2"] },
+          "legal": false,
+          "rule": "phase"
+        },
+        {
+          "move": { "actor": 2, "type": "bid", "choice": { "bid": 1 } },
+          "legal": false,
+          "rule": "turn"
+        },
+        {
+          "move": { "actor": 1, "type": "bid", "choice": { "bid": 3 } },
+          "legal": false,
+          "rule": "bid-range"
+        },
+        { "apply": { "actor": 1, "type": "bid", "choice": { "bid": 2 } } },
+        { "expect": { "turn": { "seat": 2, "phase": "bid" }, "playerVars": { "1": { "bid": 2 } } } },
+        {
+          "move": { "actor": 1, "type": "bid", "choice": { "bid": 1 } },
+          "legal": false,
+          "rule": "turn"
+        },
+        { "apply": { "actor": 2, "type": "bid", "choice": { "bid": 0 } } },
+        { "apply": { "actor": 3, "type": "bid", "choice": { "bid": 1 } } },
+        { "expect": { "turn": { "seat": 0, "phase": "bid" } } },
+        {
+          "move": { "actor": 1, "type": "playCard", "cards": ["clubs-2"] },
+          "legal": false,
+          "rule": "phase"
+        },
+        { "apply": { "actor": 0, "type": "bid", "choice": { "bid": 1 } } },
+        {
+          "expect": {
+            "turn": { "seat": 1, "phase": "play" },
+            "playerVars": { "0": { "bid": 1 }, "1": { "bid": 2 }, "2": { "bid": 0 }, "3": { "bid": 1 } },
+            "vars": { "trickNumber": 1 }
+          }
+        },
+        { "move": { "actor": 1, "type": "playCard", "cards": ["clubs-2"] }, "legal": true }
+      ]
+    },
+    {
+      "name": "a blind nil is refused while the side is still within reach",
+      "setup": {
+        "seats": 4,
+        "turn": { "seat": 0, "phase": "bid" },
+        "zones": { "hand.0": ["clubs-2", "clubs-3"] },
+        "scores": { "0": 20, "1": 40, "2": 0, "3": 30 },
+        "unlisted": "void"
+      },
+      "assert": [
+        {
+          "move": { "actor": 0, "type": "bid", "choice": { "bid": 0, "sight": "blind" } },
+          "legal": false,
+          "rule": "blind-nil"
+        },
+        { "move": { "actor": 0, "type": "bid", "choice": { "bid": 0 } }, "legal": true }
+      ]
+    },
+    {
+      "name": "a hundred and forty behind, the blind nil is on — and it pays double",
+      "setup": {
+        "seats": 4,
+        "turn": { "seat": 0, "phase": "bid" },
+        "zones": { "hand.0": ["clubs-2", "clubs-3"] },
+        "scores": { "0": 20, "1": 100, "2": 0, "3": 60 },
+        "playerVars": { "1": { "bid": 1 }, "2": { "bid": 0 }, "3": { "bid": 1 } },
+        "unlisted": "void"
+      },
+      "assert": [
+        {
+          "move": { "actor": 0, "type": "bid", "choice": { "bid": 1, "sight": "blind" } },
+          "legal": false,
+          "rule": "blind-nil"
+        },
+        { "apply": { "actor": 0, "type": "bid", "choice": { "bid": 0, "sight": "blind" } } },
+        { "expect": { "playerVars": { "0": { "bid": 0, "bidSight": "blind" } } } },
+        { "score": { "0": 200, "1": -20, "2": 100, "3": 0 } }
+      ]
+    },
+    {
+      "name": "a nil that takes a trick is set, and its partner's contract still stands",
+      "setup": {
+        "seats": 4,
+        "turn": { "seat": 0, "phase": "play" },
+        "zones": {
+          "won.0": ["clubs-2", "clubs-3", "clubs-4", "clubs-5"],
+          "won.1": [
+            "diamonds-2", "diamonds-3", "diamonds-4", "diamonds-5",
+            "diamonds-6", "diamonds-7", "diamonds-8", "diamonds-9"
+          ],
+          "won.2": [
+            "hearts-2", "hearts-3", "hearts-4", "hearts-5",
+            "hearts-6", "hearts-7", "hearts-8", "hearts-9"
+          ]
+        },
+        "playerVars": {
+          "0": { "bid": 0 },
+          "1": { "bid": 2 },
+          "2": { "bid": 2 },
+          "3": { "bid": 0 }
+        },
+        "unlisted": "void"
+      },
+      "assert": [
+        { "score": { "0": -79, "1": 20, "2": 0, "3": 100 } }
+      ]
+    },
+    {
+      "name": "a contract the side falls short of costs it the same ten a trick",
+      "setup": {
+        "seats": 4,
+        "turn": { "seat": 0, "phase": "play" },
+        "zones": {
+          "won.0": ["clubs-2", "clubs-3", "clubs-4", "clubs-5"],
+          "won.1": ["hearts-2", "hearts-3", "hearts-4", "hearts-5"],
+          "won.3": [
+            "diamonds-2", "diamonds-3", "diamonds-4", "diamonds-5",
+            "diamonds-6", "diamonds-7", "diamonds-8", "diamonds-9"
+          ]
+        },
+        "playerVars": {
+          "0": { "bid": 3 },
+          "1": { "bid": 1 },
+          "2": { "bid": 1 },
+          "3": { "bid": 1 }
+        },
+        "unlisted": "void"
+      },
+      "assert": [
+        { "score": { "0": -40, "1": 21, "2": 0, "3": 0 } }
+      ]
+    },
+    {
+      "name": "bags roll over from hand to hand and cost a hundred at the tenth",
+      "setup": {
+        "seats": 4,
+        "turn": { "seat": 0, "phase": "play" },
+        "zones": {
+          "won.0": [
+            "clubs-2", "clubs-3", "clubs-4", "clubs-5",
+            "clubs-6", "clubs-7", "clubs-8", "clubs-9",
+            "clubs-10", "clubs-J", "clubs-Q", "clubs-K",
+            "hearts-2", "hearts-3", "hearts-4", "hearts-5"
+          ]
+        },
+        "playerVars": {
+          "0": { "bid": 1, "bags": 9 },
+          "1": { "bid": 1 },
+          "2": { "bid": 1 },
+          "3": { "bid": 1 }
+        },
+        "unlisted": "void"
+      },
+      "assert": [
+        { "score": { "0": -78, "1": -20, "2": 0, "3": 0 } },
+        { "expect": { "playerVars": { "0": { "bags": 1 }, "2": { "bags": 0 } } } }
+      ]
+    },
+    {
+      "name": "nine bags is nine bags — the penalty waits for the tenth",
+      "setup": {
+        "seats": 4,
+        "turn": { "seat": 0, "phase": "play" },
+        "zones": {
+          "won.0": ["clubs-2", "clubs-3", "clubs-4", "clubs-5", "clubs-6", "clubs-7", "clubs-8", "clubs-9"]
+        },
+        "playerVars": {
+          "0": { "bid": 1, "bags": 8 },
+          "1": { "bid": 1 },
+          "2": { "bid": 0 },
+          "3": { "bid": 1 }
+        },
+        "unlisted": "void"
+      },
+      "assert": [
+        { "score": { "0": 11, "1": -20, "2": 100, "3": 0 } },
+        { "expect": { "playerVars": { "0": { "bags": 9 } } } }
+      ]
+    }
+  ]
+}

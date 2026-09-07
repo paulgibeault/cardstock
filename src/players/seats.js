@@ -43,6 +43,11 @@ function botOwner(botId) {
   return Object.freeze({ kind: 'bot', deviceId: null, localIndex: null, botId: botId ?? null });
 }
 
+/** One side per seat: the shape of every game that is not a partnership. */
+function soloSides(count) {
+  return Array.from({ length: count }, (_, seat) => [seat]);
+}
+
 /**
  * Build the ownership table for a match.
  *
@@ -50,12 +55,30 @@ function botOwner(botId) {
  * @param localDeviceId  what this device calls itself
  * @param owners         optional pre-built owner array (from `deserialize`);
  *                       omitted for a fresh table, which starts all-empty
+ * @param sides          which chairs are a pair — `sidesOf(pack, seats)` from
+ *                       src/engine/sides.js. NOT PART OF THE SERIALIZED TABLE,
+ *                       for the reason `localDeviceId` is not: it is derived
+ *                       from the pack, and a stored copy is a second answer
+ *                       that can disagree with the manifest the next build
+ *                       loads. Omitted means every seat plays for itself.
  */
-export function createSeatTable({ seats, localDeviceId = LOCAL_DEVICE, owners = null } = {}) {
+export function createSeatTable({
+  seats, localDeviceId = LOCAL_DEVICE, owners = null, sides = null,
+} = {}) {
   const count = Number(seats);
   if (!Number.isInteger(count) || count < 1) {
     throw new Error(`createSeatTable: seats must be a positive integer, got ${seats}`);
   }
+  // Defensive: a pairing that does not account for every seat exactly once
+  // would put a chair on two sides or on none, and a seat table that cannot say
+  // whose side a chair is on is worse than one that says everyone is alone.
+  const declared = Array.isArray(sides) ? sides.map((side) => [...side]) : null;
+  const seen = new Set(declared ? declared.flat() : []);
+  const pairing = declared && seen.size === count && declared.every((side) => side.length > 0)
+    ? declared
+    : soloSides(count);
+  const sideBySeat = new Array(count).fill(0);
+  pairing.forEach((side, index) => { for (const seat of side) sideBySeat[seat] = index; });
   const slots = Array.from({ length: count }, (_, seat) => {
     const given = owners?.[seat];
     if (!given || given.kind === 'empty') return EMPTY;
@@ -115,6 +138,52 @@ export function createSeatTable({ seats, localDeviceId = LOCAL_DEVICE, owners = 
     primaryLocalSeat() {
       for (let seat = 0; seat < count; seat++) if (table.isLocal(seat)) return seat;
       return null;
+    },
+
+    /**
+     * WHICH CHAIRS ARE A PAIR — the questions a partnership table asks of its
+     * seating rather than of its scores.
+     *
+     * The lobby's seat picker needs them to say "you would be partnering Nell"
+     * BEFORE a card is dealt, and the host needs them to know that seating a
+     * bot in seat 2 has given the player in seat 0 a partner. Neither question
+     * is about ownership, but both are about this table, and splitting them
+     * into a second object indexed the same way is how two answers start to
+     * disagree.
+     *
+     * A table with no declared sides answers `partnersOf` with an empty list
+     * and `partnered` with false, which is the truth at every table in the repo
+     * until Spades (#105) lands.
+     */
+    partnered() {
+      return pairing.length < count;
+    },
+
+    /** Which side a seat plays for. Its own index, at a table with no sides. */
+    sideOf(seat) {
+      return inRange(seat) ? sideBySeat[seat] : -1;
+    },
+
+    /** Every seat on a side, in seat order. */
+    sideSeats(side) {
+      return pairing[side] ? pairing[side].slice() : [];
+    },
+
+    /** The OTHER chairs on this seat's side. Empty at a table with no sides. */
+    partnersOf(seat) {
+      if (!inRange(seat)) return [];
+      return pairing[sideBySeat[seat]].filter((s) => s !== seat);
+    },
+
+    /** Are these two chairs playing for the same score? */
+    arePartners(a, b) {
+      return inRange(a) && inRange(b) && a !== b && sideBySeat[a] === sideBySeat[b];
+    },
+
+    /** The side this device plays for, or null while it holds no seat. */
+    localSide() {
+      const seat = table.primaryLocalSeat();
+      return seat === null ? null : sideBySeat[seat];
     },
 
     /** Which seat a given player holds, or null. */
@@ -200,11 +269,11 @@ export function createSeatTable({ seats, localDeviceId = LOCAL_DEVICE, owners = 
  * table read by two devices must yield two different `localSeats()`, and a
  * stored "this one is mine" would be a lie on the second one.
  */
-export function deserializeSeatTable(payload, { localDeviceId = LOCAL_DEVICE } = {}) {
+export function deserializeSeatTable(payload, { localDeviceId = LOCAL_DEVICE, sides = null } = {}) {
   const seats = payload?.seats;
   if (!Number.isInteger(seats) || seats < 1) return null;
   if (!Array.isArray(payload.owners) || payload.owners.length !== seats) return null;
-  return createSeatTable({ seats, localDeviceId, owners: payload.owners });
+  return createSeatTable({ seats, localDeviceId, owners: payload.owners, sides });
 }
 
 /**
@@ -270,8 +339,8 @@ export function createSeatLens(getTable, { fallbackSeat = 0 } = {}) {
  * roster.js already takes one, and the two must not disagree about which chair
  * the star is in.
  */
-export function soloSeatTable(seats, { humanSeat = 0, localDeviceId = LOCAL_DEVICE } = {}) {
-  const table = createSeatTable({ seats, localDeviceId });
+export function soloSeatTable(seats, { humanSeat = 0, localDeviceId = LOCAL_DEVICE, sides = null } = {}) {
+  const table = createSeatTable({ seats, localDeviceId, sides });
   for (let seat = 0; seat < table.count; seat++) {
     if (seat === humanSeat) table.claim(seat, { deviceId: localDeviceId, localIndex: 0 });
     else table.seatBot(seat);

@@ -30,6 +30,12 @@
   --chrome-bar: rgba(0, 0, 0, 0.25);
   --accent: #ffd166;
   --hint: #7cc4ff;
+  /* YOUR PARTNER'S CHAIR (src/ui/seatRing.js). Its own colour rather than
+     `--accent`, which already means "it is this seat's turn" one plate over —
+     two meanings in one ink on the same row is how a player learns to read
+     neither. Lilac is far from the yellow, from the hint's blue, and from the
+     felt itself. */
+  --partner: #cbb0ff;
   --glow: rgba(255, 255, 255, 0.3);
   --glow-strong: rgba(255, 255, 255, 0.9);
 
@@ -92,6 +98,7 @@
   --chrome-bar: rgba(255, 255, 255, 0.6);
   --accent: #9a6400;
   --hint: #7cc4ff;
+  --partner: #5b3fa8;
   --glow: rgba(20, 38, 28, 0.25);
   --glow-strong: rgba(20, 38, 28, 0.65);
 
@@ -626,6 +633,37 @@ body {
   box-shadow: 0 0 0 2px var(--accent), 0 4px 14px var(--panel-shadow);
   transform: translateY(-2px);
 }
+
+/* YOUR PARTNER'S CHAIR, in a partnership game (src/ui/seatRing.js). A quiet,
+   permanent mark rather than anything that moves: it is a standing fact about
+   the table for the whole match, so it must not compete with .seat--active,
+   which is the one thing on this row that changes and needs to be noticed. A
+   rule on the bottom edge survives every SEAT_TIERS rung — including `faces`,
+   where the name, the word and the score chip are all gone and this is the
+   only thing left to say whose side that chair is on. No animation. */
+.seat--partner {
+  border-bottom: 2px solid var(--partner);
+}
+
+/* And the word itself, while there is room for it. A colour alone is not a
+   label — it has to be learned, and a player meeting their first partnership
+   game has nothing to learn it from. It goes at the same rung the NAME goes,
+   because past that point the row has no room for prose and the rule above is
+   carrying the meaning on its own. */
+.seat__partner {
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 0.05rem 0.32rem;
+  border-radius: 999px;
+  color: var(--partner);
+  border: 1px solid var(--partner);
+  opacity: 0.85;
+  white-space: nowrap;
+}
+
+.opponent-row--tight .seat .seat__partner { display: none; }
 
 .seat__head {
   display: flex;
@@ -3957,6 +3995,16 @@ body.is-dragging .card-face { cursor: grabbing; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* WHO THIS CHAIR PLAYS WITH, at a partnership table. Quiet — it is a standing
+   fact, not news — and it must not take room from the name, which is the thing
+   the row is actually for. */
+.party-seat__partner {
+  font-size: 0.78rem;
+  opacity: 0.75;
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
 .party-seat__actions { display: flex; gap: 0.35rem; flex: 0 0 auto; }
 
 /* A chip that says nothing is a dot: "connected" is the state a player should

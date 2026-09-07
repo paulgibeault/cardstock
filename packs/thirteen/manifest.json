@@ -48,7 +48,7 @@
       "name": "Instant wins",
       "description": "Four 2s, six pairs, a 3-to-A dragon, five consecutive pairs or three consecutive triples end the hand on the deal.",
       "default": false,
-      "available": false,
+      "available": true,
       "patch": { "rules.instantWins": true }
     },
     {
@@ -56,8 +56,23 @@
       "name": "No ending on a pig",
       "description": "A 2 may not be the last card you play, so a won position can become a trap.",
       "default": false,
-      "available": false,
+      "available": true,
       "patch": { "rules.lastCardExcludes": ["rank:2"] }
+    },
+    {
+      "id": "quad-needs-four-pairs",
+      "name": "A pair of pigs needs four pairs",
+      "description": "Four of a kind no longer chops a pair of 2s — only four consecutive pairs will do it.",
+      "default": false,
+      "available": true,
+      "patch": {
+        "rules.bombs": [
+          { "shape": "consecutive-pairs(3)", "beats": ["single:rank:2"] },
+          { "shape": "quad", "beats": ["single:rank:2", "consecutive-pairs(3)"] },
+          { "shape": "consecutive-pairs(4)", "beats": ["single:rank:2", "pair:rank:2", "consecutive-pairs(3)", "quad"] },
+          { "shape": "consecutive-pairs(5)", "beats": ["*"] }
+        ]
+      }
     }
   ],
   "ui": {

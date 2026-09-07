@@ -680,6 +680,279 @@ the platform's closed vocabulary, the same shape as `INTERACTION_MODES`. No
 keyframe animation anywhere on the component: the pegs move on a one-shot
 transition and then sit still, so there is nothing for `--arcade-pulse-count`
 to cap.
+## Thirteen keeps its shape now, and the numbers say how much that is worth (#103)
+
+#102 shipped the `climbing` template with a bot that plays legally and badly.
+"Badly" was not a guess: the overseer, driving the felt by hand, beat it in
+round one playing nothing but greedy singles. `botHeuristic` grades a MOVE,
+and the losing move in Thirteen does not look like one — answering a lone 7
+with the 8 out of `6-7-8-9-10` sheds a cheap card and turns one turn into
+four. The damage is in the shape of what stayed, so a move scorer cannot see
+it at all.
+
+`evaluateState` grades the position instead (`src/templates/CONTRACT.md`), and
+climbing's reads four things about the hand that is left: its size, how many
+TURNS it still needs under a greedy cover of the pack's declared combinations,
+how many of those turns are bombs, and how many of its cards nothing unplayed
+can answer. Four new weights beside #102's four, all eight read through the
+third argument, all eight now exercised by `tests/weights.test.js`.
+
+### What it is worth, measured the way the game is decided
+
+`tools/simulate.mjs --match`, four seats, because a Thirteen match is points to
+50 and a round win is a proxy for it (#92's lesson). The BEFORE column is the
+same tree with `evaluateState` renamed out of the template, which is exactly
+the #102 bot — `medium` with no evaluator falls through to `botHeuristic` and
+is `easy` with extra steps, and the numbers say so.
+
+| pairing | before (#102) | after (#103) |
+|---|---|---|
+| medium vs easy, 200 matches | 53.5% ± 3.5 (a coin flip, as predicted) | **99.5%** (199 of 200) |
+| hard vs easy, 40 matches | — | **100%** (40 of 40) |
+| hard vs medium, 40 matches | — | see below |
+| mean final total, medium vs easy | 40.0 against 41.0 | 20.7 against 47.4 |
+| moves per hand, all four seats equal | 42.4 | 36.0 |
+
+The last row is the mechanism in one number: the same hands finish in six
+fewer moves because a bot that keeps its runs together sheds in fewer turns.
+It also broke a test, honestly — `tests/climbing.test.js`'s enumerator sweep
+counts MOVES CHECKED and needed twenty-four deals to reach the bar where
+twelve had done.
+
+`hard` is unchanged code and is not the point of this issue, but it is worth
+saying where it now sits: the rollout layer truncates at depth 16 and asks
+`evaluateState` at the cut, so it inherits the same reading.
+
+### The tuner moved nothing at `medium` — and found a great deal at `easy`
+
+`node tools/tune.mjs thirteen --match --seats=4 --games=200`: the coordinate
+search over all eight weights at ±50%, accepted at two standard errors, with
+the survivors re-measured on a seed family the search never saw. **Nothing was
+accepted, and the shipped values are kept.** The table is worth reading for
+what it says about which half of the strategy is doing the work:
+
+| weight | ±50% | best candidate |
+|---|---|---|
+| SHED_WORTH, TOP_COST, CHOP_COST, PASS_WORTH | 50.0–50.5% | — |
+| CARD_COST | 1 → 1.5: 49.0%; **→ 0.5: 42.0%** | — |
+| PLAY_COST | 2.5 → 3.75: 51.0%; **→ 1.25: 44.5%** | — |
+| BOMB_WORTH | 3 → 4.5: 47.5%; → 1.5: 48.0% | — |
+| LEAD_WORTH | 2 → 3: 46.5%; → 1: 53.0% ± 3.5 | below the 2 SE bar |
+
+The first row is the finding. At `medium` the four `botHeuristic` numbers are
+**inert** — perturbing any of them by half moves the match win rate by half a
+percent, because the evaluator has already decided and the cheap heuristic only
+orders the moves it could not score. The four evaluator numbers are the
+opposite: halving the structure term costs five and a half points of match win
+rate, and halving the cost of a card in hand costs eight. That is a strategy
+with real structure, and it is where the shipped values are sharply right.
+
+### A tuning result NOT taken, and why it is the maintainer's call
+
+Because the cheap weights are inert at `medium`, they were tuned again at the
+tier where they are not — `--difficulty=easy --only=SHED_WORTH,TOP_COST,
+CHOP_COST,PASS_WORTH` — and that run found a real, large gain:
+
+```
+SHED_WORTH 10 -> 15, TOP_COST 0.35 -> 0.175
+validation on unseen deals: tuned 98.8% ± 0.6% of 400 against shipped
+```
+
+The two together cut the price of a combination's top card by three relative
+to a shed card, so the bot plays its longest combination instead of hoarding
+high ones — which is right, and the shipped numbers were wrong about it.
+**It is not in this commit**, and the reason is not doubt about the number:
+
+| | shipped | tuned cheap weights |
+|---|---|---|
+| easy vs easy (tuned as candidate) | — | 98.8% ± 0.6 of 400 |
+| medium vs easy, 200 matches | 99.5% | **67.5%** |
+| moves per hand, four medium seats | 36.0 | 36.0 |
+
+It makes `easy` a much better bot, which narrows the difficulty ladder from
+99.5% to 67.5% and also changes `hard`'s rollout POLICY, since a rollout plays
+every chair at `easy` (`src/engine/bot.js`). Both of those are calibration
+decisions about the dial rather than about Thirteen, they are measurable
+against the personas and the other four packs, and neither is what #103 asked
+for. The change is two constants in `src/templates/climbing.js` and the
+command that found it is above.
+
+### What the evaluator deliberately does not read
+
+Anybody else's hand — and, unusually, not their hand COUNTS either, which it
+would be entitled to (`src/engine/view.js` ships one with every zone). At one
+ply every candidate leaves the other seats' counts identical, so a term built
+on them is a weight the tuner cannot move; the search layer is what compares
+seats.
+
+And the one this game makes tempting: it does not ask whether an opponent can
+chop. What it asks instead is whether a bomb could still be ASSEMBLED out of
+the cards nobody has played — arithmetic over the discard, the pile and its
+own hand — which is why a 2 is worth little in the opening and a trick in the
+endgame. **The gate that would have caught the other version did not exist.**
+`tests/rollouts.test.js`'s fairness probe drives the `hard` chooser, and
+`hard` determinizes before it reads anything, so a peeking `evaluateState` is
+invisible to it; the one-ply path is where the evaluator sees the real state.
+`tests/climbing.test.js` now carries that probe, and proving it bites turned
+up a second thing worth writing down: a peek that does not VARY with the
+acting seat's own cards cannot change a one-ply ranking at all, so the first
+attempt at breaking it passed. Both are in `CONTRACT.md` for the next template
+that offers the hook.
+
+### The three house rules
+
+All three were declared `available: false` by #102 and are switched on now,
+with the pack's rule table asserting each (`packs/thirteen/tests/rules.test.json`).
+
+- **`quad-needs-four-pairs`** (D-6's alternative) needed no code and no new
+  manifest key: the chopping ladder was already a declaration, so the variant
+  patches `rules.bombs` and drops `pair:rank:2` from the quad's list. The
+  default is asserted beside it, so the pair of tests is a control and a case.
+- **`no-ending-on-two`** (D-4) is `rules.lastCardExcludes`, omitted by
+  `enumerateLegalMoves` and refused by `validateMove` with a sentence, because
+  the enumerator is a shortlist and a felt that just silently lacks a move
+  teaches nobody anything. **It relaxes where it would deadlock** — a seat on
+  lead holding nothing but pigs has no pass to fall back on, and a rule that
+  stops the table is a stall. That is the platform's existing policy for lead
+  constraints (design doc §5), and `simulate.mjs`'s variant floor is what would
+  have caught getting it wrong.
+- **`instant-wins`** (*tới trắng*, D-8) is a `startRound`-time check on the
+  dealt hands, read against the pack's own tables rather than against
+  Thirteen: four of the ladder's top rank, `deal`/2 pairs, one card of every
+  rank a sequence may contain, the longest strip the `bombs` ladder declares,
+  and triples in as many consecutive ranks as a run needs. It fires on about
+  one deal in thirty-five at four seats (587 of 20,000), which is why it is off
+  by default.
+
+  **It is not an `endRound` at the deal, and that is a decision worth
+  flagging.** `maybeFinishRound` runs after an applied MOVE and nothing else
+  runs it, so a hand ended during the deal sits unresolved until somebody
+  plays and is then scored one card into a hand that had already started. So
+  the check leaves a public var, the seat it names is offered exactly one
+  legal move — lay the whole hand down — and the ordinary "first empty hand"
+  path scores and redeals it inside the boundary that already exists. It is
+  also better on the felt: you get to put the dragon on the table. The smaller,
+  reversible reading of "ends the hand on the deal"; if the maintainer wants it
+  to resolve with no click at all, that is an engine hook (something that runs
+  after `setup`), not a template change.
+
+  The pack's rule table can reach the resolution but not the DEAL-TIME check,
+  because the harness builds a state instead of dealing one. That half is a
+  sweep in `tests/climbing.test.js` with a checker written out longhand from
+  the rules doc rather than from the template.
+
+### One thing not done
+
+`seatCounters` still returns one number. #102 expected a bomb count beside the
+hand count, and it cannot go there: the hook is asked of EVERY seat and `ctx`
+has no notion of who is looking, so the count would publish a fact about a
+hidden hand in solo play — and read 0 for the same seat at a joined table,
+where the view ships a bare count. It wants a viewer-aware hook, which is a
+platform change and its own issue.
+## Trump, a bid and bags — Team Spades (#105)
+
+The design doc listed `trump` as a trick-taking parameter (§13.1) and named
+bidding as "the template's first planned extension". Neither existed: the word
+`trump` appeared nowhere in `src/templates/trick-taking.js`. Both are there
+now, declared rather than coded, and `packs/team-spades/` is a manifest and a
+rule-test file with no code of its own.
+
+- **Trump** is two keys, deliberately. `rules.trump` names the suit (`none`, a
+  suit, or `chosen` — a round that names its own, in the `trumpSuit` var);
+  `rules.trickWinner: "highest-trump-else-led"` says the trick resolution reads
+  it. Resolution puts a trump on a SHELF above the pack's rank ladder, so the
+  loop that finds the winner stays the single "highest wins" it always was.
+- **The bid** is a sequential phase before the first lead: `turn.seat` walks the
+  table, `actingSeats` takes the platform default (which is what "sequential"
+  meant, against the pass phase's simultaneous commit), and the move is
+  `{type: 'bid', choice: {bid: n}}`. The felt needed **one new interaction mode
+  and no new dialog**: `bid` puts a "Bid" button in the rail's thumb slot, and
+  the number is asked with the existing `pendingChoice` Ask (`kind: 'value'`,
+  options Nil…13), which the platform's own chooser renders.
+- **Bags** are the one piece of state that outlives a hand, so trick-taking now
+  implements `startRound` — see the trap in `CONTRACT.md`. They live on the
+  side's canonical seat, which the score fold makes exact.
+
+### Two bot findings, both measured, both invisible to every other bar
+
+**The seat that spoke last bid nil on three hands in ten.** `evaluateState`
+declines the bid phase — every candidate bid leaves the identical table, so
+there is no position to judge — but the LAST bid finishes the bidding inside
+its own move, so the fork it leaves is in the `play` phase and the phase check
+alone did not catch it. What the lookahead then judged was the contract the bid
+had just created, with nothing taken yet: promising nothing scored best, every
+time. The honest test is that nothing has been PLAYED, which is true exactly
+once a hand. With it, the nil rate over 300 deals fell from 28.1% to 4.1% and
+the table's total bid rose from 6.9 to 11.7 of the thirteen tricks.
+
+**A bag is worth nine points, not three.** `BAG_COST` started at 0.35 of a
+contract trick, reasoning that an overtrick is worth a point now and a tenth of
+a hundred-point penalty later. The arithmetic is nearer −9 against the +10 a
+contract trick pays, and the difference shows up only at a table where the two
+sides play differently: against opponents who take fewer tricks than they
+should, the strong side is HANDED tricks it never bid, four or five a hand, and
+pays a hundred every second hand. A medium-against-easy match sat in a 370–450
+band for a dozen hands at 0.35 and reached 527 by the tenth hand at 1. A table
+where everybody plays alike barely notices (13.6 rounds a match against 13.4),
+which is why no same-difficulty bar could have found it.
+
+### What `--vs --match` says, including the part that is not flattering
+
+Matches, not hands: a Spades hand always completes, so round completion says
+nothing about whether the bidding is any good — the match bar is the one that
+bites (`tests/simulate.test.js`).
+
+| Contest | Result |
+|---|---|
+| `--vs=medium,easy --match --games=40` | **medium 36, easy 4** (90% of decisive matches), 0 unfinished, 11.3 rounds a match |
+| `--vs=hard,easy --match --games=60 --budget-moves=600` | **hard 10, easy 45**, 5 unfinished, 29.1 rounds a match |
+| `--vs=hard,easy hearts --games=60 --budget-moves=600` (control) | **hard 38, easy 21** — the same budget, the same rollout layer, at the pack it was measured on |
+
+The move-capped budget is the one an A/B may quote: two runs of it sample
+identically on a busy laptop and an idle one. The shipped-clock version of the
+Spades row (`--vs=hard,easy --match --games=20`, no cap) costs about ninety
+seconds a match at 120 ms a decision, which is why the cap is what is tabulated
+here.
+
+The first is the number this issue's work is answerable for: `medium` is the
+one-ply search over the new `evaluateContract`, and it beats the cheap
+heuristic nine matches in ten. The second is `hard` — the flat Monte Carlo
+layer, which is generic and was not touched here — and it is **worse than easy
+at this pack**.
+
+The diagnosis, and it is not the budget: the same 600-move cap at Hearts still
+has `hard` beating `easy` on 64.4% of decisive rounds (60 rounds, three seats),
+which is the gain this file has always recorded for it. What differs is what a
+rollout MEANS. **The rollout policy is the cheap heuristic**, and trick-taking's
+cheap heuristic at a pack with no card values is "play your lowest card" — a
+policy that has never heard of a contract. In Hearts that is roughly the right
+idea, because the points come from the cards you are made to take and playing
+low avoids taking them, so where a rolled-out hand ENDS is informative about the
+move that began it. In Spades the same policy plays out a hand nobody is trying
+to win, and the final score — which is entirely about promises kept — is close
+to orthogonal to the candidate being scored. Sampling harder samples noise.
+Choosing the rollout path also means the one-ply evaluator `medium` wins with is
+never consulted at all (`rankMoves`: a rollout answer, however noisy, wins over
+the lookahead).
+
+The felt's default difficulty is `medium`, so this is not what a player meets —
+but "hard is the difficulty that loses" is a real defect, it belongs to the
+rollout layer rather than to this template, and a bidding game is the first pack
+in the repo to expose it. Worth its own issue: the fix is a rollout policy that
+consults `evaluateState`, or a template-declared policy hook, not a bigger
+budget.
+
+### Two rule readings written down rather than left to be discovered
+
+- **A trick a nil bidder is forced to take counts toward its partner's
+  contract.** At some tables it is a bag that leaves the partner short. The two
+  differ only when the partner would have been set without it; the forgiving
+  reading is the commoner one at a kitchen table, and a variant can differ.
+- **Blind nil is modelled as the wager, not the ritual.** The cards are dealt
+  before any bid is possible and a seat's own hand is in its view, so "without
+  looking" cannot be enforced; what is enforced is the entry condition (a side
+  at least `blindNil.behind` points down) and the doubled stakes. A felt that
+  wanted the ritual would have to bid before the deal.
 
 ## Next steps
 

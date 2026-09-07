@@ -91,7 +91,11 @@ test("every available house rule also completes every round", async () => {
 // rounds are fifty-odd moves now, so it pays the same twelve as everyone else.
 const PROTOCOL_GAMES_DEFAULT = 12;
 
-for (const packId of ["crazy-eights", "hearts", "wildfire", "stockpile", "milestones", "thirteen"]) {
+// team-spades is here for the move shape as much as for the pack: a bid is the
+// first move in the repo that carries a NUMBER as its whole content
+// (`choice: {bid: n}`), and a wire validator that dropped it would leave the
+// table bidding zero and playing on regardless (#105).
+for (const packId of ["crazy-eights", "hearts", "wildfire", "stockpile", "milestones", "team-spades", "thirteen"]) {
   test(`${packId} plays the same over the protocol as it does in one process`, async () => {
     const games = PROTOCOL_GAMES_DEFAULT;
     const solo = await simulatePack(packId, games, { variants: [] });
@@ -153,6 +157,36 @@ test("the two floored packs have not got worse", async () => {
 // four. Gated at 100%: the fix is a potential the round cannot raise forever
 // (src/templates/contract-rummy-bot.js, pileGain), not a tuning that happens
 // to work, and a stall here is that argument broken.
+// TEAM SPADES IS TWO BARS, AND THE SECOND ONE IS THE ONE THAT BIT (#105).
+//
+// A hand of Spades terminates for the same reason a hand of Hearts does —
+// thirteen tricks, one card each, no way to decline — so the round bar is a
+// rules-completeness claim like the three above, gated at 100%. What it cannot
+// see is the BID, because a hand completes whatever was promised.
+//
+// The match bar is where a bid is answerable for itself. A match ends when a
+// side reaches five hundred, and the first cut of the bidding heuristic never
+// got there: the table bid ten of the thirteen tricks between them, paid a
+// hundred for every ten bags that made, and drifted DOWNWARDS through a hundred
+// rounds — 99 of 100 matches unfinished with every single hand completing
+// cleanly. Every bar in this file above this one was green throughout.
+test("Team Spades bids, plays and finishes every hand", async () => {
+  const { completed, stalled, errored } = await simulatePack("team-spades", GAMES, { variants: [] });
+  assert.strictEqual(stalled, 0, `team-spades: ${stalled} stalled rounds`);
+  assert.strictEqual(errored, 0, `team-spades: ${errored} rounds threw`);
+  assert.strictEqual(completed, GAMES, `team-spades: only ${completed}/${GAMES} rounds completed`);
+});
+
+test("a Team Spades match is bid to five hundred, not drifted to a cap", async () => {
+  const MATCHES = 10;
+  const { completed, stalled, errored } = await simulateMatches("team-spades", MATCHES, { seats: 4, variants: [] });
+  assert.strictEqual(errored, 0, `team-spades: ${errored} matches threw`);
+  assert.strictEqual(stalled, 0,
+    `team-spades: ${stalled} matches never reached the target — a table that under-bids by three `
+    + "tricks a hand pays for them in bags and the score goes nowhere");
+  assert.strictEqual(completed, MATCHES, `team-spades: only ${completed}/${MATCHES} matches finished`);
+});
+
 test("Milestones matches finish at two seats, contract ladder and all", async () => {
   const MATCHES = 12;
   const { completed, stalled, errored } = await simulateMatches("milestones", MATCHES, { seats: 2, variants: [] });

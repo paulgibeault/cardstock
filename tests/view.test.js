@@ -343,6 +343,95 @@ test('a template publishes vars its RULES name, not just literal ones', async ()
   }
 });
 
+/* ------------------------------------------------------------------ *
+ * A partnership at a hosted table (#105)
+ * ------------------------------------------------------------------ *
+ *
+ * Two humans as partners is the case Team Spades adds, and it asks the filter
+ * two things nothing before it did: a promise everybody heard must REACH
+ * everybody, and a partner's hand must stay as hidden as an opponent's. The
+ * second is the one worth stating out loud — "we are a side" is a scoring fact
+ * and not a licence to see each other's cards, and a filter that had confused
+ * the two would have looked perfectly reasonable in a diff.
+ */
+
+/** Bid every seat's way through the bidding phase and stop at the first lead. */
+async function bidRound(seed = 'spades:view') {
+  const pack = await loadPackFromDisk('team-spades');
+  const state = createState({ pack, seats: 4, seed });
+  pack.template.setup(makeCtx(state));
+  assert.equal(state.turn.phase, 'bid', 'a Spades hand opens in the bidding phase');
+  let guard = 0;
+  while (state.turn.phase === 'bid' && guard++ < 10) {
+    const move = chooseBotMove(state, state.turn.seat);
+    assert.equal(move.type, 'bid');
+    applyMove(state, move);
+  }
+  assert.equal(state.turn.phase, 'play', 'the bidding finished');
+  return state;
+}
+
+test('Team Spades: every seat is told every bid — a promise is said out loud', async () => {
+  const state = await bidRound();
+  const bids = state.playerVars.map((vars) => vars.bid);
+  assert.ok(bids.every((bid) => Number.isInteger(bid)), `every seat bid: ${JSON.stringify(bids)}`);
+
+  for (let seat = 0; seat < state.seats; seat++) {
+    const view = viewFor(state, seat, { moves: enumerateLegalMoves(state, seat) });
+    for (let other = 0; other < state.seats; other++) {
+      assert.equal(view.playerVars[other].bid, bids[other],
+        `seat ${seat} cannot see what seat ${other} bid, and the seats after it bid knowing`);
+    }
+  }
+});
+
+test('Team Spades: a partner is a shared score, not a shared hand', async () => {
+  const state = await bidRound('spades:partners');
+  // seats 0 and 2 are one side, 1 and 3 the other (src/engine/sides.js).
+  const view = viewFor(state, 0, { moves: enumerateLegalMoves(state, 0) });
+  assert.ok(Array.isArray(view.zones['hand.0'].cards), 'I see my own hand');
+
+  for (const other of [1, 2, 3]) {
+    const zone = view.zones[`hand.${other}`];
+    assert.equal(zone.cards, undefined,
+      `seat 0 was sent seat ${other}'s hand${other === 2 ? ' — its PARTNER\'s hand' : ''}`);
+    assert.equal(zone.count, state.zones.cards(`hand.${other}`).length, 'the count is public, as it always was');
+  }
+
+  // And structurally, over the whole payload: nothing of the partner's hand
+  // reaches the seat by any other field either.
+  const isCardId = cardIdChecker(state);
+  const partnerCards = new Set(state.zones.cards('hand.2'));
+  const wire = JSON.parse(JSON.stringify(view));
+  for (const id of cardIdsIn(wire, isCardId)) {
+    assert.ok(!partnerCards.has(id), `${id} is in the partner's hand and reached seat 0`);
+  }
+});
+
+test('Team Spades: the whole hand plays out without a card reaching the wrong seat', async () => {
+  // The same structural sweep the packs above get, at the four-seat partnership
+  // table this pack actually seats — and through the bidding phase, which is
+  // the first phase in the repo where the acting seat holds no card at all.
+  const state = await bidRound('spades:sweep');
+  const isCardId = cardIdChecker(state);
+  let steps = 0;
+  while (steps < 60 && !state.gameOver) {
+    for (let seat = 0; seat < state.seats; seat++) {
+      const allowed = entitled(state, seat);
+      const foreign = foreignHands(state, seat);
+      const view = viewFor(state, seat, { moves: enumerateLegalMoves(state, seat) });
+      const wire = JSON.parse(JSON.stringify(view));
+      for (const id of cardIdsIn(wire, isCardId)) {
+        assert.ok(!foreign.has(id), `step ${steps}: seat ${seat} was sent ${id}, in another seat's hand`);
+        assert.ok(allowed.has(id), `step ${steps}: seat ${seat} was sent ${id}, which it may not see`);
+      }
+    }
+    if (!stepOnce(state)) break;
+    steps += 1;
+  }
+  assert.ok(steps > 20, `only ${steps} steps — the sweep proved little`);
+});
+
 test('a shared var nobody declared is published to nobody', async () => {
   // The allowlist, from the other side: milestones declares exactly one shared
   // var, and a second one appearing in the bag — a new template's bookkeeping,

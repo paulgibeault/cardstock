@@ -67,7 +67,7 @@ function walk(state, limit, visit) {
 test("a template with evaluateState ranks positions, not moves", async () => {
   // The proof that the hook is REACHED. Ripping `evaluateState` out has to
   // change what the bot plays; if it does not, nothing below it is running.
-  for (const [packId, seats] of [["milestones", 4], ["hearts", 4], ["crazy-eights", 4]]) {
+  for (const [packId, seats] of [["milestones", 4], ["hearts", 4], ["crazy-eights", 4], ["thirteen", 4]]) {
     let turns = 0;
     let differed = 0;
     for (let game = 0; game < 3; game++) {
