@@ -143,7 +143,7 @@ platform file.
 | `activeMatch` | `(ctx) -> {address, attr, value, onCard} \| null` | `describe.js`, `table.js` | none |
 | `scoreChip` | `(ctx, seat) -> {short, long, aria} \| null` | `table.js` | the SIDE's total (the seat's own, where there are no sides) |
 | `seatCounters` | `(ctx, seat) -> {text, aria, kind?}[] \| null` | `table.js` | the hand count |
-| `commitPrompt` | `(ctx, seat) -> {count, action, staging, waiting} \| null` | `interaction.js`, `table.js` | derived from the enumeration; the button says "Commit" |
+| `commitPrompt` | `(ctx, seat) -> {action, staging, waiting, count \| min+max, moveType?} \| null` | `interaction.js`, `table.js` | count and move type read off the enumeration; the button says "Commit" |
 | `committedSelection` | `(ctx, seat) -> cardId[] \| null` | `table.js` | none |
 | `getMeldGroups` | `(ctx, seat) -> Group[]` | `table.js` | `[]` |
 | `describeEvent` | `(ev, {seatLabel, seatPossessive, viewerSeat}) -> {text, tone} \| null` | `table.js` | the engine-effect vocabulary |
@@ -193,6 +193,56 @@ play. So the button asks `validateMove` on every tap (`selectionLegality`,
 from `enumerateLegalMoves` — deliberately, and the comment there says why: a
 climbing enumerator is a shortlist by necessity, and refusing a move the engine
 accepts is a worse failure than the one that invariant guards against.
+
+## `commitPrompt` — what a `pass`-mode commit button says and does
+
+`pass` is the gesture for **every** simultaneous commit: pick cards out of the
+fan, watch them stage, press the button. What is not shared is the *sentence*
+on the button, the *move* it makes, and *how many* cards arm it — and all three
+were Hearts' answers written into the platform (`passCards`, "Pass across",
+exactly `rules.passing.count`) for as long as Hearts was the only pack that
+committed anything.
+
+Pinochle's meld phase is the second, and it shares none of them. It declares a
+scoring selection of **any** size — a hand with no meld in it still has to say
+so, which is a commit of zero cards — and it moves no card anywhere.
+
+```js
+commitPrompt(ctx, seat) {
+  if (ctx.turn.phase !== 'meld') return null;   // null takes the default
+  return {
+    action: 'Declare', moveType: 'declareMeld',
+    min: 0, max: ctx.countIn(`hand.${seat}`),
+    staging: 'Declare your meld', waiting: 'Waiting for melds…',
+  };
+}
+```
+
+One shape serves both commit phases the repo has (#107's crib discard, #106's
+meld) and Hearts' pass:
+
+| Field | Meaning | Default |
+|---|---|---|
+| `action` | the button's words (under `ACTION_LABEL_MAX_CHARS`) | `Commit` |
+| `staging` / `waiting` | the status bar while this seat picks / while it waits for the others | `Pick N` / `Waiting…` |
+| `count` | the exact-N shape: a pass, a crib | the enumerated commit's card count |
+| `min` / `max` | the ranged shape: a meld of any size | both `count` |
+| `moveType` | the move the button makes | read off the enumeration — name it only for a commit that may carry ZERO cards, which has no card-carrying move to read it from |
+
+The button exists only while the enumerator is offering that move, whatever
+the template declares: a seat that has already committed gets none.
+
+**Why this rather than a seventh interaction mode.** A mode is a rendering
+vocabulary: six downstream surfaces branch on it (`buildUiModel`,
+`stagingPhase`, `dropCandidates`, `draggableSources`, the status bar, the
+staging tray). Adding one to render an identical gesture would mean teaching
+all six a new string, and every one of those branches is a place for the two
+commit phases to drift apart. Asking the template what its own button says
+costs one hook and leaves every existing pack on the default it already had.
+
+Note `min: 0` is real, and the platform handles it: with nothing picked up
+there is no `selection.from` to check, so an empty selection arms the button
+only when the floor is zero.
 
 ## `gathers` — the question a mode cannot answer
 

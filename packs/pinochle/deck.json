@@ -1,0 +1,24 @@
+{
+  "id": "pinochle-48",
+  "name": "Pinochle 48-card double deck",
+  "suits": ["clubs", "diamonds", "hearts", "spades"],
+  "colors": ["red", "black"],
+  "cards": [
+    {
+      "forEach": {
+        "suit": ["hearts", "diamonds"],
+        "rank": ["9", "J", "Q", "K", "10", "A"]
+      },
+      "def": { "id": "$suit-$rank", "rank": "$rank", "suit": "$suit", "color": "red" },
+      "count": 2
+    },
+    {
+      "forEach": {
+        "suit": ["spades", "clubs"],
+        "rank": ["9", "J", "Q", "K", "10", "A"]
+      },
+      "def": { "id": "$suit-$rank", "rank": "$rank", "suit": "$suit", "color": "black" },
+      "count": 2
+    }
+  ]
+}

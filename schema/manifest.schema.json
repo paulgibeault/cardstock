@@ -576,6 +576,17 @@
             }
           }
         },
+        "tricks": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "What taking tricks is worth beyond the cards in them, for the 'meld-and-tricks' round score (src/engine/scoring.js). The cards themselves are `cardValues`.",
+          "properties": {
+            "lastTrick": {
+              "type": "number",
+              "description": "A bonus to whoever takes the final trick of the hand. Pinochle's ten is what turns 240 in card values into the 250 the deck is named for."
+            }
+          }
+        },
         "accumulate": {
           "type": "boolean",
           "default": true
@@ -863,8 +874,10 @@
         "followSuit": {
           "enum": [
             "must",
-            "free"
-          ]
+            "free",
+            "must-beat"
+          ],
+          "description": "'free' is no obligation at all; 'must' is the ordinary follow-suit rule; 'must-beat' is Pinochle's — follow the led suit AND play above the card that is currently winning if you hold one, and if you are void in it, trump, over-trumping whoever has already trumped when you can. Every narrowing relaxes to the wider pool when it would leave the seat with nothing to play."
         },
         "firstLead": {
           "type": "string",
@@ -985,13 +998,31 @@
         "bidding": {
           "type": "object",
           "additionalProperties": false,
-          "description": "A sequential bidding phase before the first lead: each seat in turn, starting where the lead will, says how many tricks it will take. Its presence is what creates the phase; the scoring of what was promised is `scoring.roundScore` (see 'bids-and-bags').",
+          "description": "A sequential bidding phase before the first lead: each seat in turn, starting where the lead will, says what it will take. Its presence is what creates the phase; the scoring of what was promised is `scoring.roundScore` (see 'bids-and-bags' and 'meld-and-tricks').",
           "properties": {
+            "unit": {
+              "enum": [
+                "tricks",
+                "points"
+              ],
+              "default": "tricks",
+              "description": "WHAT IS BEING PROMISED. 'tricks' is Spades: every seat bids once, every bid stands, and the side's contract is its two bids added up. 'points' is Pinochle's auction: a bid is a score the SIDE will reach, each seat must outbid whatever has already been said or pass (a bid of 0), and exactly one side ends up holding the contract — the highest bidder's. If everybody passes, the last seat to speak is stuck with `min`."
+            },
+            "increment": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1,
+              "description": "The step between bids a seat may name. Pinochle raises in tens; a trick auction raises in ones."
+            },
+            "namesTrump": {
+              "const": true,
+              "description": "The bid names a suit as well as a number, and the winning bid's suit becomes the round's trump (`trumpSuit`). Only meaningful beside `trump: \"chosen\"`."
+            },
             "min": {
               "type": "integer",
               "minimum": 0,
               "default": 0,
-              "description": "The smallest bid. 0 is nil — a promise to take no trick at all."
+              "description": "The smallest bid. At a trick auction 0 is nil — a promise to take no trick at all; at a points auction 0 is a pass and `min` is the cheapest contract anybody may take."
             },
             "max": {
               "oneOf": [
@@ -1018,6 +1049,44 @@
                   "type": "integer",
                   "minimum": 1,
                   "description": "How far behind the leading side a side must be before its seats may bid blind."
+                }
+              }
+            }
+          }
+        },
+        "melds": {
+          "type": "array",
+          "minItems": 1,
+          "description": "A DECLARED MELD VOCABULARY, and the presence of it is what creates the `meld` phase between the auction and the first lead. A meld here is SCORED, not laid down: every seat commits a selection of cards from its hand at once (the same simultaneous-commit shape as a pass), the platform works out which of these it forms and for how much, and the cards stay in the hand to be played. Detection is src/templates/melds.js (`detectDeclaredMelds`); the table below is the pack's, and Pinochle's is the one it was written against.\n\nA card may be counted in melds of DIFFERENT groups but never twice in the same one — the classic rule, and the reason the run and the royal marriage share the group 'marriage' while the pinochle and the arounds have their own.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "label", "points", "cards"],
+            "properties": {
+              "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+              "label": { "type": "string", "description": "What the felt calls it. Public: every seat is told what everybody melded." },
+              "points": { "type": "number" },
+              "group": {
+                "type": "string",
+                "description": "Melds sharing a group compete for cards; melds in different groups may both use the same card. Omit for a meld that competes with nothing."
+              },
+              "suits": {
+                "enum": ["named", "same", "same-not-trump", "trump", "each"],
+                "default": "named",
+                "description": "How the suit of a card entry that does not name one is filled. 'named' — every entry says its own suit (a pinochle is the queen of SPADES with the jack of DIAMONDS). 'same' — one suit, any of them. 'same-not-trump' / 'trump' — the same, restricted (a marriage against a royal marriage). 'each' — the whole card list once per suit, which is what 'aces around' means."
+              },
+              "cards": {
+                "type": "array",
+                "minItems": 1,
+                "description": "The cards the meld is made of, one entry per physical card — a double pinochle lists four. Three or more entries in ONE suit must be consecutive on the pack's `rankLadder`, or it is not a run and the detector refuses the declaration.",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["rank"],
+                  "properties": {
+                    "rank": { "type": "string" },
+                    "suit": { "type": "string" }
+                  }
                 }
               }
             }

@@ -593,93 +593,6 @@ This was latent, not introduced: the base tree flips the same way on the same
 Hearts hand under a different rescaling. The ladder fix only moved which
 decision sits on the knife edge, and the test happened to be pointed at it.
 
-## Cribbage, and a board that is not a zone (#107)
-
-The fifth template, and the second test of `CONTRACT.md`'s "one file plus one
-registry entry" claim. What it cost is written up in that file rather than here;
-this is what the measurements said.
-
-### The bot, measured the only way a cribbage bot can be
-
-A cribbage match is first to 121 and takes about nine hands, so counting round
-wins measures almost nothing — a hand is ten moves and the pone leads every
-one of them. `--match` is the bar.
-
-```
-$ node tools/simulate.mjs cribbage --vs=hard,easy --match --games=200
-
-=== cribbage: hard vs easy (2 seats, 200 matches, shipped clock) ===
-  hard     121 wins   60.5% of decisive matches   (mean final total 117.52)
-  easy      79 wins   39.5% of decisive matches   (mean final total 111.06)
-  ties: 0   unfinished: 0   rounds per match: 8.9
-```
-
-Recorded whichever way it came out, and it came out the right way: the search
-layer is worth about ten points of match win rate over the plain heuristic.
-That is a smaller edge than Hearts gets from its evaluator and a larger one
-than shedding gets, which is about what the genre suggests — a good deal of
-cribbage is the cards you were dealt, and the two decisions a hand actually
-contains (what to throw, and what to lay) are both shallow.
-
-Completion, at the same time:
-
-```
-$ node tools/simulate.mjs cribbage
-=== cribbage (2 seats, 1000 games) ===
-  completed: 1000  stalled: 0  errored: 0
-
-$ node tools/simulate.mjs cribbage --match --games=100
-=== cribbage (2 seats, 100 matches) ===
-  completed: 100  stalled: 0  errored: 0   avg rounds/match: 8.8
-```
-
-### Two bugs the harness found that no rule test would have
-
-**A count that reopened on an empty seat.** 23 games in the first thousand
-stalled with "no legal move for seat 1, phase play". Thirty-one and a go both
-close the count and open a new one on the seat after whoever closed it — and
-when that seat has run out of cards while the other still holds some, the turn
-landed on a player with nothing to play and the table stopped. Roughly one hand
-in forty-three, which is common enough to meet in an evening and rare enough
-that a forty-game bar could have missed it. `openNextCount` walks on to the
-next seat that still holds something; the round bar in `tests/simulate.test.js`
-is gated at 100% rather than floored because of it.
-
-**Card ids leaking one level down.** The protocol run refused every game:
-"seat 1 was sent clubs-8, which it may not see". Three separate causes, all the
-same mistake in different clothes:
-
-* the crib was scored where it lay, in a `visibility: 'none'` pile, and its ids
-  went out in the event that scored it. A card is revealed by MOVING it
-  somewhere everyone can see — which is also what the dealer physically does —
-  so the crib is turned into a `show` zone before it is counted.
-* `showScored` named the starter in a field called `starter`, and `starterCut`
-  named the cut card in a field called `card`. `eventsFor` filters an event's
-  top-level `cards` array and nothing else, so both sailed past it.
-* the score breakdown carried the cards that made each part, one level down
-  inside `parts[]`. Same gap.
-
-The last one is worth a note for whoever adds the sixth template: **the round
-boundary runs inside the same move as the hand's last scoring step**, so by the
-time a show's payload is delivered its cards have been shuffled into the next
-deal and the ids name somebody's fresh hand. Teaching `eventsFor` to walk
-nested structures would not have helped — post-redeal every one of those ids is
-invisible and would be stripped anyway. What ships is a breakdown of *what*
-scored and *how much*, with a count where the cards were. The cost is that a
-REMOTE client narrates "the crib is worth eight" without being able to light up
-the eight cards; a local table reads `state.events` directly and can. The
-honest fix is a show that is its own move rather than the tail of the last
-card, which is bigger than this issue was buying.
-
-### The board
-
-`seatCounters` with `kind: 'peg'` and three numbers — where the front peg is,
-where the back one was, how long the road is. `src/ui/counterTrack.js` draws it
-and knows nothing about cribbage; the set of kinds that render as a track is
-the platform's closed vocabulary, the same shape as `INTERACTION_MODES`. No
-keyframe animation anywhere on the component: the pegs move on a one-shot
-transition and then sit still, so there is nothing for `--arcade-pulse-count`
-to cap.
 ## Thirteen keeps its shape now, and the numbers say how much that is worth (#103)
 
 #102 shipped the `climbing` template with a bot that plays legally and badly.
@@ -849,6 +762,7 @@ has no notion of who is looking, so the count would publish a fact about a
 hidden hand in solo play — and read 0 for the same seat at a joined table,
 where the view ships a bare count. It wants a viewer-aware hook, which is a
 platform change and its own issue.
+
 ## Trump, a bid and bags — Team Spades (#105)
 
 The design doc listed `trump` as a trick-taking parameter (§13.1) and named
@@ -953,6 +867,313 @@ budget.
   looking" cannot be enforced; what is enforced is the entry condition (a side
   at least `blindNil.behind` points down) and the doubled stakes. A felt that
   wanted the ritual would have to bid before the deal.
+
+## Pinochle — a doubled deck, an auction in points, and a meld that scores (#106)
+
+The eighth pack, and the third thing `trick-taking` has grown rather than the
+sixth template. Three parameters carry all of it:
+
+| Declared | What it does |
+|---|---|
+| `rules.followSuit: "must-beat"` | follow the led suit AND beat the winning card if you hold one; void, trump, and over-trump when somebody already has |
+| `rules.bidding.unit: "points"` | the seats compete for ONE contract instead of each making their own — `increment`, `namesTrump`, and the last speaker stuck with the floor |
+| `rules.melds` | a declared meld vocabulary, whose presence creates the `meld` phase between the auction and the first lead |
+
+plus `scoring.roundScore: "meld-and-tricks"` and `scoring.tricks.lastTrick`.
+
+### The meld is a DECLARATION, and that decided the privacy question
+
+Contract rummy's meld leaves the hand. Pinochle's does not: you show the table
+a marriage, it is worth two, and you still have to win tricks with the king and
+the queen. So the phase is the PASS's shape (a simultaneous commit, `turn.seat`
+frozen, `actingSeats` answering per seat) with none of its consequences — no
+card changes zone, and the size is whatever the hand happens to hold, from
+nothing to the lot.
+
+**What is published is the record, not the cards.** `meld` is a public per-seat
+var carrying `{ points, melds: [{id, label, points, suit?}] }` and no card ids
+at all, which is what a player calls out at a table. The cards stay in a hand
+that is still `visibility: 'owner'`. That is not squeamishness — at a real
+table those cards genuinely are shown — it is that the platform's whole privacy
+invariant is "a hidden zone's ids do not reach another device", and the sweeps
+enforce it structurally. Publishing the ids trips `tests/view.test.js` and the
+per-move audit in `tools/simulate.mjs`, and it should: the same ids are in a
+hand nobody else may read for the rest of the round. Carving a per-pack
+exception into a security gate to be faithful to a flourish is the wrong trade.
+The reversible version if the felt ever wants the cards face up is a real
+`meld` ZONE with `visibility: 'all'` that the cards return from before the first
+lead — a bigger change, and one the declaration record does not block.
+
+The felt shows the number on every seat's badge (`seatCounters`, `kind: 'meld'`)
+with the meld names in the aria text, for every seat, open or minimized.
+
+### `commitPrompt`, so the second commit phase did not cost a sixth mode
+
+`pass` is the gesture for every simultaneous commit. What was Hearts-specific
+was the button: `passCards`, "Pass across", exactly `rules.passing.count`. Those
+three moved onto a template hook (`src/templates/CONTRACT.md`), so a meld
+commits at any size — zero included, which the platform now handles — under a
+button that says "Declare". Adding a mode instead would have meant teaching six
+downstream surfaces a new string to render an identical gesture.
+
+### The auction, and the two numbers in it that were measured
+
+Bids run 100 to 300 in tens; a seat passes with 0; a bid must beat the standing
+one; the winner names trump (`trumpSuit`, the `trump: "chosen"` hook #105 left
+unfilled). `pendingChoice` asks twice — the number, then the suit — which is the
+first time any template has used the platform's Ask LOOP for real.
+
+**`TRICK_CONFIDENCE = 0.55` is measured, and the honest part of this pack.**
+`expectedTricks` prices a card by its distance from the top of the ladder, which
+over-counts badly on a deck with two of everything: a rank step is eight cards
+rather than four, and "I hold an ace, that is a trick" is wrong twice over when
+there are eight aces. Taken at face value the four seats counted about twice the
+twelve tricks that exist, bid 228 into a 250-point deck, and were set on 98% of
+hands. Damped:
+
+| damping | winning bid | contract made | hands nobody opened |
+|---|---|---|---|
+| 0.75 | 170 | 18% | 0% |
+| 0.65 | 150 | 47% | 0% |
+| **0.55** | **130** | **72%** | **36%** |
+| 0.45 | 106 | 87% | 74% |
+
+(160-hand samples per row; the shipped 0.55 row re-measured over 400 hands at
+the shipped floor and ceiling — mean bid 130, median 130, highest 230, contract
+made 72%, and the bidding side averaging 75 a hand against the other side's
+118.)
+
+The right fix one day is a trick count that reads the deck's own copy count.
+That is a change to a function Spades depends on and was measured against, so it
+was not made here.
+
+**The bid floor is 100, and the classic minimum is 250.** A floor these bots
+cannot clear is a floor that makes every hand the stuck-dealer game — at 250
+nobody opened and every contract was set. 100 is where the auction is a
+contest: somebody volunteers on about two hands in three, and makes the
+contract about seven times in ten. It is one line of the manifest to raise when
+the play improves.
+
+**The ceiling is 300 for the felt's sake, and it is a real cap too.** At 500 the
+bid dialog was 42 buttons and filled the screen; nothing in 200 measured hands
+bid above 230, and a side reaching 300 needs 250 in cards plus fifty of meld.
+
+### The evaluator cashed its aces, and the measurement is what found it
+
+The first cut of `evaluatePointsContract` made the bot WORSE than no evaluator
+at all: `medium` — which is the one-ply lookahead over it, and the thing this
+issue is answerable for — took **22.5% of decisive matches** against `easy`.
+Since a bid is scored by `botHeuristic` at both difficulties, that gap was
+entirely in the play.
+
+The diagnosis, and it is a mistake worth writing down because the same shape
+will recur in any pack where the cards carry the points. Every term in the
+first cut was about points that had **already moved** — melded, banked, or
+provisionally won on the table. Within a single trick that is blind in one very
+specific way: whichever card I win with, the trick lands in the same pile, so
+the only difference the banked total can see is the value of the card I spent —
+and an ace therefore scored eleven better than a ten *for taking the identical
+trick*. The bot cashed its aces at the first opportunity and had nothing left
+to take the counters with at the end of the hand.
+
+Two things were tried first and both were wrong, which is why they are recorded
+rather than quietly dropped:
+
+- **Discounting the trick on the table once per seat still to play** (`holds`
+  raised to the number of seats behind you) made it *worse*, 41.4% → 37.5%.
+  Over-confidence about a half-won trick was not the problem.
+- **Reshaping the contract cliff** — dropping it, and replacing it with the
+  normalised shortfall `evaluateContract` uses — changed the outcome *not at
+  all*, byte for byte over 300 rounds. That is not a null result, it is a fact
+  about a two-sided game: within one trick a side's gain and its rival's are
+  perfectly anti-correlated, so **every positive-weighted combination of the
+  two has the same argmax**. The cliff can only change a decision at a table
+  with three or more sides.
+
+The fix is the missing term: **what is still in this seat's own hand.** A card
+kept can still take a trick, and a high card can take a trick full of somebody
+else's counters — so a held card is worth its face value plus its rank
+(`HELD_PRIZE_WORTH = 1`, `HELD_RANK_WORTH = 4`, both measured on a grid).
+"Win with the cheapest card that wins" falls out of that rather than being
+written as a rule. It reads only the seat's own hand, never the partner's.
+
+| medium vs easy | before | after |
+|---|---|---|
+| decisive rounds (200, same seeds) | 41.1% | 46.5% |
+| decisive rounds (600) | — | 47.7% (mean round score 47.96 against easy's 47.10) |
+| decisive **matches** (80) | 22.5% | **47.5%** (mean final total 420.25 against 413.94) |
+
+So `medium` is at parity with `easy` at this pack rather than behind it — a
+weaker claim than Spades' nine-in-ten, and an honest one. Pinochle is a harder
+game for a one-ply evaluator than Spades is: the currency is points rather than
+tricks, so a position's value depends on cards nobody can see, and the
+difference between a good and a bad discard is often only visible three tricks
+later.
+
+### Measured
+
+```
+node tools/simulate.mjs pinochle --games=500      500/500 rounds, 0 stalled, 0 errored, 56.0 moves/game
+node tools/simulate.mjs pinochle --games=200 --match
+                                                  200/200 matches, 8.9 rounds/match
+pinochle: medium vs easy (4 seats, 600 rounds)    medium 47.7% of decisive rounds (mean 47.96)
+                                                  easy   52.3%                    (mean 47.10)
+pinochle: medium vs easy (4 seats, 80 matches)    medium 47.5% of decisive matches (mean total 420.25)
+                                                  easy   52.5%                     (mean total 413.94)
+pinochle: hard vs easy (4 seats, 200 rounds)      hard   50.5% of decisive rounds (mean 44.13)
+                                                  easy   49.5%                    (mean 45.42)
+pinochle: hard vs easy (4 seats, 8 matches)       hard   37.5% of decisive matches (mean total 408.94)
+                                                  easy   62.5%                     (mean total 415.06)
+```
+
+**That last line is eight matches and proves nothing** — three wins against
+five, on a sample whose standard error is about seventeen points. It is
+recorded because it was run, not because it says anything. A `hard` MATCH run
+at a useful size did not fit: 24 matches was still going after twenty-five
+minutes and was killed unfinished, which is a fact about the Monte Carlo layer's
+cost at a twelve-trick four-seat game rather than about this pack. The
+round-level bar above it (200 rounds) is the number to read for `hard`, and
+`--vs --match` at a size worth quoting is the medium-vs-easy pair.
+
+**`hard` is at parity here rather than losing, and that is the evaluator's doing
+rather than a contradiction of #114.** Before the held-in-hand term it took
+44.0% of decisive rounds — the same shape as the Spades finding filed as #114,
+where the rollout policy is the cheap heuristic and plays out a hand nobody is
+trying to win. What changed is that a depth-limited rollout ends at
+`evaluateState`, so a better evaluator improves `hard` as well as `medium`. The
+underlying defect #114 names is untouched and was deliberately not worked on
+here: the rollout POLICY is still the cheap heuristic, and the fix for that is a
+policy that consults `evaluateState`, not a bigger budget and not anything in
+this pack.
+
+### Rule readings written down rather than left to be discovered
+
+- **The last trick is worth 10, not 1.** The issue said "cards taken + last
+  trick 1" and also "the classic 250-point deck". Those disagree: A 11 · 10 10 ·
+  K 4 · Q 3 · J 2 · 9 0 across a doubled deck is 240, and it is the last trick's
+  ten that makes the 250 the deck is named for. The checkable claim won. It is
+  declared (`scoring.tricks.lastTrick`), so a table that plays it differently
+  changes one number.
+- **A card may be counted in melds of different GROUPS but never twice in one.**
+  This is the classic rule stated exactly ("not twice in melds of the same
+  class"), and the pack's grouping is what makes the two familiar consequences
+  fall out: the queen of spades counts in a marriage AND in a pinochle
+  (different groups), while the trump king-queen inside a run is not paid for
+  again as a royal marriage (the pack puts `run` and both marriages in
+  `marriage`). It also makes the arithmetic decompose group by group instead of
+  needing a search.
+- **One circuit of bidding, not an auction that goes round until three pass.**
+  Each seat speaks once, in order, hearing everything said before it. A seat
+  with a monster hand therefore gets one chance to name its number rather than
+  climbing a ladder against a rival. The multi-round auction is a bigger change
+  to the phase — it needs a "still in" state per seat and a variable number of
+  turns — and the single circuit is the smaller reversible choice.
+- **The last seat may not pass out an empty auction.** Every table has this
+  rule; here it is also load-bearing, because a passing seat names no trump.
+  Letting it pass left one deal in twenty at the first lead with `trumpSuit`
+  null (caught by the new meld bar in `tests/simulate.test.js`, not by any rule
+  test).
+- **The non-bidding side always banks what it made**, set or not. It promised
+  nothing and cannot fail. The consequence is measurable and is the real
+  incentive shape of the game: over 200 hands the bidding side averaged 73 a
+  hand and the other side 118.
+
+### A gate that only the browser was enforcing
+
+`manifest.deck` is a filename the FELT fetches by name
+(`src/ui/packSource.js`), while every headless caller reads
+`packs/<id>/deck.json` unconditionally and never looks at the field. So a pack
+naming its deck by the deck's own id passed the whole suite and failed on the
+felt with "Cannot read properties of undefined (reading 'cards')" and no game.
+Pinochle did exactly that. `validatePackFiles` (`tools/pack-test.mjs`) now
+checks the field against what is on disk in both directions.
+## Cribbage, and a board that is not a zone (#107)
+
+The fifth template, and the second test of `CONTRACT.md`'s "one file plus one
+registry entry" claim. What it cost is written up in that file rather than here;
+this is what the measurements said.
+
+### The bot, measured the only way a cribbage bot can be
+
+A cribbage match is first to 121 and takes about nine hands, so counting round
+wins measures almost nothing — a hand is ten moves and the pone leads every
+one of them. `--match` is the bar.
+
+```
+$ node tools/simulate.mjs cribbage --vs=hard,easy --match --games=200
+
+=== cribbage: hard vs easy (2 seats, 200 matches, shipped clock) ===
+  hard     121 wins   60.5% of decisive matches   (mean final total 117.52)
+  easy      79 wins   39.5% of decisive matches   (mean final total 111.06)
+  ties: 0   unfinished: 0   rounds per match: 8.9
+```
+
+Recorded whichever way it came out, and it came out the right way: the search
+layer is worth about ten points of match win rate over the plain heuristic.
+That is a smaller edge than Hearts gets from its evaluator and a larger one
+than shedding gets, which is about what the genre suggests — a good deal of
+cribbage is the cards you were dealt, and the two decisions a hand actually
+contains (what to throw, and what to lay) are both shallow.
+
+Completion, at the same time:
+
+```
+$ node tools/simulate.mjs cribbage
+=== cribbage (2 seats, 1000 games) ===
+  completed: 1000  stalled: 0  errored: 0
+
+$ node tools/simulate.mjs cribbage --match --games=100
+=== cribbage (2 seats, 100 matches) ===
+  completed: 100  stalled: 0  errored: 0   avg rounds/match: 8.8
+```
+
+### Two bugs the harness found that no rule test would have
+
+**A count that reopened on an empty seat.** 23 games in the first thousand
+stalled with "no legal move for seat 1, phase play". Thirty-one and a go both
+close the count and open a new one on the seat after whoever closed it — and
+when that seat has run out of cards while the other still holds some, the turn
+landed on a player with nothing to play and the table stopped. Roughly one hand
+in forty-three, which is common enough to meet in an evening and rare enough
+that a forty-game bar could have missed it. `openNextCount` walks on to the
+next seat that still holds something; the round bar in `tests/simulate.test.js`
+is gated at 100% rather than floored because of it.
+
+**Card ids leaking one level down.** The protocol run refused every game:
+"seat 1 was sent clubs-8, which it may not see". Three separate causes, all the
+same mistake in different clothes:
+
+* the crib was scored where it lay, in a `visibility: 'none'` pile, and its ids
+  went out in the event that scored it. A card is revealed by MOVING it
+  somewhere everyone can see — which is also what the dealer physically does —
+  so the crib is turned into a `show` zone before it is counted.
+* `showScored` named the starter in a field called `starter`, and `starterCut`
+  named the cut card in a field called `card`. `eventsFor` filters an event's
+  top-level `cards` array and nothing else, so both sailed past it.
+* the score breakdown carried the cards that made each part, one level down
+  inside `parts[]`. Same gap.
+
+The last one is worth a note for whoever adds the sixth template: **the round
+boundary runs inside the same move as the hand's last scoring step**, so by the
+time a show's payload is delivered its cards have been shuffled into the next
+deal and the ids name somebody's fresh hand. Teaching `eventsFor` to walk
+nested structures would not have helped — post-redeal every one of those ids is
+invisible and would be stripped anyway. What ships is a breakdown of *what*
+scored and *how much*, with a count where the cards were. The cost is that a
+REMOTE client narrates "the crib is worth eight" without being able to light up
+the eight cards; a local table reads `state.events` directly and can. The
+honest fix is a show that is its own move rather than the tail of the last
+card, which is bigger than this issue was buying.
+
+### The board
+
+`seatCounters` with `kind: 'peg'` and three numbers — where the front peg is,
+where the back one was, how long the road is. `src/ui/counterTrack.js` draws it
+and knows nothing about cribbage; the set of kinds that render as a track is
+the platform's closed vocabulary, the same shape as `INTERACTION_MODES`. No
+keyframe animation anywhere on the component: the pegs move on a one-shot
+transition and then sit still, so there is nothing for `--arcade-pulse-count`
+to cap.
 
 ## Next steps
 

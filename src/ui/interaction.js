@@ -415,13 +415,25 @@ export const ACTION_LABEL_MAX_CHARS = 11;
  */
 export function commitPromptFor(state, seat, moves = []) {
   const declared = state.pack.template.commitPrompt?.(makeCtx(state), seat) || null;
-  const commit = moves.find((m) => Array.isArray(m.cards) && m.cards.length > 0) || null;
-  const count = declared?.count ?? commit?.cards.length ?? 0;
+  // The move the button makes. A template names it when it must — a commit of
+  // ZERO cards has no card-carrying move to find it by (Pinochle's meld) — and
+  // otherwise it is read off the enumeration, which has already said what the
+  // commit is called by offering one. Either way the button exists only while
+  // the enumerator is offering that move: a seat that has committed gets none.
+  const carrying = moves.find((m) => Array.isArray(m.cards) && m.cards.length > 0)
+    || moves.find((m) => Array.isArray(m.cards)) || null;
+  const named = declared?.moveType ?? carrying?.type ?? null;
+  const moveType = named && moves.some((m) => m.type === named) ? named : null;
+  // HOW MANY: `count` is the exact-N shape (a pass, a crib); `min`/`max` the
+  // ranged one (a meld). A template gives one or the other; the reader gives
+  // both back so the arming rule below is one comparison.
+  const count = declared?.count ?? carrying?.cards.length ?? 0;
+  const min = Number.isInteger(declared?.min) ? declared.min : count;
+  const max = Number.isInteger(declared?.max) ? declared.max : count;
   return {
-    count,
-    moveType: commit?.type ?? null,
+    count, min, max, moveType,
     action: declared?.action ?? 'Commit',
-    staging: declared?.staging ?? `Pick ${count}`,
+    staging: declared?.staging ?? (min === max ? `Pick ${count}` : 'Pick your cards'),
     waiting: declared?.waiting ?? 'Waiting…',
   };
 }
@@ -539,11 +551,18 @@ export function buildUiModel(state, { seat, moves = [], acts = false, selection 
     const prompt = commitPromptFor(state, seat, moves);
     for (const id of hand) ui.handSelectable.add(id);
     ui.handMulti = true;
-    // `moveType` null means this seat has already committed and the enumerator
-    // is offering nothing — so there is no button, however many cards are
-    // selected. That is a stricter gate than the old one, which built a
-    // `passCards` move out of a literal and would have offered a second pass.
-    if (prompt.moveType && prompt.count > 0 && sel.length === prompt.count && selection.from === handAddr) {
+    // `moveType` null means this seat has nothing to commit — already committed,
+    // or the enumerator offers no such move — so there is no button, however
+    // many cards are selected. That is a stricter gate than the old one, which
+    // built a `passCards` move out of a literal and would have offered a second
+    // pass.
+    //
+    // AN EMPTY SELECTION IS A REAL ANSWER WHEN THE FLOOR IS ZERO. Pinochle's
+    // meld is committed at any size, nothing at all included — a hand with no
+    // meld in it still has to say so — and with nothing picked up there is no
+    // `selection.from` to check, so the floor is the whole test there (#106).
+    const mine = !sel.length ? prompt.min === 0 : selection.from === handAddr;
+    if (prompt.moveType && mine && sel.length >= prompt.min && sel.length <= prompt.max) {
       ui.action = {
         label: prompt.action,
         makeMove: () => ({ actor: seat, type: prompt.moveType, cards: sel.slice() }),
@@ -880,34 +899,6 @@ export function dropCandidates(state, { seat, moves = [], source }) {
   // is the same answer for a stronger reason: no card is part of the move at
   // all.
   if (mode === 'pass' || mode === 'rummy-draw' || mode === 'bid') return [];
-
-  // A DRAG IS A ONE-CARD COMMIT. Dragging is a gesture for one card, and a
-  // combination of several is what the button is for — so the drop is offered
-  // only where that single card is a legal play on its own, which is the
-  // commonest move in a climbing game and the one worst served by having to
-  // tap twice. Asked of the same live verdict the button uses.
-  if (mode === 'combination') {
-    if ((source.from ?? handAddr) !== handAddr) return [];
-    if (!selectionLegality(state, seat, [source.cardId]).legal) return [];
-    const move = { actor: seat, type: 'playCard', cards: [source.cardId] };
-    const address = implicitLandingZone(state, move);
-    if (address) out.push({ kind: 'zone', address, move });
-    return out;
-  }
-
-  // A DRAG IS A ONE-CARD COMMIT. Dragging is a gesture for one card, and a
-  // combination of several is what the button is for — so the drop is offered
-  // only where that single card is a legal play on its own, which is the
-  // commonest move in a climbing game and the one worst served by having to
-  // tap twice. Asked of the same live verdict the button uses.
-  if (mode === 'combination') {
-    if ((source.from ?? handAddr) !== handAddr) return [];
-    if (!selectionLegality(state, seat, [source.cardId]).legal) return [];
-    const move = { actor: seat, type: 'playCard', cards: [source.cardId] };
-    const address = implicitLandingZone(state, move);
-    if (address) out.push({ kind: 'zone', address, move });
-    return out;
-  }
 
   // A DRAG IS A ONE-CARD COMMIT. Dragging is a gesture for one card, and a
   // combination of several is what the button is for — so the drop is offered

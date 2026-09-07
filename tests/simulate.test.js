@@ -37,6 +37,11 @@ import assert from "node:assert";
 import {
   simulatePack, simulateMatches, simulateProtocolPack, availableVariantIds,
 } from "../tools/simulate.mjs";
+import { loadPackFromDisk } from "../tools/pack-test.mjs";
+import { createState } from "../src/engine/state.js";
+import { makeCtx } from "../src/engine/context.js";
+import { applyMove } from "../src/engine/movePipeline.js";
+import { chooseBotMove } from "../src/engine/bot.js";
 
 // Small enough to keep `npm test` quick, large enough that a deadlock in any
 // ordinary line of play shows up. The full 1000-game run stays a manual tool.
@@ -95,7 +100,14 @@ const PROTOCOL_GAMES_DEFAULT = 12;
 // first move in the repo that carries a NUMBER as its whole content
 // (`choice: {bid: n}`), and a wire validator that dropped it would leave the
 // table bidding zero and playing on regardless (#105).
-for (const packId of ["crazy-eights", "hearts", "wildfire", "stockpile", "milestones", "team-spades", "thirteen"]) {
+//
+// pinochle is here for two more move shapes the wire had never carried: a bid
+// whose choice holds a NUMBER AND A STRING together (`{bid, trump}`), and
+// `declareMeld`, which ships a list of card ids that never change zone. A
+// validator that dropped either would leave the table playing in no trump and
+// melding nothing, with every hand still completing cleanly.
+for (const packId of ["crazy-eights", "hearts", "wildfire", "stockpile", "milestones", "team-spades",
+  "thirteen", "pinochle"]) {
   test(`${packId} plays the same over the protocol as it does in one process`, async () => {
     const games = PROTOCOL_GAMES_DEFAULT;
     const solo = await simulatePack(packId, games, { variants: [] });
@@ -216,6 +228,95 @@ test("Thirteen matches finish, redeal and all", async () => {
   assert.strictEqual(errored, 0, `thirteen: ${errored} matches threw`);
   assert.strictEqual(stalled, 0, `thirteen: ${stalled} matches live-locked past round one`);
   assert.strictEqual(completed, MATCHES, `thirteen: only ${completed}/${MATCHES} matches finished`);
+});
+
+/* ------------------------------------------------------------------ *
+ * Pinochle (#106)
+ * ------------------------------------------------------------------ */
+
+// THREE BARS, AND THE MIDDLE ONE IS THE NEW KIND.
+//
+// The round bar is the same rules-completeness claim Spades gets: twelve
+// tricks, one card each, nobody may decline, so a hand cannot fail to end.
+// What it cannot see is either of the two phases in front of it — a hand
+// completes whatever was bid and whatever was melded.
+//
+// The MELD bar is what catches a declaration phase that never closes. It is a
+// simultaneous commit like Hearts' pass, and the failure mode is the same
+// shape: a seat whose commit is not recorded leaves `actingSeats` offering it
+// forever and the hand stalls before a card is led. That is a stall, so the
+// round bar would catch it — but only as "0/40 completed", with nothing to say
+// which of the three phases hung. Asserting that every hand reaches `play`
+// with four melds on the sheet says so directly.
+//
+// The match bar is where the AUCTION is answerable for itself, exactly as it
+// is for Spades: a table that bids what it cannot make loses the whole bid
+// every hand, and a table that never opens hands every contract to whoever
+// speaks last. Either one still completes every round.
+test("Pinochle bids, melds, plays and finishes every hand", async () => {
+  const { completed, stalled, errored } = await simulatePack("pinochle", GAMES, { variants: [] });
+  assert.strictEqual(stalled, 0, `pinochle: ${stalled} stalled rounds`);
+  assert.strictEqual(errored, 0, `pinochle: ${errored} rounds threw`);
+  assert.strictEqual(completed, GAMES, `pinochle: only ${completed}/${GAMES} rounds completed`);
+});
+
+test("every Pinochle hand gets past the auction and the meld with a trump and four declarations", async () => {
+  const pack = await loadPackFromDisk("pinochle");
+  for (let game = 0; game < 20; game++) {
+    const state = createState({ pack, seats: 4, seed: `meld-bar:${game}` });
+    pack.template.setup(makeCtx(state));
+
+    let guard = 0;
+    while (state.turn.phase !== "play" && guard++ < 200) {
+      const ctx = makeCtx(state);
+      const acting = pack.template.actingSeats(ctx);
+      let move = null;
+      for (const seat of acting) {
+        move = chooseBotMove(state, seat);
+        if (move) break;
+      }
+      assert.ok(move, `pinochle game ${game}: no legal move in phase ${state.turn.phase}`);
+      applyMove(state, move);
+    }
+    assert.strictEqual(state.turn.phase, "play",
+      `pinochle game ${game}: never reached the first lead — stuck in ${state.turn.phase}`);
+
+    // The auction settled on somebody, and it named a suit the deck holds.
+    const bids = state.playerVars.map((v) => v.bid ?? 0);
+    assert.ok(Math.max(...bids) >= 100,
+      `pinochle game ${game}: nobody holds the contract — bids were ${bids.join(", ")}`);
+    assert.ok(["clubs", "diamonds", "hearts", "spades"].includes(state.vars.trumpSuit),
+      `pinochle game ${game}: trump is "${state.vars.trumpSuit}"`);
+
+    // Every seat declared, the record is public, and NO CARD LEFT ANY HAND.
+    for (let seat = 0; seat < 4; seat++) {
+      const meld = state.playerVars[seat].meld;
+      assert.ok(meld && Number.isFinite(meld.points),
+        `pinochle game ${game}: seat ${seat} reached play with no meld on the sheet`);
+      assert.strictEqual(state.playerVars[seat].__pendingMeld, undefined,
+        `pinochle game ${game}: seat ${seat} still has a commit pending after the phase closed`);
+      assert.strictEqual(state.zones.count(`hand.${seat}`), 12,
+        `pinochle game ${game}: seat ${seat} melded cards out of its hand — a meld is scored, not laid down`);
+    }
+  }
+});
+
+test("a Pinochle match is bid to a thousand, not drifted to a cap", async () => {
+  const MATCHES = 10;
+  const { completed, stalled, errored } = await simulateMatches("pinochle", MATCHES, { seats: 4, variants: [] });
+  assert.strictEqual(errored, 0, `pinochle: ${errored} matches threw`);
+  assert.strictEqual(stalled, 0,
+    `pinochle: ${stalled} matches never reached the target — a table that is set on every hand `
+    + "loses the bid it made and the score goes nowhere");
+  assert.strictEqual(completed, MATCHES, `pinochle: only ${completed}/${MATCHES} matches finished`);
+});
+
+test("Pinochle's simple-counters house rule is the same 250 and the same complete hands", async () => {
+  for (const id of await availableVariantIds("pinochle")) {
+    const { completed, stalled, errored } = await simulatePack("pinochle", GAMES, { variants: [id] });
+    assert.strictEqual(stalled + errored, 0, `pinochle + ${id}: ${stalled} stalled, ${errored} threw`);
+    assert.strictEqual(completed, GAMES, `pinochle + ${id}: only ${completed}/${GAMES} completed`);
+  }
 });
 
 test("Thirteen is rules-complete short-handed too", async () => {

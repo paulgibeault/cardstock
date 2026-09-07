@@ -222,6 +222,11 @@ const NOT_ANIMATED = {
   // badge (trick-taking's seatCounters) — so the still felt here is the whole
   // of the animation, not a gap in it.
   bid: "a number, not a card — nothing leaves any zone",
+  // A declaration SHOWS cards and moves none of them: the meld is scored and
+  // every card stays in the hand it was dealt to. There is no zone change to
+  // fly, and the four seats commit at once — what the felt shows instead is the
+  // points, on each seat's own badge (trick-taking's seatCounters).
+  declareMeld: "a meld is scored, not laid down — no card leaves any zone",
 };
 
 test("every move type the source can build is either animated or deliberately not", () => {

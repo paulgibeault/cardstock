@@ -551,3 +551,233 @@ export function wildHitValues(ctx, group, kind, cardId) {
   }
   return candidates.filter((value) => resolveHit(ctx, group, kind, [cardId], { [cardId]: { [attr]: value } }).ok);
 }
+
+/* ------------------------------------------------------------------ *
+ * DECLARED MELDS — a meld that SCORES without ever being laid down
+ * ------------------------------------------------------------------ *
+ *
+ * Everything above this line is contract rummy's shape of meld: a group of
+ * cards that LEAVES the hand, is checked once, and then sits on the table
+ * accepting hits. Pinochle's is the other shape entirely. A meld there is a
+ * DECLARATION — you show the table a marriage, it is worth two, and you keep
+ * the king and the queen and have to win tricks with them afterwards. Nothing
+ * moves; the only thing that happens is that a number goes on the sheet.
+ *
+ * So none of `resolveMeld` fits, and none of it is reused. What IS reused is
+ * the two shapes at the top of this file (`groupByRank`, `rankWindow`), which
+ * is the whole reason this lives here rather than in a file of its own: a run
+ * is a rank window on the pack's ladder in either genre, and Pinochle's ladder
+ * is what makes A-10-K-Q-J one — `9 J Q K 10 A` puts those five ranks in the
+ * top five slots, consecutively, which they are on no other deck in the repo.
+ *
+ * THE TABLE IS THE PACK'S, NOT THIS FILE'S (`rules.melds`). Marriage 2, royal
+ * marriage 4, pinochle 4, run 15, aces around 10 — every one of those numbers
+ * is Pinochle's arithmetic, and a template that hardcoded them would be pack
+ * knowledge in the platform. What is written here is the GRAMMAR: a meld is a
+ * list of cards, some of whose suits are named and some of which are filled in
+ * relative to the trump suit, worth some number of points, in some group.
+ *
+ * A CARD MAY COUNT IN MELDS OF DIFFERENT GROUPS BUT NEVER TWICE IN ONE, which
+ * is the classic rule stated exactly ("not twice in melds of the same class").
+ * It is also what makes the arithmetic tractable: the choice decomposes group
+ * by group, so the queen of spades can be in a marriage and in a pinochle
+ * (different groups) while the trump king-queen cannot be both a royal
+ * marriage and part of the run — the pack puts both of those in `marriage`.
+ */
+
+/** The suits the deck actually holds, in deck order. Memoised on the pack. */
+const PACK_SUITS = new WeakMap();
+
+function suitsOf(ctx) {
+  let suits = PACK_SUITS.get(ctx.pack);
+  if (!suits) {
+    suits = distinctValues(ctx.pack.cardsById, 'suit');
+    PACK_SUITS.set(ctx.pack, suits);
+  }
+  return suits;
+}
+
+/** `{ rank, suit }` as one bucket key. Both are pack strings; neither is a card id. */
+function slotKey(rank, suit) {
+  return `${suit} ${rank}`;
+}
+
+/**
+ * One declared meld, made concrete against a trump suit: the exact list of
+ * `{rank, suit}` slots it needs, once per suit the declaration could mean.
+ *
+ * `suits` is the only clever part and it is five words long: 'named' (the
+ * entries carry their own suits — a pinochle is the queen of SPADES with the
+ * jack of DIAMONDS), 'same' / 'same-not-trump' / 'trump' (one suit, chosen,
+ * unrestricted or restricted), and 'each' (the list once per suit, which is
+ * what "aces around" means).
+ */
+function requirementsOf(def, suits, trump) {
+  const mode = def.suits || 'named';
+  const fill = (suit) => def.cards.map((c) => ({
+    rank: String(c.rank),
+    suit: c.suit === undefined || c.suit === null ? suit : c.suit,
+  }));
+
+  if (mode === 'named') return [{ suit: null, slots: fill(null) }];
+  if (mode === 'trump') return trump ? [{ suit: trump, slots: fill(trump) }] : [];
+  if (mode === 'each') return [{ suit: null, slots: suits.flatMap((s) => fill(s)) }];
+  const usable = mode === 'same-not-trump' ? suits.filter((s) => s !== trump) : suits;
+  return usable.map((suit) => ({ suit, slots: fill(suit) }));
+}
+
+/**
+ * IS A SAME-SUIT DECLARATION OF THREE OR MORE ACTUALLY A RUN?
+ *
+ * The one rule this file imposes on a pack's own table, and it earns its place:
+ * "run in trump, 15 points" is the biggest number in Pinochle's vocabulary, and
+ * a vocabulary that could spell it `A K Q 9` — four cards of a suit with a hole
+ * in it — would be paying fifteen for a shape nobody at a table would accept.
+ * `rankWindow` is the same function contract rummy and climbing check a run
+ * with, asked over the pack's declared ladder (#101), so the three genres agree
+ * about what consecutive means.
+ *
+ * Only same-suit lists of three or more are asked: a marriage is two cards and
+ * is not claiming to be a sequence, and an "around" spans every suit at once.
+ */
+function runIsBroken(ladder, slots) {
+  if (slots.length < 3) return false;
+  const suit = slots[0].suit;
+  if (slots.some((s) => s.suit !== suit)) return false;
+  return !rankWindow(slots.map((s) => rankIndexOf(ladder, s.rank))).ok;
+}
+
+/**
+ * Every way `slots` can be filled from `available` — a Map of slot key to the
+ * card ids sitting in it — as disjoint instances, most-obvious first.
+ *
+ * A DOUBLE DECK IS WHY THIS COUNTS RATHER THAN MATCHES. Two kings and two
+ * queens of a suit are two marriages, and the second is worth its two points as
+ * much as the first; a detector that answered yes-or-no would have scored half
+ * of what the hand held.
+ */
+function instancesOf(available, slots) {
+  const needed = new Map();
+  for (const slot of slots) {
+    const key = slotKey(slot.rank, slot.suit);
+    needed.set(key, (needed.get(key) || 0) + 1);
+  }
+  let copies = Infinity;
+  for (const [key, count] of needed) {
+    copies = Math.min(copies, Math.floor((available.get(key)?.length ?? 0) / count));
+  }
+  if (!Number.isFinite(copies) || copies <= 0) return [];
+
+  const out = [];
+  const taken = new Map();
+  for (let copy = 0; copy < copies; copy++) {
+    const cards = [];
+    for (const [key, count] of needed) {
+      const from = taken.get(key) || 0;
+      cards.push(...available.get(key).slice(from, from + count));
+      taken.set(key, from + count);
+    }
+    out.push(cards);
+  }
+  return out;
+}
+
+/**
+ * WHAT THIS SELECTION OF CARDS IS WORTH, against the pack's declared table.
+ *
+ * @param cardIds  the cards being declared — instance ids, so `spades-Q#2` is a
+ *                 different card from `spades-Q`, and a hand holding both plus
+ *                 both jacks of diamonds has a DOUBLE pinochle rather than a
+ *                 single one counted twice.
+ * @param trump    the round's trump suit, or null before one is named.
+ * @returns { points, melds: [{ id, label, points, suit? }], used }
+ *
+ * `melds` CARRIES NO CARD IDS, and that is deliberate rather than incidental.
+ * What every seat is told is WHAT was melded and for how much — which is what a
+ * player calls out at a table — and that record is published in a public
+ * per-seat var. The cards themselves stay in a hand that is still
+ * `visibility: 'owner'`, so publishing their ids would put another seat's cards
+ * on the wire and the leak sweeps (tests/view.test.js, tools/simulate.mjs)
+ * would be right to fail it. `used` is for the caller that has to know which
+ * cards were spent; it is never published.
+ */
+export function detectDeclaredMelds(ctx, cardIds, trump = null) {
+  const defs = ctx.rules.melds;
+  const empty = { points: 0, melds: [], used: [] };
+  if (!Array.isArray(defs) || !defs.length || !Array.isArray(cardIds) || !cardIds.length) return empty;
+
+  const ladder = rankLadderOf(ctx.pack);
+  const suits = suitsOf(ctx);
+
+  // Bucketed by rank first — `groupByRank` is the shared shape, and it is what
+  // makes "how many queens of spades are in this selection" a lookup rather
+  // than a scan of the whole selection per candidate meld.
+  const decorated = [];
+  for (const id of cardIds) {
+    const card = ctx.cardById(id);
+    if (card) decorated.push({ rank: card.rank, suit: card.suit, id });
+  }
+  const available = new Map();
+  for (const [rank, group] of groupByRank(decorated)) {
+    for (const entry of group) {
+      const key = slotKey(rank, entry.suit);
+      if (!available.has(key)) available.set(key, []);
+      available.get(key).push(entry.id);
+    }
+  }
+
+  // Every candidate instance of every declared meld, before the groups fight
+  // over the cards.
+  const candidates = [];
+  defs.forEach((def, order) => {
+    for (const requirement of requirementsOf(def, suits, trump)) {
+      if (runIsBroken(ladder, requirement.slots)) continue;
+      for (const cards of instancesOf(available, requirement.slots)) {
+        candidates.push({
+          id: def.id,
+          label: def.label,
+          points: Number(def.points) || 0,
+          group: def.group ?? def.id,
+          suit: requirement.suit,
+          order,
+          cards,
+        });
+      }
+    }
+  });
+
+  // THE CHOICE DECOMPOSES BY GROUP, which is the whole benefit of stating the
+  // classic rule as one: melds in different groups never compete, so each group
+  // is settled on its own against its own cards. Within one, dearest first and
+  // take it if its cards are still free — a double pinochle (30) is taken over
+  // the two singles (8) it is made of, and the run (15) over the royal marriage
+  // (4) inside it, which is exactly the table's own ordering.
+  const byGroup = new Map();
+  for (const candidate of candidates) {
+    if (!byGroup.has(candidate.group)) byGroup.set(candidate.group, []);
+    byGroup.get(candidate.group).push(candidate);
+  }
+
+  const chosen = [];
+  for (const group of byGroup.values()) {
+    group.sort((a, b) => b.points - a.points || a.cards.length - b.cards.length || a.order - b.order);
+    const spent = new Set();
+    for (const candidate of group) {
+      if (candidate.cards.some((id) => spent.has(id))) continue;
+      for (const id of candidate.cards) spent.add(id);
+      chosen.push(candidate);
+    }
+  }
+
+  chosen.sort((a, b) => b.points - a.points || a.order - b.order);
+  const used = new Set();
+  for (const candidate of chosen) for (const id of candidate.cards) used.add(id);
+
+  return {
+    points: chosen.reduce((sum, c) => sum + c.points, 0),
+    melds: chosen.map((c) => (c.suit
+      ? { id: c.id, label: c.label, points: c.points, suit: c.suit }
+      : { id: c.id, label: c.label, points: c.points })),
+    used: [...used],
+  };
+}

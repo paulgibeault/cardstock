@@ -1,0 +1,365 @@
+{
+  "pack": "pinochle",
+  "tests": [
+    {
+      "name": "the ten beats the king",
+      "setup": {
+        "seats": 4,
+        "turn": { "seat": 3, "phase": "play" },
+        "zones": {
+          "trick": ["clubs-K", "clubs-9", "clubs-10"],
+          "hand.0": ["diamonds-9"],
+          "hand.1": ["diamonds-J"],
+          "hand.2": ["diamonds-Q"],
+          "hand.3": ["clubs-9#2"]
+        },
+        "vars": { "led": "clubs", "leader": 0, "trumpSuit": "hearts", "trickNumber": 5 }
+      },
+      "assert": [
+        { "apply": { "actor": 3, "type": "playCard", "cards": ["clubs-9#2"] } },
+        {
+          "expect": {
+            "zones": { "won.2": ["clubs-K", "clubs-9", "clubs-10", "clubs-9#2"], "won.0": 0 },
+            "vars": { "leader": 2 }
+          }
+        }
+      ]
+    },
+    {
+      "name": "and the ace beats the ten",
+      "setup": {
+        "seats": 4,
+        "turn": { "seat": 3, "phase": "play" },
+        "zones": {
+          "trick": ["clubs-K", "clubs-9", "clubs-10"],
+          "hand.0": ["diamonds-9"],
+          "hand.1": ["diamonds-J"],
+          "hand.2": ["diamonds-Q"],
+          "hand.3": ["clubs-A"]
+        },
+        "vars": { "led": "clubs", "leader": 0, "trumpSuit": "hearts", "trickNumber": 5 }
+      },
+      "assert": [
+        { "move": { "actor": 3, "type": "playCard", "cards": ["clubs-A"] }, "legal": true },
+        { "apply": { "actor": 3, "type": "playCard", "cards": ["clubs-A"] } },
+        { "expect": { "zones": { "won.3": 4, "won.2": 0 }, "vars": { "leader": 3 } } }
+      ]
+    },
+    {
+      "name": "a second copy of a card is its own card in the trick, and the one played first takes it",
+      "setup": {
+        "seats": 4,
+        "turn": { "seat": 2, "phase": "play" },
+        "zones": {
+          "trick": ["spades-A", "spades-9"],
+          "hand.0": ["diamonds-9"],
+          "hand.1": ["diamonds-J"],
+          "hand.2": ["spades-A#2"],
+          "hand.3": ["spades-9#2"]
+        },
+        "vars": { "led": "spades", "leader": 0, "trumpSuit": "hearts", "trickNumber": 6 }
+      },
+      "assert": [
+        { "apply": { "actor": 2, "type": "playCard", "cards": ["spades-A#2"] } },
+        { "apply": { "actor": 3, "type": "playCard", "cards": ["spades-9#2"] } },
+        {
+          "expect": {
+            "zones": {
+              "won.0": ["spades-A", "spades-9", "spades-A#2", "spades-9#2"],
+              "won.2": 0,
+              "won.3": 0
+            },
+            "vars": { "leader": 0 }
+          }
+        }
+      ]
+    },
+    {
+      "name": "following the suit is not enough — you have to beat what is winning",
+      "setup": {
+        "seats": 4,
+        "turn": { "seat": 3, "phase": "play" },
+        "zones": {
+          "trick": ["clubs-9", "clubs-K", "clubs-J"],
+          "hand.0": ["diamonds-9"],
+          "hand.1": ["diamonds-J"],
+          "hand.2": ["diamonds-Q"],
+          "hand.3": ["clubs-A", "clubs-9#2"]
+        },
+        "vars": { "led": "clubs", "leader": 0, "trumpSuit": "hearts", "trickNumber": 4 }
+      },
+      "assert": [
+        {
+          "move": { "actor": 3, "type": "playCard", "cards": ["clubs-9#2"] },
+          "legal": false,
+          "rule": "must-beat"
+        },
+        { "move": { "actor": 3, "type": "playCard", "cards": ["clubs-A"] }, "legal": true }
+      ]
+    },
+    {
+      "name": "void in the led suit you must trump, and over-trump the trump that is winning",
+      "setup": {
+        "seats": 4,
+        "turn": { "seat": 3, "phase": "play" },
+        "zones": {
+          "trick": ["clubs-K", "hearts-9", "clubs-A"],
+          "hand.0": ["diamonds-9"],
+          "hand.1": ["diamonds-J"],
+          "hand.2": ["diamonds-Q"],
+          "hand.3": ["hearts-9#2", "hearts-J", "spades-A"]
+        },
+        "vars": { "led": "clubs", "leader": 0, "trumpSuit": "hearts", "trickNumber": 7 }
+      },
+      "assert": [
+        {
+          "move": { "actor": 3, "type": "playCard", "cards": ["spades-A"] },
+          "legal": false,
+          "rule": "must-trump"
+        },
+        {
+          "move": { "actor": 3, "type": "playCard", "cards": ["hearts-9#2"] },
+          "legal": false,
+          "rule": "must-beat"
+        },
+        { "move": { "actor": 3, "type": "playCard", "cards": ["hearts-J"] }, "legal": true },
+        { "apply": { "actor": 3, "type": "playCard", "cards": ["hearts-J"] } },
+        { "expect": { "zones": { "won.3": 4 }, "vars": { "leader": 3 } } }
+      ]
+    },
+    {
+      "name": "a hand with no trump in it may throw anything away — every narrowing relaxes",
+      "setup": {
+        "seats": 4,
+        "turn": { "seat": 3, "phase": "play" },
+        "zones": {
+          "trick": ["clubs-K", "hearts-9", "clubs-A"],
+          "hand.0": ["diamonds-9"],
+          "hand.1": ["diamonds-J"],
+          "hand.2": ["diamonds-Q"],
+          "hand.3": ["spades-A", "spades-9"]
+        },
+        "vars": { "led": "clubs", "leader": 0, "trumpSuit": "hearts", "trickNumber": 7 }
+      },
+      "assert": [
+        { "move": { "actor": 3, "type": "playCard", "cards": ["spades-9"] }, "legal": true },
+        { "move": { "actor": 3, "type": "playCard", "cards": ["spades-A"] }, "legal": true }
+      ]
+    },
+    {
+      "name": "a marriage scores 2 and the same marriage in trump scores 4",
+      "setup": {
+        "seats": 4,
+        "turn": { "seat": 1, "phase": "meld" },
+        "zones": {
+          "hand.0": ["spades-K", "spades-Q"],
+          "hand.1": ["hearts-K", "hearts-Q"],
+          "hand.2": ["clubs-9"],
+          "hand.3": ["diamonds-9"]
+        },
+        "vars": { "trumpSuit": "hearts" },
+        "playerVars": { "0": { "bid": 0 }, "1": { "bid": 150 }, "2": { "bid": 0 }, "3": { "bid": 0 } }
+      },
+      "assert": [
+        { "apply": { "actor": 0, "type": "declareMeld", "cards": ["spades-K", "spades-Q"] } },
+        { "apply": { "actor": 1, "type": "declareMeld", "cards": ["hearts-K", "hearts-Q"] } },
+        { "apply": { "actor": 2, "type": "declareMeld", "cards": [] } },
+        {
+          "move": { "actor": 0, "type": "playCard", "cards": ["spades-K"] },
+          "legal": false,
+          "rule": "phase"
+        },
+        { "apply": { "actor": 3, "type": "declareMeld", "cards": [] } },
+        {
+          "expect": {
+            "turn": { "phase": "play" },
+            "zones": { "hand.0": ["spades-K", "spades-Q"], "hand.1": ["hearts-K", "hearts-Q"] },
+            "playerVars": {
+              "0": {
+                "meld": {
+                  "points": 2,
+                  "melds": [{ "id": "marriage", "label": "Marriage", "points": 2, "suit": "spades" }]
+                }
+              },
+              "1": {
+                "meld": {
+                  "points": 4,
+                  "melds": [{ "id": "royal-marriage", "label": "Royal marriage", "points": 4, "suit": "hearts" }]
+                }
+              },
+              "2": { "meld": { "points": 0, "melds": [] } }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "the run in trump is fifteen, and the marriage inside it is not paid for twice",
+      "setup": {
+        "seats": 4,
+        "turn": { "seat": 1, "phase": "meld" },
+        "zones": {
+          "hand.0": ["hearts-J", "hearts-Q", "hearts-K", "hearts-10", "hearts-A", "spades-Q", "diamonds-J"],
+          "hand.1": ["clubs-9"],
+          "hand.2": ["clubs-9#2"],
+          "hand.3": ["diamonds-9"]
+        },
+        "vars": { "trumpSuit": "hearts" }
+      },
+      "assert": [
+        {
+          "apply": {
+            "actor": 0,
+            "type": "declareMeld",
+            "cards": ["hearts-J", "hearts-Q", "hearts-K", "hearts-10", "hearts-A", "spades-Q", "diamonds-J"]
+          }
+        },
+        { "apply": { "actor": 1, "type": "declareMeld", "cards": [] } },
+        { "apply": { "actor": 2, "type": "declareMeld", "cards": [] } },
+        { "apply": { "actor": 3, "type": "declareMeld", "cards": [] } },
+        {
+          "expect": {
+            "playerVars": {
+              "0": {
+                "meld": {
+                  "points": 19,
+                  "melds": [
+                    { "id": "run", "label": "Run", "points": 15, "suit": "hearts" },
+                    { "id": "pinochle", "label": "Pinochle", "points": 4 }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "a set bid subtracts the whole bid, and the side that promised nothing still banks what it made",
+      "setup": {
+        "seats": 4,
+        "turn": { "seat": 0, "phase": "play" },
+        "zones": {
+          "won.0": ["clubs-A"],
+          "won.1": ["hearts-A"]
+        },
+        "vars": { "leader": 1, "trumpSuit": "hearts" },
+        "playerVars": {
+          "0": { "bid": 300, "bidTrump": "hearts", "meld": { "points": 10, "melds": [] } },
+          "1": { "bid": 0 },
+          "2": { "bid": 0 },
+          "3": { "bid": 0 }
+        }
+      },
+      "assert": [
+        { "score": { "0": -300, "1": 21, "2": 0, "3": 0 } }
+      ]
+    },
+    {
+      "name": "the same hand with a bid it can reach banks meld, cards and the last trick",
+      "setup": {
+        "seats": 4,
+        "turn": { "seat": 0, "phase": "play" },
+        "zones": {
+          "won.0": ["clubs-A"],
+          "won.1": ["hearts-A"]
+        },
+        "vars": { "leader": 0, "trumpSuit": "hearts" },
+        "playerVars": {
+          "0": { "bid": 20, "bidTrump": "hearts", "meld": { "points": 10, "melds": [] } },
+          "1": { "bid": 0 },
+          "2": { "bid": 0 },
+          "3": { "bid": 0 }
+        }
+      },
+      "assert": [
+        { "score": { "0": 31, "1": 11, "2": 0, "3": 0 } }
+      ]
+    },
+    {
+      "name": "an auction bid has to beat the one before it, and the winner names trump",
+      "setup": {
+        "seats": 4,
+        "turn": { "seat": 1, "phase": "bid" },
+        "zones": {
+          "hand.0": ["clubs-9"],
+          "hand.1": ["clubs-9#2"],
+          "hand.2": ["diamonds-9"],
+          "hand.3": ["diamonds-9#2"]
+        },
+        "playerVars": { "0": { "bid": 150, "bidTrump": "clubs" } }
+      },
+      "assert": [
+        {
+          "move": { "actor": 1, "type": "bid", "choice": { "bid": 150, "trump": "spades" } },
+          "legal": false,
+          "rule": "bid-range"
+        },
+        {
+          "move": { "actor": 1, "type": "bid", "choice": { "bid": 165, "trump": "spades" } },
+          "legal": false,
+          "rule": "bid-range"
+        },
+        {
+          "move": { "actor": 1, "type": "bid", "choice": { "bid": 160 } },
+          "legal": false,
+          "rule": "bid-trump"
+        },
+        { "apply": { "actor": 1, "type": "bid", "choice": { "bid": 160, "trump": "spades" } } },
+        { "apply": { "actor": 2, "type": "bid", "choice": { "bid": 0 } } },
+        { "apply": { "actor": 3, "type": "bid", "choice": { "bid": 0 } } },
+        { "expect": { "turn": { "phase": "meld" }, "vars": { "trumpSuit": "spades" } } }
+      ]
+    },
+    {
+      "name": "if everybody else passes the last to speak may not pass — it is stuck with the floor, trump and all",
+      "setup": {
+        "seats": 4,
+        "turn": { "seat": 1, "phase": "bid" },
+        "zones": {
+          "hand.0": ["clubs-9"],
+          "hand.1": ["clubs-9#2"],
+          "hand.2": ["diamonds-9"],
+          "hand.3": ["diamonds-9#2"]
+        },
+        "playerVars": { "0": { "bid": 0 } }
+      },
+      "assert": [
+        { "apply": { "actor": 1, "type": "bid", "choice": { "bid": 0 } } },
+        { "apply": { "actor": 2, "type": "bid", "choice": { "bid": 0 } } },
+        {
+          "move": { "actor": 3, "type": "bid", "choice": { "bid": 0 } },
+          "legal": false,
+          "rule": "bid-range"
+        },
+        { "apply": { "actor": 3, "type": "bid", "choice": { "bid": 100, "trump": "diamonds" } } },
+        {
+          "expect": {
+            "turn": { "phase": "meld" },
+            "vars": { "trumpSuit": "diamonds" },
+            "playerVars": { "3": { "bid": 100, "bidForced": true, "bidTrump": "diamonds" } }
+          }
+        }
+      ]
+    },
+    {
+      "name": "a seat that still has somebody to speak after it may pass freely",
+      "setup": {
+        "seats": 4,
+        "turn": { "seat": 2, "phase": "bid" },
+        "zones": {
+          "hand.0": ["clubs-9"],
+          "hand.1": ["clubs-9#2"],
+          "hand.2": ["diamonds-9"],
+          "hand.3": ["diamonds-9#2"]
+        },
+        "playerVars": { "0": { "bid": 0 }, "1": { "bid": 0 } }
+      },
+      "assert": [
+        { "move": { "actor": 2, "type": "bid", "choice": { "bid": 0 } }, "legal": true },
+        { "apply": { "actor": 2, "type": "bid", "choice": { "bid": 0 } } },
+        { "expect": { "playerVars": { "2": { "bid": 0 } }, "turn": { "seat": 3, "phase": "bid" } } }
+      ]
+    }
+  ]
+}

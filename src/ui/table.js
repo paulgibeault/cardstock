@@ -2123,8 +2123,8 @@ function statusTextFor(state, acting) {
   //
   // ASKED OF THE MODE, NOT THE PHASE NAME. `turn.phase === 'pass'` was a
   // platform file knowing one template's word for its own phase; cribbage's is
-  // `discard` and means the same thing to this bar. Both sentences come from
-  // the template now (#107).
+  // `discard`, Pinochle's is `meld`, and both mean the same thing to this bar.
+  // Every sentence comes from the template's `commitPrompt` now (#107, #106).
   if (interactionMode(state) === 'pass') {
     const mine = acting.some(isMySeat);
     const seat = mine ? mySeat() : state.turn.seat;

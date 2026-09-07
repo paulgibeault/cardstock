@@ -7,6 +7,7 @@ import { rankLadderOf, rankOrder } from '../engine/cards.js';
 import { selectorMatches } from '../engine/selectors.js';
 import { cardValue, handValue } from '../engine/scoring.js';
 import { sidesOf, sideOfSeat } from '../engine/sides.js';
+import { detectDeclaredMelds } from './melds.js';
 
 /* ------------------------------------------------------------------ *
  * What a position is worth (see `evaluateState` at the foot of this file)
@@ -68,13 +69,94 @@ function trickTrumpOf(ctx) {
   return ctx.rules.trickWinner === 'highest-trump-else-led' ? trumpSuitOf(ctx) : null;
 }
 
+/**
+ * The height a trump is lifted to — one clear of the highest rank the deck
+ * holds, so "any trump beats every card of the led suit" is one number line and
+ * not a second comparison. See `trickLeaderSoFar`, which is where it was first
+ * written and which this shares so the two can never disagree about how high a
+ * trump plays.
+ */
+function trumpShelf(ctx, trump) {
+  return trump === null ? 0 : perilOf(ctx).topRank + 1;
+}
+
+/**
+ * A suit as a label — the deck's own word, capitalised, and nothing else.
+ *
+ * Deliberately not a table of the four French suits: the suits are whatever the
+ * deck holds (`perilOf().suits`), and a template that mapped them to symbols
+ * would be a template with a deck in it.
+ */
+function suitLabel(suit) {
+  const name = String(suit ?? '');
+  return name ? name[0].toUpperCase() + name.slice(1) : name;
+}
+
+/* ------------------------------------------------------------------ *
+ * FOLLOW, AND BEAT IF YOU CAN — `followSuit: 'must-beat'`
+ * ------------------------------------------------------------------ *
+ *
+ * Pinochle's rule, and a third value beside `must` and `free` rather than a
+ * flag on either: it is the same question ("which of my cards may I play")
+ * answered with one more clause, and splitting it into two booleans would let a
+ * pack declare `free` and `mustBeat` together, which is not a rule.
+ *
+ * THREE OBLIGATIONS, IN ORDER, each one falling through to the next only when
+ * the hand cannot meet it:
+ *
+ *   1. follow the suit that was led;
+ *   2. among the cards that follow it, play one that BEATS whatever is
+ *      currently winning, if you hold one;
+ *   3. void in the led suit — trump, and if somebody has already trumped,
+ *      over-trump if you hold one that does.
+ *
+ * All three read the same "how high does this card play" as trick resolution
+ * (the trump shelf above), so a card that would win the trick is exactly the
+ * card this says you must play. That equivalence is the point: the rule is
+ * "you may not duck", and a second notion of higher would make it "you may not
+ * duck, except sometimes".
+ *
+ * EVERY NARROWING RELAXES WHEN IT WOULD EMPTY THE POOL, which is the design
+ * doc's §5 rule and the reason each step returns the wider set rather than
+ * nothing. A hand of four low trumps facing a trumped trick has no over-trump
+ * and must still play something.
+ */
+function mustBeatPool(ctx, hand, led) {
+  const ladder = rankLadderOf(ctx.pack);
+  const trump = trickTrumpOf(ctx);
+  const shelf = trumpShelf(ctx, trump);
+  const best = trickLeaderSoFar(ctx).rank;
+  const heightOf = (id) => {
+    const card = ctx.cardById(id);
+    return rankOrder(card, ladder) + (trump !== null && card.suit === trump ? shelf : 0);
+  };
+  const beating = (pool) => {
+    const over = pool.filter((id) => heightOf(id) > best);
+    return over.length ? over : pool;
+  };
+
+  const following = hand.filter((id) => ctx.cardById(id).suit === led);
+  if (following.length) return { pool: beating(following), rule: 'must-beat' };
+
+  if (trump !== null) {
+    const trumps = hand.filter((id) => ctx.cardById(id).suit === trump);
+    // Void, holding trumps: you must ruff, and over-ruff if you can. The two
+    // are one filter because a trick nobody has trumped yet is won by a card
+    // below the shelf, so EVERY trump beats it.
+    if (trumps.length) return { pool: beating(trumps), rule: 'must-trump' };
+  }
+  return { pool: hand.slice(), rule: null };
+}
+
 // Cards the actor may follow with, before lead/play constraints: the must-follow
 // subset when they can follow suit, otherwise (void, or leading) the whole hand.
 function baseLegalCards(ctx, seat, hand) {
   const isLead = ctx.countIn('trick') === 0;
   if (isLead) return hand.slice();
   const led = ctx.var('led');
-  if (ctx.rules.followSuit === 'must' && led) {
+  const follow = ctx.rules.followSuit;
+  if (follow === 'must-beat' && led) return mustBeatPool(ctx, hand, led).pool;
+  if (follow === 'must' && led) {
     const matching = hand.filter((id) => ctx.cardById(id).suit === led);
     if (matching.length) return matching;
   }
@@ -139,10 +221,26 @@ function rejectPlayCard(ctx, seat, cardId, hand) {
 
   if (!isLead) {
     const led = ctx.var('led');
-    if (ctx.rules.followSuit === 'must' && led) {
+    const follow = ctx.rules.followSuit;
+    if ((follow === 'must' || follow === 'must-beat') && led) {
       const matching = hand.filter((id) => ctx.cardById(id).suit === led);
       if (matching.length && !matching.includes(cardId)) {
         return ctx.fail('follow-suit', `You must follow suit (${led}).`);
+      }
+    }
+    // THE REFUSAL IS THE ENUMERATOR'S OWN ANSWER, asked again. `mustBeatPool`
+    // is what `enumerateLegalMoves` filters with, so a card outside it is a
+    // card the felt never offered and a joiner was never sent — and the two
+    // cannot drift apart, because there is one function.
+    if (follow === 'must-beat' && led) {
+      const { pool, rule } = mustBeatPool(ctx, hand, led);
+      if (!pool.includes(cardId)) {
+        // Two different mistakes wear the same narrowing when you are void:
+        // playing off-suit at all, and trumping too low. The card says which.
+        const trumped = ctx.cardById(cardId).suit === trickTrumpOf(ctx);
+        return rule === 'must-trump' && !trumped
+          ? ctx.fail('must-trump', 'You are out of the suit that was led, so you must trump.')
+          : ctx.fail('must-beat', 'You have to beat the card that is winning the trick if you can.');
       }
     }
   }
@@ -463,6 +561,70 @@ function bidIsBlind(ctx, seat) {
   return ctx.playerVar(seat, 'bidSight') === 'blind';
 }
 
+/* ------------------------------------------------------------------ *
+ * TWO AUCTIONS UNDER ONE PHASE — `bidding.unit`
+ * ------------------------------------------------------------------ *
+ *
+ * Spades' auction and Pinochle's are the same PHASE — one seat at a time, in
+ * seat order, each hearing what was said before it — and two different games.
+ *
+ *   tricks   every seat's bid stands, and a side's contract is its partners'
+ *            bids added up. Nobody outbids anybody; four promises are made and
+ *            all four are kept or paid for.
+ *   points   one contract, and the seats compete for it. A bid is a SCORE the
+ *            side will reach, it has to beat whatever has already been said,
+ *            and a seat with nothing to say passes (a bid of 0). Exactly one
+ *            side ends up holding it, and it names the trump suit.
+ *
+ * Everything that is genuinely shared stays shared: the per-seat `bid` var, its
+ * publicness, the turn order, the "nothing is led until every seat has spoken"
+ * check. What differs is what a candidate bid IS, and what happens when the
+ * last seat has spoken — which is the whole of the two functions below.
+ */
+function bidUnitOf(ctx) {
+  return ctx.rules.bidding?.unit === 'points' ? 'points' : 'tricks';
+}
+
+function bidIncrementOf(ctx) {
+  const step = ctx.rules.bidding?.increment;
+  return Number.isInteger(step) && step > 0 ? step : 1;
+}
+
+/** The suit a bid names, at an auction where a bid names one (`namesTrump`). */
+function bidTrumpOf(move) {
+  const suit = move?.choice?.trump;
+  return typeof suit === 'string' && suit ? suit : null;
+}
+
+/** The best bid anybody has made so far this auction, or 0 if nobody has. */
+function highestBidSoFar(ctx) {
+  let best = 0;
+  for (let seat = 0; seat < ctx.seats; seat++) best = Math.max(best, bidOf(ctx, seat) ?? 0);
+  return best;
+}
+
+/**
+ * The seat holding the contract at a points auction — the highest bidder.
+ *
+ * DERIVED RATHER THAN STORED, for the reason src/engine/scoring.js gives about
+ * the same question: every other seat passed with a 0, a bid has to beat what
+ * came before it, so the maximum is unique and every seat watched it being
+ * made. A stored copy is a second version of a public fact, free to disagree
+ * with it after a replay.
+ */
+function contractSeatOf(ctx) {
+  let seat = null;
+  let best = 0;
+  for (let s = 0; s < ctx.seats; s++) {
+    const bid = bidOf(ctx, s) ?? 0;
+    if (bid > best) {
+      best = bid;
+      seat = s;
+    }
+  }
+  return seat;
+}
+
 function everySeatHasBid(ctx) {
   for (let seat = 0; seat < ctx.seats; seat++) {
     if (bidOf(ctx, seat) === null) return false;
@@ -526,11 +688,59 @@ function mayBidBlind(ctx, seat) {
   return totals.some((total, side) => side !== mine && total - totals[mine] >= behind);
 }
 
+/**
+ * The numbers this seat may say right now, low to high.
+ *
+ * At a trick auction that is every bid from the floor to the whole hand, which
+ * is what it has always been. At a points auction it is the pass (0) and then
+ * every rung of the ladder that would OUTBID what has been said — the floor for
+ * the first speaker, one increment above the standing bid for everybody after.
+ */
+function bidLevels(ctx, seat) {
+  const min = minBidOf(ctx);
+  const max = maxBidOf(ctx, seat);
+  const levels = [];
+  if (bidUnitOf(ctx) !== 'points') {
+    for (let bid = min; bid <= max; bid++) levels.push(bid);
+    return levels;
+  }
+  const step = bidIncrementOf(ctx);
+  const standing = highestBidSoFar(ctx);
+  // THE LAST SEAT MAY NOT PASS OUT AN EMPTY AUCTION. Every table has this rule
+  // and it is not a nicety: a hand where nobody holds the contract has no
+  // number to be scored against and — where the bid names the trump suit —
+  // nobody to name one, so the whole hand would be melded and played in no
+  // trump. That was not hypothetical: the first cut let the seat pass, and one
+  // deal in twenty reached the first lead with `trumpSuit` still null.
+  if (!isStuckWithTheBid(ctx, seat, standing)) levels.push(0);
+  for (let bid = Math.max(min, standing + step); bid <= max; bid += step) levels.push(bid);
+  return levels;
+}
+
+/** Nobody has opened, and this seat is the last one who could. */
+function isStuckWithTheBid(ctx, seat, standing = highestBidSoFar(ctx)) {
+  if (bidUnitOf(ctx) !== 'points' || standing > 0) return false;
+  for (let s = 0; s < ctx.seats; s++) {
+    if (s !== seat && bidOf(ctx, s) === null) return false;
+  }
+  return true;
+}
+
+/** The suits a bid may name, for a pack whose bid names the trump suit. */
+function bidSuits(ctx) {
+  return ctx.rules.bidding?.namesTrump === true ? [...perilOf(ctx).suits] : [];
+}
+
 /** Every bid this seat may make right now, cheapest shape first, blind last. */
 function bidCandidates(ctx, seat) {
   const moves = [];
-  for (let bid = minBidOf(ctx); bid <= maxBidOf(ctx, seat); bid++) {
-    moves.push({ actor: seat, type: 'bid', choice: { bid } });
+  const suits = bidSuits(ctx);
+  for (const bid of bidLevels(ctx, seat)) {
+    // A PASS NAMES NO SUIT. It is not a contract, so there is nothing for it to
+    // be trump in, and offering four indistinguishable passes would put three
+    // duplicate moves in front of every bot and on every joiner's wire.
+    if (!suits.length || bid === 0) moves.push({ actor: seat, type: 'bid', choice: { bid } });
+    else for (const trump of suits) moves.push({ actor: seat, type: 'bid', choice: { bid, trump } });
   }
   if (mayBidBlind(ctx, seat)) {
     moves.push({ actor: seat, type: 'bid', choice: { bid: 0, sight: 'blind' } });
@@ -554,10 +764,14 @@ function bidCandidates(ctx, seat) {
  * deck whose ace is not the highest card is counted correctly without this
  * function knowing which rank is which.
  */
-function expectedTricks(ctx, seat) {
+function expectedTricks(ctx, seat, trumpOverride) {
   const ladder = rankLadderOf(ctx.pack);
   const { topRank, suits } = perilOf(ctx);
-  const trump = trumpSuitOf(ctx);
+  // A BID THAT NAMES ITS OWN TRUMP HAS TO BE COUNTED IN THAT TRUMP. During a
+  // Pinochle auction `trumpSuit` is still unset — the suit is part of the move
+  // being scored, not a fact about the table yet — so the caller passes it in.
+  // Spades passes nothing and reads the fixed suit exactly as before.
+  const trump = trumpOverride === undefined ? trumpSuitOf(ctx) : trumpOverride;
 
   const bySuit = new Map();
   for (const id of ctx.cardIdsIn(ctx.zoneAddr('hand', seat))) {
@@ -665,10 +879,123 @@ const BID_UNDER_COST = 1;
  * while a trick over it is a point now and a tenth of a bag penalty later. So
  * the bot bids its count, rounded DOWN when the count sits between two.
  */
+/* ------------------------------------------------------------------ *
+ * WHAT A HAND IS WORTH IN POINTS — the other half of the bidding heuristic
+ * ------------------------------------------------------------------ *
+ *
+ * `expectedTricks` counts a hand in TRICKS, which is the currency Spades bids
+ * in. A points auction is bid in the number the SIDE will score, and the number
+ * is made of two things a seat can actually see:
+ *
+ *   the meld it is holding      exact, once a trump suit is named — the pack's
+ *                               own table, run over its own hand.
+ *   the tricks it expects       times what a trick is worth, which is the deck
+ *                               divided by the number of tricks in a hand.
+ *
+ * And one it cannot: THE PARTNER'S HALF. A side's contract is paid by two
+ * hands, and a seat that bid only what it could see itself would never open at
+ * all — the floor at a real table is above what one hand can make. So a partner
+ * is credited with an average share of what is left on the table, which is what
+ * a human means by "I can see half of this".
+ */
+
+/** What one trick is worth, on average, in a deck whose cards carry points. */
+function pointsPerTrick(ctx) {
+  const scoring = ctx.pack.scoring || {};
+  if (!scoring.cardValues) return 0;
+  let deck = 0;
+  for (const card of ctx.pack.cardsById.values()) deck += cardValue(card, scoring);
+  deck += num(scoring.tricks?.lastTrick, 0);
+  const tricks = Math.max(1, Math.floor(ctx.pack.cardsById.size / Math.max(1, ctx.seats)));
+  return deck / tricks;
+}
+
+function num(value, fallback) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+}
+
+/**
+ * A partner's share of a contract, as a fraction of what this seat can see.
+ *
+ * MEASURED, and the reason it is not 1. At 1 the table opens on every hand and
+ * two thirds of the contracts are set; at 0 nobody opens at all and the seat
+ * that is stuck with the floor holds every contract in the match. Two thirds
+ * sits where the bid is made about half the time, which is roughly what a real
+ * auction settles at.
+ */
+const PARTNER_SHARE = 0.66;
+
+/**
+ * HOW MUCH OF `expectedTricks` TO BELIEVE, when it is being spent rather than
+ * merely compared — and the honest part of this heuristic.
+ *
+ * `expectedTricks` counts the way a Spades player counts: the top card of a
+ * suit takes a trick, the second usually does, length in trump turns small
+ * cards into winners. It is measured, it works, and its scale is only ever
+ * compared against ANOTHER bid in the same units, so a systematic bias in it
+ * costs Spades nothing.
+ *
+ * A points bid spends it, and then the scale matters. It also over-counts on a
+ * DOUBLED deck, for a reason the function cannot see: it prices a card by its
+ * distance from the top of the ladder, and on a deck with two of everything a
+ * rank step is eight cards rather than four — so "I hold an ace, that is a
+ * trick" is wrong twice over when there are eight aces and somebody else has
+ * one. Left at face value the four seats between them counted about twice the
+ * twelve tricks that exist, bid 228 into a 250-point deck and were set on 98%
+ * of hands.
+ *
+ * So it is damped, and the damping is MEASURED rather than reasoned: at 0.75
+ * the table bids 170 and makes it 18% of the time; at 0.45 nobody opens at all
+ * and three quarters of hands fall to the seat that is stuck with the floor. At
+ * 0.55 the winning bid averages 129 against a side that scores about 132, the
+ * contract is made 72% of the time, and somebody volunteers for it on four
+ * hands in five — which is what an auction is supposed to look like.
+ *
+ * The right fix one day is a trick count that reads the deck's own copy count
+ * instead of a constant here. That is a change to a function Spades depends on
+ * and was measured against, so it is not this issue's to make.
+ */
+const TRICK_CONFIDENCE = 0.55;
+
+function expectedPoints(ctx, seat, trump) {
+  const meld = ctx.rules.melds
+    ? detectDeclaredMelds(ctx, ctx.cardIdsIn(ctx.zoneAddr('hand', seat)), trump).points
+    : 0;
+  const mine = meld + expectedTricks(ctx, seat, trump) * pointsPerTrick(ctx) * TRICK_CONFIDENCE;
+  return mine * (1 + PARTNER_SHARE);
+}
+
+/** How far a points bid may sit above the count before the bot will not say it. */
+const POINTS_OVER_COST = 1.6;
+const POINTS_UNDER_COST = 1;
+
+function scorePointsBid(ctx, move) {
+  const seat = move.actor;
+  const bid = bidValueOf(move);
+  const step = bidIncrementOf(ctx);
+  const worth = expectedPoints(ctx, seat, bidTrumpOf(move));
+
+  // A PASS IS PRICED AGAINST THE CHEAPEST BID THAT IS STILL AVAILABLE, not
+  // against zero. Passing is right exactly when the hand cannot afford the
+  // floor, and saying so in the same units as every other candidate is what
+  // stops the pass being either free (bid nothing, ever) or unaffordable (bid
+  // the maximum on a bare hand).
+  if (bid === 0) {
+    const levels = bidLevels(ctx, seat).filter((n) => n > 0);
+    if (!levels.length) return 0;
+    // Worth what declining the cheapest contract is worth: nothing when the
+    // hand could have made it, and the shortfall when it could not.
+    return Math.max(0, levels[0] - worth) * POINTS_UNDER_COST / step - 0.5;
+  }
+  const gap = (bid - worth) / step;
+  return -(gap > 0 ? gap * POINTS_OVER_COST : -gap * POINTS_UNDER_COST);
+}
+
 function scoreBid(ctx, move, w = WEIGHTS) {
   const seat = move.actor;
   const bid = bidValueOf(move);
   if (bid === null) return -Infinity;
+  if (bidUnitOf(ctx) === 'points') return scorePointsBid(ctx, move);
 
   if (bid === 0) {
     // A NIL IS A GATE, NOT A CANDIDATE. Priced on the same scale as the gaps
@@ -692,7 +1019,15 @@ function startBiddingPhase(ctx) {
   for (let seat = 0; seat < ctx.seats; seat++) {
     ctx.setPlayerVar(seat, 'bid', undefined);
     ctx.setPlayerVar(seat, 'bidSight', undefined);
+    ctx.setPlayerVar(seat, 'bidTrump', undefined);
+    ctx.setPlayerVar(seat, 'bidForced', undefined);
+    ctx.setPlayerVar(seat, 'meld', undefined);
   }
+  // A CHOSEN TRUMP BELONGS TO ONE HAND. `startRound` carries bags across the
+  // round boundary and would happily carry a stale suit with them, which would
+  // let hand two be melded and played in hand one's trump before its own
+  // auction had finished.
+  if (ctx.rules.trump === 'chosen') ctx.setVar('trumpSuit', null);
   // The seat that bids first is the seat that leads first — one rule, read
   // twice, so a pack cannot end up bidding round the table in one direction
   // and playing in the other.
@@ -701,16 +1036,135 @@ function startBiddingPhase(ctx) {
   return true;
 }
 
+/**
+ * THE AUCTION IS OVER — settle it, and name what it settled.
+ *
+ * Only a points auction has anything to settle: at a trick auction every bid
+ * stands as made and there is nothing to decide. Here the highest bid becomes
+ * one side's contract, and two things follow from it.
+ *
+ * SOMEBODY IS ALWAYS STUCK WITH IT — but that is enforced one step earlier, by
+ * `bidLevels` refusing the last seat a pass into an empty auction, so that the
+ * seat which ends up holding the contract has NAMED A SUIT like any other
+ * bidder. Settling it here instead would have to invent a trump suit on a seat
+ * that never chose one. The fallback below therefore only fires for a state
+ * built by hand (a rule test), and it is kept as a belt: a hand with no
+ * contract has no number to be scored against.
+ *
+ * AND THE WINNING BID NAMES TRUMP. `trump: 'chosen'` has been the resolution
+ * rule since #105 with nothing to fill it in; this is what fills it in. The var
+ * is public (`publicVars`) because a trump suit is the most public fact at a
+ * trick table.
+ */
+function settleAuction(ctx) {
+  if (bidUnitOf(ctx) !== 'points') return;
+  let seat = contractSeatOf(ctx);
+  if (seat === null) {
+    seat = ctx.turn.seat;
+    ctx.setPlayerVar(seat, 'bid', minBidOf(ctx));
+    ctx.setPlayerVar(seat, 'bidForced', true);
+  }
+  if (ctx.rules.bidding?.namesTrump === true) {
+    ctx.setVar('trumpSuit', ctx.playerVar(seat, 'bidTrump') ?? null);
+  }
+  ctx.emit('contractSet', {
+    seat,
+    bid: bidOf(ctx, seat),
+    trump: ctx.var('trumpSuit') ?? null,
+    forced: ctx.playerVar(seat, 'bidForced') === true,
+  });
+}
+
 function applyBid(ctx, move) {
   const seat = move.actor;
   const bid = bidValueOf(move);
   const blind = bidIsBlindMove(move);
+  const trump = bidTrumpOf(move);
+  // Asked BEFORE the bid lands, because it is a question about the auction as
+  // this seat found it: was passing even on the table?
+  const stuck = isStuckWithTheBid(ctx, seat);
+  if (stuck) ctx.setPlayerVar(seat, 'bidForced', true);
   ctx.setPlayerVar(seat, 'bid', bid);
   if (blind) ctx.setPlayerVar(seat, 'bidSight', 'blind');
-  ctx.emit('bidMade', { seat, bid, blind });
+  // A suit said out loud, in a public per-seat var beside the number — the
+  // seats bidding after you are entitled to hear which suit you fancied as much
+  // as they are entitled to hear how much you said.
+  if (trump) ctx.setPlayerVar(seat, 'bidTrump', trump);
+  ctx.emit('bidMade', { seat, bid, blind, trump });
 
-  if (everySeatHasBid(ctx)) startPlayPhase(ctx);
-  else ctx.setTurnSeat(ctx.nextSeat(seat));
+  if (!everySeatHasBid(ctx)) {
+    ctx.setTurnSeat(ctx.nextSeat(seat));
+    return;
+  }
+  settleAuction(ctx);
+  beginPlay(ctx);
+}
+
+/* ------------------------------------------------------------------ *
+ * THE MELD — a phase that SCORES a selection and moves nothing
+ * ------------------------------------------------------------------ *
+ *
+ * The third optional phase, and its shape is the pass's rather than the bid's:
+ * every seat commits at once, nobody may read anybody else's choice until they
+ * all have, and `turn.seat` does not move while it is open (`actingSeats`).
+ *
+ * WHAT MAKES IT A DIFFERENT PHASE FROM THE PASS, and the reason it is not one
+ * with a flag on it: a pass MOVES the cards it commits, into somebody else's
+ * hand, and it is exactly N of them. A meld moves nothing at all — the cards
+ * you show the table are the cards you then have to win tricks with — and its
+ * size is whatever the hand happens to hold, from nothing to the lot.
+ *
+ * WHAT IS PUBLISHED, AND WHAT IS NOT. `meld` is a per-seat var with no `__`
+ * prefix, so every seat is told what every other seat melded and for how much;
+ * that is what a player calls out at a table and the seats after them write
+ * down. It carries NO CARD IDS (see `detectDeclaredMelds`) — the hand is still
+ * `visibility: 'owner'` and stays that way, partner's included. The selection
+ * on its way to being committed hides behind `__pendingMeld` for the same
+ * reason the pass does: a commit anybody can read is not a commit.
+ */
+function pendingMeldOf(ctx, seat) {
+  return ctx.playerVar(seat, '__pendingMeld');
+}
+
+function everySeatHasMelded(ctx) {
+  for (let seat = 0; seat < ctx.seats; seat++) {
+    if (pendingMeldOf(ctx, seat) === undefined) return false;
+  }
+  return true;
+}
+
+function startMeldPhase(ctx) {
+  if (!Array.isArray(ctx.rules.melds) || !ctx.rules.melds.length) return false;
+  for (let seat = 0; seat < ctx.seats; seat++) ctx.setPlayerVar(seat, '__pendingMeld', undefined);
+  ctx.setPhase('meld');
+  return true;
+}
+
+/**
+ * The declaration this seat's hand is worth, whole — what a bot commits and
+ * what the felt would suggest.
+ *
+ * Every card the detector could use, and no others: a declaration is scored
+ * over what it contains, so there is nothing to gain from showing a card that
+ * is in no meld and nothing to lose by showing every card that is in one.
+ */
+function bestMeldSelection(ctx, seat) {
+  const hand = ctx.cardIdsIn(ctx.zoneAddr('hand', seat));
+  return detectDeclaredMelds(ctx, hand, trumpSuitOf(ctx)).used;
+}
+
+function applyDeclareMeld(ctx, move) {
+  ctx.setPlayerVar(move.actor, '__pendingMeld', (move.cards || []).slice());
+  if (!everySeatHasMelded(ctx)) return;
+
+  const trump = trumpSuitOf(ctx);
+  for (let seat = 0; seat < ctx.seats; seat++) {
+    const declared = detectDeclaredMelds(ctx, pendingMeldOf(ctx, seat), trump);
+    ctx.setPlayerVar(seat, '__pendingMeld', undefined);
+    ctx.setPlayerVar(seat, 'meld', { points: declared.points, melds: declared.melds });
+    ctx.emit('meldDeclared', { seat, points: declared.points, melds: declared.melds });
+  }
+  startPlayPhase(ctx);
 }
 
 /**
@@ -764,6 +1218,112 @@ function holdsUp(ctx, taking) {
  * tricks each pile is, which everyone at the table watched being taken. The
  * bids are public by construction.
  */
+/**
+ * HOW THE CONTRACT IS GOING when the contract is a NUMBER OF POINTS.
+ *
+ * The evaluator below this one is in tricks, because that is what a Spades side
+ * promised. A Pinochle side promised a score, and the two are not convertible:
+ * a trick worth 34 points and a trick worth nothing count the same toward a
+ * Spades contract and are the difference between making and missing this one.
+ * So this reads the same thing the round scorer will
+ * (src/engine/scoring.js, `meld-and-tricks`) — meld banked plus card values
+ * taken — and prices the distance to the bid.
+ *
+ * ONE SIDE OWES SOMETHING AND THE OTHER DOES NOT, which is the asymmetry that
+ * makes this different from a game where everybody has a contract. The side
+ * holding the bid is playing against a number; the other side is simply
+ * collecting, and its only interest in the bid is that setting the bidders
+ * costs them the lot.
+ *
+ * WHAT IT DELIBERATELY DOES NOT READ: any hand but this seat's, and no card in
+ * a won pile beyond its point TOTAL — which the felt has always shown
+ * (`showsHeldValue`) because everybody watched those tricks being taken. The
+ * bids and the melds are public by construction.
+ */
+/**
+ * How much a point still in hand is worth against a point already taken, and
+ * how much of a point one rung of the ladder is worth. Both measured — see the
+ * `held` term inside `evaluatePointsContract`.
+ */
+const HELD_PRIZE_WORTH = 1;
+const HELD_RANK_WORTH = 4;
+
+function evaluatePointsContract(ctx, seat, w = WEIGHTS) {
+  if (ctx.turn.phase === 'bid' || ctx.turn.phase === 'meld') return null;
+  if (ctx.var('trickNumber') === 1 && ctx.countIn('trick') === 0) return null;
+
+  const scoring = ctx.pack.scoring || {};
+  const sides = sidesOf(ctx.pack, ctx.seats);
+  const mine = sideOfSeat(ctx.pack, ctx.seats, seat);
+  const contractSeat = contractSeatOf(ctx);
+  const contractSide = contractSeat === null ? null : sideOfSeat(ctx.pack, ctx.seats, contractSeat);
+  const contract = contractSeat === null ? 0 : (bidOf(ctx, contractSeat) ?? 0);
+
+  const taking = trickLeaderSoFar(ctx);
+  const takingSide = taking.seat === null ? null : sideOfSeat(ctx.pack, ctx.seats, taking.seat);
+  const trickIds = ctx.cardIdsIn('trick');
+  let onTable = 0;
+  for (const id of trickIds) onTable += cardValue(ctx.cardById(id), scoring);
+
+  const holds = holdsUp(ctx, taking);
+
+  const bankedBy = (side) => sides[side].reduce((sum, s) => sum
+    + (Number(ctx.playerVar(s, 'meld')?.points) || 0)
+    + handValue(ctx.cardsIn(ctx.zoneAddr('won', s)), scoring), 0);
+
+  /**
+   * WHAT IS STILL IN THIS SEAT'S OWN HAND, AND WHY THE EVALUATOR IS WRONG
+   * WITHOUT IT.
+   *
+   * Every other term here is about points that have already moved. Within one
+   * trick that makes the evaluator blind in a very specific way: whichever card
+   * I win with, the trick lands in the same pile, and the only difference the
+   * banked total sees is the value of the card I spent — so an ace scores
+   * ELEVEN BETTER than a ten for taking the identical trick. The bot cashed its
+   * aces at the first opportunity and had nothing left to win the counters at
+   * the end of the hand with, which is the classic beginner's mistake and it
+   * lost to the cheap heuristic because of it (`medium` took 41% of decisive
+   * rounds against `easy` before this term existed).
+   *
+   * A card kept is a card that can still take a trick, and a high card can take
+   * a trick full of somebody else's counters — so what is held is worth its
+   * face value PLUS its rank, which is what makes "win with the cheapest card
+   * that wins" fall out rather than being written as a rule.
+   *
+   * ONLY THIS SEAT'S HAND, never the partner's: `evaluateState` is asked of one
+   * seat and may read nothing it could not see.
+   */
+  const ladder = rankLadderOf(ctx.pack);
+  let held = 0;
+  for (const id of ctx.cardIdsIn(ctx.zoneAddr('hand', seat))) {
+    const card = ctx.cardById(id);
+    held += cardValue(card, scoring) + rankOrder(card, ladder) * HELD_RANK_WORTH;
+  }
+
+  const valueOfSide = (side) => {
+    let value = bankedBy(side);
+    if (side === mine) value += held * HELD_PRIZE_WORTH;
+    // The pile on the table, discounted by how well the winning card holds —
+    // the term the no-trump evaluator's own comment calls "the whole signal".
+    if (takingSide === side) value += onTable * holds;
+    if (side !== contractSide) return value;
+    // AND THE CLIFF. Everything a bidding side has banked is worth nothing at
+    // all if it finishes short, so the distance to the contract is priced on
+    // its own and not folded into the total: a side one trick from making it
+    // should play very differently from one that has already made it.
+    const owed = Math.max(0, contract - value);
+    return owed > 0 ? value - owed * w.SHORTFALL_COST : value + contract * 0.5;
+  };
+
+  let rival = -Infinity;
+  for (let side = 0; side < sides.length; side++) {
+    if (side === mine) continue;
+    rival = Math.max(rival, valueOfSide(side));
+  }
+  const value = valueOfSide(mine) - (Number.isFinite(rival) ? rival * w.CONTRACT_RIVAL_SHARE : 0);
+  return prizeSign(ctx) * value;
+}
+
 function evaluateContract(ctx, seat, w = WEIGHTS) {
   // A BID IS NOT A POSITION. Every candidate bid leaves the identical table —
   // no card has moved — so the only thing separating them is the promise
@@ -957,12 +1517,21 @@ function startPlayPhase(ctx) {
 
 /**
  * The phases a dealt hand goes through before a card is led, in order: the
- * pass, then the bid, then play. Both middle phases are optional and a pack may
- * declare either, both or neither — Hearts passes and does not bid, Spades bids
- * and does not pass — so this is the one place the order is written down.
+ * pass, then the bid, then the meld, then play. Every middle phase is optional
+ * and a pack may declare any of them or none — Hearts passes and does not bid,
+ * Spades bids and does not meld, Pinochle bids and melds — so this and
+ * `beginPlay` are the one place the order is written down.
+ *
+ * THE MELD COMES AFTER THE BID because it cannot be scored before it: a royal
+ * marriage is a marriage in the trump suit, and until the auction settles there
+ * is no trump suit for it to be in.
  */
+function beginPlay(ctx) {
+  if (!startMeldPhase(ctx)) startPlayPhase(ctx);
+}
+
 function beginHand(ctx) {
-  if (!startBiddingPhase(ctx)) startPlayPhase(ctx);
+  if (!startBiddingPhase(ctx)) beginPlay(ctx);
 }
 
 function applyPassCards(ctx, move) {
@@ -1102,6 +1671,7 @@ const trickTaking = {
       // bid is a real seat with a real hand, so without this the first bidder
       // could simply lead instead of bidding and the phase would be advisory.
       if (ctx.turn.phase === 'bid') return ctx.fail('phase', 'The bidding is not finished.');
+      if (ctx.turn.phase === 'meld') return ctx.fail('phase', 'The melds have not all been declared.');
       if (move.actor !== ctx.turn.seat) return ctx.fail('turn', "It's not your turn.");
       const cardId = move.cards?.[0];
       if (!cardId) return ctx.fail('no-card', 'No card specified.');
@@ -1121,6 +1691,23 @@ const trickTaking = {
       const bid = bidValueOf(move);
       const min = minBidOf(ctx);
       const max = maxBidOf(ctx, move.actor);
+      if (bidUnitOf(ctx) === 'points') {
+        // The LADDER is the range at a points auction, not an interval: a bid
+        // has to be a rung, and it has to be above whatever has been said.
+        if (bid === null || !bidLevels(ctx, move.actor).includes(bid)) {
+          const standing = highestBidSoFar(ctx);
+          return ctx.fail('bid-range', standing
+            ? `Pass, or bid more than ${standing}, in steps of ${bidIncrementOf(ctx)}.`
+            : `Pass, or bid from ${min} to ${max} in steps of ${bidIncrementOf(ctx)}.`);
+        }
+        if (bid > 0 && ctx.rules.bidding.namesTrump === true) {
+          const suit = bidTrumpOf(move);
+          if (!suit || !perilOf(ctx).suits.has(suit)) {
+            return ctx.fail('bid-trump', 'A bid has to name the suit it would play in.');
+          }
+        }
+        return ctx.ok();
+      }
       if (bid === null || bid < min || bid > max) {
         return ctx.fail('bid-range', `Bid between ${min} and ${max} tricks.`);
       }
@@ -1147,6 +1734,29 @@ const trickTaking = {
       return ctx.ok();
     }
 
+    if (move.type === 'declareMeld') {
+      if (!Array.isArray(ctx.rules.melds) || !ctx.rules.melds.length) {
+        return ctx.fail('no-melding', 'This game has no melding phase.');
+      }
+      if (ctx.turn.phase !== 'meld') return ctx.fail('phase', 'Not in the melding phase.');
+      if (pendingMeldOf(ctx, move.actor) !== undefined) {
+        return ctx.fail('already-melded', 'You have already declared your meld.');
+      }
+      const cards = move.cards || [];
+      if (new Set(cards).size !== cards.length) {
+        return ctx.fail('duplicate-card', 'A card can only be declared once.');
+      }
+      const hand = ctx.cardIdsIn(ctx.zoneAddr('hand', move.actor));
+      if (!cards.every((id) => hand.includes(id))) {
+        return ctx.fail('not-in-hand', 'That card is not in your hand.');
+      }
+      // ANY SELECTION IS A LEGAL DECLARATION, including none of it. Showing a
+      // card that is in no meld is worth nothing and costs nothing, and
+      // under-declaring is a player's own business — there is no rule at a
+      // table that makes you claim everything you hold.
+      return ctx.ok();
+    }
+
     return ctx.fail('unknown-move', `Unknown move type: ${move.type}`);
   },
 
@@ -1154,6 +1764,7 @@ const trickTaking = {
     if (move.type === 'playCard') applyPlayCard(ctx, move);
     else if (move.type === 'passCards') applyPassCards(ctx, move);
     else if (move.type === 'bid') applyBid(ctx, move);
+    else if (move.type === 'declareMeld') applyDeclareMeld(ctx, move);
   },
 
   enumerateLegalMoves(ctx, seat) {
@@ -1165,6 +1776,17 @@ const trickTaking = {
     if (ctx.turn.phase === 'bid') {
       return seat === ctx.turn.seat ? bidCandidates(ctx, seat) : [];
     }
+    // ONE CANDIDATE, AND IT IS THE WHOLE ANSWER. Unlike a pass, a declaration
+    // has no trade-off in it: every meld the hand holds is worth its points and
+    // showing one costs nothing, so "declare everything that counts" is not a
+    // shortlist of a space — it is the space, with the dominated members left
+    // out. A human is not restricted to it; the felt builds the move from
+    // whatever was staged (src/ui/interaction.js).
+    if (ctx.turn.phase === 'meld') {
+      if (pendingMeldOf(ctx, seat) !== undefined) return [];
+      return [{ actor: seat, type: 'declareMeld', cards: bestMeldSelection(ctx, seat) }];
+    }
+
     if (ctx.turn.phase === 'pass') {
       if (ctx.playerVar(seat, '__pendingPass') !== undefined) return [];
       // A SHORTLIST, NOT THE SPACE — see passCandidates for what is on it and
@@ -1186,6 +1808,11 @@ const trickTaking = {
   // the design doc meant by a `sequential` phase, and it is expressed by NOT
   // appearing here.
   actingSeats(ctx) {
+    if (ctx.turn.phase === 'meld') {
+      const seats = [];
+      for (let s = 0; s < ctx.seats; s++) if (pendingMeldOf(ctx, s) === undefined) seats.push(s);
+      return seats;
+    }
     if (ctx.turn.phase !== 'pass') return [ctx.turn.seat];
     const seats = [];
     for (let s = 0; s < ctx.seats; s++) {
@@ -1205,31 +1832,13 @@ const trickTaking = {
 
   interactionMode(ctx) {
     if (ctx.turn.phase === 'bid') return 'bid';
-    return ctx.turn.phase === 'pass' ? 'pass' : 'tap';
-  },
-
-  /**
-   * HOW MANY CARDS THE PASS WANTS AND WHICH WAY IT GOES — said here, because
-   * they are this genre's two parameters and were being read by name out of
-   * `rules.passing` and `vars.passDirection` inside src/ui/interaction.js and
-   * src/ui/table.js. Nothing changes on the felt: the button still says
-   * "Pass left" and the status bar still says "Passing — pick 3". What changes
-   * is that a second template using the same mode no longer inherits a count of
-   * three and a direction it does not have (#107).
-   *
-   * The label stays under ACTION_LABEL_MAX_CHARS — "Pass across" is eleven —
-   * which is why the count is in the status line and not on the button.
-   */
-  commitPrompt(ctx) {
-    if (ctx.turn.phase !== 'pass') return null;
-    const count = ctx.rules.passing?.count ?? 3;
-    const direction = { left: 'left', right: 'right', across: 'across' }[ctx.var('passDirection')] || '';
-    return {
-      count,
-      action: `Pass ${direction}`.trim(),
-      staging: `Passing — pick ${count}`,
-      waiting: 'Waiting for passes…',
-    };
+    // THE MELD IS THE PASS'S GESTURE, and reusing the mode rather than adding a
+    // sixth is the whole reason `commitPrompt` exists: pick cards out of the
+    // fan, watch them stage, commit with the action button. Everything that
+    // differs — what the button says, what move it makes, how many cards arm it
+    // — is answered below rather than by a new string that six downstream
+    // surfaces would each have to learn (src/ui/interaction.js).
+    return ctx.turn.phase === 'pass' || ctx.turn.phase === 'meld' ? 'pass' : 'tap';
   },
 
   /**
@@ -1246,22 +1855,90 @@ const trickTaking = {
    */
   pendingChoice(ctx, move) {
     if (move?.type !== 'bid' || ctx.turn.phase !== 'bid') return null;
-    if (bidValueOf(move) !== null) return null;
     const seat = move.actor;
-    const options = [];
-    for (let bid = minBidOf(ctx); bid <= maxBidOf(ctx, seat); bid++) {
-      options.push({ value: bid, label: bid === 0 ? 'Nil' : String(bid) });
+    const points = bidUnitOf(ctx) === 'points';
+    const bid = bidValueOf(move);
+
+    // TWO QUESTIONS, ASKED IN TURN — the platform's chooser loops until this
+    // answers null (src/templates/CONTRACT.md), so a bid that names a suit as
+    // well as a number is two ordinary Asks and not a bespoke dialog. The
+    // second only exists once the first has been answered with a real bid: a
+    // pass is not a contract, so there is no suit for it to be played in.
+    if (points && bid !== null) {
+      if (bid === 0 || ctx.rules.bidding.namesTrump !== true || bidTrumpOf(move)) return null;
+      return {
+        attr: 'trump',
+        prompt: 'suit to play it in',
+        kind: 'value',
+        options: [...perilOf(ctx).suits].map((suit) => ({ value: suit, label: suitLabel(suit) })),
+        apply: (m, value) => ({ ...m, choice: { ...(m.choice || {}), trump: value } }),
+      };
     }
-    if (mayBidBlind(ctx, seat)) options.push({ value: 'blind', label: 'Blind nil' });
+    if (bid !== null) return null;
+
+    const options = points
+      ? bidLevels(ctx, seat).map((n) => ({ value: n, label: n === 0 ? 'Pass' : String(n) }))
+      : [];
+    if (!points) {
+      for (let n = minBidOf(ctx); n <= maxBidOf(ctx, seat); n++) {
+        options.push({ value: n, label: n === 0 ? 'Nil' : String(n) });
+      }
+      if (mayBidBlind(ctx, seat)) options.push({ value: 'blind', label: 'Blind nil' });
+    }
     return {
       attr: 'bid',
       // Completes "Choose a …", so it is a noun phrase and not a sentence.
-      prompt: 'number of tricks to bid',
+      prompt: points ? 'number of points to bid' : 'number of tricks to bid',
       kind: 'value',
       options,
       apply: (m, value) => (value === 'blind'
         ? { ...m, choice: { ...(m.choice || {}), bid: 0, sight: 'blind' } }
         : { ...m, choice: { ...(m.choice || {}), bid: value } }),
+    };
+  },
+
+  /**
+   * WHAT THE COMMIT BUTTON SAYS, AND WHEN IT IS ARMED — for both of this
+   * template's simultaneous-commit phases, which share the `pass` gesture and
+   * nothing else.
+   *
+   * THE PASS (#107): how many cards it wants and which way it goes were being
+   * read by name out of `rules.passing` and `vars.passDirection` inside
+   * src/ui/interaction.js and src/ui/table.js. Nothing changes on the felt: the
+   * button still says "Pass left" and the status bar still says "Passing —
+   * pick 3". What changes is that a second template using the same mode no
+   * longer inherits a count of three and a direction it does not have. The
+   * label stays under ACTION_LABEL_MAX_CHARS — "Pass across" is eleven — which
+   * is why the count is in the status line and not on the button.
+   *
+   * THE MELD (#106): a declaration is committed at ANY size, nothing at all
+   * included — a hand with no meld in it still has to say so before the table
+   * can move on — and it moves no card anywhere. So it is a `min`/`max` rather
+   * than a `count`, and it NAMES its move, because a commit of zero cards has
+   * no card-carrying move for the platform to read the type off.
+   *
+   * Returning null takes the platform's default, which is what every other
+   * template does by not implementing this at all.
+   */
+  commitPrompt(ctx, seat) {
+    if (ctx.turn.phase === 'meld') {
+      return {
+        action: 'Declare',
+        moveType: 'declareMeld',
+        min: 0,
+        max: ctx.countIn(ctx.zoneAddr('hand', seat)),
+        staging: 'Declare your meld',
+        waiting: 'Waiting for melds…',
+      };
+    }
+    if (ctx.turn.phase !== 'pass') return null;
+    const count = ctx.rules.passing?.count ?? 3;
+    const direction = { left: 'left', right: 'right', across: 'across' }[ctx.var('passDirection')] || '';
+    return {
+      count,
+      action: `Pass ${direction}`.trim(),
+      staging: `Passing — pick ${count}`,
+      waiting: 'Waiting for passes…',
     };
   },
 
@@ -1291,10 +1968,16 @@ const trickTaking = {
     if (ctx.rules.bidding) {
       const bid = bidOf(ctx, seat);
       const blind = bidIsBlind(ctx, seat);
+      // A ZERO MEANS TWO OPPOSITE THINGS. At a trick auction it is a nil — the
+      // boldest promise on the table. At a points auction it is a pass: this
+      // seat said nothing at all. Printing "nil" for the second would tell the
+      // felt the exact reverse of what happened.
+      const points = bidUnitOf(ctx) === 'points';
       counters.push({
-        text: bid === null ? '—' : bid === 0 ? (blind ? 'BN' : 'nil') : String(bid),
+        text: bid === null ? '—' : bid === 0 ? (points ? '—' : blind ? 'BN' : 'nil') : String(bid),
         aria: bid === null ? 'has not bid yet'
-          : bid === 0 ? `bid ${blind ? 'blind ' : ''}nil` : `bid ${bid} ${bid === 1 ? 'trick' : 'tricks'}`,
+          : bid === 0 ? (points ? 'passed' : `bid ${blind ? 'blind ' : ''}nil`)
+            : points ? `bid ${bid} points` : `bid ${bid} ${bid === 1 ? 'trick' : 'tricks'}`,
         label: 'Bid',
         kind: 'bid',
       });
@@ -1307,6 +1990,23 @@ const trickTaking = {
         // The won pile is right there on an open seat, and it is a pile whose
         // height IS this number.
         minimizedOnly: true,
+      });
+    }
+
+    // WHAT THIS SEAT DECLARED, ON EVERY SEAT'S FELT. A meld is called out at a
+    // table and written down by everybody, and the cards it was made of stay in
+    // a hand nobody else may look at — so the number and the names are the
+    // whole of what there is to show, and they are shown for every seat rather
+    // than only for the one looking.
+    if (Array.isArray(ctx.rules.melds) && ctx.rules.melds.length) {
+      const meld = ctx.playerVar(seat, 'meld');
+      const named = meld?.melds?.map((m) => (m.suit ? `${m.label} in ${m.suit}` : m.label)).join(', ');
+      counters.push({
+        text: meld ? String(meld.points) : '—',
+        aria: !meld ? 'has not declared a meld yet'
+          : named ? `melded ${meld.points}: ${named}` : 'declared no meld',
+        label: 'Meld',
+        kind: 'meld',
       });
     }
 
@@ -1337,7 +2037,7 @@ const trickTaking = {
    * was reading it directly in three places, double underscore and all.
    */
   committedSelection(ctx, seat) {
-    return ctx.playerVar(seat, '__pendingPass') ?? null;
+    return ctx.playerVar(seat, '__pendingPass') ?? pendingMeldOf(ctx, seat) ?? null;
   },
 
   ruleLines(rules) {
@@ -1347,10 +2047,24 @@ const trickTaking = {
       ? `Everyone plays one card; the highest ${trump.replace(/s$/, '')} takes the trick, or the highest card of the suit that was led if no ${trump.replace(/s$/, '')} was played.`
       : 'Everyone plays one card; the highest card of the suit that was led takes the trick.'];
     if (rules.followSuit === 'must') out.push('Follow the suit that was led if you can.');
-    if (rules.bidding) {
+    if (rules.followSuit === 'must-beat') {
+      out.push('Follow the suit that was led, and play higher than the card that is winning if you hold one. '
+        + 'If you are out of that suit you must trump instead — and over-trump if somebody already has.');
+    }
+    if (rules.bidding?.unit === 'points') {
+      out.push('Before the first card, each player in turn names a score their side will reach, or passes. '
+        + 'Every bid has to beat the one before it, the highest bidder names the trump suit, and if everybody '
+        + 'passes the last to speak is stuck with the smallest bid. Reach it and your side banks everything it '
+        + 'made; fall short and you lose the whole bid instead.');
+    } else if (rules.bidding) {
       out.push('Before the first card, each player in turn says how many tricks they will take. '
         + 'Take what you said and your side scores it; fall short and it costs you the same. '
         + 'A bid of nothing — nil — pays a bonus for taking no trick at all, and costs the same for taking one.');
+    }
+    if (Array.isArray(rules.melds) && rules.melds.length) {
+      out.push('Then everybody declares their meld — the scoring combinations they were dealt. '
+        + 'The points go on the sheet and the cards stay in your hand, so what you have just shown the '
+        + 'table is what you still have to win tricks with.');
     }
     if (rules.passing) {
       out.push(`Before play, pass ${rules.passing.count ?? 3} cards to another player.`);
@@ -1362,7 +2076,7 @@ const trickTaking = {
     return [];
   },
 
-  botVerbs: { passCards: 'passed', bid: 'bid' },
+  botVerbs: { passCards: 'passed', bid: 'bid', declareMeld: 'melded' },
 
   statLines(seat) {
     return [
@@ -1376,6 +2090,12 @@ const trickTaking = {
     // only while the enumerator offered exactly one pass, and would now rank
     // five whole passes by an accident of sort order. playCard is untouched.
     if (move.type === 'passCards') return scorePass(ctx, move, w);
+    // A DECLARATION IS WORTH EXACTLY WHAT IT SCORES. No lookahead, no
+    // trade-off: the cards do not move, so the position after it is the
+    // position before it with a number added.
+    if (move.type === 'declareMeld') {
+      return detectDeclaredMelds(ctx, move.cards || [], trumpSuitOf(ctx)).points;
+    }
     // A BID IS THE ONE MOVE WITH NO CARD IN IT, and the one the lookahead
     // cannot help with: every bid leaves a position where nothing has been
     // played, so `evaluateState` declines the whole phase (see below) and this
@@ -1424,7 +2144,11 @@ const trickTaking = {
     // TWO GENRES UNDER ONE TEMPLATE, and they are not scored in the same
     // currency. A pack that bids is playing for a number the cards do not
     // carry — see `evaluateContract`, which is the whole of that judgement.
-    if (ctx.rules.bidding) return evaluateContract(ctx, seat, w);
+    if (ctx.rules.bidding) {
+      return bidUnitOf(ctx) === 'points'
+        ? evaluatePointsContract(ctx, seat, w)
+        : evaluateContract(ctx, seat, w);
+    }
 
     const scoring = ctx.pack.scoring || {};
 
