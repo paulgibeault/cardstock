@@ -50,7 +50,7 @@ than an error.
 | `isGameOver` | `(ctx) -> boolean` | `false`. Only consulted when the pack's `scoring.gameOver` is absent or says `"template"`. |
 | `botHeuristic` | `(ctx, move, weights?) -> number` | every non-draw move scores equally |
 | `evaluateState` | `(ctx, seat, weights?) -> number` | none — the bot ranks by `botHeuristic` alone |
-| `matchStanding` | `(ctx, seat) -> number` | the seat's accumulated score, signed by `scoring.gameOver.winner` — see *What the `hard` bot asks of you* |
+| `matchStanding` | `(ctx, seat) -> number` | the seat's accumulated score, signed by `scoring.gameOver.winner` — see *What the `hard` bot asks of you*. Asked per SEAT even in a partnership; the engine folds it — see *Partnerships* |
 | `actingSeats` | `(ctx) -> seat[]` | `[ctx.turn.seat]`. Say so for a simultaneous-commit phase, or the table will schedule only one of the seats that may act. |
 | `enumerateAnnouncements` | `(ctx, seat) -> move[]` | none. Its presence is also what reserves the announce bar's slot on the felt. |
 | `applyAnnouncement` | `(ctx, announcement) -> void` | none — the rule-test harness's entry point only |
@@ -138,7 +138,7 @@ platform file.
 | `gathers` | `(ctx, seat) -> boolean` | `interaction.js`, `table.js` | whether the current mode is one that stages |
 | `pendingChoice` | `(ctx, move) -> Ask \| null` | `src/ui/table.js` | no question |
 | `activeMatch` | `(ctx) -> {address, attr, value, onCard} \| null` | `describe.js`, `table.js` | none |
-| `scoreChip` | `(ctx, seat) -> {short, long, aria} \| null` | `table.js` | the plain total |
+| `scoreChip` | `(ctx, seat) -> {short, long, aria} \| null` | `table.js` | the SIDE's total (the seat's own, where there are no sides) |
 | `seatCounters` | `(ctx, seat) -> {text, aria, kind?}[] \| null` | `table.js` | the hand count |
 | `committedSelection` | `(ctx, seat) -> cardId[] \| null` | `table.js` | none |
 | `getMeldGroups` | `(ctx, seat) -> Group[]` | `table.js` | `[]` |
@@ -340,6 +340,49 @@ simply never published it. A fifth template that declares nothing leaks nothing.
 | Member | Signature | Notes |
 |---|---|---|
 | `publicVars` | `string[] \| (rules) -> string[]` | Optional. A FUNCTION when the names come from the rules: shedding publishes one `active<Attr>` per attribute the pack matches on, and trick-taking publishes whichever var the manifest named for "hearts are broken". |
+
+## Partnerships
+
+A pack may declare `players.teams: N` and be played in **sides**: seats deal
+round-robin into `N` of them, so seat *s* plays for side `s % N` and a partner
+sits `seats / N` chairs away — opposite, at the four-seat two-side table this
+was built for. `src/engine/sides.js` is the whole vocabulary and every answer is
+computed from the pack on demand, so a game whose partners ROTATE grows a shape
+there and nothing else moves.
+
+**A template still scores per seat.** `scoreRound` returns `{seat: delta}` as it
+always did and the engine folds the seats into their side — so a bids-and-bags
+scorer may hand a side's whole 120 to one partner or split it sixty each, and a
+scorer that has never heard of partnerships gets the right answer for free.
+`state.scores` stays per seat and the side's total is derived; nothing was added
+to the match payload, which is why `MATCH_FORMAT_VERSION` did not move.
+
+What the platform folds for you:
+
+| Question | Answered for |
+|---|---|
+| `scoring.gameOver`'s `anyScore >= N` | the SIDE's total |
+| `placements` / `sideStandings` (`src/stats/matchStats.js`) | the SIDE; partners share a place |
+| the `hard` bot's terminal signal | the SIDE's change in standing, against the other SIDES |
+| the felt's score chip, and one chip per side | `src/ui/seatRing.js` |
+
+**A pack with no `players.teams` has one side per seat**, so every fold above is
+the identity and nothing in this table is a new behaviour for it —
+`tests/replayIdentity.test.js` holds the five shipped packs to serializing the
+same bytes they did before any of it existed.
+
+Two things a template still owns:
+
+* **`matchStanding` is asked per SEAT**, because a chair is all a template can
+  see, and the engine sums it over the side. A hook that tries to answer for the
+  side itself will be counted twice.
+* **`scoreChip`, if you override it,** owes its own fold. The default is the
+  side's total; a template that replaces it and reports one partner's half will
+  disagree with every other number on the screen.
+
+`state.winner` is a **seat** and stays one — the canonical (lowest-numbered)
+member of the winning side. Nothing asks `winner === mySeat` to mean "did I
+win"; it asks whether the winner is on your side.
 
 ## Ending a round
 
