@@ -504,10 +504,36 @@ export function buildUiModel(state, { seat, moves = [], acts = false, selection 
     const direction = { left: 'left', right: 'right', across: 'across' }[state.vars.passDirection] || '';
     for (const id of hand) ui.handSelectable.add(id);
     ui.handMulti = true;
-    if (sel.length === count && selection.from === handAddr) {
+
+    // WHAT THIS COMMIT IS, ASKED OF THE TEMPLATE (`commitPrompt`).
+    //
+    // Everything above is the gesture — pick cards out of the fan, watch them
+    // stage — and it is the same gesture for every simultaneous commit there
+    // will ever be. What is NOT the same is the sentence on the button, the
+    // move it makes, and how many cards arm it, and all three of those were
+    // Hearts' answers written into the platform: `passCards`, "Pass across",
+    // and exactly `rules.passing.count`.
+    //
+    // Pinochle's meld is the second commit phase and shares none of them. It
+    // declares a scoring selection of ANY size — a hand with no meld in it
+    // still has to say so — and moves no card anywhere. Adding a sixth
+    // interaction mode for that would have meant teaching six downstream
+    // surfaces a new string to render an identical gesture; asking the template
+    // what its button says costs one hook and leaves every existing pack on the
+    // default it already had.
+    const prompt = state.pack.template.commitPrompt?.(makeCtx(state), seat) || null;
+    const label = prompt?.label ?? `Pass ${direction}`.trim();
+    const moveType = prompt?.moveType ?? 'passCards';
+    const min = Number.isInteger(prompt?.min) ? prompt.min : count;
+    const max = Number.isInteger(prompt?.max) ? prompt.max : count;
+
+    // An EMPTY selection is a real answer when the floor is zero, and there is
+    // no `selection.from` to check when nothing has been picked up.
+    const mine = !sel.length ? min === 0 : selection.from === handAddr;
+    if (mine && sel.length >= min && sel.length <= max) {
       ui.action = {
-        label: `Pass ${direction}`.trim(),
-        makeMove: () => ({ actor: seat, type: 'passCards', cards: sel.slice() }),
+        label,
+        makeMove: () => ({ actor: seat, type: moveType, cards: sel.slice() }),
       };
     }
     return ui;

@@ -2075,6 +2075,12 @@ function statusTextFor(state, acting) {
     // where the only live control is a button in the rail.
     return acting.some(isMySeat) ? 'Your bid' : `${seatLabel(state.turn.seat)} is bidding…`;
   }
+  if (state.turn.phase === 'meld') {
+    // The meld shares the pass's GESTURE and not its sentence: there is no
+    // count to learn (any number of cards is a declaration, none included), so
+    // what this slot has to say is what the button will do with them.
+    return acting.some(isMySeat) ? 'Declare your meld' : 'Waiting for melds…';
+  }
   if (state.turn.phase === 'pass') {
     // HOW MANY, HERE, because nothing else says it in time. The pass button
     // only appears once exactly this many cards are staged, so its label

@@ -3,7 +3,7 @@
 // scoring.defaultValue -> 0.
 
 import { resolveSelectorMap, selectorMatches } from './selectors.js';
-import { sidesOf, foldToSides, representativeSeat } from './sides.js';
+import { sidesOf, sideOfSeat, foldToSides, representativeSeat } from './sides.js';
 
 export function cardValue(card, scoring) {
   const fromMap = scoring.cardValues ? resolveSelectorMap(card, scoring.cardValues, undefined) : undefined;
@@ -191,11 +191,80 @@ export function roundScoreBidsAndBags(ctx) {
   return result;
 }
 
+/* ------------------------------------------------------------------ *
+ * MELD AND TRICKS
+ * ------------------------------------------------------------------ *
+ *
+ * Pinochle's, and the third currency in this file. `penalty-cards-taken`
+ * scores the cards a seat was made to take; `bids-and-bags` scores a promise
+ * counted in tricks and ignores the cards entirely. This scores BOTH, added
+ * together, and then prices the total against a bid made in the same units:
+ *
+ *     side total = what its seats melded  +  the card value of what they took
+ *                  (+ a bonus to whoever took the last trick)
+ *
+ * ONE SIDE HOLDS THE CONTRACT, not both — the difference from `bids-and-bags`,
+ * where every seat's bid stands and each side owes the sum of its own two. A
+ * points auction ends with exactly one number on the table, and the side that
+ * said it either reaches it or loses the whole thing (`unit: 'points'`, and
+ * the auction that produces it is src/templates/trick-taking.js).
+ *
+ * WHO HOLDS IT IS DERIVED, NOT STORED. The seat with the highest bid is the
+ * seat that won the auction — every other seat passed with a 0, and the auction
+ * refuses a bid that does not beat what has been said, so the maximum is unique
+ * and every seat at the table watched it being made. A stored `contractSeat`
+ * would be a second copy of a fact the public `bid` vars already carry, free to
+ * disagree with them after a replay.
+ *
+ * WHAT A SET COSTS. The bid, whole and negative — the meld and the tricks the
+ * side did take are worth nothing at all, which is the rule that makes bidding
+ * a hand up to a number it cannot reach the expensive mistake. The side that
+ * did NOT hold the contract always banks what it made, set or not: it promised
+ * nothing and cannot fail.
+ *
+ * THE LAST TRICK IS `leader`. Resolving a trick sets that var to whoever won
+ * it, so after the final trick of a hand it is the seat that took the last one
+ * — no second var, and nothing for a replay to get out of step with.
+ */
+export function roundScoreMeldAndTricks(ctx) {
+  const scoring = ctx.pack.scoring || {};
+  const lastTrick = num(scoring.tricks?.lastTrick, 0);
+  const sides = sidesOf(ctx.pack, ctx.seats);
+
+  const result = {};
+  for (let seat = 0; seat < ctx.seats; seat++) result[seat] = 0;
+
+  let contractSeat = null;
+  let contract = 0;
+  for (let seat = 0; seat < ctx.seats; seat++) {
+    const bid = ctx.playerVar(seat, 'bid');
+    if (Number.isInteger(bid) && bid > contract) {
+      contract = bid;
+      contractSeat = seat;
+    }
+  }
+  const contractSide = contractSeat === null ? null : sideOfSeat(ctx.pack, ctx.seats, contractSeat);
+  const lastSeat = ctx.var('leader');
+
+  sides.forEach((members, side) => {
+    const banker = members[0];
+    let total = 0;
+    for (const seat of members) {
+      total += Number(ctx.playerVar(seat, 'meld')?.points) || 0;
+      total += handValue(ctx.cardsIn(ctx.zoneAddr('won', seat)), scoring);
+      if (seat === lastSeat) total += lastTrick;
+    }
+    result[banker] += side === contractSide && total < contract ? -contract : total;
+  });
+  return result;
+}
+
 export const ROUND_SCORE_STRATEGIES = {
   'hand-values-to-winner': roundScoreHandValuesToWinner,
   'leftover-hand-values': roundScoreLeftoverHandValues,
   'penalty-cards-taken': roundScorePenaltyCardsTaken,
   'bids-and-bags': roundScoreBidsAndBags,
+  'meld-and-tricks': roundScoreMeldAndTricks,
 };
 
 /**

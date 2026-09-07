@@ -1,0 +1,151 @@
+{
+  "id": "pinochle",
+  "name": "Pinochle",
+  "version": "0.1.0",
+  "players": { "min": 4, "max": 4, "best": 4, "teams": 2 },
+  "deck": "pinochle-48",
+  "rankLadder": ["9", "J", "Q", "K", "10", "A"],
+  "template": "trick-taking",
+  "tagline": "Show what you hold. Then take what you promised.",
+  "howToPlay": [
+    "Forty-eight cards, two of every one of them, and a ladder nobody else uses: the ten sits between the king and the ace. A ten beats a king and loses to an ace, and the second copy of a card is its own card — two aces of spades can meet in the same trick.",
+    "The auction is in POINTS, not tricks. Each seat in turn names a number it thinks its side can make, or passes, and the seat that bids highest also names the trump suit. Nobody may repeat or undercut what has already been said, and if everybody passes the last seat to speak is stuck with the minimum.",
+    "Then everyone declares their meld: a marriage (king and queen of a suit) is 2, the same marriage in trump is 4, the queen of spades with the jack of diamonds is a pinochle worth 4, and a run of J-Q-K-10-A in trump is 15. You keep the cards — a meld is scored, not laid down — so the ace you just showed the table is still the ace you have to win a trick with.",
+    "In play you must follow suit AND beat the card that is winning if you hold anything that can. Void in the suit, you must trump; if somebody has already trumped, you must over-trump. Cards taken are worth A 11, ten 10, king 4, queen 3, jack 2, and the last trick is worth 10 more — 250 in the deck. Meld plus tricks against the bid: make it and your side banks the lot, miss it and you lose the whole bid instead."
+  ],
+  "accent": "#7a3b6b",
+  "heroCards": [
+    { "rank": "Q", "suit": "spades" },
+    { "rank": "J", "suit": "diamonds" },
+    { "rank": "10", "suit": "hearts" }
+  ],
+  "rules": {
+    "followSuit": "must-beat",
+    "trump": "chosen",
+    "trickWinner": "highest-trump-else-led",
+    "firstLead": "left-of-dealer",
+    "dealAll": true,
+    "bidding": {
+      "unit": "points",
+      "min": 100,
+      "max": 500,
+      "increment": 10,
+      "namesTrump": true
+    },
+    "melds": [
+      {
+        "id": "run",
+        "label": "Run",
+        "points": 15,
+        "group": "marriage",
+        "suits": "trump",
+        "cards": [{ "rank": "J" }, { "rank": "Q" }, { "rank": "K" }, { "rank": "10" }, { "rank": "A" }]
+      },
+      {
+        "id": "royal-marriage",
+        "label": "Royal marriage",
+        "points": 4,
+        "group": "marriage",
+        "suits": "trump",
+        "cards": [{ "rank": "K" }, { "rank": "Q" }]
+      },
+      {
+        "id": "marriage",
+        "label": "Marriage",
+        "points": 2,
+        "group": "marriage",
+        "suits": "same-not-trump",
+        "cards": [{ "rank": "K" }, { "rank": "Q" }]
+      },
+      {
+        "id": "double-pinochle",
+        "label": "Double pinochle",
+        "points": 30,
+        "group": "pinochle",
+        "cards": [
+          { "rank": "Q", "suit": "spades" },
+          { "rank": "Q", "suit": "spades" },
+          { "rank": "J", "suit": "diamonds" },
+          { "rank": "J", "suit": "diamonds" }
+        ]
+      },
+      {
+        "id": "pinochle",
+        "label": "Pinochle",
+        "points": 4,
+        "group": "pinochle",
+        "cards": [{ "rank": "Q", "suit": "spades" }, { "rank": "J", "suit": "diamonds" }]
+      },
+      {
+        "id": "aces-around",
+        "label": "Aces around",
+        "points": 10,
+        "group": "around",
+        "suits": "each",
+        "cards": [{ "rank": "A" }]
+      },
+      {
+        "id": "kings-around",
+        "label": "Kings around",
+        "points": 8,
+        "group": "around",
+        "suits": "each",
+        "cards": [{ "rank": "K" }]
+      },
+      {
+        "id": "queens-around",
+        "label": "Queens around",
+        "points": 6,
+        "group": "around",
+        "suits": "each",
+        "cards": [{ "rank": "Q" }]
+      },
+      {
+        "id": "jacks-around",
+        "label": "Jacks around",
+        "points": 4,
+        "group": "around",
+        "suits": "each",
+        "cards": [{ "rank": "J" }]
+      }
+    ]
+  },
+  "scoring": {
+    "cardValues": {
+      "rank:A": 11,
+      "rank:10": 10,
+      "rank:K": 4,
+      "rank:Q": 3,
+      "rank:J": 2,
+      "rank:9": 0
+    },
+    "roundScore": "meld-and-tricks",
+    "tricks": { "lastTrick": 10 },
+    "accumulate": true,
+    "gameOver": { "when": "anyScore >= 1000", "winner": "highestScore" }
+  },
+  "variants": [
+    {
+      "id": "simple-counters",
+      "name": "Simple counters",
+      "description": "Aces, tens and kings are worth 10 apiece and nothing else counts — the same 250 in the deck, with no arithmetic to do at the table.",
+      "default": false,
+      "available": true,
+      "patch": {
+        "scoring.cardValues": {
+          "rank:A": 10,
+          "rank:10": 10,
+          "rank:K": 10,
+          "rank:Q": 0,
+          "rank:J": 0,
+          "rank:9": 0
+        }
+      }
+    }
+  ],
+  "ui": {
+    "cardStyle": "classic",
+    "cardBack": { "pattern": "weave", "color": "#7a3b6b", "emblem": "♦" }
+  },
+  "credits": "Traditional (public domain). Partnership auction Pinochle, 48-card deck."
+}
