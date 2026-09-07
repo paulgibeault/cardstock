@@ -239,6 +239,187 @@
       ]
     },
     {
+      "name": "four of a kind chops a pair of 2s — the default (D-6)",
+      "setup": {
+        "seats": 4,
+        "turn": { "seat": 2, "phase": "play" },
+        "direction": "counterclockwise",
+        "zones": {
+          "hand.0": ["diamonds-4"],
+          "hand.1": ["diamonds-J"],
+          "hand.2": ["spades-8", "clubs-8", "diamonds-8", "hearts-8", "diamonds-10"],
+          "hand.3": ["spades-5", "clubs-5", "spades-6", "clubs-6", "spades-7", "clubs-7", "diamonds-9"],
+          "pile": ["spades-2", "clubs-2"]
+        },
+        "vars": {
+          "combo": { "kind": "pair", "size": 2, "top": 49, "cards": ["spades-2", "clubs-2"], "seat": 0 },
+          "passed": [], "lastPlayer": 0, "leader": 0, "trickNumber": 1
+        }
+      },
+      "assert": [
+        { "move": { "actor": 2, "type": "playCard",
+                    "cards": ["spades-8", "clubs-8", "diamonds-8", "hearts-8"] },
+          "legal": true }
+      ]
+    },
+    {
+      "name": "quad-needs-four-pairs: the quad no longer chops a pair of 2s, four consecutive pairs still do",
+      "variants": ["quad-needs-four-pairs"],
+      "setup": {
+        "seats": 4,
+        "turn": { "seat": 3, "phase": "play" },
+        "direction": "counterclockwise",
+        "zones": {
+          "hand.0": ["diamonds-4"],
+          "hand.1": ["diamonds-J"],
+          "hand.2": ["spades-8", "clubs-8", "diamonds-8", "hearts-8", "diamonds-10"],
+          "hand.3": ["spades-4", "clubs-4", "spades-5", "clubs-5", "spades-6", "clubs-6",
+                     "spades-7", "clubs-7", "diamonds-9"],
+          "pile": ["spades-2", "clubs-2"]
+        },
+        "vars": {
+          "combo": { "kind": "pair", "size": 2, "top": 49, "cards": ["spades-2", "clubs-2"], "seat": 0 },
+          "passed": [], "lastPlayer": 0, "leader": 0, "trickNumber": 1
+        }
+      },
+      "assert": [
+        { "move": { "actor": 3, "type": "playCard",
+                    "cards": ["spades-4", "clubs-4", "spades-5", "clubs-5",
+                              "spades-6", "clubs-6", "spades-7", "clubs-7"] },
+          "legal": true },
+        { "apply": { "actor": 3, "type": "pass" } },
+        { "expect": { "turn": { "seat": 2 } } },
+        { "move": { "actor": 2, "type": "playCard",
+                    "cards": ["spades-8", "clubs-8", "diamonds-8", "hearts-8"] },
+          "legal": false, "rule": "wrong-shape" }
+      ]
+    },
+    {
+      "name": "no-ending-on-two: a 2 may not be your last card",
+      "variants": ["no-ending-on-two"],
+      "setup": {
+        "seats": 4,
+        "turn": { "seat": 3, "phase": "play" },
+        "direction": "counterclockwise",
+        "zones": {
+          "hand.0": ["diamonds-9"],
+          "hand.1": ["diamonds-5"],
+          "hand.2": ["diamonds-6"],
+          "hand.3": ["hearts-2"],
+          "pile": ["clubs-4"]
+        },
+        "vars": {
+          "combo": { "kind": "single", "size": 1, "top": 5, "cards": ["clubs-4"], "seat": 0 },
+          "passed": [], "lastPlayer": 0, "leader": 0, "trickNumber": 1
+        }
+      },
+      "assert": [
+        { "move": { "actor": 3, "type": "playCard", "cards": ["hearts-2"] },
+          "legal": false, "rule": "last-card" },
+        { "move": { "actor": 3, "type": "pass" }, "legal": true }
+      ]
+    },
+    {
+      "name": "the same 2 is a fine way to go out with the house rule off",
+      "setup": {
+        "seats": 4,
+        "turn": { "seat": 3, "phase": "play" },
+        "direction": "counterclockwise",
+        "zones": {
+          "hand.0": ["diamonds-9"],
+          "hand.1": ["diamonds-5"],
+          "hand.2": ["diamonds-6"],
+          "hand.3": ["hearts-2"],
+          "pile": ["clubs-4"]
+        },
+        "vars": {
+          "combo": { "kind": "single", "size": 1, "top": 5, "cards": ["clubs-4"], "seat": 0 },
+          "passed": [], "lastPlayer": 0, "leader": 0, "trickNumber": 1
+        }
+      },
+      "assert": [
+        { "move": { "actor": 3, "type": "playCard", "cards": ["hearts-2"] }, "legal": true }
+      ]
+    },
+    {
+      "name": "no-ending-on-two: the 2 you are not going out on is still a play",
+      "variants": ["no-ending-on-two"],
+      "setup": {
+        "seats": 4,
+        "turn": { "seat": 3, "phase": "play" },
+        "direction": "counterclockwise",
+        "zones": {
+          "hand.0": ["diamonds-9"],
+          "hand.1": ["diamonds-5"],
+          "hand.2": ["diamonds-6"],
+          "hand.3": ["hearts-2", "spades-7"],
+          "pile": ["clubs-4"]
+        },
+        "vars": {
+          "combo": { "kind": "single", "size": 1, "top": 5, "cards": ["clubs-4"], "seat": 0 },
+          "passed": [], "lastPlayer": 0, "leader": 0, "trickNumber": 1
+        }
+      },
+      "assert": [
+        { "move": { "actor": 3, "type": "playCard", "cards": ["hearts-2"] }, "legal": true }
+      ]
+    },
+    {
+      "name": "no-ending-on-two: the rule relaxes rather than stalling a leader holding nothing else",
+      "variants": ["no-ending-on-two"],
+      "setup": {
+        "seats": 4,
+        "turn": { "seat": 3, "phase": "play" },
+        "direction": "counterclockwise",
+        "zones": {
+          "hand.0": ["diamonds-9"],
+          "hand.1": ["diamonds-5"],
+          "hand.2": ["diamonds-6"],
+          "hand.3": ["hearts-2"]
+        },
+        "vars": { "combo": null, "passed": [], "lastPlayer": null, "leader": 3, "trickNumber": 1 }
+      },
+      "assert": [
+        { "move": { "actor": 3, "type": "pass" }, "legal": false, "rule": "must-lead" },
+        { "move": { "actor": 3, "type": "playCard", "cards": ["hearts-2"] }, "legal": true }
+      ]
+    },
+    {
+      "name": "instant-wins: the whole hand goes down, and everybody else pays for all thirteen",
+      "variants": ["instant-wins"],
+      "setup": {
+        "seats": 4,
+        "turn": { "seat": 0, "phase": "play" },
+        "direction": "counterclockwise",
+        "zones": {
+          "hand.0": ["spades-2", "clubs-2", "diamonds-2", "hearts-2", "spades-3", "clubs-4",
+                     "diamonds-5", "hearts-6", "spades-7", "clubs-8", "diamonds-9",
+                     "hearts-10", "spades-J"],
+          "hand.1": ["diamonds-J"],
+          "hand.2": ["diamonds-Q", "hearts-Q"],
+          "hand.3": ["diamonds-K", "hearts-K", "spades-K"]
+        },
+        "vars": {
+          "combo": null, "passed": [], "lastPlayer": null, "leader": 0, "trickNumber": 1,
+          "instantWin": { "seat": 0, "shape": "four pigs" }
+        }
+      },
+      "assert": [
+        { "move": { "actor": 0, "type": "playCard", "cards": ["spades-3"] },
+          "legal": false, "rule": "instant-win" },
+        { "move": { "actor": 0, "type": "playCard",
+                    "cards": ["spades-2", "clubs-2", "diamonds-2", "hearts-2"] },
+          "legal": false, "rule": "instant-win" },
+        { "move": { "actor": 1, "type": "playCard", "cards": ["diamonds-J"] },
+          "legal": false, "rule": "turn" },
+        { "apply": { "actor": 0, "type": "playCard",
+                     "cards": ["spades-2", "clubs-2", "diamonds-2", "hearts-2", "spades-3", "clubs-4",
+                               "diamonds-5", "hearts-6", "spades-7", "clubs-8", "diamonds-9",
+                               "hearts-10", "spades-J"] } },
+        { "expect": { "scores": { "0": 0, "1": 1, "2": 2, "3": 3 } } }
+      ]
+    },
+    {
       "name": "the cards left in your hand are the points, and going out costs nothing",
       "setup": {
         "seats": 4,

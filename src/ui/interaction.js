@@ -856,6 +856,20 @@ export function dropCandidates(state, { seat, moves = [], source }) {
     return out;
   }
 
+  // A DRAG IS A ONE-CARD COMMIT. Dragging is a gesture for one card, and a
+  // combination of several is what the button is for — so the drop is offered
+  // only where that single card is a legal play on its own, which is the
+  // commonest move in a climbing game and the one worst served by having to
+  // tap twice. Asked of the same live verdict the button uses.
+  if (mode === 'combination') {
+    if ((source.from ?? handAddr) !== handAddr) return [];
+    if (!selectionLegality(state, seat, [source.cardId]).legal) return [];
+    const move = { actor: seat, type: 'playCard', cards: [source.cardId] };
+    const address = implicitLandingZone(state, move);
+    if (address) out.push({ kind: 'zone', address, move });
+    return out;
+  }
+
   // Every other mode already expresses its destinations as readyTargets /
   // readyMelds once a single card is selected — so ask the model the same
   // question with this card standing in as the selection.

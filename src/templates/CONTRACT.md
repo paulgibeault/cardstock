@@ -500,3 +500,46 @@ Trick-taking's deal writes zone arrays directly rather than going through
 sanctioned *for the initial deal only* — there is nothing for a `zoneEmpty`
 reaction to respond to while the deck is being handed out, and the alternative
 is a recycle firing mid-deal. Everything after setup goes through `moveCards`.
+
+---
+
+## What a template's BOT cost, on the same template (#103, `climbing`)
+
+The section at the top of this file priced a fifth template. This one prices
+the other half — giving it an `evaluateState`, a frozen `weights` bag and three
+house-rule variants — because the contract makes claims about all three and
+only one of them had ever been tested by somebody following it rather than
+somebody documenting it.
+
+**It cost one file.** `src/templates/climbing.js` grew a `weights` object of
+eight numbers, an `evaluateState`, and the two rules keys the variants needed;
+`schema/manifest.schema.json` grew those two keys because the schema is
+normative and closed. Nothing in `src/engine/` and nothing in `src/ui/` was
+touched. The bot layer, the tuner and the variant machinery all consumed it
+without knowing which template had arrived — which is the claim the `weights`
+note above makes, now with a second template behind it.
+
+**Two things are worth knowing before you write the fourth one.**
+
+**The fairness gate does not cover the one-ply path.**
+`tests/rollouts.test.js` probes the `hard` chooser, and `hard` deals itself an
+ignorant world before it reads anything (`src/engine/determinize.js`) — so an
+`evaluateState` that reads an opponent's hand is *invisible* to that gate. It
+is `medium` where the evaluator sees the real state. A template offering the
+hook should carry its own probe (`tests/climbing.test.js`, "the evaluator
+judges the position without seeing the hands it is judging against"):
+determinize the position and demand `chooseBotMove(state, seat)` — no options,
+so no sampling in the way — answers the same. Note also that a read of an
+opponent's hand which does not vary with the acting seat's own cards cannot
+change a one-ply ranking at all, so a probe has to break something the
+candidates actually differ on; a hand-count term is the honest example of the
+same shape, and is why this evaluator has none.
+
+**A `startRound`-time end has nothing to end it.** `maybeFinishRound`
+(`src/engine/movePipeline.js`) runs after an applied MOVE and nothing else
+runs it, so a template that discovers during the deal that the hand is already
+decided cannot call `ctx.endRound` there — the round sits unresolved until
+somebody plays, and is then scored one card into a hand that had already
+started. The shape that works is to leave the fact in a var, offer the seat it
+names exactly one legal move, and let the ordinary round boundary do the rest.
+Climbing's `instantWins` (tới trắng) is the worked example.

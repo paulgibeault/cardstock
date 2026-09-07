@@ -38,7 +38,7 @@ import { loadPackFromDisk } from "../tools/pack-test.mjs";
 /** Every pack, at the seat count its lobby tile suggests. */
 const TABLES = [
   ["crazy-eights", 4], ["milestones", 4], ["hearts", 4],
-  ["wildfire", 4], ["stockpile", 4],
+  ["wildfire", 4], ["stockpile", 4], ["thirteen", 4],
 ];
 
 async function dealt(packId, seats, seed) {

@@ -1276,6 +1276,18 @@
             "first-empty-hand"
           ],
           "description": "DECLARATIVE ONLY. Win detection is fixed (first empty hand); this drives the wording on the rules page."
+        },
+        "lastCardExcludes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/selector"
+          },
+          "description": "Cards you may not go out on — Thirteen's 'no ending on a pig' house rule (THIRTEEN_RULES.md D-4), which turns a won position into a trap because the 2 that was going to take the last trick has to be spent before it. `enumerateLegalMoves` omits the play and `validateMove` refuses it with a sentence. It RELAXES where it would deadlock (a seat on lead holding nothing else), the same way trick-taking's lead constraints do."
+        },
+        "instantWins": {
+          "type": "boolean",
+          "default": false,
+          "description": "Tới trắng: a hand that wins on the deal (D-8). Read against the pack's own tables rather than against Thirteen — four of the ladder's top rank, `deal`/2 pairs, one card of every rank a sequence may contain, the longest strip the `bombs` ladder declares, and triples in as many consecutive ranks as a run needs. The seat it names lays the whole hand down as its one legal move, so the hand is scored and redealt through the ordinary round boundary."
         }
       }
     }
