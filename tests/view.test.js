@@ -24,7 +24,7 @@ import { serializeMatch } from '../src/engine/replay.js';
 import { viewFor, eventsFor, cardIdsIn, VIEW_VERSION } from '../src/engine/view.js';
 import { loadPackFromDisk } from '../tools/pack-test.mjs';
 
-const PACKS = ['crazy-eights', 'wildfire', 'hearts', 'milestones', 'stockpile', 'thirteen'];
+const PACKS = ['crazy-eights', 'wildfire', 'hearts', 'milestones', 'stockpile', 'thirteen', 'pinochle'];
 
 async function tableFor(packId, seats = 3) {
   const pack = await loadPackFromDisk(packId);
@@ -109,9 +109,15 @@ function stepOnce(state) {
   return false;
 }
 
+// Three seats unless the pack cannot be played at three. Pinochle declares
+// 4/4 — and at three the sweep would run it teamless and with a sixteen-card
+// hand, which is a table nobody can sit at and a weaker test than the one this
+// pack actually needs.
+const SWEEP_SEATS = { pinochle: 4 };
+
 for (const packId of PACKS) {
   test(`${packId}: no seat's view ever contains a card it may not see`, async () => {
-    const state = await tableFor(packId);
+    const state = await tableFor(packId, SWEEP_SEATS[packId] ?? 3);
     const isCardId = cardIdChecker(state);
     let steps = 0;
 
@@ -430,6 +436,119 @@ test('Team Spades: the whole hand plays out without a card reaching the wrong se
     steps += 1;
   }
   assert.ok(steps > 20, `only ${steps} steps — the sweep proved little`);
+});
+
+/* ------------------------------------------------------------------ *
+ * Pinochle: a meld is SHOWN and a hand is not (#106)
+ * ------------------------------------------------------------------ */
+
+/**
+ * A Pinochle hand carried through its auction and its meld phase, stopping at
+ * the first lead — the position this pack's whole privacy question lives in.
+ */
+async function meldRound(seed = 'pinochle:melds') {
+  const pack = await loadPackFromDisk('pinochle');
+  const state = createState({ pack, seats: 4, seed });
+  pack.template.setup(makeCtx(state));
+  assert.equal(state.turn.phase, 'bid', 'a Pinochle hand opens in the bidding phase');
+  let guard = 0;
+  while (state.turn.phase !== 'play' && guard++ < 30) {
+    const acting = pack.template.actingSeats(makeCtx(state));
+    let played = false;
+    for (const seat of acting) {
+      const move = chooseBotMove(state, seat);
+      if (!move) continue;
+      applyMove(state, move);
+      played = true;
+      break;
+    }
+    assert.ok(played, `nothing legal in phase ${state.turn.phase}`);
+  }
+  assert.equal(state.turn.phase, 'play', 'the auction and the meld both finished');
+  return state;
+}
+
+test('Pinochle: every seat is told every meld — a declaration is said out loud', async () => {
+  const state = await meldRound();
+  const melds = state.playerVars.map((vars) => vars.meld);
+  assert.ok(melds.every((m) => m && Number.isFinite(m.points)),
+    `every seat declared: ${JSON.stringify(melds)}`);
+  assert.ok(melds.some((m) => m.points > 0),
+    'no seat at this table melded anything, so the test would pass on an empty record');
+
+  for (let seat = 0; seat < state.seats; seat++) {
+    const view = viewFor(state, seat, { moves: enumerateLegalMoves(state, seat) });
+    for (let other = 0; other < state.seats; other++) {
+      assert.deepEqual(view.playerVars[other].meld, melds[other],
+        `seat ${seat} cannot read what seat ${other} melded, and everybody at a table writes it down`);
+    }
+    // The commit on its way in is the opposite rule, and it has been cleared by
+    // now — but a template that left it behind would be publishing a card list.
+    for (let other = 0; other < state.seats; other++) {
+      assert.equal(view.playerVars[other].__pendingMeld, undefined,
+        `seat ${seat} was sent seat ${other}'s pending meld selection`);
+    }
+  }
+});
+
+test('Pinochle: a meld is scored, not laid down — the cards stay in a hand nobody may read', async () => {
+  const state = await meldRound('pinochle:hands');
+  const isCardId = cardIdChecker(state);
+
+  for (let seat = 0; seat < state.seats; seat++) {
+    assert.equal(state.zones.cards(`hand.${seat}`).length, 12,
+      `seat ${seat} does not hold twelve cards — a declaration moved something`);
+  }
+
+  const view = viewFor(state, 0, { moves: enumerateLegalMoves(state, 0) });
+  assert.ok(Array.isArray(view.zones['hand.0'].cards), 'I see my own hand');
+  for (const other of [1, 2, 3]) {
+    assert.equal(view.zones[`hand.${other}`].cards, undefined,
+      `seat 0 was sent seat ${other}'s hand${other === 2 ? " — its PARTNER's hand" : ''}`);
+  }
+
+  // AND STRUCTURALLY, WHICH IS THE POINT. The melds are public and the cards
+  // that made them are not, so the record has to carry names and numbers and no
+  // ids at all — see `detectDeclaredMelds`. A meld var that shipped its cards
+  // would put every other seat's holding on the wire while every zone in the
+  // payload was still correctly redacted.
+  const foreign = foreignHands(state, 0);
+  const wire = JSON.parse(JSON.stringify(view));
+  for (const id of cardIdsIn(wire, isCardId)) {
+    assert.ok(!foreign.has(id), `${id} is in another seat's hand and reached seat 0`);
+  }
+});
+
+test('Pinochle: the pending declaration is a commit — nobody reads it before the phase closes', async () => {
+  const pack = await loadPackFromDisk('pinochle');
+  const state = createState({ pack, seats: 4, seed: 'pinochle:commit' });
+  pack.template.setup(makeCtx(state));
+  let guard = 0;
+  while (state.turn.phase === 'bid' && guard++ < 20) applyMove(state, chooseBotMove(state, state.turn.seat));
+  assert.equal(state.turn.phase, 'meld');
+
+  // One seat commits; the other three have not, so the phase is still open.
+  applyMove(state, chooseBotMove(state, 0));
+  assert.equal(state.turn.phase, 'meld', 'one declaration did not close the phase');
+  // ASKED THROUGH THE PLATFORM'S OWN ACCESSOR rather than by reaching for the
+  // private var by name: `committedSelection` is what the felt draws a staged
+  // card from (src/templates/CONTRACT.md), so a template that renamed or
+  // un-hid its bookkeeping still answers this — and the leak assertions below
+  // are then the ones that fire, instead of the setup line.
+  const pending = pack.template.committedSelection(makeCtx(state), 0);
+  assert.ok(Array.isArray(pending) && pending.length, 'seat 0 has a commit on record');
+
+  const isCardId = cardIdChecker(state);
+  for (const seat of [1, 2, 3]) {
+    const view = viewFor(state, seat, { moves: enumerateLegalMoves(state, seat) });
+    const wire = JSON.parse(JSON.stringify(view));
+    const leaked = [...cardIdsIn(wire, isCardId)].filter((id) => pending.includes(id));
+    assert.deepEqual(leaked, [], `seat ${seat} was sent ${leaked.join(', ')} out of seat 0's commit`);
+  }
+  // Its owner still sees it, or the felt could not draw its own staged cards.
+  const own = JSON.parse(JSON.stringify(viewFor(state, 0, { moves: enumerateLegalMoves(state, 0) })));
+  const mine = new Set(cardIdsIn(own, isCardId));
+  assert.ok(pending.every((id) => mine.has(id)), 'seat 0 cannot see its own commit');
 });
 
 test('a shared var nobody declared is published to nobody', async () => {

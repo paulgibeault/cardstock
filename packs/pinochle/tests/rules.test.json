@@ -312,7 +312,7 @@
       ]
     },
     {
-      "name": "if everybody passes the last to speak is stuck with the floor",
+      "name": "if everybody else passes the last to speak may not pass — it is stuck with the floor, trump and all",
       "setup": {
         "seats": 4,
         "turn": { "seat": 1, "phase": "bid" },
@@ -327,13 +327,38 @@
       "assert": [
         { "apply": { "actor": 1, "type": "bid", "choice": { "bid": 0 } } },
         { "apply": { "actor": 2, "type": "bid", "choice": { "bid": 0 } } },
-        { "apply": { "actor": 3, "type": "bid", "choice": { "bid": 0 } } },
+        {
+          "move": { "actor": 3, "type": "bid", "choice": { "bid": 0 } },
+          "legal": false,
+          "rule": "bid-range"
+        },
+        { "apply": { "actor": 3, "type": "bid", "choice": { "bid": 100, "trump": "diamonds" } } },
         {
           "expect": {
             "turn": { "phase": "meld" },
-            "playerVars": { "3": { "bid": 100, "bidForced": true } }
+            "vars": { "trumpSuit": "diamonds" },
+            "playerVars": { "3": { "bid": 100, "bidForced": true, "bidTrump": "diamonds" } }
           }
         }
+      ]
+    },
+    {
+      "name": "a seat that still has somebody to speak after it may pass freely",
+      "setup": {
+        "seats": 4,
+        "turn": { "seat": 2, "phase": "bid" },
+        "zones": {
+          "hand.0": ["clubs-9"],
+          "hand.1": ["clubs-9#2"],
+          "hand.2": ["diamonds-9"],
+          "hand.3": ["diamonds-9#2"]
+        },
+        "playerVars": { "0": { "bid": 0 }, "1": { "bid": 0 } }
+      },
+      "assert": [
+        { "move": { "actor": 2, "type": "bid", "choice": { "bid": 0 } }, "legal": true },
+        { "apply": { "actor": 2, "type": "bid", "choice": { "bid": 0 } } },
+        { "expect": { "playerVars": { "2": { "bid": 0 } }, "turn": { "seat": 3, "phase": "bid" } } }
       ]
     }
   ]

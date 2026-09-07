@@ -54,7 +54,7 @@ const OPTIONAL_FUNCTIONS = [
   // cannot answer, because the mode comes from the table-wide turn.phase.
   "gathers",
   "seatCounters",
-  "committedSelection", "getMeldGroups", "describeEvent",
+  "committedSelection", "commitPrompt", "getMeldGroups", "describeEvent",
   "ruleLines", "endingLines", "statLines",
   "arrangeContract", "suggestMeld",
   // Not called by the engine but by the per-seat view filter
@@ -191,28 +191,55 @@ test("a pendingChoice, where one is offered, is answerable and lands a legal mov
   // Only asserts the SHAPE of an Ask across whatever the packs actually offer at
   // a fresh deal; the answers themselves are pinned per-template in
   // tests/interaction.test.js and the pack rule tests.
+  //
+  // THE CHAIN, NOT THE FIRST LINK. The platform asks in a LOOP until the hook
+  // answers null (src/templates/CONTRACT.md, `MAX_PENDING_CHOICES` in
+  // src/ui/table.js), so a move may owe several answers and only the LAST one
+  // is supposed to leave something legal. This used to assert legality after
+  // one answer, which was indistinguishable from the real invariant for as long
+  // as no template asked twice — and Pinochle's bid asks twice, a number and
+  // then the suit it would be played in. Walking the chain is the honest
+  // reading and it is a strictly stronger gate: every combination of answers
+  // has to land somewhere legal, not just every first answer.
+  const MAX_ASKS = 8;
   for (const packId of listPackIds()) {
     const pack = await loadPackFromDisk(packId);
     if (!pack.template.pendingChoice) continue;
     const state = createState({ pack, seats: 4, seed: `contract:${packId}` });
     pack.template.setup(makeCtx(state));
     const ctx = makeCtx(state);
+
+    // Enumerated moves arrive with their answers already on them, so strip the
+    // choice back off to reach the question the table would be asked. Several
+    // enumerated moves collapse onto the same bare one — a bid ladder crossed
+    // with four suits is one question twice — so ask each distinct one once.
+    const bares = new Map();
     for (const move of pack.template.enumerateLegalMoves(ctx, state.turn.seat)) {
-      // Enumerated moves arrive with their answers already on them, so strip the
-      // choice back off to reach the question the table would be asked.
       const { choice, ...bare } = move;   // eslint-disable-line no-unused-vars
-      const ask = pack.template.pendingChoice(makeCtx(state), bare);
-      if (!ask) continue;
+      bares.set(JSON.stringify(bare), bare);
+    }
+
+    const walk = (move, depth) => {
+      const ask = pack.template.pendingChoice(makeCtx(state), move);
+      if (!ask) {
+        assert.ok(pack.template.validateMove(makeCtx(state), move).legal,
+          `${packId}: ${JSON.stringify(move.choice)} answered every Ask and left an illegal move`);
+        return;
+      }
+      assert.ok(depth < MAX_ASKS, `${packId}: pendingChoice never stops asking`);
       assert.ok(typeof ask.attr === "string" && ask.attr, `${packId}: an Ask with no attr`);
       assert.ok(["value", "seat"].includes(ask.kind), `${packId}: unknown Ask kind "${ask.kind}"`);
       assert.ok(Array.isArray(ask.options) && ask.options.length, `${packId}: an Ask with no options`);
       assert.strictEqual(typeof ask.apply, "function", `${packId}: an Ask with no apply()`);
       for (const option of ask.options) {
-        const answered = ask.apply(bare, option.value);
-        assert.ok(pack.template.validateMove(makeCtx(state), answered).legal,
-          `${packId}: answering ${JSON.stringify(option.value)} left an illegal move`);
+        const answered = ask.apply(move, option.value);
+        assert.notDeepStrictEqual(answered, move,
+          `${packId}: answering ${JSON.stringify(option.value)} for "${ask.attr}" changed nothing, `
+          + "so the same question would be asked forever");
+        walk(answered, depth + 1);
       }
-    }
+    };
+    for (const bare of bares.values()) walk(bare, 0);
   }
 });
 

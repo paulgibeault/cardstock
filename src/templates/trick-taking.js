@@ -706,9 +706,24 @@ function bidLevels(ctx, seat) {
   }
   const step = bidIncrementOf(ctx);
   const standing = highestBidSoFar(ctx);
-  levels.push(0);
+  // THE LAST SEAT MAY NOT PASS OUT AN EMPTY AUCTION. Every table has this rule
+  // and it is not a nicety: a hand where nobody holds the contract has no
+  // number to be scored against and — where the bid names the trump suit —
+  // nobody to name one, so the whole hand would be melded and played in no
+  // trump. That was not hypothetical: the first cut let the seat pass, and one
+  // deal in twenty reached the first lead with `trumpSuit` still null.
+  if (!isStuckWithTheBid(ctx, seat, standing)) levels.push(0);
   for (let bid = Math.max(min, standing + step); bid <= max; bid += step) levels.push(bid);
   return levels;
+}
+
+/** Nobody has opened, and this seat is the last one who could. */
+function isStuckWithTheBid(ctx, seat, standing = highestBidSoFar(ctx)) {
+  if (bidUnitOf(ctx) !== 'points' || standing > 0) return false;
+  for (let s = 0; s < ctx.seats; s++) {
+    if (s !== seat && bidOf(ctx, s) === null) return false;
+  }
+  return true;
 }
 
 /** The suits a bid may name, for a pack whose bid names the trump suit. */
@@ -1028,11 +1043,13 @@ function startBiddingPhase(ctx) {
  * stands as made and there is nothing to decide. Here the highest bid becomes
  * one side's contract, and two things follow from it.
  *
- * SOMEBODY IS ALWAYS STUCK WITH IT. If every seat passed, the LAST seat to
- * speak takes the floor whether it wants it or not — the rule every Pinochle
- * table has, and the reason this cannot just leave the hand contract-less: a
- * hand with no contract has nothing to be scored against, and four seats that
- * all pass every hand is a match that never ends.
+ * SOMEBODY IS ALWAYS STUCK WITH IT — but that is enforced one step earlier, by
+ * `bidLevels` refusing the last seat a pass into an empty auction, so that the
+ * seat which ends up holding the contract has NAMED A SUIT like any other
+ * bidder. Settling it here instead would have to invent a trump suit on a seat
+ * that never chose one. The fallback below therefore only fires for a state
+ * built by hand (a rule test), and it is kept as a belt: a hand with no
+ * contract has no number to be scored against.
  *
  * AND THE WINNING BID NAMES TRUMP. `trump: 'chosen'` has been the resolution
  * rule since #105 with nothing to fill it in; this is what fills it in. The var
@@ -1063,6 +1080,10 @@ function applyBid(ctx, move) {
   const bid = bidValueOf(move);
   const blind = bidIsBlindMove(move);
   const trump = bidTrumpOf(move);
+  // Asked BEFORE the bid lands, because it is a question about the auction as
+  // this seat found it: was passing even on the table?
+  const stuck = isStuckWithTheBid(ctx, seat);
+  if (stuck) ctx.setPlayerVar(seat, 'bidForced', true);
   ctx.setPlayerVar(seat, 'bid', bid);
   if (blind) ctx.setPlayerVar(seat, 'bidSight', 'blind');
   // A suit said out loud, in a public per-seat var beside the number — the

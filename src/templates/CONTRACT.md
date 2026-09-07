@@ -235,6 +235,44 @@ from `enumerateLegalMoves` — deliberately, and the comment there says why: a
 climbing enumerator is a shortlist by necessity, and refusing a move the engine
 accepts is a worse failure than the one that invariant guards against.
 
+## `commitPrompt` — what a `pass`-mode commit button says and does
+
+`pass` is the gesture for **every** simultaneous commit: pick cards out of the
+fan, watch them stage, press the button. What is not shared is the *sentence*
+on the button, the *move* it makes, and *how many* cards arm it — and all three
+were Hearts' answers written into the platform (`passCards`, "Pass across",
+exactly `rules.passing.count`) for as long as Hearts was the only pack that
+committed anything.
+
+Pinochle's meld phase is the second, and it shares none of them. It declares a
+scoring selection of **any** size — a hand with no meld in it still has to say
+so, which is a commit of zero cards — and it moves no card anywhere.
+
+```js
+commitPrompt(ctx, seat) {
+  if (ctx.turn.phase !== 'meld') return null;   // null takes the default
+  return { label: 'Declare', moveType: 'declareMeld', min: 0, max: ctx.countIn(`hand.${seat}`) };
+}
+```
+
+| Field | Default |
+|---|---|
+| `label` | `Pass <direction>` |
+| `moveType` | `passCards` |
+| `min` / `max` | both `rules.passing.count` |
+
+**Why this rather than a seventh interaction mode.** A mode is a rendering
+vocabulary: six downstream surfaces branch on it (`buildUiModel`,
+`stagingPhase`, `dropCandidates`, `draggableSources`, the status bar, the
+staging tray). Adding one to render an identical gesture would mean teaching
+all six a new string, and every one of those branches is a place for the two
+commit phases to drift apart. Asking the template what its own button says
+costs one hook and leaves every existing pack on the default it already had.
+
+Note `min: 0` is real, and the platform handles it: with nothing picked up
+there is no `selection.from` to check, so an empty selection arms the button
+only when the floor is zero.
+
 ## `gathers` — the question a mode cannot answer
 
 `interactionMode` says how a tap is READ. It cannot say whether a given seat is
