@@ -61,6 +61,21 @@ export const TEMPLATE_INFO = Object.freeze({
     defaultCardStyle: 'vanilla',
     playable: true,
   },
+  // The sixth (#107). Playable the day it played a full match to 121 against
+  // the bot, and not before: it shipped absent from this table — the Preview
+  // badge and the neutral genre word, which is the right way for a new
+  // template to start — and earned the entry once
+  // `tools/simulate.mjs --match cribbage` finished every game it was given.
+  //
+  // `classic` and not `vanilla`, which is the opposite call to climbing's
+  // above and for the same reason stated the other way round: a cribbage pack
+  // with a deck of its own is still a deck of French-suited cards being
+  // counted to fifteen, because the counting IS the genre.
+  cribbage: {
+    genreLabel: 'Cribbage',
+    defaultCardStyle: 'classic',
+    playable: true,
+  },
 });
 
 const UNKNOWN = Object.freeze({

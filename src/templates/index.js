@@ -3,6 +3,7 @@ import trickTaking from './trick-taking.js';
 import contractRummy from './contract-rummy.js';
 import sequencing from './sequencing.js';
 import climbing from './climbing.js';
+import cribbage from './cribbage.js';
 import { templateInfo } from './registry.js';
 
 const TEMPLATES = {
@@ -11,6 +12,7 @@ const TEMPLATES = {
   'contract-rummy': contractRummy,
   sequencing,
   climbing,
+  cribbage,
 };
 
 // The presentation facts (genre word, default card art, playable-to-the-end)

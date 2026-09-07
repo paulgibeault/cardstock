@@ -1842,28 +1842,6 @@ const trickTaking = {
   },
 
   /**
-   * WHAT THE COMMIT BUTTON SAYS, AND WHEN IT IS ARMED.
-   *
-   * The platform's default for the `pass` mode is Hearts' — "Pass left", armed
-   * at exactly `passing.count` staged cards — and it is a default rather than
-   * the rule because a second commit phase wants neither half of it. A meld
-   * declaration is committed at ANY size, nothing at all included: a hand with
-   * no meld in it still has to say so before the table can move on.
-   *
-   * Returning null takes the platform's default, which is what the pass phase
-   * does and what every other template does by not implementing this at all.
-   */
-  commitPrompt(ctx, seat) {
-    if (ctx.turn.phase !== 'meld') return null;
-    return {
-      label: 'Declare',
-      moveType: 'declareMeld',
-      min: 0,
-      max: ctx.countIn(ctx.zoneAddr('hand', seat)),
-    };
-  },
-
-  /**
    * The question a bid still owes: HOW MANY.
    *
    * The felt's affordance for a bid is one button and this Ask — no new dialog,
@@ -1916,6 +1894,51 @@ const trickTaking = {
       apply: (m, value) => (value === 'blind'
         ? { ...m, choice: { ...(m.choice || {}), bid: 0, sight: 'blind' } }
         : { ...m, choice: { ...(m.choice || {}), bid: value } }),
+    };
+  },
+
+  /**
+   * WHAT THE COMMIT BUTTON SAYS, AND WHEN IT IS ARMED — for both of this
+   * template's simultaneous-commit phases, which share the `pass` gesture and
+   * nothing else.
+   *
+   * THE PASS (#107): how many cards it wants and which way it goes were being
+   * read by name out of `rules.passing` and `vars.passDirection` inside
+   * src/ui/interaction.js and src/ui/table.js. Nothing changes on the felt: the
+   * button still says "Pass left" and the status bar still says "Passing —
+   * pick 3". What changes is that a second template using the same mode no
+   * longer inherits a count of three and a direction it does not have. The
+   * label stays under ACTION_LABEL_MAX_CHARS — "Pass across" is eleven — which
+   * is why the count is in the status line and not on the button.
+   *
+   * THE MELD (#106): a declaration is committed at ANY size, nothing at all
+   * included — a hand with no meld in it still has to say so before the table
+   * can move on — and it moves no card anywhere. So it is a `min`/`max` rather
+   * than a `count`, and it NAMES its move, because a commit of zero cards has
+   * no card-carrying move for the platform to read the type off.
+   *
+   * Returning null takes the platform's default, which is what every other
+   * template does by not implementing this at all.
+   */
+  commitPrompt(ctx, seat) {
+    if (ctx.turn.phase === 'meld') {
+      return {
+        action: 'Declare',
+        moveType: 'declareMeld',
+        min: 0,
+        max: ctx.countIn(ctx.zoneAddr('hand', seat)),
+        staging: 'Declare your meld',
+        waiting: 'Waiting for melds…',
+      };
+    }
+    if (ctx.turn.phase !== 'pass') return null;
+    const count = ctx.rules.passing?.count ?? 3;
+    const direction = { left: 'left', right: 'right', across: 'across' }[ctx.var('passDirection')] || '';
+    return {
+      count,
+      action: `Pass ${direction}`.trim(),
+      staging: `Passing — pick ${count}`,
+      waiting: 'Waiting for passes…',
     };
   },
 

@@ -852,7 +852,18 @@ pinochle: medium vs easy (4 seats, 80 matches)    medium 47.5% of decisive match
                                                   easy   52.5%                     (mean total 413.94)
 pinochle: hard vs easy (4 seats, 200 rounds)      hard   50.5% of decisive rounds (mean 44.13)
                                                   easy   49.5%                    (mean 45.42)
+pinochle: hard vs easy (4 seats, 8 matches)       hard   37.5% of decisive matches (mean total 408.94)
+                                                  easy   62.5%                     (mean total 415.06)
 ```
+
+**That last line is eight matches and proves nothing** — three wins against
+five, on a sample whose standard error is about seventeen points. It is
+recorded because it was run, not because it says anything. A `hard` MATCH run
+at a useful size did not fit: 24 matches was still going after twenty-five
+minutes and was killed unfinished, which is a fact about the Monte Carlo layer's
+cost at a twelve-trick four-seat game rather than about this pack. The
+round-level bar above it (200 rounds) is the number to read for `hard`, and
+`--vs --match` at a size worth quoting is the medium-vs-easy pair.
 
 **`hard` is at parity here rather than losing, and that is the evaluator's doing
 rather than a contradiction of #114.** Before the held-in-hand term it took
@@ -906,6 +917,93 @@ naming its deck by the deck's own id passed the whole suite and failed on the
 felt with "Cannot read properties of undefined (reading 'cards')" and no game.
 Pinochle did exactly that. `validatePackFiles` (`tools/pack-test.mjs`) now
 checks the field against what is on disk in both directions.
+## Cribbage, and a board that is not a zone (#107)
+
+The fifth template, and the second test of `CONTRACT.md`'s "one file plus one
+registry entry" claim. What it cost is written up in that file rather than here;
+this is what the measurements said.
+
+### The bot, measured the only way a cribbage bot can be
+
+A cribbage match is first to 121 and takes about nine hands, so counting round
+wins measures almost nothing — a hand is ten moves and the pone leads every
+one of them. `--match` is the bar.
+
+```
+$ node tools/simulate.mjs cribbage --vs=hard,easy --match --games=200
+
+=== cribbage: hard vs easy (2 seats, 200 matches, shipped clock) ===
+  hard     121 wins   60.5% of decisive matches   (mean final total 117.52)
+  easy      79 wins   39.5% of decisive matches   (mean final total 111.06)
+  ties: 0   unfinished: 0   rounds per match: 8.9
+```
+
+Recorded whichever way it came out, and it came out the right way: the search
+layer is worth about ten points of match win rate over the plain heuristic.
+That is a smaller edge than Hearts gets from its evaluator and a larger one
+than shedding gets, which is about what the genre suggests — a good deal of
+cribbage is the cards you were dealt, and the two decisions a hand actually
+contains (what to throw, and what to lay) are both shallow.
+
+Completion, at the same time:
+
+```
+$ node tools/simulate.mjs cribbage
+=== cribbage (2 seats, 1000 games) ===
+  completed: 1000  stalled: 0  errored: 0
+
+$ node tools/simulate.mjs cribbage --match --games=100
+=== cribbage (2 seats, 100 matches) ===
+  completed: 100  stalled: 0  errored: 0   avg rounds/match: 8.8
+```
+
+### Two bugs the harness found that no rule test would have
+
+**A count that reopened on an empty seat.** 23 games in the first thousand
+stalled with "no legal move for seat 1, phase play". Thirty-one and a go both
+close the count and open a new one on the seat after whoever closed it — and
+when that seat has run out of cards while the other still holds some, the turn
+landed on a player with nothing to play and the table stopped. Roughly one hand
+in forty-three, which is common enough to meet in an evening and rare enough
+that a forty-game bar could have missed it. `openNextCount` walks on to the
+next seat that still holds something; the round bar in `tests/simulate.test.js`
+is gated at 100% rather than floored because of it.
+
+**Card ids leaking one level down.** The protocol run refused every game:
+"seat 1 was sent clubs-8, which it may not see". Three separate causes, all the
+same mistake in different clothes:
+
+* the crib was scored where it lay, in a `visibility: 'none'` pile, and its ids
+  went out in the event that scored it. A card is revealed by MOVING it
+  somewhere everyone can see — which is also what the dealer physically does —
+  so the crib is turned into a `show` zone before it is counted.
+* `showScored` named the starter in a field called `starter`, and `starterCut`
+  named the cut card in a field called `card`. `eventsFor` filters an event's
+  top-level `cards` array and nothing else, so both sailed past it.
+* the score breakdown carried the cards that made each part, one level down
+  inside `parts[]`. Same gap.
+
+The last one is worth a note for whoever adds the sixth template: **the round
+boundary runs inside the same move as the hand's last scoring step**, so by the
+time a show's payload is delivered its cards have been shuffled into the next
+deal and the ids name somebody's fresh hand. Teaching `eventsFor` to walk
+nested structures would not have helped — post-redeal every one of those ids is
+invisible and would be stripped anyway. What ships is a breakdown of *what*
+scored and *how much*, with a count where the cards were. The cost is that a
+REMOTE client narrates "the crib is worth eight" without being able to light up
+the eight cards; a local table reads `state.events` directly and can. The
+honest fix is a show that is its own move rather than the tail of the last
+card, which is bigger than this issue was buying.
+
+### The board
+
+`seatCounters` with `kind: 'peg'` and three numbers — where the front peg is,
+where the back one was, how long the road is. `src/ui/counterTrack.js` draws it
+and knows nothing about cribbage; the set of kinds that render as a track is
+the platform's closed vocabulary, the same shape as `INTERACTION_MODES`. No
+keyframe animation anywhere on the component: the pegs move on a one-shot
+transition and then sit still, so there is nothing for `--arcade-pulse-count`
+to cap.
 
 ## Next steps
 

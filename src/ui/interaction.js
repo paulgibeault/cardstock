@@ -398,6 +398,47 @@ export function describeContract(items) {
 export const ACTION_LABEL_MAX_CHARS = 11;
 
 /**
+ * WHAT A SIMULTANEOUS COMMIT WANTS, AND WHAT IT IS CALLED — the template's
+ * answer, with a generic fallback that says nothing it cannot know.
+ *
+ * The `pass` mode is "multi-select exactly N, commit with the action button",
+ * and everything specific about it — how many N is, what the button says, what
+ * the status bar says while you are choosing and while you are waiting — is
+ * per-genre. Hearts wants three cards passed left; cribbage wants two thrown to
+ * somebody's crib. Neither of those belongs in this file.
+ *
+ * THE MOVE TYPE COMES FROM THE ENUMERATION, not from the prompt: the template
+ * has already said what the commit move is called by offering one, and reading
+ * it back is one fewer thing for a template to get out of step with itself.
+ * `moveType` is null when the seat has nothing left to commit, which is exactly
+ * when the button should not exist.
+ */
+export function commitPromptFor(state, seat, moves = []) {
+  const declared = state.pack.template.commitPrompt?.(makeCtx(state), seat) || null;
+  // The move the button makes. A template names it when it must — a commit of
+  // ZERO cards has no card-carrying move to find it by (Pinochle's meld) — and
+  // otherwise it is read off the enumeration, which has already said what the
+  // commit is called by offering one. Either way the button exists only while
+  // the enumerator is offering that move: a seat that has committed gets none.
+  const carrying = moves.find((m) => Array.isArray(m.cards) && m.cards.length > 0)
+    || moves.find((m) => Array.isArray(m.cards)) || null;
+  const named = declared?.moveType ?? carrying?.type ?? null;
+  const moveType = named && moves.some((m) => m.type === named) ? named : null;
+  // HOW MANY: `count` is the exact-N shape (a pass, a crib); `min`/`max` the
+  // ranged one (a meld). A template gives one or the other; the reader gives
+  // both back so the arming rule below is one comparison.
+  const count = declared?.count ?? carrying?.cards.length ?? 0;
+  const min = Number.isInteger(declared?.min) ? declared.min : count;
+  const max = Number.isInteger(declared?.max) ? declared.max : count;
+  return {
+    count, min, max, moveType,
+    action: declared?.action ?? 'Commit',
+    staging: declared?.staging ?? (min === max ? `Pick ${count}` : 'Pick your cards'),
+    waiting: declared?.waiting ?? 'Waiting…',
+  };
+}
+
+/**
  * Everything a render needs to know about what is tappable, derived in one
  * place from the enumerated legal moves so the pile builders stay dumb:
  *   handSelectable  Set of hand card ids that respond to a tap
@@ -488,7 +529,6 @@ export function buildUiModel(state, { seat, moves = [], acts = false, selection 
   }
 
   if (mode === 'pass') {
-    const count = state.pack.rules.passing?.count ?? 3;
     // WHICH WAY, ON THE BUTTON — AND THE COUNT MOVED TO THE STATUS BAR.
     // The dropped phase sentence ("Pick 3 cards to pass to the left") was
     // carrying both, and only one of them still needs saying HERE. Nothing on
@@ -501,39 +541,31 @@ export function buildUiModel(state, { seat, moves = [], acts = false, selection 
     // (src/ui/table.js).
     // Dropping it is also what makes the label fit: "Pass 3 across" wraps to
     // two lines in the rail and grows it past the fan; "Pass across" does not.
-    const direction = { left: 'left', right: 'right', across: 'across' }[state.vars.passDirection] || '';
+    //
+    // BOTH OF THOSE ARE THE TEMPLATE'S TO SAY NOW. This block used to read
+    // `rules.passing.count` and `vars.passDirection` — trick-taking's own two
+    // parameters, by name, in a platform file — which looked harmless while
+    // trick-taking was the only template using this mode. The second one wants
+    // two cards and a crib, not three and a direction (#107). See
+    // `commitPromptFor` and `commitPrompt` in src/templates/CONTRACT.md.
+    const prompt = commitPromptFor(state, seat, moves);
     for (const id of hand) ui.handSelectable.add(id);
     ui.handMulti = true;
-
-    // WHAT THIS COMMIT IS, ASKED OF THE TEMPLATE (`commitPrompt`).
+    // `moveType` null means this seat has nothing to commit — already committed,
+    // or the enumerator offers no such move — so there is no button, however
+    // many cards are selected. That is a stricter gate than the old one, which
+    // built a `passCards` move out of a literal and would have offered a second
+    // pass.
     //
-    // Everything above is the gesture — pick cards out of the fan, watch them
-    // stage — and it is the same gesture for every simultaneous commit there
-    // will ever be. What is NOT the same is the sentence on the button, the
-    // move it makes, and how many cards arm it, and all three of those were
-    // Hearts' answers written into the platform: `passCards`, "Pass across",
-    // and exactly `rules.passing.count`.
-    //
-    // Pinochle's meld is the second commit phase and shares none of them. It
-    // declares a scoring selection of ANY size — a hand with no meld in it
-    // still has to say so — and moves no card anywhere. Adding a sixth
-    // interaction mode for that would have meant teaching six downstream
-    // surfaces a new string to render an identical gesture; asking the template
-    // what its button says costs one hook and leaves every existing pack on the
-    // default it already had.
-    const prompt = state.pack.template.commitPrompt?.(makeCtx(state), seat) || null;
-    const label = prompt?.label ?? `Pass ${direction}`.trim();
-    const moveType = prompt?.moveType ?? 'passCards';
-    const min = Number.isInteger(prompt?.min) ? prompt.min : count;
-    const max = Number.isInteger(prompt?.max) ? prompt.max : count;
-
-    // An EMPTY selection is a real answer when the floor is zero, and there is
-    // no `selection.from` to check when nothing has been picked up.
-    const mine = !sel.length ? min === 0 : selection.from === handAddr;
-    if (mine && sel.length >= min && sel.length <= max) {
+    // AN EMPTY SELECTION IS A REAL ANSWER WHEN THE FLOOR IS ZERO. Pinochle's
+    // meld is committed at any size, nothing at all included — a hand with no
+    // meld in it still has to say so — and with nothing picked up there is no
+    // `selection.from` to check, so the floor is the whole test there (#106).
+    const mine = !sel.length ? prompt.min === 0 : selection.from === handAddr;
+    if (prompt.moveType && mine && sel.length >= prompt.min && sel.length <= prompt.max) {
       ui.action = {
-        label,
-        makeMove: () => ({ actor: seat, type: moveType, cards: sel.slice() }),
+        label: prompt.action,
+        makeMove: () => ({ actor: seat, type: prompt.moveType, cards: sel.slice() }),
       };
     }
     return ui;

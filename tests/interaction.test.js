@@ -61,7 +61,8 @@ function untilHumansTurn(state, limit = 200) {
   return !state.gameOver;
 }
 
-const PACKS = ["crazy-eights", "wildfire", "hearts", "milestones", "stockpile", "thirteen"];
+const PACKS = ["crazy-eights", "wildfire", "hearts", "milestones", "stockpile",
+  "thirteen", "cribbage"];
 
 test("every pack's interaction mode is one the table knows how to render", () => {
   const known = new Set(["tap", "play-drawn", "pass", "rummy-draw", "rummy-meld", "place", "combination"]);
