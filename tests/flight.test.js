@@ -217,6 +217,11 @@ const NOT_ANIMATED = {
   // a different piece of work from the one this gate was added for.
   passCards: "simultaneous, into hidden hands — needs its own treatment, not a "
     + "single flight",
+  // There is no card in a bid at all: a seat says a number and the turn moves
+  // on. What the felt shows instead is the number itself, on the seat's own
+  // badge (trick-taking's seatCounters) — so the still felt here is the whole
+  // of the animation, not a gap in it.
+  bid: "a number, not a card — nothing leaves any zone",
 };
 
 test("every move type the source can build is either animated or deliberately not", () => {

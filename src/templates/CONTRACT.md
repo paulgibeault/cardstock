@@ -168,7 +168,9 @@ than an error.
 > round boundary, which **wipes every `playerVars` entry** before re-running
 > `setup`. Any template with meta-state that outlives a round — contract-rummy's
 > `phase` is the whole game — **must** implement `startRound`, or that state
-> silently resets at the first round change.
+> silently resets at the first round change. Trick-taking's is a BAG: a bid is
+> this hand's and goes with it, while an overtrick sits on the side's sheet
+> until ten of them have cost a hundred points, several hands later.
 
 ### Presentation — what the platform asks a template about itself
 
@@ -218,6 +220,7 @@ how to render, exported as `INTERACTION_MODES` from `src/ui/interaction.js`).
 | `rummy-draw` | tap a pile to draw from it |
 | `rummy-meld` | multi-select for a lay-down; one card arms meld chips and the discard |
 | `place` | select a card, then tap the pile it goes on |
+| `bid` | no card answers a tap; the action button asks a question and the answer is the move |
 | `combination` | multi-select **any** number, commit with the action button — which arms only while the selection is a legal play |
 
 A mode this build does not know falls back to `tap`.
@@ -438,6 +441,16 @@ Two things a template still owns:
 member of the winning side. Nothing asks `winner === mySeat` to mean "did I
 win"; it asks whether the winner is on your side.
 
+**Which way is up is the pack's, and an evaluator must read it.** The bot's
+match standing already signs the accumulated score by
+`scoring.gameOver.winner`, and `evaluateState` owes the same reading: Hearts
+prices a won pile as a bill because its points are the penalty, and the same
+pile at a pack whose `winner` is `highestScore` is an asset. Trick-taking
+writes both of its evaluators in the direction the SCORE moves and turns the
+answer round once (`prizeSign`), which is why adding a points-are-the-prize
+game to it changed no number Hearts was measured on. Get this wrong and the
+bot plays to lose while every test stays green.
+
 ## Ending a round
 
 `ctx.endRound(winnerSeat)` — **this hand is finished**. Whether the *match* is
@@ -464,6 +477,7 @@ The vocabulary in use today:
 | `pileCleared` | state reactions | `{zone, to, count}` |
 | `trickWon` | trick-taking | `{seat, cards, points, trickNumber}` |
 | `cardsPassed` | trick-taking | `{direction}` |
+| `bidMade` | trick-taking | `{seat, bid, blind}` |
 | `skipped` | shedding effects | `{by, seat}` |
 | `reversed` | shedding effects | `{by, direction}` |
 | `penalty` | shedding effects | `{by, seat, drew, asked}` |

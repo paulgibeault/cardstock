@@ -593,6 +593,111 @@ This was latent, not introduced: the base tree flips the same way on the same
 Hearts hand under a different rescaling. The ladder fix only moved which
 decision sits on the knife edge, and the test happened to be pointed at it.
 
+## Trump, a bid and bags — Team Spades (#105)
+
+The design doc listed `trump` as a trick-taking parameter (§13.1) and named
+bidding as "the template's first planned extension". Neither existed: the word
+`trump` appeared nowhere in `src/templates/trick-taking.js`. Both are there
+now, declared rather than coded, and `packs/team-spades/` is a manifest and a
+rule-test file with no code of its own.
+
+- **Trump** is two keys, deliberately. `rules.trump` names the suit (`none`, a
+  suit, or `chosen` — a round that names its own, in the `trumpSuit` var);
+  `rules.trickWinner: "highest-trump-else-led"` says the trick resolution reads
+  it. Resolution puts a trump on a SHELF above the pack's rank ladder, so the
+  loop that finds the winner stays the single "highest wins" it always was.
+- **The bid** is a sequential phase before the first lead: `turn.seat` walks the
+  table, `actingSeats` takes the platform default (which is what "sequential"
+  meant, against the pass phase's simultaneous commit), and the move is
+  `{type: 'bid', choice: {bid: n}}`. The felt needed **one new interaction mode
+  and no new dialog**: `bid` puts a "Bid" button in the rail's thumb slot, and
+  the number is asked with the existing `pendingChoice` Ask (`kind: 'value'`,
+  options Nil…13), which the platform's own chooser renders.
+- **Bags** are the one piece of state that outlives a hand, so trick-taking now
+  implements `startRound` — see the trap in `CONTRACT.md`. They live on the
+  side's canonical seat, which the score fold makes exact.
+
+### Two bot findings, both measured, both invisible to every other bar
+
+**The seat that spoke last bid nil on three hands in ten.** `evaluateState`
+declines the bid phase — every candidate bid leaves the identical table, so
+there is no position to judge — but the LAST bid finishes the bidding inside
+its own move, so the fork it leaves is in the `play` phase and the phase check
+alone did not catch it. What the lookahead then judged was the contract the bid
+had just created, with nothing taken yet: promising nothing scored best, every
+time. The honest test is that nothing has been PLAYED, which is true exactly
+once a hand. With it, the nil rate over 300 deals fell from 28.1% to 4.1% and
+the table's total bid rose from 6.9 to 11.7 of the thirteen tricks.
+
+**A bag is worth nine points, not three.** `BAG_COST` started at 0.35 of a
+contract trick, reasoning that an overtrick is worth a point now and a tenth of
+a hundred-point penalty later. The arithmetic is nearer −9 against the +10 a
+contract trick pays, and the difference shows up only at a table where the two
+sides play differently: against opponents who take fewer tricks than they
+should, the strong side is HANDED tricks it never bid, four or five a hand, and
+pays a hundred every second hand. A medium-against-easy match sat in a 370–450
+band for a dozen hands at 0.35 and reached 527 by the tenth hand at 1. A table
+where everybody plays alike barely notices (13.6 rounds a match against 13.4),
+which is why no same-difficulty bar could have found it.
+
+### What `--vs --match` says, including the part that is not flattering
+
+Matches, not hands: a Spades hand always completes, so round completion says
+nothing about whether the bidding is any good — the match bar is the one that
+bites (`tests/simulate.test.js`).
+
+| Contest | Result |
+|---|---|
+| `--vs=medium,easy --match --games=40` | **medium 36, easy 4** (90% of decisive matches), 0 unfinished, 11.3 rounds a match |
+| `--vs=hard,easy --match --games=60 --budget-moves=600` | **hard 10, easy 45**, 5 unfinished, 29.1 rounds a match |
+| `--vs=hard,easy hearts --games=60 --budget-moves=600` (control) | **hard 38, easy 21** — the same budget, the same rollout layer, at the pack it was measured on |
+
+The move-capped budget is the one an A/B may quote: two runs of it sample
+identically on a busy laptop and an idle one. The shipped-clock version of the
+Spades row (`--vs=hard,easy --match --games=20`, no cap) costs about ninety
+seconds a match at 120 ms a decision, which is why the cap is what is tabulated
+here.
+
+The first is the number this issue's work is answerable for: `medium` is the
+one-ply search over the new `evaluateContract`, and it beats the cheap
+heuristic nine matches in ten. The second is `hard` — the flat Monte Carlo
+layer, which is generic and was not touched here — and it is **worse than easy
+at this pack**.
+
+The diagnosis, and it is not the budget: the same 600-move cap at Hearts still
+has `hard` beating `easy` on 64.4% of decisive rounds (60 rounds, three seats),
+which is the gain this file has always recorded for it. What differs is what a
+rollout MEANS. **The rollout policy is the cheap heuristic**, and trick-taking's
+cheap heuristic at a pack with no card values is "play your lowest card" — a
+policy that has never heard of a contract. In Hearts that is roughly the right
+idea, because the points come from the cards you are made to take and playing
+low avoids taking them, so where a rolled-out hand ENDS is informative about the
+move that began it. In Spades the same policy plays out a hand nobody is trying
+to win, and the final score — which is entirely about promises kept — is close
+to orthogonal to the candidate being scored. Sampling harder samples noise.
+Choosing the rollout path also means the one-ply evaluator `medium` wins with is
+never consulted at all (`rankMoves`: a rollout answer, however noisy, wins over
+the lookahead).
+
+The felt's default difficulty is `medium`, so this is not what a player meets —
+but "hard is the difficulty that loses" is a real defect, it belongs to the
+rollout layer rather than to this template, and a bidding game is the first pack
+in the repo to expose it. Worth its own issue: the fix is a rollout policy that
+consults `evaluateState`, or a template-declared policy hook, not a bigger
+budget.
+
+### Two rule readings written down rather than left to be discovered
+
+- **A trick a nil bidder is forced to take counts toward its partner's
+  contract.** At some tables it is a bag that leaves the partner short. The two
+  differ only when the partner would have been set without it; the forgiving
+  reading is the commoner one at a kitchen table, and a variant can differ.
+- **Blind nil is modelled as the wager, not the ritual.** The cards are dealt
+  before any bid is possible and a seat's own hand is in its view, so "without
+  looking" cannot be enforced; what is enforced is the entry condition (a side
+  at least `blindNil.behind` points down) and the doubled stakes. A felt that
+  wanted the ritual would have to bid before the deal.
+
 ## Next steps
 
 Multiplayer (Phase 8), per-pack UI polish (per-pack `theme.css`, custom
