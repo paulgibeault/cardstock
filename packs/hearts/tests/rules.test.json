@@ -323,6 +323,57 @@
       ]
     },
     {
+      "name": "the jack outranks the ten, so a heart jack played after a heart ten still takes it",
+      "setup": {
+        "seats": 4,
+        "turn": {
+          "seat": 3,
+          "phase": "play"
+        },
+        "zones": {
+          "trick": [
+            "hearts-3",
+            "hearts-10",
+            "hearts-J"
+          ],
+          "hand.3": [
+            "hearts-4"
+          ],
+          "hand.2": [
+            "spades-2"
+          ]
+        },
+        "vars": {
+          "led": "hearts",
+          "leader": 0,
+          "heartsBroken": true,
+          "trickNumber": 5
+        }
+      },
+      "assert": [
+        {
+          "apply": {
+            "actor": 3,
+            "type": "playCard",
+            "cards": [
+              "hearts-4"
+            ]
+          }
+        },
+        {
+          "expect": {
+            "zones": {
+              "trick": 0,
+              "won.2": 4
+            },
+            "turn": {
+              "seat": 2
+            }
+          }
+        }
+      ]
+    },
+    {
       "name": "round scoring counts one per heart and thirteen for the queen of spades",
       "setup": {
         "seats": 4,
