@@ -290,5 +290,5 @@ test("a template's weights are a frozen bag of finite numbers", () => {
       assert.ok(typeof value === "number" && Number.isFinite(value), `${id}: weights.${key} is ${value}`);
     }
   }
-  assert.ok(declared >= 3, `only ${declared} templates declare weights — the three with evaluateState should`);
+  assert.ok(declared >= 4, `only ${declared} templates declare weights — the four with evaluateState should`);
 });

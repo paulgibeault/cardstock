@@ -22,8 +22,12 @@
 //
 // What this file does NOT decide, on purpose: which combinations exist, which
 // of them may be played out of shape and over what, whether a pass is final,
-// which card must open the first hand, and which way the turn goes. All six are
-// keys in the manifest, and every one of them is read below.
+// which card must open the first hand, which way the turn goes, which cards a
+// hand may not end on, and whether a deal can win on its own. All eight are
+// keys in the manifest, and every one of them is read below — the last two are
+// #103's house rules (`lastCardExcludes`, `instantWins`), and the third
+// (`quad-needs-four-pairs`) needed no key at all, because a chopping ladder
+// was already a declaration and the variant simply patches it.
 
 import { cardOrder, rankIndexOf, rankLadderOf } from '../engine/cards.js';
 import { selectorMatches } from '../engine/selectors.js';
@@ -33,10 +37,11 @@ import { groupByRank, rankWindow } from './melds.js';
  * What a greedy bot thinks a move is worth (see `botHeuristic`)
  * ------------------------------------------------------------------ *
  *
- * #102 owes a bot that plays LEGALLY and reaches `isRoundOver` under greedy
- * play, so the rollout layer has something to grade; playing WELL — shape
- * preservation, `evaluateState` — is #103, and these numbers are the seam it
- * takes over through (src/templates/CONTRACT.md, `weights`).
+ * #102 owed a bot that plays LEGALLY and reaches `isRoundOver` under greedy
+ * play, so the rollout layer had something to grade; playing WELL — shape
+ * preservation — is `evaluateState` at the foot of this file (#103), and these
+ * numbers are the seam it took over through (src/templates/CONTRACT.md,
+ * `weights`).
  *
  * Cards out of hand is the race, so it is the unit. Everything else is priced
  * against it: a combination's top card is what you are spending, a bomb spent
@@ -54,7 +59,38 @@ const CHOP_COST = 25;
 /** A pass sheds nothing, so it sits below every play that sheds one card. */
 const PASS_WORTH = -1;
 
-export const WEIGHTS = Object.freeze({ SHED_WORTH, TOP_COST, CHOP_COST, PASS_WORTH });
+/* ------------------------------------------------------------------ *
+ * What a POSITION is worth (see `evaluateState`)
+ * ------------------------------------------------------------------ *
+ *
+ * The same unit, the same direction, a different question. A card still in
+ * hand is a card not yet shed, so it is the cost; but thirteen cards that are
+ * four plays beat eleven cards that are eleven, and that is the whole game.
+ */
+const CARD_COST = 1;
+
+/**
+ * Per TURN the hand still needs — the structure term, and the reason this hook
+ * exists at all.
+ *
+ * Priced above a card because that is the claim: breaking a five-card run to
+ * answer a single sheds one card (worth 1) and turns one play into four
+ * (worth 3 × this). At 2.5 the bot passes rather than make that trade, and
+ * plays the run when it is on lead. Below about 1.5 it stops preferring the
+ * intact hand at all, which is the shipped `botHeuristic` with extra steps.
+ */
+const PLAY_COST = 2.5;
+
+/** A bomb still in hand — the answer to somebody else's pig, unspent. */
+const BOMB_WORTH = 3;
+
+/** A lead nothing left in the deck can answer in shape. */
+const LEAD_WORTH = 2;
+
+export const WEIGHTS = Object.freeze({
+  SHED_WORTH, TOP_COST, CHOP_COST, PASS_WORTH,
+  CARD_COST, PLAY_COST, BOMB_WORTH, LEAD_WORTH,
+});
 
 /* ------------------------------------------------------------------ *
  * The declared combination vocabulary
@@ -378,7 +414,35 @@ function beginHand(ctx, opening) {
   ctx.setVar('passed', []);
   ctx.setVar('lastPlayer', null);
   ctx.setVar('trickNumber', 1);
+  ctx.setVar('instantWin', null);
   for (let seat = 0; seat < ctx.seats; seat++) ctx.setPlayerVar(seat, '__mustInclude', null);
+
+  // TỚI TRẮNG IS A FACT ABOUT THE DEAL, so it is asked here and nowhere else —
+  // once a card has been played the hand is an ordinary hand, however it was
+  // dealt. Seat order settles the vanishingly rare double, and the seat it
+  // names leads whatever the first-lead rule would otherwise have said.
+  //
+  // WHY IT IS NOT AN `endRound` RIGHT HERE, which is the shape this wanted to
+  // be. The round boundary is driven by `applyMove` (src/engine/movePipeline.js
+  // — `maybeFinishRound` runs after an applied move and nothing else runs it),
+  // so a hand ended during the DEAL sits unresolved until somebody moves, and
+  // then gets scored one card into the next hand. Instead the check leaves a
+  // var, the seat it names has exactly one legal move — lay the whole hand
+  // down — and the ordinary "first empty hand" path scores and redeals it
+  // inside the boundary that already exists. It is also the honest thing on
+  // the felt: you get to put the dragon on the table.
+  if (ctx.rules.instantWins) {
+    for (let seat = 0; seat < ctx.seats; seat++) {
+      const shape = instantWinShape(ctx, ctx.cardIdsIn(ctx.zoneAddr('hand', seat)));
+      if (!shape) continue;
+      ctx.setVar('instantWin', { seat, shape });
+      for (let s = 0; s < ctx.seats; s++) ctx.setPlayerVar(s, '__mustInclude', null);
+      ctx.setVar('leader', seat);
+      ctx.setTurnSeat(seat);
+      ctx.setPhase('play');
+      return;
+    }
+  }
 
   let leader = opening;
   if (leader === null || leader === undefined) {
@@ -538,6 +602,326 @@ function bombShapes(ctx) {
   return shapes;
 }
 
+/**
+ * Is a combination of this kind and size a bomb?
+ *
+ * `size >=` rather than `===` because a strip of six consecutive pairs
+ * CONTAINS the five-pair bomb the pack declared, and a hand holding one holds
+ * the answer to a pig whether or not the whole thing is on the ladder.
+ */
+function isBombShape(ctx, kind, size) {
+  return bombShapes(ctx).some((shape) => shape.kind === kind
+    && (shape.size === null || size >= shape.size));
+}
+
+/* ------------------------------------------------------------------ *
+ * What a hand IS, as distinct from how big it is
+ * ------------------------------------------------------------------ *
+ *
+ * THE ONE FACT THE MOVE-BY-MOVE HEURISTIC CANNOT SEE. `botHeuristic` grades a
+ * play by what it sheds and what it spends, and by that reading answering a
+ * single 7 with the 8 out of `6-7-8-9-10` is a fine move: one card gone, a
+ * cheap card at that. It is the losing move in the game. The run was one turn
+ * and is now four, and four turns is four tricks somebody else gets to lead.
+ *
+ * So the hand is measured in TURNS: greedily cover it with the biggest legal
+ * combinations the pack declares and count them. Quads first (a quad is one
+ * play and usually a bomb), then strips of consecutive pairs, then runs, then
+ * whatever is left as pairs, triples and singles. Any fixed order is a
+ * heuristic; this one is the order a player actually reads their hand in.
+ */
+function rankCounts(ctx, cardIds) {
+  const ladder = rankLadderOf(ctx.pack);
+  const counts = new Map();
+  for (const id of cardIds) {
+    const card = ctx.cardById(id);
+    if (!card) continue;
+    const at = rankIndexOf(ladder, card.rank);
+    if (at < 0) continue;
+    if (!counts.has(at)) counts.set(at, { total: 0, seq: 0 });
+    const entry = counts.get(at);
+    entry.total += 1;
+    // A card no sequence may contain (Thirteen's 2) counts toward a quad and a
+    // pair and toward nothing that runs.
+    if (!outOfSequence(ctx, card)) entry.seq += 1;
+  }
+  return counts;
+}
+
+/**
+ * Maximal windows of CONSECUTIVE ladder positions holding at least `each`
+ * cards apiece — the same walk `candidateSets` does, over counts rather than
+ * over card ids, because a hand being measured does not need the ids back.
+ */
+function windows(counts, each, pick) {
+  const positions = [...counts.keys()].sort((a, b) => a - b)
+    .filter((at) => pick(counts.get(at)) >= each);
+  const out = [];
+  let group = [];
+  for (const at of positions) {
+    if (group.length && at !== group[group.length - 1] + 1) {
+      out.push(group);
+      group = [];
+    }
+    group.push(at);
+  }
+  if (group.length) out.push(group);
+  return out;
+}
+
+/**
+ * `{ plays, bombs }` — how many turns this hand needs, and how many of them
+ * are chops somebody else's pig has to get past.
+ */
+function handShape(ctx, cardIds) {
+  const vocab = vocabularyOf(ctx);
+  const counts = rankCounts(ctx, cardIds);
+  let plays = 0;
+  let bombs = 0;
+
+  // Same-rank cards spend the ones a sequence could not have used first.
+  const takeFlat = (entry, k) => {
+    const fromSeq = Math.max(0, k - (entry.total - entry.seq));
+    entry.total -= k;
+    entry.seq -= fromSeq;
+  };
+
+  if (vocab.has('quad')) {
+    for (const entry of counts.values()) {
+      if (entry.total < 4) continue;
+      plays += 1;
+      if (isBombShape(ctx, 'quad', 4)) bombs += 1;
+      takeFlat(entry, 4);
+    }
+  }
+
+  const strip = vocab.get('consecutive-pairs');
+  if (strip) {
+    for (const window of windows(counts, 2, (e) => e.seq)) {
+      if (window.length < strip.min) continue;
+      plays += 1;
+      if (isBombShape(ctx, 'consecutive-pairs', window.length)) bombs += 1;
+      for (const at of window) {
+        const entry = counts.get(at);
+        entry.total -= 2;
+        entry.seq -= 2;
+      }
+    }
+  }
+
+  const run = vocab.get('run');
+  if (run) {
+    // Repeated, because a rank the hand holds three of can sit in three runs.
+    for (let pass = 0; pass < 4; pass++) {
+      let laid = false;
+      for (const window of windows(counts, 1, (e) => e.seq)) {
+        if (window.length < run.min) continue;
+        plays += 1;
+        laid = true;
+        for (const at of window) {
+          const entry = counts.get(at);
+          entry.total -= 1;
+          entry.seq -= 1;
+        }
+      }
+      if (!laid) break;
+    }
+  }
+
+  for (const entry of counts.values()) {
+    const left = entry.total;
+    if (left <= 0) continue;
+    const kind = Object.keys(FIXED_SIZE).find((k) => FIXED_SIZE[k] === left);
+    plays += kind && vocab.has(kind) ? 1 : left;
+  }
+  return { plays, bombs };
+}
+
+/* ------------------------------------------------------------------ *
+ * Control — the cards nothing left in the deck can answer
+ * ------------------------------------------------------------------ */
+
+/**
+ * Every card that is neither in `seat`'s hand nor face up on the table.
+ *
+ * Short-handed, this includes the cards the deal left OUT of play (D-11: three
+ * players see 39 of the 52) — which is the conservative and the honest answer
+ * at once. Nobody has seen them, this seat cannot tell them from a card in
+ * somebody's hand, and treating them as still out there is what keeps the
+ * reading identical for every seat.
+ */
+function unseenBy(ctx, seat) {
+  const seen = new Set(ctx.cardIdsIn(ctx.zoneAddr('hand', seat)));
+  for (const id of ctx.cardIdsIn('pile')) seen.add(id);
+  for (const id of ctx.cardIdsIn('discard')) seen.add(id);
+  const out = [];
+  for (const id of ctx.pack.cardsById.keys()) if (!seen.has(id)) out.push(id);
+  return out;
+}
+
+/**
+ * Could a bomb still be ASSEMBLED out of the cards nobody has played?
+ *
+ * Arithmetic over public information, and the distinction is the whole
+ * fairness question: this asks whether the unplayed remainder of the DECK
+ * could contain a chop, never whether the seat across the table is holding
+ * one. Early in a hand the answer is yes and a pig is worth little; by the
+ * endgame, when the fours of a kind have all been broken up, it is no and a
+ * pig is a trick.
+ */
+function chopAssemblable(ctx, unseen) {
+  const counts = rankCounts(ctx, unseen);
+  for (const shape of bombShapes(ctx)) {
+    if (shape.kind === 'consecutive-pairs') {
+      const size = shape.size ?? 3;
+      if (windows(counts, 2, (e) => e.seq).some((w) => w.length >= size)) return true;
+      continue;
+    }
+    const size = shape.size ?? FIXED_SIZE[shape.kind] ?? 1;
+    for (const entry of counts.values()) if (entry.total >= size) return true;
+  }
+  return false;
+}
+
+/** Is this combination one a declared bomb names as a target? */
+function isChopTarget(ctx, combo) {
+  for (const bomb of ctx.rules.bombs || []) {
+    if ((bomb.beats || []).some((token) => tokenMatches(ctx, token, combo))) return true;
+  }
+  return false;
+}
+
+/**
+ * How many leads this hand holds that nothing still out there can answer.
+ *
+ * The top of the total order downward: every card of `seat`'s that outranks
+ * the highest card nobody has seen is a lead the table can only pass on. That
+ * is "holding the highest remaining card" counted rather than flagged, which
+ * matters because holding the 2♥ AND the 2♦ is two free tricks, not one.
+ *
+ * A card a bomb could chop only counts while no bomb can still be built — the
+ * pig that cannot be chopped is the whole reason this game's endgame is worth
+ * playing, and `chopAssemblable` is the public half of that question.
+ */
+function controlOf(ctx, seat) {
+  const ladder = rankLadderOf(ctx.pack);
+  const hand = ctx.cardIdsIn(ctx.zoneAddr('hand', seat));
+  const unseen = unseenBy(ctx, seat);
+  let ceiling = -1;
+  for (const id of unseen) ceiling = Math.max(ceiling, cardOrder(ctx.cardById(id), ladder));
+  const chopped = chopAssemblable(ctx, unseen);
+  let leads = 0;
+  for (const id of hand) {
+    if (cardOrder(ctx.cardById(id), ladder) <= ceiling) continue;
+    if (chopped) {
+      const single = classify(ctx, [id]);
+      if (single && isChopTarget(ctx, single)) continue;
+    }
+    leads += 1;
+  }
+  return leads;
+}
+
+/* ------------------------------------------------------------------ *
+ * The three house rules (#103), each a declaration this file reads
+ * ------------------------------------------------------------------ */
+
+/**
+ * TỚI TRẮNG — the hand that has won before a card is played, or null.
+ *
+ * `rules.instantWins` is the switch (D-8, off by default because a hand that
+ * ends on the deal is the wrong first impression from the lobby). The five
+ * shapes are the traditional list, and every one of them is read off the
+ * pack's OWN declarations rather than off Thirteen:
+ *
+ *   four 2s                 four of the top rank on the `rankLadder`
+ *   six pairs               half a hand's worth of pairs (`deal` / 2)
+ *   a 3-to-A dragon         one card of every rank a sequence may contain,
+ *                           i.e. the ladder minus `runExcludes`
+ *   five consecutive pairs  the longest strip the `bombs` ladder declares
+ *   three consecutive       triples in as many consecutive ranks as a run
+ *   triples                 needs (`combinations`' `run(3+)`)
+ *
+ * A pack with a different ladder and a different bomb list gets the same five
+ * ideas measured against ITS table, which is the only way this belongs in a
+ * template rather than in a Thirteen-shaped branch.
+ */
+function instantWinShape(ctx, cardIds) {
+  if (!ctx.rules.instantWins) return null;
+  const ladder = rankLadderOf(ctx.pack);
+  const vocab = vocabularyOf(ctx);
+  const counts = rankCounts(ctx, cardIds);
+
+  const ranks = ladder.ranks || [];
+  const topRank = rankIndexOf(ladder, ranks[ranks.length - 1]);
+  if (vocab.has('quad') && (counts.get(topRank)?.total ?? 0) >= 4) return 'four pigs';
+
+  let pairs = 0;
+  let sequenceable = 0;
+  for (const entry of counts.values()) {
+    if (entry.total >= 2) pairs += 1;
+    if (entry.seq >= 1) sequenceable += 1;
+  }
+  if (vocab.has('pair') && pairs >= Math.floor((ctx.rules.deal ?? cardIds.length) / 2)) return 'six pairs';
+
+  const run = vocab.get('run');
+  const excluded = new Set();
+  for (const card of ctx.pack.cardsById.values()) if (outOfSequence(ctx, card)) excluded.add(card.rank);
+  const inSequence = ranks.filter((rank) => !excluded.has(rank)).length;
+  if (run && sequenceable >= inSequence) return 'a dragon';
+
+  const strip = vocab.get('consecutive-pairs');
+  if (strip) {
+    const longest = Math.max(0, ...bombShapes(ctx)
+      .filter((shape) => shape.kind === 'consecutive-pairs')
+      .map((shape) => shape.size ?? strip.min));
+    if (longest && windows(counts, 2, (e) => e.seq).some((w) => w.length >= longest)) {
+      return `${longest} consecutive pairs`;
+    }
+  }
+  if (run && vocab.has('triple')
+    && windows(counts, 3, (e) => e.seq).some((w) => w.length >= run.min)) {
+    return `${run.min} consecutive triples`;
+  }
+  return null;
+}
+
+/**
+ * Would this play empty the hand on a card the pack forbids ending on?
+ *
+ * `rules.lastCardExcludes` is the "no ending on a pig" house rule (D-4): a
+ * won position becomes a trap, because the 2 that was going to take the last
+ * trick is now a card you have to get rid of BEFORE the last trick.
+ */
+function endsOnExcluded(ctx, seat, cards) {
+  const excludes = ctx.rules.lastCardExcludes;
+  if (!excludes?.length) return false;
+  if (cards.length !== ctx.countIn(ctx.zoneAddr('hand', seat))) return false;
+  return cards.some((id) => excludes.some((selector) => selectorMatches(ctx.cardById(id), selector)));
+}
+
+/**
+ * Is the exclusion in force for this seat right now?
+ *
+ * IT RELAXES WHERE IT WOULD DEADLOCK, which is the platform's existing policy
+ * for a constraint that leaves an actor with nothing (`CARD_PLATFORM_DESIGN.md`
+ * §5, and trick-taking's lead constraints do the same). A seat answering can
+ * always pass, so the rule is absolute there. A seat on LEAD holding nothing
+ * but pigs has no pass to fall back on, and a rule that stops the table is not
+ * a rule, it is a stall — so on lead, and only where every other lead is
+ * excluded too, the last card goes down.
+ */
+function exclusionApplies(ctx, seat) {
+  if (!ctx.rules.lastCardExcludes?.length) return false;
+  if (ctx.var('combo')) return true;
+  const required = requiredCardFor(ctx, seat);
+  for (const cards of candidateSets(ctx, seat)) {
+    if (required && !cards.includes(required)) continue;
+    if (!endsOnExcluded(ctx, seat, cards)) return true;
+  }
+  return false;
+}
+
 /* ------------------------------------------------------------------ *
  * The template
  * ------------------------------------------------------------------ */
@@ -557,8 +941,12 @@ const climbing = {
    *
    * WHAT IS NOT HERE: the 3♠ the opening lead owes. It is a card in a hand, so
    * it is `__mustInclude` on the seat holding it — see `requiredCardFor`.
+   *
+   * `instantWin` names a SEAT and a shape, never a card: tới trắng is declared
+   * out loud at the table the moment it is dealt, and the hand it names is
+   * about to be laid face up anyway.
    */
-  publicVars: ['combo', 'passed', 'leader', 'lastPlayer', 'trickNumber'],
+  publicVars: ['combo', 'passed', 'leader', 'lastPlayer', 'trickNumber', 'instantWin'],
 
   defaultZones(rules, seats) {   // eslint-disable-line no-unused-vars
     return [
@@ -607,6 +995,17 @@ const climbing = {
       const hand = ctx.cardIdsIn(ctx.zoneAddr('hand', move.actor));
       if (!cards.every((id) => hand.includes(id))) return ctx.fail('not-in-hand', 'That card is not in your hand.');
 
+      // A declared instant win is not a combination and is not answered: the
+      // whole hand goes down, and nothing else is a move while it stands.
+      const instant = ctx.var('instantWin');
+      if (instant) {
+        if (instant.seat !== move.actor) return ctx.fail('turn', "It's not your turn.");
+        if (cards.length !== hand.length) {
+          return ctx.fail('instant-win', `You were dealt ${instant.shape} — lay the whole hand down.`);
+        }
+        return ctx.ok();
+      }
+
       const played = classify(ctx, cards);
       if (!played) return ctx.fail('not-a-combination', 'Those cards are not a combination you can play.');
 
@@ -615,6 +1014,15 @@ const climbing = {
         const card = ctx.cardById(required);
         return ctx.fail('first-lead',
           `The first lead of the hand has to include the ${card ? `${card.rank} of ${card.suit}` : required}.`);
+      }
+
+      // THE FELT SAYS WHY THE MOVE IS MISSING. `enumerateLegalMoves` omits
+      // these, and a refusal with a sentence is what the human gets when they
+      // gather the cards anyway — the enumerator is a shortlist, so this is
+      // the only place the "no ending on a pig" rule can be explained.
+      if (endsOnExcluded(ctx, move.actor, cards) && exclusionApplies(ctx, move.actor)) {
+        return ctx.fail('last-card',
+          'You cannot go out on that — it has to be played before your last card.');
       }
 
       const current = ctx.var('combo');
@@ -643,6 +1051,18 @@ const climbing = {
       ctx.setVar('passed', [...passedSeats(ctx), seat]);
       ctx.emit('passed', { seat });
       advance(ctx, seat);
+      return;
+    }
+
+    const instant = ctx.var('instantWin');
+    if (instant) {
+      const cards = move.cards.slice();
+      ctx.moveCards(cards, ctx.zoneAddr('hand', seat), 'pile');
+      ctx.setVar('instantWin', null);
+      ctx.setVar('lastPlayer', seat);
+      ctx.emit('instantWin', { seat, shape: instant.shape, cards });
+      ctx.setPlayerVar(seat, 'wonLastHand', true);
+      ctx.endRound(seat);
       return;
     }
 
@@ -675,11 +1095,25 @@ const climbing = {
     // turn token and the bot scheduler cannot disagree about it.
     if (!stillIn(ctx, seat)) return [];
 
+    // A hand that won on the deal has exactly one thing to do with itself.
+    const instant = ctx.var('instantWin');
+    if (instant) {
+      if (instant.seat !== seat) return [];
+      return [{ actor: seat, type: 'playCard', cards: ctx.cardIdsIn(ctx.zoneAddr('hand', seat)).slice() }];
+    }
+
     const current = ctx.var('combo');
     const moves = [];
     const required = requiredCardFor(ctx, seat);
+    // Asked once per turn rather than per candidate: it walks the same
+    // candidate list this function is building.
+    const excluding = exclusionApplies(ctx, seat);
     const push = (cards) => {
       if (required && !cards.includes(required)) return;
+      // OMITTED, NOT REFUSED LATE. `validateMove` says the same thing in a
+      // sentence; here the move simply is not on the list, which is what keeps
+      // a bot from ever proposing it.
+      if (excluding && endsOnExcluded(ctx, seat, cards)) return;
       moves.push({ actor: seat, type: 'playCard', cards });
     };
 
@@ -753,7 +1187,17 @@ const climbing = {
    * The hand count, which is the race — thirteen down to nothing, and the first
    * one there has gone forward. The platform's default says the same thing;
    * saying it here is what gets the number a label and a proper sentence in the
-   * screen reader, and it is the counter #103 will hang a bomb count beside.
+   * screen reader.
+   *
+   * AND THE BOMB COUNT #102 EXPECTED TO HANG BESIDE IT IS NOT HERE, which is
+   * worth writing down rather than leaving as an omission. This hook is asked
+   * of EVERY seat (CONTRACT.md says so, and it is why the badges line up), and
+   * `ctx` has no notion of who is looking — so a bomb count would publish a
+   * fact about a hidden hand to whoever is sitting in front of the screen. It
+   * would not even be a consistent leak: a joined table renders from a
+   * filtered view where an opponent's hand is a bare count, so the number
+   * would read 0 there and 2 in solo play. The seat that wants it is the
+   * viewer's own, and until the hook knows which one that is, it is one number.
    */
   seatCounters(ctx, seat) {
     const hand = ctx.countIn(ctx.zoneAddr('hand', seat));
@@ -773,6 +1217,9 @@ const climbing = {
     if (ev.type === 'trickCleared') {
       return { text: `${who(ev.seat)} took the pile and lead`, tone: 'neutral' };
     }
+    if (ev.type === 'instantWin') {
+      return { text: `${who(ev.seat)} was dealt ${ev.shape} — the hand is over`, tone: 'good' };
+    }
     if (ev.type === 'combinationPlayed' && ev.size > 1) {
       const shape = ev.kind === 'consecutive-pairs' ? `${ev.size} consecutive pairs` : `a ${ev.kind}`;
       return { text: `${who(ev.seat)} played ${shape}`, tone: 'neutral' };
@@ -789,6 +1236,16 @@ const climbing = {
     if (rules.bombs?.length) out.push('A bomb can be played out of shape to kill the highest cards.');
     if (rules.laterLead === 'trick-winner') {
       out.push('When everyone else passes, the last player to have played leads the next trick.');
+    }
+    // The two variants that change what is LEGAL say so here, because a rule
+    // whose only expression is a move quietly missing from the felt is a rule
+    // the player has to reverse-engineer.
+    if (rules.lastCardExcludes?.length) {
+      out.push('You may not go out on a 2 — it has to be played before your last card.');
+    }
+    if (rules.instantWins) {
+      out.push('Some hands win on the deal: four 2s, six pairs, a 3-to-A dragon, '
+        + 'five consecutive pairs or three consecutive triples.');
     }
     return out;
   },
@@ -824,6 +1281,54 @@ const climbing = {
     const current = ctx.var('combo');
     if (current && !beatsInShape(ctx, played, current)) score -= w.CHOP_COST;
     return score;
+  },
+
+  /**
+   * HOW GOOD THIS POSITION IS FOR `seat` — the lookahead's scorer
+   * (src/engine/bot.js), higher is better. In this genre that means "how few
+   * turns I still need, and how many of them nobody can take off me".
+   *
+   * WHAT `botHeuristic` CANNOT SAY, and the reason the hook is here at all.
+   * Grading a move one at a time, answering a lone 7 with the 8 out of
+   * `6-7-8-9-10` is a cheap card for a shed card and looks fine. It is how you
+   * lose: the run was one turn and is now four. A move scorer has no way to
+   * see that, because the damage is not in the cards that left — it is in the
+   * SHAPE of the ones that stayed. So this reads the hand that is left:
+   *
+   *   its size            the race, and the unit everything else is priced in
+   *   its `plays`         how many turns it would take to shed under a greedy
+   *                       cover — the structure term, and a broken run raises
+   *                       it by three
+   *   its bombs           a chop still in hand is somebody else's pig answered
+   *   its control         the cards nothing unplayed can beat (`controlOf`)
+   *
+   * WHAT IT DELIBERATELY DOES NOT READ. Anybody else's hand — not the cards,
+   * and not the counts either. The counts are public and it would be within
+   * its rights (src/engine/view.js ships one with every zone), but at one ply
+   * they are identical under every candidate this seat is choosing between, so
+   * a term built on them would be a weight the tuner could not move. The
+   * search layer is what compares seats; this says what the position is worth.
+   *
+   * And, the one this game makes tempting: it does NOT ask whether an opponent
+   * can chop. `controlOf` asks whether a bomb could still be ASSEMBLED from
+   * the cards nobody has played — arithmetic over the discard, the pile and
+   * this seat's own hand — never who is holding what. A bot that knew your
+   * four of a kind was gone would play a pig into it and nothing in the suite
+   * would catch it except the fairness gate, which is exactly why that gate
+   * exists (tests/rollouts.test.js).
+   *
+   * `null` where there is nothing to judge: a hand that has been laid down,
+   * and a deal that won before it was played.
+   */
+  evaluateState(ctx, seat, w = WEIGHTS) {
+    if (ctx.var('instantWin')) return null;
+    const hand = ctx.cardIdsIn(ctx.zoneAddr('hand', seat));
+    if (!hand.length) return null;
+    const { plays, bombs } = handShape(ctx, hand);
+    return -hand.length * w.CARD_COST
+      - plays * w.PLAY_COST
+      + bombs * w.BOMB_WORTH
+      + controlOf(ctx, seat) * w.LEAD_WORTH;
   },
 
   /** The strategy's numbers, for a caller that wants to play with different ones. */

@@ -23,7 +23,7 @@ import { chooseBotMove, rankMoves } from "../src/engine/bot.js";
 import { createRng } from "../src/engine/rng.js";
 import { loadPackFromDisk } from "../tools/pack-test.mjs";
 
-const TABLES = [["milestones", 3], ["hearts", 4], ["wildfire", 3]];
+const TABLES = [["milestones", 3], ["hearts", 4], ["wildfire", 3], ["thirteen", 4]];
 
 async function dealt(packId, seats, seed) {
   const pack = await loadPackFromDisk(packId);
