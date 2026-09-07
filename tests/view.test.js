@@ -24,7 +24,7 @@ import { serializeMatch } from '../src/engine/replay.js';
 import { viewFor, eventsFor, cardIdsIn, VIEW_VERSION } from '../src/engine/view.js';
 import { loadPackFromDisk } from '../tools/pack-test.mjs';
 
-const PACKS = ['crazy-eights', 'wildfire', 'hearts', 'milestones', 'stockpile'];
+const PACKS = ['crazy-eights', 'wildfire', 'hearts', 'milestones', 'stockpile', 'thirteen'];
 
 async function tableFor(packId, seats = 3) {
   const pack = await loadPackFromDisk(packId);
@@ -441,4 +441,51 @@ test('a shared var nobody declared is published to nobody', async () => {
   const other = viewFor(state, (state.turn.seat + 1) % state.seats);
   assert.equal(other.vars.somethingNobodyDeclared, undefined);
   assert.equal(other.privateVars.somethingNobodyDeclared, undefined);
+});
+
+test('a joiner sees the combination on the table and who has dropped out', async () => {
+  // WHAT A CLIMBING TABLE IS UNPLAYABLE WITHOUT (#102). A joiner holds a view
+  // and never a state, so anything the felt draws that is not a zone has to be
+  // in the shared-var allowlist — and for this genre that is the STANDING
+  // COMBINATION (what shape and size you have to answer, and what you have to
+  // beat) and the PASS STATE (who is still in the trick). Neither is derivable
+  // from the pile: a pile of six cards could be three consecutive pairs or a
+  // six-card run, and nothing about the cards says who declined to answer them.
+  const state = await tableFor('thirteen', 4);
+
+  // The opening lead, then one seat passing, so both facts are real.
+  applyMove(state, chooseBotMove(state, state.turn.seat));
+  const passer = state.turn.seat;
+  applyMove(state, { actor: passer, type: 'pass' });
+
+  const combo = state.vars.combo;
+  assert.ok(combo && combo.kind, 'no combination was recorded on the table');
+
+  for (let seat = 0; seat < state.seats; seat++) {
+    const view = viewFor(state, seat, { moves: enumerateLegalMoves(state, seat) });
+    assert.deepEqual(view.vars.combo, combo, `seat ${seat} cannot see what is on the table`);
+    assert.deepEqual(view.vars.passed, [passer], `seat ${seat} cannot see who has passed`);
+    assert.equal(view.vars.lastPlayer, state.vars.lastPlayer);
+    assert.equal(view.vars.trickNumber, state.vars.trickNumber);
+
+    // ...and still nobody else's hand. The combination's cards are ids, and
+    // they are ids of cards face up in the pile — which is exactly why the
+    // sweep above has to keep passing with them published.
+    for (let other = 0; other < state.seats; other++) {
+      if (other === seat) continue;
+      assert.equal(view.zones[`hand.${other}`].cards, undefined,
+        `seat ${seat} was sent seat ${other}'s hand`);
+      assert.equal(view.zones[`hand.${other}`].count, state.zones.count(`hand.${other}`));
+    }
+    assert.ok(Array.isArray(view.zones[`hand.${seat}`].cards), 'a seat cannot see its own hand');
+  }
+
+  // A spectator gets the table and no hand at all, the combination included —
+  // it is the one thing that makes watching legible.
+  const spectator = viewFor(state, null);
+  assert.deepEqual(spectator.vars.combo, combo);
+  assert.deepEqual(spectator.vars.passed, [passer]);
+  for (let seat = 0; seat < state.seats; seat++) {
+    assert.equal(spectator.zones[`hand.${seat}`].cards, undefined);
+  }
 });

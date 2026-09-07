@@ -18,6 +18,7 @@
 // mechanics get a manual pass.
 
 import { makeCtx } from '../engine/context.js';
+import { validateMove } from '../engine/movePipeline.js';
 import { selectorMatches } from '../engine/selectors.js';
 
 export function handAddress(seat) {
@@ -48,13 +49,17 @@ export function handAddress(seat) {
  *                build pile (play) or an own discard pile (end of turn).
  *   'bid'        no card answers a tap at all; the action button asks a
  *                question and the answer IS the move.
+ *   'combination' multi-select ANY number, commit with the action button, which
+ *                arms only while the selection is a legal play. The count is
+ *                not fixed and legality is not a property of the cards one at a
+ *                time, so it is answered live as they go in.
  *
  * And the question a mode must NEVER be asked: whether a given SEAT may be
  * assembling something. A mode is derived from the table-wide `turn.phase`, so
  * that answer is `gathers` below.
  */
 export const INTERACTION_MODES = Object.freeze([
-  'tap', 'play-drawn', 'pass', 'rummy-draw', 'rummy-meld', 'place', 'bid',
+  'tap', 'play-drawn', 'pass', 'rummy-draw', 'rummy-meld', 'place', 'bid', 'combination',
 ]);
 
 /**
@@ -87,7 +92,43 @@ export function interactionMode(state) {
  */
 export function stagingPhase(state) {
   const mode = interactionMode(state);
-  return mode === 'pass' || mode === 'rummy-draw' || mode === 'rummy-meld';
+  return mode === 'pass' || mode === 'rummy-draw' || mode === 'rummy-meld' || mode === 'combination';
+}
+
+/* ------------------------------------------------------------------ *
+ * Live legality, for a selection whose size is not fixed
+ * ------------------------------------------------------------------ */
+
+/**
+ * IS WHAT I HAVE PICKED UP A PLAY, RIGHT NOW?
+ *
+ * The question `pass` never has to ask. There, the count is declared and the
+ * button appears at exactly N; here the count is whatever the combination
+ * happens to be — one card, a pair, a five-card run, six cards that are three
+ * consecutive pairs — and none of the intermediate selections on the way to any
+ * of those is a play. A mode that only found out at commit time would leave the
+ * player tapping a button that does nothing and no way to learn why.
+ *
+ * ASKED OF `validateMove`, NOT OF THE ENUMERATION, and that is the one place
+ * this module departs from "every tap target is derived from a move that
+ * already enumerated as legal". A climbing enumerator is a SHORTLIST by
+ * necessity (src/templates/climbing.js writes down its budget), so a legal
+ * combination a human assembled by hand can be absent from it — a run built
+ * from the higher of two identical-rank cards is the ordinary case. Deriving
+ * the button from the list would refuse a move the engine accepts, which is a
+ * worse failure than the one the invariant guards against: the invariant exists
+ * so the UI can never construct a move the engine REFUSES, and asking the
+ * refuser directly satisfies it exactly.
+ *
+ * Pure over (state, seat, cardIds), so the rule can be pinned without a pointer.
+ *
+ * @returns { legal, rule?, reason? } — the engine's own verdict, unedited.
+ */
+export function selectionLegality(state, seat, cardIds) {
+  if (!Array.isArray(cardIds) || !cardIds.length) {
+    return { legal: false, rule: 'no-card', reason: 'Nothing is selected.' };
+  }
+  return validateMove(state, { actor: seat, type: 'playCard', cards: cardIds.slice() });
 }
 
 /**
@@ -489,6 +530,37 @@ export function buildUiModel(state, { seat, moves = [], acts = false, selection 
     return ui;
   }
 
+  if (mode === 'combination') {
+    // EVERY CARD LIFTS. A card that cannot be part of any play is still a card
+    // you may pick up and put back — the same rule `draggableSources` states
+    // below, and the right one here for a different reason: legality is a
+    // property of the SET, so no per-card answer exists to grey a card out
+    // with. Half a run is not an illegal card, it is an unfinished selection.
+    for (const id of hand) ui.handSelectable.add(id);
+    ui.handMulti = true;
+
+    const mine = selection && selection.from === handAddr;
+    if (mine && sel.length) {
+      // The live answer, asked of the engine on every tap — the button is the
+      // feedback, and it is armed only where the commit would be accepted.
+      if (selectionLegality(state, seat, sel).legal) {
+        ui.action = {
+          // ACTION_LABEL_MAX_CHARS is 11: "Play 13" is the longest this gets.
+          label: `Play ${sel.length}`,
+          makeMove: () => ({ actor: seat, type: 'playCard', cards: sel.slice() }),
+        };
+      }
+      return ui;
+    }
+    // Nothing picked up: an empty selection is what "I have nothing for this"
+    // looks like, so that is where passing is offered. Putting Pass on the same
+    // button while cards are staged would flip the player's own commit out from
+    // under them mid-gather.
+    const pass = moves.find((m) => m.type === 'pass');
+    if (pass) ui.action = { label: 'Pass', makeMove: () => ({ actor: seat, type: 'pass' }) };
+    return ui;
+  }
+
   if (mode === 'rummy-draw') {
     for (const move of moves) {
       if (move.type === 'draw') ui.readyTargets.set(move.from ?? 'draw', move);
@@ -769,6 +841,20 @@ export function dropCandidates(state, { seat, moves = [], source }) {
   // is the same answer for a stronger reason: no card is part of the move at
   // all.
   if (mode === 'pass' || mode === 'rummy-draw' || mode === 'bid') return [];
+
+  // A DRAG IS A ONE-CARD COMMIT. Dragging is a gesture for one card, and a
+  // combination of several is what the button is for — so the drop is offered
+  // only where that single card is a legal play on its own, which is the
+  // commonest move in a climbing game and the one worst served by having to
+  // tap twice. Asked of the same live verdict the button uses.
+  if (mode === 'combination') {
+    if ((source.from ?? handAddr) !== handAddr) return [];
+    if (!selectionLegality(state, seat, [source.cardId]).legal) return [];
+    const move = { actor: seat, type: 'playCard', cards: [source.cardId] };
+    const address = implicitLandingZone(state, move);
+    if (address) out.push({ kind: 'zone', address, move });
+    return out;
+  }
 
   // Every other mode already expresses its destinations as readyTargets /
   // readyMelds once a single card is selected — so ask the model the same

@@ -61,10 +61,10 @@ function untilHumansTurn(state, limit = 200) {
   return !state.gameOver;
 }
 
-const PACKS = ["crazy-eights", "wildfire", "hearts", "milestones", "stockpile"];
+const PACKS = ["crazy-eights", "wildfire", "hearts", "milestones", "stockpile", "thirteen"];
 
 test("every pack's interaction mode is one the table knows how to render", () => {
-  const known = new Set(["tap", "play-drawn", "pass", "rummy-draw", "rummy-meld", "place"]);
+  const known = new Set(["tap", "play-drawn", "pass", "rummy-draw", "rummy-meld", "place", "combination"]);
   for (const packId of PACKS) {
     assert.ok(known.has(interactionMode(tableFor(packId))), `${packId} has an unknown mode`);
     // Every phase a template can reach, not only the one a fresh deal opens on:
