@@ -3,7 +3,7 @@
 // constraints relax automatically when they'd leave the actor with zero legal cards
 // (design doc §5).
 
-import { rankOrder } from '../engine/cards.js';
+import { rankLadderOf, rankOrder } from '../engine/cards.js';
 import { selectorMatches } from '../engine/selectors.js';
 import { cardValue, handValue } from '../engine/scoring.js';
 
@@ -193,10 +193,11 @@ function perilOf(ctx) {
   let cached = packPeril.get(ctx.pack);
   if (cached) return cached;
   const scoring = ctx.pack.scoring || {};
+  const ladder = rankLadderOf(ctx.pack);
   const peril = new Map();
   let topRank = 0;
   for (const card of ctx.pack.cardsById.values()) {
-    const rank = rankOrder(card);
+    const rank = rankOrder(card, ladder);
     if (rank > topRank) topRank = rank;
     if (!card.suit || cardValue(card, scoring) <= 0) continue;
     if (rank > (peril.get(card.suit) ?? -Infinity)) peril.set(card.suit, rank);
@@ -210,9 +211,9 @@ function perilRankBySuit(ctx) {
   return perilOf(ctx).peril;
 }
 
-function isLiability(ctx, card, peril) {
+function isLiability(ctx, card, peril, ladder = rankLadderOf(ctx.pack)) {
   const bar = peril.get(card.suit);
-  return bar !== undefined && rankOrder(card) > bar;
+  return bar !== undefined && rankOrder(card, ladder) > bar;
 }
 
 /**
@@ -241,12 +242,13 @@ function passCandidates(ctx, seat) {
 
   const scoring = ctx.pack.scoring || {};
   const peril = perilRankBySuit(ctx);
+  const ladder = rankLadderOf(ctx.pack);
   const value = (card) => cardValue(card, scoring);
 
-  const byRank = mostPassableFirst(ctx, hand, (card) => rankOrder(card));
-  const byValue = mostPassableFirst(ctx, hand, (card) => value(card) * 100 + rankOrder(card));
+  const byRank = mostPassableFirst(ctx, hand, (card) => rankOrder(card, ladder));
+  const byValue = mostPassableFirst(ctx, hand, (card) => value(card) * 100 + rankOrder(card, ladder));
   const byLiability = mostPassableFirst(ctx, hand,
-    (card) => (isLiability(ctx, card, peril) ? 10000 : 0) + value(card) * 100 + rankOrder(card));
+    (card) => (isLiability(ctx, card, peril, ladder) ? 10000 : 0) + value(card) * 100 + rankOrder(card, ladder));
 
   const candidates = [byRank.slice(0, count), byValue.slice(0, count), byLiability.slice(0, count)];
 
@@ -315,14 +317,15 @@ export const WEIGHTS = Object.freeze({
 function scorePass(ctx, move, w = WEIGHTS) {
   const scoring = ctx.pack.scoring || {};
   const peril = perilRankBySuit(ctx);
+  const ladder = rankLadderOf(ctx.pack);
   const going = new Set(move.cards);
 
   let score = 0;
   for (const id of move.cards) {
     const card = ctx.cardById(id);
-    score += rankOrder(card);
+    score += rankOrder(card, ladder);
     score += cardValue(card, scoring) * w.PASS_VALUE_WORTH;
-    if (isLiability(ctx, card, peril)) score += w.PASS_LIABILITY_WORTH;
+    if (isLiability(ctx, card, peril, ladder)) score += w.PASS_LIABILITY_WORTH;
   }
 
   const hand = ctx.cardIdsIn(ctx.zoneAddr('hand', move.actor));
@@ -357,15 +360,18 @@ function trickLeaderSoFar(ctx) {
   const led = ctx.var('led');
   const seats = seatsForTrick(ctx, leader, trickCards.length);
 
+  const ladder = rankLadderOf(ctx.pack);
   let winnerSeat = leader;
   let bestRank = -1;
   for (let i = 0; i < trickCards.length; i++) {
     const card = ctx.cardById(trickCards[i]);
     if (card.suit !== led) continue;
-    // Within the led suit, every rank ladder agrees — see rankOrder in
-    // src/engine/cards.js for why the standard-52 array is no longer the only
-    // answer, and why deck order is the last of the three rather than the first.
-    const rank = rankOrder(card);
+    // The pack's own ladder decides, and it is resolved once above rather than
+    // per card. The comment that used to sit here said "within the led suit,
+    // every rank ladder agrees" — which was false on the very deck Hearts
+    // ships: `rankOrder` put the jack on top of the nine and the ten above it,
+    // so ♥10 played before ♥J took the trick. See src/engine/cards.js.
+    const rank = rankOrder(card, ladder);
     if (rank > bestRank) {
       bestRank = rank;
       winnerSeat = seats[i];
@@ -685,7 +691,7 @@ const trickTaking = {
     // hardcoded into the template, and worth exactly −5 whether the card was a
     // two of hearts or the queen of spades. The pack's scoring config already
     // says what each card costs, so it says it here too.
-    let score = -rankOrder(card);
+    let score = -rankOrder(card, rankLadderOf(ctx.pack));
     score -= cardValue(card, ctx.pack.scoring || {});
     return score;
   },
@@ -748,10 +754,11 @@ const trickTaking = {
     }
 
     // What is still in hand is a bill that has not come in yet.
+    const ladder = rankLadderOf(ctx.pack);
     for (const id of ctx.cardIdsIn(ctx.zoneAddr('hand', seat))) {
       const card = ctx.cardById(id);
       score -= cardValue(card, scoring) * w.HELD_VALUE_WORTH;
-      if (isLiability(ctx, card, peril)) score -= w.HELD_LIABILITY_WORTH;
+      if (isLiability(ctx, card, peril, ladder)) score -= w.HELD_LIABILITY_WORTH;
     }
 
     // Cheaper than the cheapest opponent is the only kind of ahead there is

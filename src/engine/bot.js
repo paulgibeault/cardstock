@@ -667,7 +667,24 @@ function separated(rows, means, confidence) {
   for (const row of rows) variance += ((row[best] - row[next]) - gap) ** 2;
   // n-1: the mean being subtracted was estimated from these same rows.
   const error = Math.sqrt(variance / (rows.length - 1) / rows.length);
-  return gap > confidence * error;
+  // ON THE BAR EXACTLY, AND FAR MORE OFTEN THAN "exactly" SUGGESTS. When ONE
+  // sweep of n separates the pair and the other n-1 tie them — the ordinary
+  // shape of an endgame, where most determinized worlds play out the same
+  // whichever of two cards you lead — the algebra collapses to gap === error
+  // identically, whatever the one sweep's difference was. With the default
+  // confidence of 1 the two sides of this comparison are then the SAME NUMBER,
+  // and a bare `>` hands the turn to whichever way the last bit of the z-scores
+  // happened to round. That is how a change of UNITS in `evaluateState` —
+  // something no bot is allowed to feel, and tests/rollouts.test.js says so —
+  // reaches a different card.
+  //
+  // Settled deterministically, and settled toward SEPARATED: at exactly one
+  // standard error the sampler has an opinion and says so. Answering the other
+  // way would make it decline in the commonest endgame shape there is, which is
+  // most of what it was built to do. The tolerance is relative because `error`
+  // carries the units of the banked rows.
+  const bar = confidence * error;
+  return gap - bar > -Math.abs(bar) * 1e-9;
 }
 
 function scoreByRollout(state, seat, moves, cheap,

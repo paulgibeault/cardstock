@@ -62,6 +62,22 @@
       "type": "string",
       "description": "Built-in deck id (standard-52, standard-54, standard-52x2) or relative path to a deck file, e.g. 'deck.json'. Built-in card ids follow '<suit>-<rank>' (clubs-2 \u2026 spades-A); built-in cards carry value:null \u2014 point values come from `scoring`."
     },
+    "rankLadder": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 2,
+      "description": "The pack's rank order, LOW TO HIGH ('3','4',\u2026,'A','2' for Thirteen; '9','J','Q','K','10','A' for Pinochle). Resolved once per pack by src/engine/cards.js (`rankLadderOf`) and read from there by trick resolution and by the meld run window \u2014 no template reads this key itself. Omit it and the order is derived from the deck: numeric ranks ascending, then the ranks of the standard ladder (J Q K A), then anything else in deck order.\n\nWHY IT LIVES HERE AND NOT IN `rules`: `rules` is refined per template by the four closed `$defs.rules-*` blocks below, so a key EVERY template shares would have to be repeated in all four and kept in step by hand. It is also not a template parameter \u2014 it is a fact about the deck, in the same class as `deck` itself, consumed by an engine primitive rather than by any one genre (the \u00a713 extension policy's third step). Note the consequence: the `rules.*` gate in tests/repo-gates.test.js does not cover this key, so the honesty check for it is the unit tests in tests/rankLadder.test.js.\n\nA rank the deck holds that this list does not name sits BELOW the whole ladder rather than above it \u2014 a card nobody gave a place to should not win a trick."
+    },
+    "suitLadder": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 2,
+      "description": "Optional suit order, LOW TO HIGH (Thirteen: spades, clubs, diamonds, hearts). The tiebreak that makes the order over the deck TOTAL, which a climbing game needs because 'play higher or pass' has no answer for a tie. Same placement rationale as `rankLadder` above. Read by `cardOrder` in src/engine/cards.js; no template consumes it yet."
+    },
     "template": {
       "enum": [
         "trick-taking",
@@ -733,7 +749,7 @@
           "enum": [
             "first-empty-hand"
           ],
-          "description": "DECLARATIVE ONLY. Win detection is fixed (first empty hand); this drives the wording on the rules page. Optional — omit it rather than declaring a value the template does not branch on."
+          "description": "DECLARATIVE ONLY. Win detection is fixed (first empty hand); this drives the wording on the rules page. Optional \u2014 omit it rather than declaring a value the template does not branch on."
         },
         "lastCardCall": {
           "type": "object",
@@ -951,7 +967,7 @@
           "items": {
             "$ref": "#/$defs/selector"
           },
-          "description": "Selectors that may not be part of a meld at all (Milestones' Skip — an action you play at somebody, not a card with a place in a run). Same selector vocabulary as discardPickupForbidden."
+          "description": "Selectors that may not be part of a meld at all (Milestones' Skip \u2014 an action you play at somebody, not a card with a place in a run). Same selector vocabulary as discardPickupForbidden."
         }
       }
     },
