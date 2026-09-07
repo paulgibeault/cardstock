@@ -44,6 +44,23 @@ export const TEMPLATE_INFO = Object.freeze({
     defaultCardStyle: 'vanilla',
     playable: true,
   },
+  // The fifth (#102). It started life absent from this table — which is what
+  // gets a new template the neutral genre word, the vanilla card art and a
+  // Preview badge — and earned its row by playing a hand from deal to game
+  // over. 'Climbing' is the genre's own name (Big Two, President and Zheng
+  // Shangyou are the same engine); 'Shedding' is the neighbouring genre and
+  // means something else on this shelf already.
+  //
+  // `vanilla` rather than `classic` for the same reason trick-taking is
+  // vanilla: a standard deck already resolves to `classic` before the template
+  // is consulted at all (src/ui/cardStyles/index.js), so this line only ever
+  // answers for a climbing pack with a deck of its own — and a deck of its own
+  // is exactly the case where French pips would be the wrong guess.
+  climbing: {
+    genreLabel: 'Climbing',
+    defaultCardStyle: 'vanilla',
+    playable: true,
+  },
 });
 
 const UNKNOWN = Object.freeze({

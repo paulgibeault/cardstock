@@ -1,0 +1,260 @@
+{
+  "pack": "thirteen",
+  "tests": [
+    {
+      "name": "K-A-2 is not a run; Q-K-A is",
+      "setup": {
+        "seats": 4,
+        "turn": { "seat": 0, "phase": "play" },
+        "direction": "counterclockwise",
+        "zones": {
+          "hand.0": ["spades-Q", "spades-K", "spades-A", "spades-2"],
+          "hand.1": ["diamonds-4"],
+          "hand.2": ["diamonds-5"],
+          "hand.3": ["diamonds-6"]
+        },
+        "vars": { "combo": null, "passed": [], "lastPlayer": null, "leader": 0, "trickNumber": 1 }
+      },
+      "assert": [
+        { "move": { "actor": 0, "type": "playCard", "cards": ["spades-K", "spades-A", "spades-2"] },
+          "legal": false, "rule": "not-a-combination" },
+        { "move": { "actor": 0, "type": "playCard", "cards": ["spades-Q", "spades-K", "spades-A"] },
+          "legal": true }
+      ]
+    },
+    {
+      "name": "a four-card run is not a legal answer to a three-card run",
+      "setup": {
+        "seats": 4,
+        "turn": { "seat": 0, "phase": "play" },
+        "direction": "counterclockwise",
+        "zones": {
+          "hand.0": ["clubs-5", "clubs-6", "clubs-7", "spades-4"],
+          "hand.1": ["diamonds-4"],
+          "hand.2": ["diamonds-9"],
+          "hand.3": ["hearts-5", "hearts-6", "hearts-7", "hearts-8", "spades-9"]
+        },
+        "vars": { "combo": null, "passed": [], "lastPlayer": null, "leader": 0, "trickNumber": 1 }
+      },
+      "assert": [
+        { "apply": { "actor": 0, "type": "playCard", "cards": ["clubs-5", "clubs-6", "clubs-7"] } },
+        { "expect": { "turn": { "seat": 3 } } },
+        { "move": { "actor": 3, "type": "playCard", "cards": ["hearts-5", "hearts-6", "hearts-7", "hearts-8"] },
+          "legal": false, "rule": "wrong-shape" },
+        { "move": { "actor": 3, "type": "playCard", "cards": ["hearts-6", "hearts-7", "hearts-8"] },
+          "legal": true }
+      ]
+    },
+    {
+      "name": "9H 9D beats 9C 9S — the suit ladder breaks the tie",
+      "setup": {
+        "seats": 4,
+        "turn": { "seat": 0, "phase": "play" },
+        "direction": "counterclockwise",
+        "zones": {
+          "hand.0": ["clubs-9", "spades-9", "diamonds-3"],
+          "hand.1": ["diamonds-4"],
+          "hand.2": ["diamonds-5"],
+          "hand.3": ["hearts-9", "diamonds-9", "spades-4"]
+        },
+        "vars": { "combo": null, "passed": [], "lastPlayer": null, "leader": 0, "trickNumber": 1 }
+      },
+      "assert": [
+        { "apply": { "actor": 0, "type": "playCard", "cards": ["clubs-9", "spades-9"] } },
+        { "move": { "actor": 3, "type": "playCard", "cards": ["hearts-9", "diamonds-9"] }, "legal": true }
+      ]
+    },
+    {
+      "name": "9C 9S does not beat 9H 9D — and not the reverse",
+      "setup": {
+        "seats": 4,
+        "turn": { "seat": 0, "phase": "play" },
+        "direction": "counterclockwise",
+        "zones": {
+          "hand.0": ["hearts-9", "diamonds-9", "diamonds-3"],
+          "hand.1": ["diamonds-4"],
+          "hand.2": ["diamonds-5"],
+          "hand.3": ["clubs-9", "spades-9", "spades-4"]
+        },
+        "vars": { "combo": null, "passed": [], "lastPlayer": null, "leader": 0, "trickNumber": 1 }
+      },
+      "assert": [
+        { "apply": { "actor": 0, "type": "playCard", "cards": ["hearts-9", "diamonds-9"] } },
+        { "move": { "actor": 3, "type": "playCard", "cards": ["clubs-9", "spades-9"] },
+          "legal": false, "rule": "not-higher" }
+      ]
+    },
+    {
+      "name": "three consecutive pairs chop a lone 2 and do not chop a pair of 2s",
+      "setup": {
+        "seats": 4,
+        "turn": { "seat": 0, "phase": "play" },
+        "direction": "counterclockwise",
+        "zones": {
+          "hand.0": ["hearts-2", "spades-2", "clubs-2", "diamonds-4"],
+          "hand.1": ["diamonds-5"],
+          "hand.2": ["diamonds-6"],
+          "hand.3": ["spades-5", "clubs-5", "spades-6", "clubs-6", "spades-7", "clubs-7", "diamonds-9"]
+        },
+        "vars": { "combo": null, "passed": [], "lastPlayer": null, "leader": 0, "trickNumber": 1 }
+      },
+      "assert": [
+        { "apply": { "actor": 0, "type": "playCard", "cards": ["hearts-2"] } },
+        { "move": { "actor": 3, "type": "playCard",
+                    "cards": ["spades-5", "clubs-5", "spades-6", "clubs-6", "spades-7", "clubs-7"] },
+          "legal": true },
+        { "apply": { "actor": 3, "type": "pass" } },
+        { "apply": { "actor": 2, "type": "pass" } },
+        { "apply": { "actor": 1, "type": "pass" } },
+        { "expect": { "turn": { "seat": 0 }, "vars": { "combo": null, "passed": [], "leader": 0 } } },
+        { "apply": { "actor": 0, "type": "playCard", "cards": ["spades-2", "clubs-2"] } },
+        { "move": { "actor": 3, "type": "playCard",
+                    "cards": ["spades-5", "clubs-5", "spades-6", "clubs-6", "spades-7", "clubs-7"] },
+          "legal": false, "rule": "wrong-shape" }
+      ]
+    },
+    {
+      "name": "a bomb chops only what its list names — a lone ace is not a pig",
+      "setup": {
+        "seats": 4,
+        "turn": { "seat": 0, "phase": "play" },
+        "direction": "counterclockwise",
+        "zones": {
+          "hand.0": ["hearts-A", "hearts-2", "diamonds-4"],
+          "hand.1": ["diamonds-J"],
+          "hand.2": ["diamonds-10"],
+          "hand.3": ["spades-5", "clubs-5", "spades-6", "clubs-6", "spades-7", "clubs-7", "diamonds-9"]
+        },
+        "vars": { "combo": null, "passed": [], "lastPlayer": null, "leader": 0, "trickNumber": 1 }
+      },
+      "assert": [
+        { "apply": { "actor": 0, "type": "playCard", "cards": ["hearts-A"] } },
+        { "move": { "actor": 3, "type": "playCard",
+                    "cards": ["spades-5", "clubs-5", "spades-6", "clubs-6", "spades-7", "clubs-7"] },
+          "legal": false, "rule": "wrong-shape" },
+        { "apply": { "actor": 3, "type": "pass" } },
+        { "apply": { "actor": 2, "type": "pass" } },
+        { "apply": { "actor": 1, "type": "pass" } },
+        { "apply": { "actor": 0, "type": "playCard", "cards": ["hearts-2"] } },
+        { "move": { "actor": 3, "type": "playCard",
+                    "cards": ["spades-5", "clubs-5", "spades-6", "clubs-6", "spades-7", "clubs-7"] },
+          "legal": true }
+      ]
+    },
+    {
+      "name": "four of a kind chops the three consecutive pairs that just chopped a pig",
+      "setup": {
+        "seats": 4,
+        "turn": { "seat": 0, "phase": "play" },
+        "direction": "counterclockwise",
+        "zones": {
+          "hand.0": ["hearts-2", "diamonds-4"],
+          "hand.1": ["diamonds-J"],
+          "hand.2": ["spades-8", "clubs-8", "diamonds-8", "hearts-8", "diamonds-10"],
+          "hand.3": ["spades-5", "clubs-5", "spades-6", "clubs-6", "spades-7", "clubs-7", "diamonds-9"]
+        },
+        "vars": { "combo": null, "passed": [], "lastPlayer": null, "leader": 0, "trickNumber": 1 }
+      },
+      "assert": [
+        { "apply": { "actor": 0, "type": "playCard", "cards": ["hearts-2"] } },
+        { "apply": { "actor": 3, "type": "playCard",
+                     "cards": ["spades-5", "clubs-5", "spades-6", "clubs-6", "spades-7", "clubs-7"] } },
+        { "expect": { "turn": { "seat": 2 } } },
+        { "move": { "actor": 2, "type": "playCard",
+                    "cards": ["spades-8", "clubs-8", "diamonds-8", "hearts-8"] },
+          "legal": true }
+      ]
+    },
+    {
+      "name": "a seat that passed is out of the trick, whatever it is holding",
+      "setup": {
+        "seats": 4,
+        "turn": { "seat": 3, "phase": "play" },
+        "direction": "counterclockwise",
+        "zones": {
+          "hand.0": ["diamonds-4"],
+          "hand.1": ["diamonds-5"],
+          "hand.2": ["diamonds-6"],
+          "hand.3": ["hearts-2"],
+          "pile": ["spades-4"]
+        },
+        "vars": {
+          "combo": { "kind": "single", "size": 1, "top": 4, "cards": ["spades-4"], "seat": 0 },
+          "passed": [3], "lastPlayer": 0, "leader": 0, "trickNumber": 1
+        }
+      },
+      "assert": [
+        { "move": { "actor": 3, "type": "playCard", "cards": ["hearts-2"] },
+          "legal": false, "rule": "passed" },
+        { "move": { "actor": 3, "type": "pass" }, "legal": false, "rule": "passed" }
+      ]
+    },
+    {
+      "name": "the first lead of hand one is refused unless it contains the 3 of spades",
+      "setup": {
+        "seats": 4,
+        "turn": { "seat": 0, "phase": "play" },
+        "direction": "counterclockwise",
+        "zones": {
+          "hand.0": ["spades-3", "clubs-3", "spades-7"],
+          "hand.1": ["diamonds-4"],
+          "hand.2": ["diamonds-5"],
+          "hand.3": ["diamonds-6"]
+        },
+        "vars": { "combo": null, "passed": [], "lastPlayer": null, "leader": 0, "trickNumber": 1 },
+        "playerVars": { "0": { "__mustInclude": "spades-3" } }
+      },
+      "assert": [
+        { "move": { "actor": 0, "type": "playCard", "cards": ["spades-7"] },
+          "legal": false, "rule": "first-lead" },
+        { "move": { "actor": 0, "type": "playCard", "cards": ["spades-3"] }, "legal": true },
+        { "move": { "actor": 0, "type": "playCard", "cards": ["spades-3", "clubs-3"] }, "legal": true }
+      ]
+    },
+    {
+      "name": "a trick clears and the last player to have played leads next",
+      "setup": {
+        "seats": 4,
+        "turn": { "seat": 0, "phase": "play" },
+        "direction": "counterclockwise",
+        "zones": {
+          "hand.0": ["spades-4", "diamonds-5"],
+          "hand.1": ["diamonds-6"],
+          "hand.2": ["diamonds-7"],
+          "hand.3": ["hearts-9", "clubs-J"]
+        },
+        "vars": { "combo": null, "passed": [], "lastPlayer": null, "leader": 0, "trickNumber": 1 }
+      },
+      "assert": [
+        { "apply": { "actor": 0, "type": "playCard", "cards": ["spades-4"] } },
+        { "apply": { "actor": 3, "type": "playCard", "cards": ["hearts-9"] } },
+        { "apply": { "actor": 2, "type": "pass" } },
+        { "apply": { "actor": 1, "type": "pass" } },
+        { "apply": { "actor": 0, "type": "pass" } },
+        { "expect": {
+            "turn": { "seat": 3 },
+            "vars": { "combo": null, "passed": [], "leader": 3, "lastPlayer": null, "trickNumber": 2 },
+            "zones": { "pile": 0, "discard": 2 }
+          } }
+      ]
+    },
+    {
+      "name": "the cards left in your hand are the points, and going out costs nothing",
+      "setup": {
+        "seats": 4,
+        "turn": { "seat": 0, "phase": "play" },
+        "direction": "counterclockwise",
+        "zones": {
+          "hand.0": [],
+          "hand.1": ["hearts-2", "spades-3"],
+          "hand.2": ["clubs-4"],
+          "hand.3": ["diamonds-5", "diamonds-6", "diamonds-7"]
+        },
+        "vars": { "combo": null, "passed": [], "lastPlayer": 0, "leader": 0, "trickNumber": 1 }
+      },
+      "assert": [
+        { "score": { "0": 0, "1": 2, "2": 1, "3": 3 } }
+      ]
+    }
+  ]
+}
