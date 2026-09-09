@@ -141,13 +141,14 @@ platform file.
 | `gathers` | `(ctx, seat) -> boolean` | `interaction.js`, `table.js` | whether the current mode is one that stages |
 | `pendingChoice` | `(ctx, move) -> Ask \| null` | `src/ui/table.js` | no question |
 | `activeMatch` | `(ctx) -> {address, attr, value, onCard} \| null` | `describe.js`, `table.js` | none |
+| `zoneFocus` | `(ctx, address) -> {cards, label, seat?} \| null` | `describe.js`, `zoneRenderer.js` | none |
 | `scoreChip` | `(ctx, seat) -> {short, long, aria} \| null` | `table.js` | the SIDE's total (the seat's own, where there are no sides) |
 | `seatCounters` | `(ctx, seat) -> {text, aria, kind?}[] \| null` | `table.js` | the hand count |
 | `tableCounters` | `(ctx) -> {text, label, aria?}[] \| null` | `table.js` | no strip at all |
 | `commitPrompt` | `(ctx, seat) -> {action, staging, waiting, count \| min+max, moveType?} \| null` | `interaction.js`, `table.js` | count and move type read off the enumeration; the button says "Commit" |
 | `committedSelection` | `(ctx, seat) -> cardId[] \| null` | `table.js` | none |
 | `getMeldGroups` | `(ctx, seat) -> Group[]` | `table.js` | `[]` |
-| `describeEvent` | `(ev, {seatLabel, seatPossessive, seatVerb, viewerSeat}) -> {text, tone} \| null` | `table.js` | the engine-effect vocabulary |
+| `describeEvent` | `(ev, {seatLabel, seatPossessive, seatVerb, viewerSeat}) -> {text, tone, priority?} \| null` | `table.js` | the engine-effect vocabulary |
 | `ruleLines` | `(rules) -> string[]` | `src/ui/rules.js` | none |
 | `endingLines` | `(pack) -> string[]` | `src/ui/rules.js` | none |
 | `statLines` | `(seatStats) -> {label, value, always?}[]` | `src/stats/matchStats.js` | moves + cards played |
@@ -305,6 +306,33 @@ question with one answer is not a question.
 
 `apply` is the whole point: the platform renders a chooser and knows nothing
 about effect schemas, so a pack-defined effect gets one for free.
+
+## Which cards on a pile are still live — `zoneFocus`
+
+A pile can hold more than the thing you are answering. Thirteen's `pile` holds
+every card played this trick, in sequence, on purpose — it *is* the trick, and
+everybody watched it happen — but the combination you have to beat is only its
+tail, and the felt used to report the whole heap as a count. A `3` on a trick
+where three singles have been played is true and useless: the thing to beat is
+one card (#122).
+
+```js
+zoneFocus(ctx, address) -> { cards: cardId[], label: string, seat?: number } | null
+```
+
+`cards` are the ids still in play — the renderer rings those and draws the rest
+as history — and `label` is what to call them ("Pair of 4s"), which becomes the
+pile's badge, the first line of its inspector and part of its accessible name.
+Null for every zone with nothing standing on it, which is every zone in every
+pack that does not implement this.
+
+## Saying which event ENDED the move — `priority`
+
+`describeEvent` (and an event's own `say`) may carry `priority`, a number that
+defaults to 0. One move may emit two describable events, and the banner shows
+ONE: the pass that ends a Thirteen trick emits `passed` and then `trickCleared`.
+Highest priority wins, ties fall to the first emitted — so a template that says
+nothing about priority keeps the old behaviour exactly.
 
 ## Naming a seat in a sentence — `seatLabel` and `seatPossessive`
 

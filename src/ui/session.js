@@ -70,6 +70,11 @@ export function createSession({ pack, state, seats, seating, cardArt, handPrefs,
     // counted into the pack's record when the match concludes, which is the
     // one place the question "does anybody use this" can be answered from.
     hintsTaken,
+    // The refusal sentence #log is currently carrying for a staged selection the
+    // engine will not take (renderStageTray). Kept so a repaint for some other
+    // reason — a bot moving, a resize — does not re-announce the same sentence
+    // to a screen reader that has already read it.
+    lastRefusal: null,
 
     // A render that landed mid-drag would replace the node the pointer is
     // holding, so renders are deferred while one is live and replayed after.

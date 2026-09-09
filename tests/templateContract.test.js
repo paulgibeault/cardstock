@@ -50,6 +50,10 @@ const OPTIONAL_FUNCTIONS = [
   "matchStanding",
   "actingSeats", "enumerateAnnouncements", "applyAnnouncement",
   "interactionMode", "pendingChoice", "activeMatch", "scoreChip",
+  // Which cards in a shared pile are still the thing to answer, and what they
+  // are called — src/ui/describe.js. A pile that holds a whole trick cannot be
+  // reported as a count (#122).
+  "zoneFocus",
   // Whether a SEAT is still assembling something — the question interactionMode
   // cannot answer, because the mode comes from the table-wide turn.phase.
   "gathers",
