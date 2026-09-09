@@ -90,7 +90,7 @@ import { createDragController } from './dragController.js';
 import { attachInspector, hideInspector } from './inspector.js';
 import {
   describeCard, cardAriaLabel, cardName,
-  possessive,
+  possessive, zoneBadge,
 } from './describe.js';
 import {
   interactionMode, gathers, stagedSelection, buildUiModel, dropCandidates, draggableSources,
@@ -889,7 +889,15 @@ function buildSeatBody(state, seat, stagger, ui, into, { compactZones = true } =
         strip.appendChild(zones.buildMeldStrip(state, seat, ui, { mini: compactZones }));
       } else if (inst.def.visibility === 'none') {
         const pts = heldValueText(state, inst.def, inst.address);
-        const chip = line('seat__pilechip', `${inst.def.label || inst.def.id} ${state.zones.count(inst.address)}${pts ? ` · ${pts}` : ''}`);
+        // THE PILE'S OWN NUMBER, not a second opinion about it. This chip used
+        // to print the card count itself, so an opponent's won pile climbed in
+        // fours — "Won 4", "Won 8" — beside a bid counted in tricks (#123,
+        // item 29). `zoneBadge` is what the pile wears everywhere else, and it
+        // is the template that knows four cards are one trick.
+        const badge = zoneBadge(state, inst);
+        const label = inst.def.label || inst.def.id;
+        const chip = line('seat__pilechip',
+          `${badge.kind === 'name' ? badge.text : `${label} ${badge.text}`}${pts ? ` · ${pts}` : ''}`);
         chip.dataset.zone = inst.address;
         strip.appendChild(chip);
       } else {
@@ -1648,8 +1656,69 @@ function renderCenterZones(state, ui, draggable) {
   }
 }
 
+/**
+ * The counter kinds that belong on the HUMAN's own seat.
+ *
+ * A closed platform vocabulary, exactly like `COUNTER_TRACK_KINDS`
+ * (src/ui/counterTrack.js), and for the same reason: which kind a counter is
+ * remains the template's, and what the platform does with each kind is the
+ * platform's. A kind this build has never heard of simply does not appear here,
+ * which is the safe direction — the seat plates still show it.
+ *
+ * WHY THIS EXISTS. Every seat but one wears its numbers on a plate, and the one
+ * that does not is yours: the human's seat is the hand, the rail and the piles,
+ * and there is no plate anywhere on the felt with your name on it. So a bid —
+ * the thing you promised, which the whole hand is then played against — was
+ * shown for all three opponents and nowhere at all for you (#123, item 28: "not
+ * on the status bar, not on any seat plate, not in the round summary". In a
+ * partnership the contract is your bid plus your partner's, and half of it was
+ * unreadable).
+ *
+ * What is NOT here is as deliberate: a hand count (the fan is right there), and
+ * anything `minimizedOnly` (redundant when a seat is open, and yours always
+ * is — the won pile beside this strip is the trick count in as many words).
+ */
+const MY_SEAT_KINDS = ['bid', 'bags'];
+
+/**
+ * Your side of the table's own numbers, as a row of labelled chips.
+ *
+ * Labelled, unlike a plate's badges, because there is room: the plates carry
+ * bare numbers whose meaning is learned from position, and this row is read
+ * once a hand rather than glanced at every turn.
+ */
+function buildMySeatStrip(state) {
+  const counters = seatCountersFor(state, mySeat(), { minimized: false })
+    .filter((counter) => MY_SEAT_KINDS.includes(counter.kind));
+  if (!counters.length) return null;
+
+  const strip = document.createElement('div');
+  strip.className = 'my-seat';
+  strip.id = 'my-seat-strip';
+  for (const counter of counters) {
+    const chip = document.createElement('span');
+    chip.className = 'my-seat__chip';
+    chip.dataset.counter = counter.kind;
+    // ONE ACCESSIBLE NAME for the pair, the counter's own sentence ("bid 3
+    // tricks", "2 bags"), with the halves hidden: a screen reader reading
+    // "Bid, 3, bid 3 tricks" is worse than either.
+    chip.setAttribute('role', 'img');
+    chip.setAttribute('aria-label', counter.aria || `${counter.label}: ${counter.text}`);
+    chip.appendChild(line('my-seat__name', counter.label || ''));
+    chip.appendChild(line('my-seat__value', counter.text));
+    strip.appendChild(chip);
+  }
+  return strip;
+}
+
 function renderPlayerZones(state, ui, draggable) {
   el.playerPiles.replaceChildren();
+  // FIRST IN THE ROW, so it reads as this seat's — the piles that follow are
+  // yours too. `#player-piles` collapses when it is empty and this is a child
+  // of it rather than a row of its own, so a pack with nothing to say here
+  // costs no vertical space on a phone.
+  const mine = buildMySeatStrip(state);
+  if (mine) el.playerPiles.appendChild(mine);
   for (const inst of perPlayerZoneInstances(state, mySeat())) {
     if (inst.def.id === 'melds') {
       el.playerPiles.appendChild(zones.buildMeldStrip(state, mySeat(), ui));
@@ -3251,6 +3320,33 @@ const MAX_PENDING_CHOICES = 6;
  *
  * @returns the completed move, or null if the player backed out.
  */
+/**
+ * The Ask's context rows, with the seats dressed.
+ *
+ * A SEAT IS A NUMBER THE TEMPLATE CANNOT DRESS — the same rule its `kind:
+ * 'seat'` options follow, one rung up: the name is the roster's
+ * (src/players/roster.js) and who is partnered with whom is the pack's
+ * (src/engine/sides.js), and a template that had to know either would be a
+ * template that had to know what a player is called.
+ *
+ * `you` and `partner` are marks rather than words in the label because the
+ * dialog draws them, and because "You" as a name is already this table's
+ * convention everywhere else (seatLabel).
+ */
+function dressedContext(state, rows) {
+  if (!Array.isArray(rows) || !rows.length) return [];
+  return rows.map((row) => {
+    if (!Number.isInteger(row.seat)) return { label: row.label ?? '', value: String(row.value ?? '') };
+    const marks = seatSideMarks(state.pack, state.seats, mySeat(), row.seat);
+    return {
+      label: seatLabel(row.seat),
+      value: String(row.value ?? ''),
+      mine: isMySeat(row.seat),
+      partner: marks.partner,
+    };
+  });
+}
+
 async function fillPendingChoices(state, move, myEpoch) {
   const template = state.pack.template;
   if (!template.pendingChoice) return move;
@@ -3271,7 +3367,10 @@ async function fillPendingChoices(state, move, myEpoch) {
       picked = options[0].value;
     } else {
       picked = await promptChoice(art(), ask.prompt || ask.attr, options,
-        { card: ask.cardId ? cardById(state, ask.cardId) : null });
+        {
+          card: ask.cardId ? cardById(state, ask.cardId) : null,
+          context: dressedContext(state, ask.context),
+        });
       // Backed out, or the table closed while the prompt was open — either way
       // this move belongs to a match that is no longer the one on screen.
       if (picked === null || myEpoch !== epoch) return null;

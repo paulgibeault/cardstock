@@ -23,7 +23,17 @@ const el = {
   prompt: document.getElementById('choice-prompt'),
   panel: document.getElementById('choice-options'),
   cancel: document.getElementById('choice-cancel'),
+  // WHAT THE TABLE HAS ALREADY SAID, for a question that is asked ABOUT the
+  // table rather than about a card (#123). Built here rather than in index.html
+  // because it belongs to this dialog and to nothing else, and because an empty
+  // element in the markup is one more thing that can be left showing.
+  context: document.createElement('div'),
 };
+el.context.id = 'choice-context';
+el.context.className = 'choice-context';
+el.context.hidden = true;
+// Between the question and the answers: it is what you read to decide.
+el.prompt?.after(el.context);
 
 // Resolves a pending prompt with null when the table closes under it, so the
 // awaiting move handler unwinds instead of applying a move to a match nobody is
@@ -99,9 +109,45 @@ function buildChoiceOption(art, attr, { label, icon = null }) {
  * better next to it. Optional: a wild already lying in somebody's meld has no
  * single card to show.
  */
-export async function promptChoice(art, attr, options, { card = null } = {}) {
+/**
+ * The state of play, as a row of small facts, above the answers.
+ *
+ * `rows` are `{ label, value, mine?, partner? }` — already dressed by the
+ * caller, because who a seat IS is the roster's business and not this
+ * dialog's. Nothing here knows what a bid is: it draws whatever the template
+ * said was worth knowing before answering (src/templates/CONTRACT.md).
+ *
+ * A LIST, NOT A TABLE, and read out as one: each row is one accessible string,
+ * so a screen reader hears "Wren, partner, 4" rather than three cells.
+ */
+function renderContext(rows) {
+  el.context.replaceChildren();
+  el.context.hidden = !rows.length;
+  if (!rows.length) return;
+  for (const row of rows) {
+    const item = document.createElement('div');
+    item.className = 'choice-context__row';
+    if (row.mine) item.classList.add('choice-context__row--mine');
+    if (row.partner) item.classList.add('choice-context__row--partner');
+    const name = document.createElement('span');
+    name.className = 'choice-context__name';
+    name.textContent = row.label;
+    const value = document.createElement('span');
+    value.className = 'choice-context__value';
+    value.textContent = row.value;
+    item.setAttribute('role', 'img');
+    item.setAttribute('aria-label',
+      `${row.label}${row.partner ? ', your partner' : ''}: ${row.value}`);
+    item.appendChild(name);
+    item.appendChild(value);
+    el.context.appendChild(item);
+  }
+}
+
+export async function promptChoice(art, attr, options, { card = null, context = [] } = {}) {
   const choices = options.map((o) => ({ icon: null, ...o, label: o.label ?? String(o.value) }));
   el.prompt.textContent = `Choose a ${attr}`;
+  renderContext(context);
   el.panel.replaceChildren();
   el.card.replaceChildren();
   if (card) el.card.appendChild(svgNode(art.face(card), 'choice-dialog__face'));

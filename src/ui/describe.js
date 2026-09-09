@@ -154,11 +154,30 @@ function activeMatchOf(state) {
   return state.pack.template.activeMatch?.(makeCtx(state)) ?? null;
 }
 
-export function describeZone(state, { def, n, address }) {
+/**
+ * What this pile's number MEANS, when the count of cards is not it.
+ *
+ * ASKED OF THE TEMPLATE, for the same reason `activeMatch` is: a won pile is
+ * counted in TRICKS and only the genre knows that four cards are one of them
+ * (#123). The default — no reading — is every pile in every other pack, whose
+ * number is simply how many cards it holds.
+ */
+function zoneReadingOf(state, inst) {
+  return state.pack.template.zoneReading?.(makeCtx(state), inst) ?? null;
+}
+
+export function describeZone(state, inst) {
+  const { def, n, address } = inst;
   const count = state.zones.count(address);
   const title = `${def.label || titleCase(def.id)}${n != null ? ` ${n}` : ''}`;
   const lines = [{ label: 'Cards', value: String(count) }];
   const notes = [];
+
+  // BOTH NUMBERS, and the pile's own first: "twelve cards, which is three
+  // tricks" is the whole of what there is to say about a won pile, and the
+  // inspector is where there is room to say it.
+  const reading = zoneReadingOf(state, inst);
+  if (reading?.line) lines.push(reading.line);
 
   if (def.capacity != null) lines.push({ label: 'Holds', value: `${count} of ${def.capacity}` });
   if (def.visibility === 'top') notes.push('Only the top card is face up.');
@@ -200,12 +219,19 @@ export function describeZone(state, { def, n, address }) {
  * colour the table is playing to — and `suit` is the four-suit name behind a
  * 'match' glyph when there is one, so the caller can ink a heart red.
  */
-export function zoneBadge(state, { def, n, address }) {
+export function zoneBadge(state, inst) {
+  const { def, n, address } = inst;
   const count = state.zones.count(address);
   if (count === 0) {
     // The empty slot already reads as zero; the word is the missing half.
     return { text: `${def.label || titleCase(def.id)}${n != null ? ` ${n}` : ''}`, kind: 'name' };
   }
+  // THE UNIT COMES WITH IT when the template says the count of cards is not the
+  // number (`zoneReading`). "3 tricks" rather than "12", because the badge on a
+  // won pile is read against a bid that is counted in tricks — and because a
+  // bare 3 under a stack of twelve cards would need the same explaining.
+  const reading = zoneReadingOf(state, inst);
+  if (reading?.badge) return { text: reading.badge, kind: 'count' };
   if (def.capacity != null) return { text: `${count}/${def.capacity}`, kind: 'count' };
   const match = activeMatchOf(state);
   if (match && match.address === address) {
@@ -228,6 +254,10 @@ export function zoneBadge(state, { def, n, address }) {
 export function zoneAriaLabel(state, inst) {
   const { title, lines, notes } = describeZone(state, inst);
   const count = Number(lines.find((l) => l.label === 'Cards')?.value ?? 0);
-  return `${title}, ${count} ${count === 1 ? 'card' : 'cards'}.`
+  // The reading is what the badge says, so it is what the pile is called: a
+  // screen reader hearing "Won, twelve cards" while the felt says "3 tricks"
+  // is being told a different thing from everybody else.
+  const reading = zoneReadingOf(state, inst);
+  return `${title}, ${reading?.badge ?? `${count} ${count === 1 ? 'card' : 'cards'}`}.`
     + (notes.length ? ` ${notes.join(' ')}` : '');
 }

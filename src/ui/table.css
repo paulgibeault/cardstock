@@ -1284,6 +1284,51 @@ body {
 
 .pile { text-align: center; }
 
+/* YOUR OWN SEAT'S NUMBERS (#123).
+ *
+ * Every seat but yours wears a plate; yours is the hand, the rail and the
+ * piles, so what you promised had nowhere to be shown and was not shown. This
+ * is that plate's one honest row, sitting with your own piles rather than
+ * across the felt — and labelled, because unlike a plate's badges it is read
+ * once a hand rather than glanced at every turn.
+ *
+ * Aligned to the bottom of the pile row (align-items: flex-end above), so the
+ * chips sit level with the pile badges beside them. */
+.my-seat {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem;
+  margin-bottom: 0.5rem;
+}
+
+.my-seat__chip {
+  display: flex;
+  align-items: baseline;
+  gap: 0.3rem;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  background: var(--chip-bg);
+  border: 1px solid var(--chip-border);
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.my-seat__name {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.72;
+}
+
+.my-seat__value { font-weight: 700; }
+
+/* The promise itself is the loud one: it is the number the whole hand is played
+   against, and the bags beside it are what it has already cost. */
+.my-seat__chip[data-counter="bid"] {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--chip-border));
+}
+
 /* What is left on the felt once the words moved to the inspector and the
    accessible name: the count. A pile that spells out "Discard (7)" under
    itself is louder than a real one, and the label never told you anything the
@@ -3180,6 +3225,52 @@ body.is-dragging .card-face { cursor: grabbing; }
   border-radius: 6px;
   box-shadow: 0 4px 12px var(--card-shadow);
 }
+
+/* WHAT THE TABLE HAS ALREADY SAID (#123).
+ *
+ * A bid is made against the bids before it, and on a phone the seats carrying
+ * them are a carousel — the playtest bid with the partner's plate clipped
+ * mid-word and the third opponent off the screen entirely. So the four
+ * promises come into the dialog, in seat order, with your own and your
+ * partner's marked; the row after them is what the two of you have promised
+ * between you, which is the number the hand is actually played against.
+ *
+ * Wraps rather than scrolls: four short chips fit on one line at 375px and on
+ * two if a name is long, and a row that can be scrolled off is the bug this is
+ * fixing wearing a smaller hat. */
+.choice-context {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.3rem;
+  margin: -0.4rem 0 0.9rem;
+}
+.choice-context[hidden] { display: none; }
+
+.choice-context__row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.3rem;
+  padding: 0.12rem 0.45rem;
+  border-radius: 999px;
+  border: 1px solid var(--chip-border);
+  background: var(--chip-bg);
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Your side, marked the way the felt marks it: the plate wears a PARTNER pill
+   and these two wear the accent. Colour is not the only signal — the row is
+   named "your partner" in its accessible label as well. */
+.choice-context__row--mine,
+.choice-context__row--partner {
+  border-color: color-mix(in srgb, var(--accent) 60%, var(--chip-border));
+}
+.choice-context__row--mine { font-weight: 700; }
+
+.choice-context__name { opacity: 0.78; }
+.choice-context__value { font-weight: 700; }
 
 .choice-grid {
   display: flex;
