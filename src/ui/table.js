@@ -85,7 +85,8 @@ import { feltClock } from '../match/clock.js';
 import { createMatchRecord } from './matchRecord.js';
 import { watchHandGestures } from './handGestures.js';
 import { createZoneRenderer } from './zoneRenderer.js';
-import { renderCounterTrack } from './counterTrack.js';
+import { counterTrack, renderCounterTrack } from './counterTrack.js';
+import { sharedBoard, renderSharedBoard, updateSharedBoard } from './sharedBoard.js';
 import { closeConfirm, confirmAction } from './confirm.js';
 import { createDragController } from './dragController.js';
 import { attachInspector, hideInspector } from './inspector.js';
@@ -159,6 +160,8 @@ const el = {
   scoreChipTrack: document.getElementById('score-chip-track'),
   scoreChipValue: document.getElementById('score-chip-value'),
   tableCounters: document.getElementById('table-counters'),
+  tableBoard: document.getElementById('table-board'),
+  feltMiddle: document.getElementById('felt-middle'),
   opponentsTop: document.getElementById('opponents-top'),
   feltMiddle: document.getElementById('felt-middle'),
   centerPiles: document.getElementById('center-piles'),
@@ -1394,9 +1397,13 @@ function buildSeatRow(state, stagger, acting, ui, { tier, carousel, mustOpen, sh
       // Which kinds are which is the PLATFORM's closed vocabulary
       // (src/ui/counterTrack.js) and which kind this counter is, is the
       // template's. An unrecognised kind falls through to the badge below.
-      const track = renderCounterTrack(counter);
-      if (track) {
-        head.appendChild(track);
+      // AND WHERE THE FELT ALREADY DRAWS THE ROAD, THE PLATE DOES NOT (#136).
+      // A shared board puts every seat's pegs on one road in the middle of the
+      // table; an 88px copy of one lane of it, up here, is the same number a
+      // third time — the plate's own score pill above already prints it. The
+      // counter still counts for the collapsed head's spoken name below.
+      if (counterTrack(counter)) {
+        if (!session?.board) head.appendChild(renderCounterTrack(counter));
         return;
       }
       const badge = document.createElement('span');
@@ -2247,13 +2254,21 @@ const SLACK_STEP = 16;
 function handSlack(rowCost) {
   const middle = el.feltMiddle;
   if (!middle || !middle.clientHeight) return 0;
-  // `offsetHeight`, not a rect: a pile mid-deal is carrying a transform, and
-  // what is being asked here is how much room its layout needs.
-  let content = 0;
+  // `offsetTop`/`offsetHeight`, not rects: a pile mid-deal is carrying a
+  // transform, and what is being asked here is how much room its layout needs.
+  // THE UNION OF THE CHILDREN, NOT THE TALLEST ONE: the middle WRAPS for a
+  // table with a shared board (#136, `felt-middle--boarded`), so its content
+  // is the piles' line plus the board's line under it, and the tallest child
+  // alone would hand the fan a second row's worth of room the board is
+  // already standing in.
+  let top = Infinity;
+  let bottom = -Infinity;
   for (const child of middle.children) {
     if (child.hidden) continue;
-    content = Math.max(content, child.offsetHeight);
+    top = Math.min(top, child.offsetTop);
+    bottom = Math.max(bottom, child.offsetTop + child.offsetHeight);
   }
+  const content = bottom > top ? bottom - top : 0;
   // AND WHAT THE FELT IS ALREADY OVER BY. The middle's spare room is the answer
   // only while the column fits the screen; a felt that has outgrown it has
   // taken height it did not have, and a second row would take more. Without
@@ -2583,7 +2598,15 @@ function renderStatusBar(state, acting) {
     // is `renderCounterTrack` being DOM-parameterised for the second time and
     // not a second board. A pack whose primary counter is an ordinary quantity
     // renders nothing here and keeps the plain pill.
-    const board = renderCounterTrack(seatCountersFor(state, mySeat(), { minimized: false })[0]);
+    //
+    // AND WHERE THE FELT DRAWS THE SHARED BOARD (#136), NOT HERE EITHER. The
+    // chip's track is 90px in the top-right corner, which is the one place on
+    // the felt the eye never goes mid-hand; once your own lane is on the road
+    // in the middle of the table, this goes back to being the plain pill it
+    // was before #124 and says the number once.
+    const board = session?.board
+      ? null
+      : renderCounterTrack(seatCountersFor(state, mySeat(), { minimized: false })[0]);
     el.scoreChipTrack.replaceChildren(...(board ? [board] : []));
     // The track prints the number itself; two of them in one pill is the same
     // score twice.
@@ -2633,6 +2656,84 @@ function renderTableCounters(state) {
     chip.setAttribute('aria-label', counter.aria || `${counter.label} ${counter.text}`);
     el.tableCounters.appendChild(chip);
   }
+}
+
+/**
+ * EVERY SEAT'S BOARD, AS ONE BOARD (#136).
+ *
+ * `seatCounters` one rung the other way from `tableCounters`: not a number the
+ * table owns, but the same number from every seat drawn on one picture. A
+ * cribbage board is one object with both players on it, and the reason it is
+ * one object is that the only question worth asking of it is comparative —
+ * am I ahead, by how much, and did that hand close the gap. Two 88px tracks
+ * in the two corners of the felt the eye never goes (the opponent's plate and
+ * the status bar's own chip) made that a subtraction; #124 shipped them and
+ * round 5 came back with "where is my board and pegs?".
+ *
+ * WHICH SEATS GET A LANE is the table's question and not the component's, so
+ * it is answered here: ring order from the chair on your left (seatRing.js),
+ * with your own lane last so it lands nearest your hand, and one lane per
+ * SIDE rather than per seat — `scoreBearers` is the same rule the score chips
+ * use, and for the same reason. A partnership has one score and drawing it
+ * twice reads as two scores that happen to be equal.
+ *
+ * WHICH seats have a board at all is nobody's question here either: a lane
+ * exists where `counterTrack()` says the seat's primary counter is a position
+ * on a road, and a pack whose seats count things gets no board and no row.
+ */
+function sharedBoardFor(state) {
+  const seat = mySeat();
+  const bearers = scoreBearers(state.pack, state.seats, seat);
+  const order = [...opponentRing(state.seats, seat), seat]
+    .filter((s) => Number.isInteger(s) && s >= 0 && s < state.seats && bearers.has(s));
+  return sharedBoard(order.map((s) => {
+    const identity = identityOf(s);
+    const marks = seatSideMarks(state.pack, state.seats, seat, s);
+    return {
+      seat: s,
+      counter: seatCountersFor(state, s, { minimized: false })[0],
+      name: seatLabel(s),
+      // The roster's mark, exactly as the plate and the trick's owner tags
+      // wear it — never a manifest value reaching the felt (§7b).
+      mark: identity.icon || identity.initials || String(s + 1),
+      color: identity.color,
+      mine: isMySeat(s),
+      partner: marks.partner,
+      side: marks.side,
+    };
+  }));
+}
+
+/**
+ * The board on the felt, repainted rather than rebuilt.
+ *
+ * THE PEGS ONLY MOVE IF THE NODES SURVIVE. A render rebuilds the felt, and an
+ * element created fresh at 37% has never been anywhere else — its transition
+ * on `left` has no old value to run from, so a rebuilt board teleports and the
+ * one piece of motion this component is allowed never happens. So the handle
+ * from the last render is offered the new model first, and a full rebuild is
+ * what happens when the seats or the road actually change (a new match).
+ *
+ * `session.board` is the model, and it is what the seat plate and the status
+ * chip read to know their own small track is now redundant — which is why
+ * this runs FIRST in `render`.
+ */
+function renderSharedBoardRow(state) {
+  const model = sharedBoardFor(state);
+  session.board = model;
+  el.tableBoard.hidden = !model;
+  // The middle only wraps for a table that HAS a board. A permanently wrapping
+  // middle would let Milestones' contract ladder fall under the piles on a
+  // narrow window, which is a layout for a problem nobody has.
+  el.feltMiddle.classList.toggle('felt-middle--boarded', !!model);
+  if (!model) {
+    el.tableBoard.replaceChildren();
+    session.boardHandle = null;
+    return;
+  }
+  if (session.boardHandle && updateSharedBoard(session.boardHandle, model)) return;
+  session.boardHandle = renderSharedBoard(model);
+  el.tableBoard.replaceChildren(session.boardHandle.node);
 }
 
 function statusTextFor(state, acting) {
@@ -2762,6 +2863,11 @@ function render(state, message) {
 
   session.ui = ui;
 
+  // THE BOARD GOES FIRST, and the order is load-bearing: both the status bar's
+  // score chip and every seat plate ask `session.board` whether the felt is
+  // already drawing this road, and draw their own small track only if it is
+  // not (#136).
+  renderSharedBoardRow(state);
   renderStatusBar(state, acting);
   renderSeats(state, stagger, acting, ui);
   if (ladder) ladder.render(state);

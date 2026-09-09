@@ -1919,6 +1919,133 @@ game, and changing the deck's identity is a bigger call than this issue. The
 only that to `goToTable`, and the seat count comes from the new-game sheet — no
 URL plumbing was added, per the issue.
 
+## One board, with everybody on it (#136)
+
+### What was wrong
+
+#124 gave the felt a `peg` counter kind and drew it wherever the seat already
+was: 88px on the opponent's plate, and — because the human's own seat is not a
+plate — a second copy about 90px wide squeezed into the status bar's YOU chip.
+Round 5 played a whole cribbage match on that and the note that came back was
+"In cribbage I don't see the board. Is it the small progress-bar-looking thing
+on their player card? That is too small. Where is my board and pegs?"
+
+Two tracks that small, in the two corners of the felt the eye never goes
+mid-hand, are not a board. They are two progress bars that happen to be about
+the same road, and the only question anybody asks of a cribbage board is
+comparative — am I ahead, by how much, did that hand close the gap — which two
+separate bars at two separate scales in two separate places turn into a
+subtraction.
+
+### The component
+
+`src/ui/sharedBoard.js`, on exactly the terms `counterTrack.js` is on and for
+the same reasons. A pure `sharedBoard(seats)` that takes no DOM (src/ui/table.js
+touches `document` at import time, so a model that can be asserted without a
+browser is the only way this geometry is ever checked), and a
+`renderSharedBoard(model, doc)` beside it. Nothing in the file knows the word
+cribbage: it is handed a list of seats and their primary counters, and the ones
+`counterTrack()` says are a POSITION get a lane. A pack whose seats count things
+produces no board and no row.
+
+Three things the model owns that two separate tracks could not:
+
+* **One road for every lane.** `counterTrack` computes each seat's position as a
+  fraction of its OWN `of`. Here the road is the longest `of` any lane declares
+  and every peg is re-measured against it, so two seats playing to different
+  targets are drawn where they actually are rather than both at "80% of
+  something".
+* **A ruler in holes.** The ticks are a repeating gradient whose period is a
+  PERCENTAGE computed from the road's length (4.13% for five holes of 121), not
+  a pixel rhythm — a mark is five holes at 223px on a phone and at 461px on a
+  desktop. Streets every thirty are the same trick painted twice as strong.
+  Numbered 30, 60, 90 and then the target: 120 and 121 land five pixels apart
+  and shipped, in the first screenshot of this component, as one muddled
+  five-digit thing.
+* **A repaint rather than a rebuild.** `updateSharedBoard` exists because an
+  element created fresh at 37% has never been anywhere else: its one-shot
+  transition on `left` has no old value to run from, so a rebuilt board
+  teleports its pegs and the one piece of motion this component is allowed
+  never happens at all. Proved on the felt, not asserted — the browser reports
+  `transitionstart left on peg1 after 0s` / `transitionend left on peg1 after
+  0.32s` on the SAME node it tagged before the score, and no animation event of
+  any kind (§6d: there is no `@keyframes` on this component).
+
+Ring order with the human's lane nearest the hand, one lane per SIDE rather than
+per seat (`scoreBearers`, the same rule the score chips use — a partnership has
+one score and drawing it twice reads as two scores that happen to be equal), the
+roster's own mark and colour, and one accessible name per lane: "You: 45 of 121,
+up 6".
+
+### Where it sits, and why the measurement decided it
+
+The issue proposed a full-width row directly under the piles at every size. The
+felt said otherwise, and the numbers are worth keeping:
+
+| | 375x812 | 1280x860 |
+|---|---|---|
+| middle's width | 332px | 1221px |
+| piles + COUNT | 234px | 416px |
+| spare HEIGHT during the play | 191px | **33px** |
+
+A row under the piles costs its own height plus `#table`'s 16px gap, so at every
+desktop size it pushes `#table-screen` past the window — and "the play does not
+scroll" was the one thing this issue had to leave alone (the crib DISCARD
+already overflows at 1280x860 by 71px; that is #137 and it is unchanged).
+Meanwhile a phone has 98px LESS width than the piles and the count already use,
+so there is no room beside them at all.
+
+So the board is a flex item inside `#felt-middle` with a minimum width, and the
+middle wraps: beside the piles wherever the row can hold it — which is every
+desktop, and is what Paul actually asked for ("can we share a large board next
+to the played card slots") — and on its own full-width line directly under them
+where it cannot. One rule, no breakpoint, and the awkward middle widths resolve
+themselves. Measured across twelve viewports from 1600x900 to 320x690: beside at
+1600/1280/1041/900/820/700, under at 768x1024, 600, 414, 375, 360 and 320, and
+`scrollHeight === innerHeight` at every one of them.
+
+Two details that rule needed. `flex-wrap` is switched on by a class the renderer
+adds only when a board is actually drawn — a permanently wrapping middle would
+let Milestones' contract ladder fall under the piles on a narrow window.
+`align-content: center`, because the default `stretch` spread the two lines to
+fill the middle and left 74px of empty felt between the piles and the board that
+belongs to them.
+
+And the lane's columns are FIXED widths, which is what makes the scale honest:
+the street numbers are one row under both lanes, positioned as a percentage of
+the road, so the box they are a percentage of has to be the box the rails are.
+A name column sized to its content would put the "30" half a street away from
+hole 30 on the lane with the longer name. What gives way on a cramped board is
+the name, through a CONTAINER query rather than a media query — the board's
+width is not a function of the viewport's (608px at 1280, 334px at 820 beside
+the piles, 608px again at 768x1024 underneath them), so a viewport breakpoint
+would dress the wide board as though it were the narrow one. It buys 35px of
+road at 375 and 38px at 820.
+
+### The two small tracks
+
+Gone wherever the board is drawn, both through `session.board` — the model, read
+by the seat plate's counter loop and the status bar's score chip, which is why
+the board renders FIRST. The plate keeps its score pill (the same number, and
+the peg counter still counts toward the collapsed head's spoken name); the chip
+goes back to the plain pill it was before #124. `renderCounterTrack` itself
+stays: it is the fallback for a pack that wants a track and no board, and
+`tests/counterTrack.test.js` stays green on it.
+
+### Verified
+
+Driven through the crib discard, the play, the show, a score and the round sheet
+at 375x812 and 1280x860 in both themes, against this branch and against an
+unmodified v0.1.62 server. `#table-screen.scrollHeight` is exactly `innerHeight`
+at every phase and both sizes except the crib discard at 1280x860, which is 931
+on both servers. `.seat__track` count 2 -> 0 and `#score-chip-track` 1 child ->
+0 in all four runs; the road went from 88px on a plate to 223px at 375 and 461px
+at 1280. All nine packs boot headlessly with no page errors and `#table-board`
+`display: none`, 0x0, on the eight that are not cribbage; every pack's felt
+geometry is byte-identical to main (Pinochle's middle varies by 8px on BOTH
+servers — its contract strip wraps or does not depending on the bid).
+`node tools/simulate.mjs cribbage --games=150` is 150 completed / 0 stalled /
+0 errored / 10.0 moves per game on both trees.
 ## The numbers on a plate, named — and an edge that says the row goes on (#133)
 
 Round-5 items 49 and 53, the two the research pass left inside #133 after items

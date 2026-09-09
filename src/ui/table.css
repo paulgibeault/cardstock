@@ -1381,6 +1381,258 @@ body {
   flex: 0 1 auto;
 }
 
+/* ------------------------------------------------------------------ *
+ * THE BOARD (#136)
+ * ------------------------------------------------------------------ *
+ *
+ * One road, every seat on it, in the middle of the felt where the play is —
+ * replacing the two 88px tracks that used to draw the same road twice, small,
+ * on the opponent's plate and inside the status bar's own chip. The component
+ * is src/ui/sharedBoard.js and it knows nothing about cribbage; this is the
+ * slot it lands in.
+ *
+ * WHERE IT SITS IS DECIDED BY THE FLEXBOX, NOT BY A BREAKPOINT, and that is
+ * the one interesting thing about this block. Measured on the felt at
+ * v0.1.62: during the play at 1280x860 the whole column has 33px of spare
+ * height — #felt-middle is 221px around 172px of piles and the row gap costs
+ * 16 of the 49px difference — so a board UNDER the piles at a desktop size
+ * pushes #table-screen past the window and breaks the one thing this issue
+ * had to leave alone. At 375x812 the same measurement is 191px of slack and
+ * 332px of width, which is 98px less than the piles and the count already
+ * take: there is no room BESIDE them on a phone and plenty under.
+ *
+ * So the board declares a minimum width and lets the middle wrap: it sits
+ * beside the piles wherever the row can hold it (which is every desktop, and
+ * is also what Paul asked for — "next to the played card slots") and drops
+ * onto its own full-width line directly under them where it cannot. One
+ * layout, one rule, and the awkward middle widths resolve themselves.
+ *
+ * `flex-wrap` is switched on by a class the renderer adds only when a board is
+ * actually drawn, so every other pack's middle is the single unwrapped row it
+ * has always been — a wrapping middle would let Milestones' contract ladder
+ * fall under the piles on a narrow window, which is a layout nobody asked for.
+ */
+#felt-middle.felt-middle--boarded {
+  flex-wrap: wrap;
+  /* `stretch` is the default and it spreads the two lines to fill the middle,
+     which put 74px of empty felt between the piles and the board they belong
+     to and read as two unrelated things. Centred, the board sits DIRECTLY
+     under the piles and the pair centres in the middle's slack together. */
+  align-content: center;
+}
+
+#table-board {
+  /* Grows into whatever the row has left, up to a road worth reading; below
+     the basis the middle wraps it under the piles instead of squeezing it. */
+  flex: 1 1 17rem;
+  max-width: 38rem;
+  display: flex;
+  min-width: 0;
+}
+#table-board[hidden] { display: none; }
+
+/* THE COLUMNS ARE FIXED, AND THAT IS WHAT MAKES THE SCALE HONEST. The street
+   numbers are printed once under both lanes, positioned as a percentage of the
+   road — so the box they are a percentage OF has to be the same box the rails
+   are, which it can only be if the mark, the name and the value take the same
+   width on every lane. A name column sized to its content would put the "30"
+   half a street away from hole 30 on the lane with the longer name, which is
+   worse than not numbering the road at all. Named here so the phone block
+   below can spend the width differently without re-deriving the arithmetic. */
+.board {
+  --board-mark: 1.05rem;
+  --board-name: 4.2rem;
+  --board-value: 1.9rem;
+  --board-gap: 0.3rem;
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.35rem 0.5rem 0.3rem;
+  border-radius: 10px;
+  background: var(--chip-bg);
+  border: 1px solid var(--chip-border);
+}
+
+/* One lane: whose it is, the road, and the number at the end of it. The lanes
+   are in ring order with your own nearest the hand, which is the order the
+   renderer hands them over in — nothing here reorders anything. */
+.board__lane {
+  display: flex;
+  align-items: center;
+  gap: var(--board-gap);
+  min-width: 0;
+}
+
+/* THE ROSTER'S MARK, the same circle the seat plate and the trick's owner tags
+   wear (.trick-owner) — "this is a player" is one vocabulary wherever it turns
+   up. The rim is the partnership rule those tags already use: your own lane
+   takes the accent, a partner's takes the partner colour, everyone else takes
+   the surface they sit on. */
+.board__mark {
+  flex: 0 0 var(--board-mark);
+  height: var(--board-mark);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 2px solid var(--chip-border);
+  font-size: 0.58rem;
+  line-height: 1;
+  overflow: hidden;
+}
+.board__lane--mine .board__mark { border-color: var(--accent); }
+.board__lane--partner .board__mark { border-color: var(--partner); }
+
+.board__name {
+  flex: 0 0 var(--board-name);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 0.66rem;
+  font-weight: 600;
+  opacity: 0.85;
+}
+
+/* The road. The ticks are a repeating gradient rather than 24 elements, and
+   the percentages are computed by sharedBoard.js from the road's own length —
+   so a mark is a HOLE, five holes apart at every width, and not a pixel rhythm
+   that happens to look like a scale. The street gradient is the same trick at
+   thirty holes, painted stronger and full height so the eye has four landmarks
+   on a road that is only a couple of hundred pixels long.
+
+   The edge is an inset shadow and not a border ON PURPOSE: `left: n%` on a peg
+   is a percentage of the rail's PADDING box, and a 1px border makes that box
+   1px narrower at each end than the scale line underneath, which is the same
+   class of mistake as #124's — a percentage measured against a box that is not
+   the one the reader sees. */
+.board__rail {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 4rem;
+  height: 0.5rem;
+  border-radius: 999px;
+  background: var(--chip-bg);
+  box-shadow: inset 0 0 0 1px var(--chip-border);
+  background-image:
+    repeating-linear-gradient(to right,
+      var(--board-street-ink) 0 1px, transparent 1px var(--board-street, 100%)),
+    repeating-linear-gradient(to right,
+      var(--board-tick-ink) 0 1px, transparent 1px var(--board-tick, 100%));
+  background-size: 100% 100%, 100% 52%;
+  background-position: 0 0, 0 50%;
+  background-repeat: no-repeat, no-repeat;
+}
+
+/* Both pegs are the seat's own colour — the roster's, never a manifest's
+   (§7b) — so which lane is whose survives being read at a glance. The back peg
+   is the same ink at a third of the weight, which is how a real board says
+   "this is where you were before the last hand" without a second hue. */
+.board__peg {
+  position: absolute;
+  top: 50%;
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  box-shadow: 0 0 0 1.5px var(--panel-bg);
+  /* The move itself, and the only motion on this component. `left` rather than
+     a transform because the peg's position IS a left offset in percent of the
+     rail. No @keyframes anywhere here: a peg moves once and then sits still, so
+     there is nothing for --arcade-pulse-count to cap (§6d). */
+  transition: left 320ms ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .board__peg { transition: none; }
+}
+.board__peg--front { z-index: 1; }
+.board__peg--back { opacity: 0.42; }
+
+/* Both pegs in the same hole is where every seat starts and where it sits
+   until its first score. Nudged apart rather than stacked invisibly, the same
+   way .seat__track does it. */
+.board__lane[data-together="true"] .board__peg--back {
+  transform: translate(-90%, -50%);
+}
+
+.board__value {
+  flex: 0 0 var(--board-value);
+  text-align: right;
+  font-size: 0.78rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The streets, numbered once under both lanes rather than on each of them —
+   which is how a real board is printed, and which costs one row of 11px
+   instead of two. The margins are the lane's own columns, so this line spans
+   exactly the rails above it. The road's own length closes it on the right,
+   because "45" is not a position until you know what it is out of, and the
+   lanes print only the first half of that. */
+.board__scale {
+  position: relative;
+  height: 0.72rem;
+  margin-left: calc(var(--board-mark) + var(--board-name) + var(--board-gap) * 2);
+  margin-right: calc(var(--board-value) + var(--board-gap));
+  font-size: 0.55rem;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.62;
+}
+.board__scale-num {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+}
+.board__target {
+  position: absolute;
+  top: 0;
+  right: 0;
+  transform: translateX(calc(var(--board-gap) + var(--board-value)));
+  font-weight: 700;
+  opacity: 0.9;
+}
+
+/* BOTH THEMES ARE PAINTED, not one plus a tint — the same rule .seat__track
+   carries. The rail is a groove either way: its marks are white ink over the
+   dark felt's chip and near-black ink over the light theme's paper, and a
+   street mark is twice the weight of a five in both. */
+:root,
+[data-theme="dark"] {
+  --board-tick-ink: rgba(255, 255, 255, 0.22);
+  --board-street-ink: rgba(255, 255, 255, 0.5);
+}
+[data-theme="light"] {
+  --board-tick-ink: rgba(20, 38, 28, 0.24);
+  --board-street-ink: rgba(20, 38, 28, 0.5);
+}
+
+/* A NARROW BOARD, NOT A NARROW WINDOW, and the difference is the whole reason
+   this is a container query. Because the board sits beside the piles wherever
+   the row can hold it, its width is not a function of the viewport's: at
+   1280x860 it is 608px, at 820x860 it is 334px BESIDE the piles, and at
+   768x1024 it is 608px again UNDERNEATH them. A viewport breakpoint would
+   dress the 608px board at 768 as though it were the 334px one.
+
+   What gives way is the name. A lane is read by its coloured mark first — the
+   same mark the seat plate and the trick's owner tags wear — so what a cramped
+   board spends on four more letters it is taking directly off the thing the
+   component exists to draw, and the name is on the lane's accessible name
+   either way. Measured: at 375x812 this takes the road from 188px to 223px,
+   and at 820x860 from 187px to 220px. */
+#table-board { container-type: inline-size; container-name: board; }
+
+@container board (max-width: 430px) {
+  .board {
+    --board-name: 2.6rem;
+    --board-value: 1.6rem;
+    --board-gap: 0.25rem;
+    padding: 0.3rem 0.35rem 0.25rem;
+  }
+  .board__name { font-size: 0.62rem; }
+  .board__value { font-size: 0.72rem; }
+}
+
 /* WHAT THE TABLE IS COUNTING, beside the piles it is counted off.
    A column, like the ladder on the other side, and sized to its content so it
    cannot push the piles off centre. Hidden with no reserved slot for every
