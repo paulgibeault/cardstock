@@ -171,6 +171,19 @@
              `tableCounters` and hidden — with no slot reserved — for every
              pack that declares none. -->
         <div id="table-counters" class="table-counters" hidden></div>
+
+        <!-- THE BOARD: every seat's pegs on one road (src/ui/sharedBoard.js),
+             for packs whose seat counters are POSITIONS rather than quantities.
+             Hidden with no reserved slot for every other pack.
+
+             Beside the piles where the middle is wide enough to hold it, and
+             wrapped onto its own full-width line directly under them where it
+             is not — one rule, decided by the flexbox, because the room is
+             genuinely there on a desktop and genuinely is not on a phone. The
+             wrap is switched on by `felt-middle--boarded` and therefore only
+             ever applies to a table that HAS a board; every other pack's middle
+             is the single unwrapped row it has always been. -->
+        <div id="table-board" hidden></div>
       </div>
 
       <!-- The human's own piles beyond the hand: a Stockpile stock and
