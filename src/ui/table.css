@@ -1420,7 +1420,7 @@ body {
   #player-row:has(> #player-piles > :not(:empty)) {
     display: grid;
     /* Equal gutters, so the centre column is centred on the felt however wide
-       the tray in the right one grows. */
+       the tray in the one beside it grows. */
     grid-template-columns: 1fr auto 1fr;
     align-items: end;
     /* The felt's own gap, for the announce and emote bars when they show. */
@@ -1462,8 +1462,9 @@ body {
      So in the shared row the tray does not wrap — it narrows its cards, which
      is the trade the `max-height: 660px` block at the foot of this sheet
      already makes for this exact element ("smaller cards here, not a
-     collapsing row"). It is a continuous one: a five-card meld at 1041px is
-     still 92% of a full card, and nothing on the felt moves at any count. */
+     collapsing row"). It is a continuous one: six staged cards are still a
+     full 74px at 1280, and five are 67px at 1041; nothing on the felt moves at
+     any count, at any width the gate lets in. */
   #player-row:has(> #player-piles > :not(:empty)) > #stage-row #stage-tray {
     flex-wrap: nowrap;
   }
