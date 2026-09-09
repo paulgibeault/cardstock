@@ -1919,6 +1919,260 @@ game, and changing the deck's identity is a bigger call than this issue. The
 only that to `goToTable`, and the seat count comes from the new-game sheet — no
 URL plumbing was added, per the issue.
 
+## One board, with everybody on it (#136)
+
+### What was wrong
+
+#124 gave the felt a `peg` counter kind and drew it wherever the seat already
+was: 88px on the opponent's plate, and — because the human's own seat is not a
+plate — a second copy about 90px wide squeezed into the status bar's YOU chip.
+Round 5 played a whole cribbage match on that and the note that came back was
+"In cribbage I don't see the board. Is it the small progress-bar-looking thing
+on their player card? That is too small. Where is my board and pegs?"
+
+Two tracks that small, in the two corners of the felt the eye never goes
+mid-hand, are not a board. They are two progress bars that happen to be about
+the same road, and the only question anybody asks of a cribbage board is
+comparative — am I ahead, by how much, did that hand close the gap — which two
+separate bars at two separate scales in two separate places turn into a
+subtraction.
+
+### The component
+
+`src/ui/sharedBoard.js`, on exactly the terms `counterTrack.js` is on and for
+the same reasons. A pure `sharedBoard(seats)` that takes no DOM (src/ui/table.js
+touches `document` at import time, so a model that can be asserted without a
+browser is the only way this geometry is ever checked), and a
+`renderSharedBoard(model, doc)` beside it. Nothing in the file knows the word
+cribbage: it is handed a list of seats and their primary counters, and the ones
+`counterTrack()` says are a POSITION get a lane. A pack whose seats count things
+produces no board and no row.
+
+Three things the model owns that two separate tracks could not:
+
+* **One road for every lane.** `counterTrack` computes each seat's position as a
+  fraction of its OWN `of`. Here the road is the longest `of` any lane declares
+  and every peg is re-measured against it, so two seats playing to different
+  targets are drawn where they actually are rather than both at "80% of
+  something".
+* **A ruler in holes.** The ticks are a repeating gradient whose period is a
+  PERCENTAGE computed from the road's length (4.13% for five holes of 121), not
+  a pixel rhythm — a mark is five holes at 223px on a phone and at 461px on a
+  desktop. Streets every thirty are the same trick painted twice as strong.
+  Numbered 30, 60, 90 and then the target: 120 and 121 land five pixels apart
+  and shipped, in the first screenshot of this component, as one muddled
+  five-digit thing.
+* **A repaint rather than a rebuild.** `updateSharedBoard` exists because an
+  element created fresh at 37% has never been anywhere else: its one-shot
+  transition on `left` has no old value to run from, so a rebuilt board
+  teleports its pegs and the one piece of motion this component is allowed
+  never happens at all. Proved on the felt, not asserted — the browser reports
+  `transitionstart left on peg1 after 0s` / `transitionend left on peg1 after
+  0.32s` on the SAME node it tagged before the score, and no animation event of
+  any kind (§6d: there is no `@keyframes` on this component).
+
+Ring order with the human's lane nearest the hand, one lane per SIDE rather than
+per seat (`scoreBearers`, the same rule the score chips use — a partnership has
+one score and drawing it twice reads as two scores that happen to be equal), the
+roster's own mark and colour, and one accessible name per lane: "You: 45 of 121,
+up 6".
+
+### Where it sits, and why the measurement decided it
+
+The issue proposed a full-width row directly under the piles at every size. The
+felt said otherwise, and the numbers are worth keeping:
+
+| | 375x812 | 1280x860 |
+|---|---|---|
+| middle's width | 332px | 1221px |
+| piles + COUNT | 234px | 416px |
+| spare HEIGHT during the play | 191px | **33px** |
+
+A row under the piles costs its own height plus `#table`'s 16px gap, so at every
+desktop size it pushes `#table-screen` past the window — and "the play does not
+scroll" was the one thing this issue had to leave alone (the crib DISCARD
+already overflows at 1280x860 by 71px; that is #137 and it is unchanged).
+Meanwhile a phone has 98px LESS width than the piles and the count already use,
+so there is no room beside them at all.
+
+So the board is a flex item inside `#felt-middle` with a minimum width, and the
+middle wraps: beside the piles wherever the row can hold it — which is every
+desktop, and is what Paul actually asked for ("can we share a large board next
+to the played card slots") — and on its own full-width line directly under them
+where it cannot. One rule, no breakpoint, and the awkward middle widths resolve
+themselves. Measured across twelve viewports from 1600x900 to 320x690: beside at
+1600/1280/1041/900/820/700, under at 768x1024, 600, 414, 375, 360 and 320, and
+`scrollHeight === innerHeight` at every one of them.
+
+Two details that rule needed. `flex-wrap` is switched on by a class the renderer
+adds only when a board is actually drawn — a permanently wrapping middle would
+let Milestones' contract ladder fall under the piles on a narrow window.
+`align-content: center`, because the default `stretch` spread the two lines to
+fill the middle and left 74px of empty felt between the piles and the board that
+belongs to them.
+
+And the lane's columns are FIXED widths, which is what makes the scale honest:
+the street numbers are one row under both lanes, positioned as a percentage of
+the road, so the box they are a percentage of has to be the box the rails are.
+A name column sized to its content would put the "30" half a street away from
+hole 30 on the lane with the longer name. What gives way on a cramped board is
+the name, through a CONTAINER query rather than a media query — the board's
+width is not a function of the viewport's (608px at 1280, 334px at 820 beside
+the piles, 608px again at 768x1024 underneath them), so a viewport breakpoint
+would dress the wide board as though it were the narrow one. It buys 35px of
+road at 375 and 38px at 820.
+
+### The two small tracks
+
+Gone wherever the board is drawn, both through `session.board` — the model, read
+by the seat plate's counter loop and the status bar's score chip, which is why
+the board renders FIRST. The plate keeps its score pill (the same number, and
+the peg counter still counts toward the collapsed head's spoken name); the chip
+goes back to the plain pill it was before #124. `renderCounterTrack` itself
+stays: it is the fallback for a pack that wants a track and no board, and
+`tests/counterTrack.test.js` stays green on it.
+
+### Verified
+
+Driven through the crib discard, the play, the show, a score and the round sheet
+at 375x812 and 1280x860 in both themes, against this branch and against an
+unmodified v0.1.62 server. `#table-screen.scrollHeight` is exactly `innerHeight`
+at every phase and both sizes except the crib discard at 1280x860, which is 931
+on both servers. `.seat__track` count 2 -> 0 and `#score-chip-track` 1 child ->
+0 in all four runs; the road went from 88px on a plate to 223px at 375 and 461px
+at 1280. All nine packs boot headlessly with no page errors and `#table-board`
+`display: none`, 0x0, on the eight that are not cribbage; every pack's felt
+geometry is byte-identical to main (Pinochle's middle varies by 8px on BOTH
+servers — its contract strip wraps or does not depending on the bid).
+`node tools/simulate.mjs cribbage --games=150` is 150 completed / 0 stalled /
+0 errored / 10.0 moves per game on both trees.
+## The numbers on a plate, named — and an edge that says the row goes on (#133)
+
+Round-5 items 49 and 53, the two the research pass left inside #133 after items
+1–4 became #134–#138.
+
+### What was wrong
+
+**A seat plate was a row of anonymous digits.** `buildSeatRow` drew a seat's
+score, hand count, bid, tricks, bags and meld as six bare numbers whose only
+difference was their position in the head — `Bruno 0 12 150 —` on Pinochle,
+`Nell 12 4 0` on Team Spades. #122 had already made the CARD COUNT a different
+shape from the SCORE (a card, not a pill), and that is as far as shape goes:
+four pills in a row are four pills. The human's own seat had been labelled as a
+side effect of #123 (`BID`, `BAGS`) and #125 (`YOUR MELD`), so the two halves of
+the table said the same fact two different ways.
+
+The badges' one name was an `aria-label` on a roleless `<span>`, which is the
+exact shape `directionBadge` grew a `role="img"` to fix in #122: most screen
+readers drop it. So the plate had no visible name and, in practice, no spoken
+one either.
+
+Pinochle's `—` is what settles the argument. The template draws it twice, for
+"passed" and for "has not declared a meld yet". A dash with no word beside it is
+not a number that is missing; it is a plate with nothing on it.
+
+**The seat carousel scrolls and nothing said so.** #125 measured item 53 and
+found it was never a clipping bug — every seat is reachable, and the toggle
+shows all three at once — and flagged the likely real complaint: nobody can see
+that the row scrolls. Measured again here at 375×812: the row is 683–741px of
+seats in a 332px port, the second plate is cut at the edge with ~91px showing,
+and the third is off screen. A cut edge is ambiguous. It reads as a felt that
+ends there just as easily as one that continues.
+
+### What changed
+
+**A caption under each number, in the template's own word.**
+`fillCounterBadge` (`src/ui/table.js`) builds every badge as a value line plus a
+`.seat__count-label` line, and gives the pair `role="img"` with the counter's
+sentence as its accessible name — one name, not "12, cards, 12 cards". The word
+is `counter.label`, which every template already supplied; `seatCountersFor`'s
+platform default and `defaultScoreChip` (`src/ui/seatRing.js`) grew theirs, and
+the contract now says `label` is required and DRAWN rather than, as it read
+before, filed away for an inspector that no longer exists.
+
+`scoreChip` grew an optional `label` for one pack. Contract rummy's chip is the
+contract reached and the points are its tiebreak (that is why it overrides the
+hook at all), so `Ph 1` under the word SCORE is wrong twice; Milestones now says
+CONTRACT and everything else takes the default.
+
+*Under the number, not beside it, and that was measured rather than argued.*
+Both shapes were injected into a live felt during the research pass. Captions
+UNDER: Team Spades' seats 209→269px at 375px (+29%), carousel scroll 683→776px,
+plate height +1px, and the 1280 row still fits with ~350px to spare. Captions
+BESIDE: +50% width, scroll 912–993px. The row already scrolls; making it half
+again as long to say the same six words is paying twice. Re-measured after the
+fact on the shipped build: Team Spades 375 seats 212/251/172 → 278/280/206 and
+scroll 654→783, row height 130→131; Stockpile at six seats 159→159px per plate
+(the word is narrower than the pile row above it) with the row 149→151 tall;
+Milestones four-handed 167–172 → 203–207 and scroll 528→634 (its plates carry
+the longest caption on the platform, CONTRACT, next to a two-character number).
+
+*Faces keep the bare number,* by a stylesheet rule (`.seat--collapsed
+.seat__count-label { display: none }`) rather than by building a different DOM.
+That is deliberate: which rung the row settles on is MEASURED by the fit loop,
+and building the caption conditionally would put the ladder's own output inside
+the question it is answering. Collapsed seat widths are unchanged to the pixel —
+18px and 15px badges at 375px, 22px and 21px at 1280 — so the crowded-row
+collapse other packs rely on is untouched. The open PLATE popup shows no
+captions for the simplest possible reason: it has no head. `buildPlateFor` calls
+`buildSeatBody`, which is the fan and the seat's piles; the numbers stay on the
+face the plate hangs off, where they always were.
+
+**A scroll-edge fade, and only where there is something to scroll to.**
+`paintSeatRowEdges` toggles `.opponent-row--more-left` / `--more-right` from the
+row's own geometry, and the stylesheet turns them into one `mask-image` gradient
+whose two ends are switched independently. Three things drive it and each is a
+real hole without the others: a passive `scroll` listener follows the finger;
+`renderSeats` repaints after issuing its scroll, because a bot laying a meld
+lengthens the row without any scroll event being fired; and the row's
+`ResizeObserver` repaints before its width gate, since the same width can hold a
+different length.
+
+*A mask rather than two overlay pseudo-elements* — `::before`/`::after` inside a
+scrollport scroll WITH the content, so they would slide off the edge they were
+drawn for. A mask applies to the element's painted result against its border
+box, which stays still. Nothing that overflows on purpose is clipped: the mask
+is uniform in the block axis, so `.seat--active`'s 2px lift and its glow (inside
+the block padding, inside the border box) are untouched, the open plate is not
+in this row at all (`#seat-plate-layer`), and the view toggle is positioned
+against `#table`. No animation — the fade is a state, not a pulse (cardstock#24).
+
+### How it was verified
+
+Two servers, the worktree on 4833 and unmodified main on 4843, driven headless
+by playwright at 375×812 and 1280×860.
+
+- Team Spades and Pinochle, open plates: every badge's rendered text went from
+  `🐺Sable071404` to `🐻Otto0Score9Cards—Bid6Meld`, both viewports, both packs.
+- Minimized faces: identical badge widths and row heights before and after
+  (42px at 375, 44px at 1280), and the plate still opens on tap.
+- Stockpile at six seats and Milestones four-handed (lobby tile → new-game sheet
+  → seat count), both views: the ladder still lands on `faces` at 375 and
+  `tight` at 1280, and the acting seat's plate still opens.
+- The fade at scrollLeft 0 / middle / max on both packs: right only, both, left
+  only, with the mask's own computed value read back each time. Cribbage and
+  two-handed Thirteen carry no classes and `mask-image: none`.
+- Both themes at 375: the caption is `currentColor` at 0.7 opacity, so it is
+  ink-on-felt in dark and ink-on-paper in light with no second colour to keep in
+  step.
+- `npm test` 817/817, `node tools/pack-test.mjs --all` 137/137 across nine
+  packs, `node --check src/ui/table.js`, and all nine packs booted headlessly
+  with no page errors and a non-empty seat row.
+
+`tests/seatPlate.test.js` is new: a runtime sweep asserting every counter every
+shipped pack declares carries a short label (with a floor on the count, so a
+renamed hook cannot leave it green over nothing), plus source gates on the two
+call sites that draw it, the rule that hides it on a face, and the three drivers
+of the edge fade. Each of its eight assertions was proved to bite by breaking
+what it watches and restoring from a scratch copy.
+
+### Not done
+
+The felt at 1280×860 scrolls by 5px on a six-handed Stockpile table, where it
+scrolled by 3px before. That is #137's measurement, worsened by the 2px the
+captions add to the seat row; it is not a new class of problem and #137 owns the
+three candidate fixes. Cribbage's peg track carries no caption — it short
+circuits the badge branch entirely, and #136 is replacing it.
 ## The hand takes a second row, and the rail gets out of its way (#134)
 
 ### What was wrong
@@ -2129,6 +2383,139 @@ preferring the declaration over the measurement, returning the measurement
 unconditionally, and dropping the positive guard each turned it red, and it
 went green again from a scratch copy.
 
+## One sequence, in one place (#138)
+
+### What was wrong
+
+Cribbage's `play` is a per-player zone, so the felt drew it the way it draws
+every per-player zone: the human's instance as a full spread in `#player-piles`
+above the hand, each opponent's as a compact copy on their seat plate. Measured
+mid-play at 375x812 that is your three cards at y=563 and theirs a 24px pile at
+y=290 showing ONE card, with the deck, the crib, the starter and the count in
+between. The sequence you are counting to thirty-one off — whose fifteens,
+pairs and runs are made from whatever went down last, whoever put it there — was
+in two places 270px apart, one of which showed a quarter of itself.
+
+The overlap constant #133 first pointed at is not the problem and was not
+touched: `.pile-stack--spread` gives each card a 26.5px strip at 375px
+(`--pile-w: 52px` x 0.51) and 48px at 1280, the slot is a fixed 2.11 card
+widths, and four cards at 0.51 already need 2.53 of them — the spread is
+already as open as its box allows.
+
+### The flag
+
+`table: true` on a per-player zone definition. The THIRD answer to "where is a
+pile drawn", beside `interactive` and `onFelt`, and like both of them it says
+nothing about what may be SEEN in the pile: `visibility` remains the only thing
+that decides that. What it says is that the zone is read ACROSS the seats, so
+every seat's instance of it is drawn together in the felt's middle — full size,
+in ring order with the human's nearest the hand — and neither the plate's mini
+copy nor the `#player-piles` copy is drawn at all.
+
+The alternative was one shared sequence zone with per-card owner tags, the
+trick's treatment. It reads better and it is not a presentation change: cribbage
+reads a SEAT's own `play` pile for the count, for the "go", and to hand each
+player their four cards back at the show, and the bot evaluates from it. That is
+the template's data, the simulator and the replay format. The zone model is
+untouched here — `play` is still `per: 'player'`, and `tests/tableZone.test.js`
+pins that as hard as it pins the flag.
+
+**The mark is a HEAD, not a tag per card.** The trick's `ownerTag` puts the
+roster's mark on each card because a trick's cards have different owners; every
+card in one seat's `play` pile has the same one, so four copies of one answer is
+noise. The caption is the same vocabulary — the roster's mark and colour, the
+accent rim on your own and the partner colour on a partner's — and the OWNER
+also reaches the pile's accessible name, which it did not before: `describeZone`
+titles a pile with its label, so two spreads side by side were both "Played, 4
+cards" to a screen reader. They are "Rook's played, 4 cards" and "Your played, 4
+cards" now.
+
+### Where it sits, and the two things the measurement decided
+
+**The count moved.** #124 put `#table-counters` beside the piles, which is
+beside the STARTER — the one card in the play the count has nothing to do with.
+It is the running total of the two spreads and of nothing else, so it rides at
+the end of their line. That is a `#table-play` wrapper holding `#table-zones`
+and `#table-counters`, and it is a wrapper rather than two siblings because the
+middle WRAPS (#136): two flex items with their own bases are separated by the
+first line break that lands between them, which in a 332px middle is every
+time. The wrapper takes a whole line only when there are spreads on it
+(`table-play--zoned`), so a pack with a table counter and no `table` zone keeps
+the content-sized slot beside the piles, and a pack with neither is `hidden` —
+no slot, no gap, and no child in `handSlack`'s union (#134).
+
+**Side by side, not stacked.** Two full-size spreads one above the other are
+218px, and at 375x812 the middle has 168 to give once the piles and the board
+have theirs. Side by side they are 251px WIDE in a 332px middle and cost one
+row. At 1280x860 the middle's first line is already 1078 of its 1221 — piles
+361, board 608, the gaps — so the row could only have joined it by squeezing
+#136's road from 608px to under 300, and the second line costs nothing the row
+above the hand was not already spending.
+
+**The gutter is a fraction of a card**, `--pile-w * 0.6`, and that is not
+taste. A four-card spread hangs 0.21 of a card over EACH end of its own
+2.11-wide box, so two of them with an ordinary 8px gap overlap by 14px at 375px
+— shipped in the first screenshot of this row, with the first card of your
+sequence drawn under the last card of theirs, which is precisely the confusion
+the whole thing exists to remove. 0.6 clears both overhangs and leaves a real
+gutter at every card size: 31px at 375, 57px at 1280.
+
+**The row appears with the first card played**, which is `hideWhenEmpty`'s rule
+asked of the row rather than of one pile. The play piles are empty through the
+deal and the whole discard, and two empty slots there would cost a phase that
+already overflows on a desktop a line it has nothing to put in. Once any seat
+has played, ALL of them are drawn — including one that has not yet — so the
+row's shape never moves under the player.
+
+### The plate keeps nothing, including behind a tap
+
+The issue left open whether the open plate popup should still show the mini
+copy. It does not. The popup is `buildSeatBody` with the same arguments, so
+"only in the popup" would mean a second, smaller, differently ordered rendering
+of the same sequence behind a tap — the split this flag exists to end rather
+than a convenience on top of it. The spreads are full size and always on the
+felt; there is nothing the popup copy could have been for.
+
+### Verified
+
+Driven through the crib discard, the pegging, the show and the round sheet
+against this branch and against a server running its unmodified base (#136), at
+375x812 and 1280x860 and in both themes, plus an eleven-viewport sweep from
+1600x900 to 320x690 at three phases each.
+
+| | before | after |
+|---|---|---|
+| your spread, 375 mid-play | 110px wide in `#player-piles`, y=530 | 110px wide in `#table-zones`, y=468 |
+| their spread, 375 | 24x34 mini pile on the plate, y=177 | 110px wide beside yours, y=468 |
+| their spread, 1280 | 34x48 | 200px, the same as yours |
+| per-card strip, 375 | 26.5px (yours), none (theirs) | 26.5px, both |
+| owner on the felt | none | the roster's mark and name over each |
+| pile's accessible name | "Played, 4 cards." twice | "Rook's played…" / "Your played…" |
+| `#table-screen` at 375, play and show | 812 = 812 | 812 = 812 |
+| `#table-screen` at 1280, crib discard | **933** > 860 | **860** = 860 |
+
+`#fly-layer` produces the same two flights a hand as it did on the base — a
+played card in this pack has never flown, because `implicitLandingZone` skips
+per-player zones and cribbage's `play` is one; that is untouched. What did move
+is the rect a flight WOULD be aimed at: `zoneRect('play.1')` was 24x34 on a
+plate and is 69x84 in the middle, and each card is still seen settling in
+(`markEntry`'s `.card-face--fresh`) inside its own seat's spread and no other.
+The show's spotlight (`spotlightZone`, `.pile-stack--counting`) lands on the
+right pile at both sizes — which now means a ring around four readable cards
+rather than around a 24px pile.
+
+All nine packs boot headlessly with no page errors; on the eight that are not
+cribbage `#table-play` is `hidden`, 0x0, with no children, and the middle's
+geometry is unchanged. `npm test` 837 passed / 0 failed,
+`node tools/pack-test.mjs --all` 137 passed / 0 failed across the nine packs,
+and `node tools/simulate.mjs cribbage --games=150` is 150 completed / 0 stalled
+/ 0 errored / 10.0 moves per game on this tree and on its base.
+
+**One thing landed that belongs to somebody else.** The crib discard overflowed
+`#table-screen` at 1600x900, 1280x860, 1041x860 and 768x1024 (#137). It no
+longer does at any of them, because the human's empty "Played 0" pile was the
+row above the hand during that phase and there is no such pile now. That is a
+side effect, not a fix — #137 should re-measure rather than assume its numbers.
 ## Your piles and your tray share a row (#137)
 
 ### What was wrong

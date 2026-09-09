@@ -413,6 +413,10 @@ const contractRummy = {
     return {
       short: `Ph ${phase}`,
       long: `Ph ${phase} · ${score}`,
+      // The word on the seat plate, under the number (#133). "Score" is what
+      // the platform's default says and it would be wrong twice over here:
+      // this chip is not the points, and the points are the tiebreak.
+      label: 'Contract',
       aria: `on contract ${phase}, ${score} points`,
     };
   },

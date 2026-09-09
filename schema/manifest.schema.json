@@ -471,6 +471,11 @@
           "default": false,
           "description": "This zone is not a place on the table until it holds something. For a pile that exists only for a moment — cribbage's crib is turned face up into one at the show — an empty slot wearing its label for the rest of the hand is worse than no slot at all."
         },
+        "table": {
+          "type": "boolean",
+          "default": false,
+          "description": "A per-player zone whose every seat's instance is drawn TOGETHER in the felt's middle, full size and captioned with the seat's mark, instead of one copy in the human's pile row and a mini copy on each opponent's plate. For a per-player pile that is read ACROSS the seats — cribbage's play, whose runs and pairs are made from both players' cards. Like `onFelt` it says where a pile is drawn and never what may be seen in it; the zone stays per player, and the row appears only once a seat has something in it."
+        },
         "landing": {
           "enum": [
             "play",

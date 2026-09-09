@@ -573,7 +573,16 @@ const cribbage = {
       // Each seat lays in front of themselves and takes their own four back at
       // the show — which is what a real table does, and what saves this
       // template from having to remember who played what.
-      { id: 'play', per: 'player', visibility: 'all', layout: 'spread', order: 'sequence', facing: 'up', label: 'Played', landing: 'play' },
+      //
+      // `table` because the pile is READ ACROSS THE SEATS even though it is
+      // owned by one of them (#138). Fifteens, pairs and runs in the play are
+      // made from whatever went down last, whoever put it there, so the
+      // sequence is one thing — and the felt was drawing it as two, a full
+      // spread above your hand and a 24px pile on the opponent's plate 270px
+      // away showing only its top card. The zone model is untouched: every
+      // seat still has its own pile, which is what the count, the "go" and the
+      // show all read; `table` says only that the two are drawn together.
+      { id: 'play', per: 'player', visibility: 'all', layout: 'spread', order: 'sequence', facing: 'up', label: 'Played', landing: 'play', table: true },
       { id: 'starter', per: 'shared', visibility: 'all', layout: 'stack', order: 'stack', facing: 'up', label: 'Starter' },
     ];
   },

@@ -85,7 +85,8 @@ import { feltClock } from '../match/clock.js';
 import { createMatchRecord } from './matchRecord.js';
 import { watchHandGestures } from './handGestures.js';
 import { createZoneRenderer } from './zoneRenderer.js';
-import { renderCounterTrack } from './counterTrack.js';
+import { counterTrack, renderCounterTrack } from './counterTrack.js';
+import { sharedBoard, renderSharedBoard, updateSharedBoard } from './sharedBoard.js';
 import { closeConfirm, confirmAction } from './confirm.js';
 import { createDragController } from './dragController.js';
 import { attachInspector, hideInspector } from './inspector.js';
@@ -159,6 +160,10 @@ const el = {
   scoreChipTrack: document.getElementById('score-chip-track'),
   scoreChipValue: document.getElementById('score-chip-value'),
   tableCounters: document.getElementById('table-counters'),
+  tablePlay: document.getElementById('table-play'),
+  tableZones: document.getElementById('table-zones'),
+  tableBoard: document.getElementById('table-board'),
+  feltMiddle: document.getElementById('felt-middle'),
   opponentsTop: document.getElementById('opponents-top'),
   feltMiddle: document.getElementById('felt-middle'),
   centerPiles: document.getElementById('center-piles'),
@@ -650,6 +655,47 @@ function perPlayerZoneInstances(state, seat) {
   return out;
 }
 
+/**
+ * A per-player zone that is drawn in the MIDDLE for every seat at once (#138).
+ *
+ * The third answer to "where is a pile drawn", beside `interactive` and
+ * `onFelt`, and like both of them it says nothing about what may be SEEN in
+ * the pile — `visibility` remains the only thing that decides that. What it
+ * says is that the zone is read ACROSS the seats: cribbage's play is one
+ * sequence that both players add to and that both of them score runs and pairs
+ * off, and drawing it as a full spread above your own hand plus a 24px pile on
+ * the opponent's plate made the one thing the phase is about the one thing you
+ * could not read (#133 items 3–4).
+ */
+function isTableZone(def) {
+  return def.per === 'player' && def.table === true;
+}
+
+/** The per-player zones a SEAT still draws for itself — its plate, your row. */
+function ownZoneInstances(state, seat) {
+  return perPlayerZoneInstances(state, seat).filter((inst) => !isTableZone(inst.def));
+}
+
+/**
+ * Every seat's instance of every `table` zone, in the order they are drawn.
+ *
+ * RING ORDER WITH THE HUMAN LAST, which is the board's rule (#136) and the
+ * seat row's: the row sits above the hand, so "nearest the hand" is the end of
+ * it, and your own cards are the ones you look down at.
+ */
+function tableZoneInstances(state) {
+  const seat = mySeat();
+  const order = [...opponentRing(state.seats, seat), seat]
+    .filter((s) => Number.isInteger(s) && s >= 0 && s < state.seats);
+  const out = [];
+  for (const s of order) {
+    for (const inst of perPlayerZoneInstances(state, s)) {
+      if (isTableZone(inst.def)) out.push({ ...inst, seat: s });
+    }
+  }
+  return out;
+}
+
 function zoneStackNode(address) {
   return el.screen.querySelector(`[data-zone="${CSS.escape(address)}"]`);
 }
@@ -704,12 +750,54 @@ function scoreChipFor(state, seat) {
   return defaultScoreChip(state.pack, state.seats, state.scores, seat);
 }
 
+/**
+ * THE WORD UNDER A PLATE'S NUMBER (#133, round-5 item 49).
+ *
+ * A seat plate used to be a row of bare digits — "Bruno 0 12 150 —" — legible
+ * only to somebody who already knew which slot meant what, and its ONLY name
+ * was an `aria-label` nobody sighted ever hears. The vocabulary is the human's
+ * own chips' (`buildMySeatStrip`: SCORE, CARDS, BID, BAGS, MELD), so the two
+ * halves of the table say a bid the same way.
+ *
+ * UNDER, NOT BESIDE, and that was measured rather than chosen: captions beside
+ * the numbers cost +50% seat width at 375px (Team Spades' carousel scroll ran
+ * 683 -> 912-993px), captions underneath cost +29% (683 -> 776) and one pixel
+ * of height. The row already scrolls; making it half again as long to say the
+ * same words is paying twice.
+ *
+ * ARIA-WISE THIS IS ONE THING, NOT TWO. The badge carries the counter's own
+ * sentence ("bid 4 tricks") and `role="img"`, which stops the caption and the
+ * digits being read out beside it — the same trick `.my-seat__chip` uses, and
+ * the same reason directionBadge grew a role: an aria-label on a roleless
+ * <span> is dropped by most screen readers, so the badge was previously
+ * announcing nothing at all.
+ */
+function counterCaption(label) {
+  const cap = line('seat__count-label', label);
+  // Belt and braces beside role="img": the caption is decoration for the
+  // accessible name the badge already carries in full.
+  cap.setAttribute('aria-hidden', 'true');
+  return cap;
+}
+
+/** A badge's contents: the number, and the word for it. */
+function fillCounterBadge(badge, text, label, aria) {
+  badge.replaceChildren();
+  badge.appendChild(line('seat__count-value', text));
+  if (label) badge.appendChild(counterCaption(label));
+  badge.setAttribute('role', 'img');
+  badge.setAttribute('aria-label', aria);
+}
+
 function seatScoreChip(state, seat) {
   const chip = document.createElement('span');
   chip.className = 'seat__score';
-  const { short, aria } = scoreChipFor(state, seat);
-  chip.textContent = short;
-  chip.setAttribute('aria-label', aria);
+  const { short, label, aria } = scoreChipFor(state, seat);
+  // The chip's OWN word, defaulted rather than assumed: `scoreChipFor` answers
+  // "what is this seat racing", and contract rummy's answer is a contract
+  // reached, not a score — "Ph 1" under the word SCORE says the wrong thing in
+  // the one pack that overrides the hook.
+  fillCounterBadge(chip, short, label || 'Score', aria);
   return chip;
 }
 
@@ -843,9 +931,13 @@ function seatHasReadyTarget(state, seat, ui) {
 function seatCountersFor(state, seat, { minimized }) {
   const declared = state.pack.template.seatCounters?.(makeCtx(state), seat);
   const count = state.zones.count(`hand.${seat}`);
+  // `label` on the DEFAULT too, and not only on the templates' own counters:
+  // the caption under a plate's number (see counterCaption) is drawn from it,
+  // and a pack that declares no counters is exactly the pack whose bare digit
+  // has least else around it to explain itself.
   const list = Array.isArray(declared) && declared.length
     ? declared
-    : [{ text: String(count), aria: cardsPhrase(count) }];
+    : [{ text: String(count), aria: cardsPhrase(count), label: 'Cards' }];
   // THE PRIMARY NUMBER IS THE SAME WHETHER OR NOT THE SEAT IS MINIMIZED.
   //
   // Counters were once read only off minimized seats, which meant the badge in
@@ -960,7 +1052,15 @@ function buildSeatBody(state, seat, stagger, ui, into, { compactZones = true } =
 
   // The seat's own piles, compact: a Stockpile stock and discards, laid-down
   // melds (live hit targets), a Hearts won pile with the points it holds.
-  const seatZones = perPlayerZoneInstances(state, seat);
+  //
+  // A `table` zone is NOT among them, on the plate or in the popup the plate
+  // opens — ONE PLACE, NOT THREE (#138). The popup was the tempting exception
+  // and it is the wrong one: it would put a second, smaller, differently
+  // ordered rendering of the same sequence behind a tap, which is the split
+  // this flag exists to end rather than a convenience on top of it. The
+  // spreads in the middle are full size and always visible, so there is
+  // nothing the popup copy could have been for.
+  const seatZones = ownZoneInstances(state, seat);
   if (seatZones.length) {
     const strip = document.createElement('div');
     strip.className = 'seat__zones';
@@ -1348,9 +1448,13 @@ function buildSeatRow(state, stagger, acting, ui, { tier, carousel, mustOpen, sh
       // Which kinds are which is the PLATFORM's closed vocabulary
       // (src/ui/counterTrack.js) and which kind this counter is, is the
       // template's. An unrecognised kind falls through to the badge below.
-      const track = renderCounterTrack(counter);
-      if (track) {
-        head.appendChild(track);
+      // AND WHERE THE FELT ALREADY DRAWS THE ROAD, THE PLATE DOES NOT (#136).
+      // A shared board puts every seat's pegs on one road in the middle of the
+      // table; an 88px copy of one lane of it, up here, is the same number a
+      // third time — the plate's own score pill above already prints it. The
+      // counter still counts for the collapsed head's spoken name below.
+      if (counterTrack(counter)) {
+        if (!session?.board) head.appendChild(renderCounterTrack(counter));
         return;
       }
       const badge = document.createElement('span');
@@ -1359,12 +1463,16 @@ function buildSeatRow(state, stagger, acting, ui, { tier, carousel, mustOpen, sh
       // the stylesheet matches on (§7b) — hence the whitelist-ish shape.
       badge.className = i === 0 ? 'seat__count' : 'seat__count--aux';
       if (counter.kind) badge.dataset.counter = String(counter.kind).replace(/[^a-z0-9-]/gi, '');
-      badge.textContent = counter.text;
-      // The visible badge is a bare number, which reads as nothing on its own.
       // "Their turn" is false in a simultaneous phase, and it was being said on
       // every seat that had not committed yet — see committingToken.
       const says = !active || i !== 0 ? '' : (committing ? '. Still choosing.' : '. Their turn.');
-      badge.setAttribute('aria-label', `${counter.aria}${says}`);
+      // The word under the number — the template's own, never invented here, so
+      // a pack that calls its trick count something else is quoted rather than
+      // translated. It is drawn on every rung and hidden by the stylesheet on
+      // the ones with no room for it (.seat--collapsed): the caption is a
+      // presentation decision about width, and rebuilding the row's DOM to make
+      // it would put the fit ladder's own output inside the fit question.
+      fillCounterBadge(badge, counter.text, counter.label, `${counter.aria}${says}`);
       head.appendChild(badge);
     });
 
@@ -1527,9 +1635,56 @@ function renderSeats(state, stagger, acting, ui) {
 
   reserveSeatRowSpace(state, view);
   scrollActingSeatIntoView(state, acting);
+  // After the scroll is ISSUED and not before: the row is where this render
+  // left it until the glide starts, and the listener repaints all the way
+  // along. Repainted every render because the row's LENGTH changes without
+  // anybody scrolling — a bot laying a meld can turn a row that fitted into one
+  // that does not, and no scroll event is fired for that.
+  paintSeatRowEdges();
 
   // Every seat is in the DOM now, so the open plate has a rect to hang off.
   placeOpenPlate();
+}
+
+/**
+ * WHICH WAY THE ROW STILL HAS SEATS IN (#133, round-5 item 53).
+ *
+ * #125 measured item 53 and found no clipping bug: every seat is reachable at
+ * 375px, and the "Minimize player cards" toggle shows all three at once. What
+ * the playtest could not see is that the row scrolls at all — at 375 the
+ * carousel is 683-741px of seats in a 332px port, so the second plate is cut at
+ * the edge and the third is not on screen. A cut edge is ambiguous: it reads as
+ * a felt that ends there just as easily as one that continues.
+ *
+ * So the edge that still has content is FADED rather than cut. Two classes, and
+ * the stylesheet owns what they look like — see .opponent-row--more-right.
+ *
+ * NOTHING ON A ROW THAT DOES NOT SCROLL, which is the whole discipline of it: a
+ * two-handed Cribbage or Thirteen table gets no mask, no extra paint layer, and
+ * no soft edge suggesting a fourth player somewhere off to the right. Same at
+ * either extreme — at scrollLeft 0 there is nothing to the left, so the left
+ * edge is hard again and the fade is a live answer rather than decoration.
+ *
+ * The 1px slack is the same rounding tolerance seatRowOverflows keeps: integer
+ * scrollWidth off fractional layout would otherwise leave a permanent fade on a
+ * row with nowhere to go.
+ */
+function paintSeatRowEdges() {
+  const row = el.opponentsTop;
+  const max = row.scrollWidth - row.clientWidth;
+  const scrolls = row.classList.contains('opponent-row--carousel') && max > 1;
+  row.classList.toggle('opponent-row--more-left', scrolls && row.scrollLeft > 1);
+  row.classList.toggle('opponent-row--more-right', scrolls && row.scrollLeft < max - 1);
+}
+
+/**
+ * The fade follows the finger. Passive because it never calls preventDefault
+ * and a non-passive listener on a scroller is a scroll the compositor has to
+ * wait for — this one only writes two class names.
+ */
+function watchSeatRowEdges() {
+  el.opponentsTop.addEventListener('scroll', paintSeatRowEdges, { passive: true });
+  paintSeatRowEdges();
 }
 
 /**
@@ -1745,6 +1900,107 @@ function renderCenterZones(state, ui, draggable) {
 }
 
 /**
+ * THE SEQUENCE THE WHOLE TABLE IS PLAYING, drawn once (#138).
+ *
+ * Every seat's instance of every `table` zone, side by side in the middle of
+ * the felt, full size, each under the mark and the name of the seat it belongs
+ * to. The zone stays per player — cribbage's count, its "go" and its show all
+ * read a seat's own pile, and none of that is touched — but the two piles are
+ * one sequence to READ, so they are drawn as one thing. Before this, yours was
+ * a full spread above your hand and theirs was a 24px mini pile on their plate
+ * 270px away showing only its top card, with the count between them.
+ *
+ * THE ROW IS NOT A PLACE ON THE TABLE UNTIL SOMETHING IS IN IT, which is
+ * `hideWhenEmpty`'s rule asked of the row rather than of one pile. Cribbage's
+ * play piles are empty through the deal and the whole discard, and a row of
+ * empty slots there costs a phase that already struggles for height on a
+ * desktop (#137) a line it has nothing to put in. Once ANY seat has played, all
+ * of them are drawn — including the one that has not yet — so the row's shape
+ * does not move underneath the player for the rest of the hand.
+ *
+ * @returns whether any spread was drawn
+ */
+function renderTableZones(state, ui, draggable) {
+  const insts = tableZoneInstances(state);
+  el.tableZones.replaceChildren();
+  const live = insts.some((inst) => state.zones.count(inst.address) > 0);
+  if (!live) return false;
+
+  for (const inst of insts) {
+    const { seat } = inst;
+    const identity = identityOf(seat);
+    const marks = seatSideMarks(state.pack, state.seats, mySeat(), seat);
+    const wrap = document.createElement('div');
+    wrap.className = `table-zone ${isMySeat(seat) ? 'table-zone--mine' : ''} `
+      + `${marks.partner ? 'table-zone--partner' : ''}`;
+
+    const head = document.createElement('div');
+    head.className = 'table-zone__head';
+    const mark = document.createElement('span');
+    mark.className = 'table-zone__mark';
+    // A number the STYLESHEET may dress, chosen by the engine and never by
+    // pack data (§7b) — the same attribute the plate and the trick tag carry.
+    if (marks.side !== null) mark.dataset.side = String(marks.side);
+    // Own value from the roster, never a manifest one — inline style (§7b).
+    mark.style.background = identity.color;
+    mark.textContent = identity.icon || identity.initials || String(seat + 1);
+    head.appendChild(mark);
+    head.appendChild(line('table-zone__name', seatLabel(seat)));
+    // Decorative: the pile's own accessible name is possessive below, so a
+    // reader that spoke both would hear the owner twice per pile.
+    head.setAttribute('aria-hidden', 'true');
+    wrap.appendChild(head);
+
+    const pile = zones.buildPileNode(state, inst, ui, {
+      draggableTop: isMySeat(seat) ? (draggable.piles.get(inst.address) || null) : null,
+    });
+    // WHOSE PILE THIS IS, IN ITS NAME. `describeZone`'s title is the zone's
+    // label — "Played" — and two spreads side by side both called "Played, 3
+    // cards" are one pile as far as a screen reader is concerned. The caption
+    // beside them is the visual answer; this is the spoken one, and it has to
+    // be re-painted because paintPileState builds the name from this dataset.
+    const stack = pile.querySelector('.pile-stack');
+    if (stack) {
+      const said = stack.dataset.zoneLabel || '';
+      stack.dataset.zoneLabel = `${seatPossessive(seat)} ${said.charAt(0).toLowerCase()}${said.slice(1)}`;
+      zones.paintPileState(stack, ui);
+    }
+    wrap.appendChild(pile);
+    el.tableZones.appendChild(wrap);
+  }
+  return true;
+}
+
+/**
+ * The play row and the number that belongs to it, as one line of the middle.
+ *
+ * WHY THEY SHARE A SLOT. The count is the running total of the sequence beside
+ * it — "why are three of my four cards greyed out" is answered by the cards and
+ * the number together — and #124 had put it beside the STARTER, which is the
+ * one card in the play it has nothing to do with. Once the spreads are in the
+ * middle the count belongs with them, and a wrapper is what keeps the pair on
+ * one line of a wrapping middle whatever the width: two flex items with their
+ * own bases get separated the moment the line is tight, which at 375px is
+ * every time.
+ *
+ * FULL WIDTH ONLY WHEN THERE ARE SPREADS. `table-play--zoned` is what gives the
+ * wrapper a whole line; without it the wrapper is the content-sized slot beside
+ * the piles that `#table-counters` has always been, so a pack with a table
+ * counter and no `table` zone keeps the felt it had. And with neither, the
+ * wrapper is `hidden` — no slot, no gap, no child in handSlack's measurement.
+ */
+function renderTablePlay(state, ui, draggable) {
+  const zoned = renderTableZones(state, ui, draggable);
+  el.tablePlay.classList.toggle('table-play--zoned', zoned);
+  el.tablePlay.hidden = !zoned && el.tableCounters.hidden;
+  // The middle wraps for a table that HAS a full-width line to wrap, and for
+  // no other — the same rule and the same reason as the board's (#136): a
+  // permanently wrapping middle would let Milestones' contract ladder fall
+  // under the piles on a narrow window.
+  el.feltMiddle.classList.toggle('felt-middle--tabled', zoned);
+}
+
+/**
  * The counter kinds that belong on the HUMAN's own seat.
  *
  * A closed platform vocabulary, exactly like `COUNTER_TRACK_KINDS`
@@ -1807,7 +2063,9 @@ function renderPlayerZones(state, ui, draggable) {
   // costs no vertical space on a phone.
   const mine = buildMySeatStrip(state);
   if (mine) el.playerPiles.appendChild(mine);
-  for (const inst of perPlayerZoneInstances(state, mySeat())) {
+  // ...and not a `table` zone, which is drawn in the middle with everybody
+  // else's copy of it (renderTableZones).
+  for (const inst of ownZoneInstances(state, mySeat())) {
     if (inst.def.id === 'melds') {
       el.playerPiles.appendChild(zones.buildMeldStrip(state, mySeat(), ui));
     } else if (inst.def.visibility === 'none') {
@@ -2150,13 +2408,21 @@ const SLACK_STEP = 16;
 function handSlack(rowCost) {
   const middle = el.feltMiddle;
   if (!middle || !middle.clientHeight) return 0;
-  // `offsetHeight`, not a rect: a pile mid-deal is carrying a transform, and
-  // what is being asked here is how much room its layout needs.
-  let content = 0;
+  // `offsetTop`/`offsetHeight`, not rects: a pile mid-deal is carrying a
+  // transform, and what is being asked here is how much room its layout needs.
+  // THE UNION OF THE CHILDREN, NOT THE TALLEST ONE: the middle WRAPS for a
+  // table with a shared board (#136, `felt-middle--boarded`), so its content
+  // is the piles' line plus the board's line under it, and the tallest child
+  // alone would hand the fan a second row's worth of room the board is
+  // already standing in.
+  let top = Infinity;
+  let bottom = -Infinity;
   for (const child of middle.children) {
     if (child.hidden) continue;
-    content = Math.max(content, child.offsetHeight);
+    top = Math.min(top, child.offsetTop);
+    bottom = Math.max(bottom, child.offsetTop + child.offsetHeight);
   }
+  const content = bottom > top ? bottom - top : 0;
   // AND WHAT THE FELT IS ALREADY OVER BY. The middle's spare room is the answer
   // only while the column fits the screen; a felt that has outgrown it has
   // taken height it did not have, and a second row would take more. Without
@@ -2248,6 +2514,11 @@ function watchSeatRowWidth() {
     // to — and the drag holds measured rects for nodes this would throw away.
     if (!state || !session || (drag && drag.isDragging())) return;
     const width = el.opponentsTop.clientWidth;
+    // BEFORE the width gate, and outside it. A row can be re-measured at the
+    // same width and a different LENGTH — the launcher's font scale, a meld
+    // laid down — and the edge fade is a question about the length. Two class
+    // writes off geometry the line below is reading anyway.
+    paintSeatRowEdges();
     if (width === lastWidth) return;
     lastWidth = width;
     renderSeats(state, false, actingSeatsOf(state), session.ui || buildUiModel(state, {
@@ -2481,7 +2752,15 @@ function renderStatusBar(state, acting) {
     // is `renderCounterTrack` being DOM-parameterised for the second time and
     // not a second board. A pack whose primary counter is an ordinary quantity
     // renders nothing here and keeps the plain pill.
-    const board = renderCounterTrack(seatCountersFor(state, mySeat(), { minimized: false })[0]);
+    //
+    // AND WHERE THE FELT DRAWS THE SHARED BOARD (#136), NOT HERE EITHER. The
+    // chip's track is 90px in the top-right corner, which is the one place on
+    // the felt the eye never goes mid-hand; once your own lane is on the road
+    // in the middle of the table, this goes back to being the plain pill it
+    // was before #124 and says the number once.
+    const board = session?.board
+      ? null
+      : renderCounterTrack(seatCountersFor(state, mySeat(), { minimized: false })[0]);
     el.scoreChipTrack.replaceChildren(...(board ? [board] : []));
     // The track prints the number itself; two of them in one pill is the same
     // score twice.
@@ -2531,6 +2810,84 @@ function renderTableCounters(state) {
     chip.setAttribute('aria-label', counter.aria || `${counter.label} ${counter.text}`);
     el.tableCounters.appendChild(chip);
   }
+}
+
+/**
+ * EVERY SEAT'S BOARD, AS ONE BOARD (#136).
+ *
+ * `seatCounters` one rung the other way from `tableCounters`: not a number the
+ * table owns, but the same number from every seat drawn on one picture. A
+ * cribbage board is one object with both players on it, and the reason it is
+ * one object is that the only question worth asking of it is comparative —
+ * am I ahead, by how much, and did that hand close the gap. Two 88px tracks
+ * in the two corners of the felt the eye never goes (the opponent's plate and
+ * the status bar's own chip) made that a subtraction; #124 shipped them and
+ * round 5 came back with "where is my board and pegs?".
+ *
+ * WHICH SEATS GET A LANE is the table's question and not the component's, so
+ * it is answered here: ring order from the chair on your left (seatRing.js),
+ * with your own lane last so it lands nearest your hand, and one lane per
+ * SIDE rather than per seat — `scoreBearers` is the same rule the score chips
+ * use, and for the same reason. A partnership has one score and drawing it
+ * twice reads as two scores that happen to be equal.
+ *
+ * WHICH seats have a board at all is nobody's question here either: a lane
+ * exists where `counterTrack()` says the seat's primary counter is a position
+ * on a road, and a pack whose seats count things gets no board and no row.
+ */
+function sharedBoardFor(state) {
+  const seat = mySeat();
+  const bearers = scoreBearers(state.pack, state.seats, seat);
+  const order = [...opponentRing(state.seats, seat), seat]
+    .filter((s) => Number.isInteger(s) && s >= 0 && s < state.seats && bearers.has(s));
+  return sharedBoard(order.map((s) => {
+    const identity = identityOf(s);
+    const marks = seatSideMarks(state.pack, state.seats, seat, s);
+    return {
+      seat: s,
+      counter: seatCountersFor(state, s, { minimized: false })[0],
+      name: seatLabel(s),
+      // The roster's mark, exactly as the plate and the trick's owner tags
+      // wear it — never a manifest value reaching the felt (§7b).
+      mark: identity.icon || identity.initials || String(s + 1),
+      color: identity.color,
+      mine: isMySeat(s),
+      partner: marks.partner,
+      side: marks.side,
+    };
+  }));
+}
+
+/**
+ * The board on the felt, repainted rather than rebuilt.
+ *
+ * THE PEGS ONLY MOVE IF THE NODES SURVIVE. A render rebuilds the felt, and an
+ * element created fresh at 37% has never been anywhere else — its transition
+ * on `left` has no old value to run from, so a rebuilt board teleports and the
+ * one piece of motion this component is allowed never happens. So the handle
+ * from the last render is offered the new model first, and a full rebuild is
+ * what happens when the seats or the road actually change (a new match).
+ *
+ * `session.board` is the model, and it is what the seat plate and the status
+ * chip read to know their own small track is now redundant — which is why
+ * this runs FIRST in `render`.
+ */
+function renderSharedBoardRow(state) {
+  const model = sharedBoardFor(state);
+  session.board = model;
+  el.tableBoard.hidden = !model;
+  // The middle only wraps for a table that HAS a board. A permanently wrapping
+  // middle would let Milestones' contract ladder fall under the piles on a
+  // narrow window, which is a layout for a problem nobody has.
+  el.feltMiddle.classList.toggle('felt-middle--boarded', !!model);
+  if (!model) {
+    el.tableBoard.replaceChildren();
+    session.boardHandle = null;
+    return;
+  }
+  if (session.boardHandle && updateSharedBoard(session.boardHandle, model)) return;
+  session.boardHandle = renderSharedBoard(model);
+  el.tableBoard.replaceChildren(session.boardHandle.node);
 }
 
 function statusTextFor(state, acting) {
@@ -2660,6 +3017,11 @@ function render(state, message) {
 
   session.ui = ui;
 
+  // THE BOARD GOES FIRST, and the order is load-bearing: both the status bar's
+  // score chip and every seat plate ask `session.board` whether the felt is
+  // already drawing this road, and draw their own small track only if it is
+  // not (#136).
+  renderSharedBoardRow(state);
   renderStatusBar(state, acting);
   renderSeats(state, stagger, acting, ui);
   if (ladder) ladder.render(state);
@@ -2668,6 +3030,10 @@ function render(state, message) {
   if (contractStrip) contractStrip.render(state);
   renderCenterZones(state, ui, draggable);
   renderPlayerZones(state, ui, draggable);
+  // AFTER the status bar, which is where renderTableCounters runs: the count
+  // shares this row and whether it is on screen decides whether the row exists
+  // at all for a pack that has one and no `table` zone.
+  renderTablePlay(state, ui, draggable);
   // The two bars go BEFORE the hand, and the order is load-bearing: renderHand
   // ends by measuring how much room the fan has. Measured with the previous
   // render's bars still showing, the fan was laid out against a row of the
@@ -4618,6 +4984,7 @@ export function initTable({ onExit }) {
   // a width change costs two measurements, not a repaint of the table.
   watchHandWidth();
   watchSeatRowWidth();
+  watchSeatRowEdges();
   ladder.watch(liveState);
   gestures = watchHandGestures({
     hand: el.hand,

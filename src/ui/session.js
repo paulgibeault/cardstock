@@ -151,6 +151,18 @@ export function createSession({ pack, state, seats, seating, cardArt, handPrefs,
     // the turn passes. See reserveSeatRowSpace.
     seatRowReserve: null,
 
+    // THE SHARED BOARD ON THE FELT (src/ui/sharedBoard.js, #136), or null for
+    // a pack whose seat counters are quantities rather than positions. The
+    // MODEL, not the DOM: the seat plates and the status bar's score chip read
+    // it to know the felt is already drawing this road and their own 88px copy
+    // of one lane of it would be the same number twice.
+    board: null,
+    // The board's live nodes. Kept so a score REPAINTS the pegs rather than
+    // rebuilding them — an element built fresh at 37% has never been anywhere
+    // else, so its one-shot transition on `left` has nothing to run from and
+    // the peg teleports instead of moving.
+    boardHandle: null,
+
     // Timers. Every one of these freezes with a suspended frame (§6c) and every
     // one is cancelled by stopSession below.
     botTimer: null,
