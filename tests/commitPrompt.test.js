@@ -65,7 +65,13 @@ test("Cribbage's crib: the count is the pack's, the words are the template's", (
   assert.strictEqual(prompt.count, state.pack.rules.crib);
   assert.strictEqual(prompt.min, prompt.max);
   assert.match(prompt.action, /crib$/i, "whose crib it is, on the button");
-  assert.strictEqual(prompt.staging, `Crib — pick ${state.pack.rules.crib}`);
+  // WHOSE CRIB, BEFORE THE COMMIT AND NOT ONLY ON IT (#124, item 42). The
+  // button does not appear until both cards are staged, so a staging sentence
+  // that says only "Crib — pick 2" withholds the one fact the choice turns on
+  // until after the choice is made. `dealer` is public from the deal.
+  assert.strictEqual(prompt.staging, `${prompt.action} — pick ${state.pack.rules.crib}`);
+  assert.match(prompt.staging, /^(Your|Their) crib —/,
+    "the staging sentence names whose crib it is");
   const hand = handOf(state, 0);
   assert.strictEqual(model(state, 0, picked(0, hand.slice(0, 1))).action, null);
   assert.strictEqual(model(state, 0, picked(0, hand.slice(0, prompt.count))).action?.label, prompt.action);

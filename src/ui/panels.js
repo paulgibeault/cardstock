@@ -82,12 +82,28 @@ function signed(n) {
 export function showRoundSummary(state, ev, seating) {
   el.roundTitle.textContent = `Round ${ev.round} over`;
   el.roundScores.replaceChildren();
+  // A COLUMN WITH NOTHING TO SAY SAYS NOTHING (#124, item 43).
+  //
+  // The delta is what the ROUND BOUNDARY scored, and a pack whose points are
+  // pegged the moment they are earned has no such number: cribbage's every hole
+  // is already in `totals` by the time the hand ends, so its `scoreRound`
+  // returns nothing and `roundScores` comes back empty. What the sheet showed
+  // was `?? 0` — an unlabelled column reading 0 for both players, every round,
+  // sitting beside one that moved.
+  //
+  // The test is whether the event carries any per-seat entries AT ALL, not
+  // whether they are zero: a pack that genuinely scored nobody this hand still
+  // has a delta column, and it is still correct to print "+0" in it.
+  const hasDeltas = Object.keys(ev.scores || {}).length > 0;
   for (let s = 0; s < state.seats; s++) {
     const delta = ev.scores[s] ?? 0;
     const row = document.createElement('div');
     row.className = `round-scores__row ${seating[s] && !seating[s].isBot ? 'round-scores__row--you' : ''}`;
     row.appendChild(nameCell('round-scores__name', seating[s]));
-    row.appendChild(line('round-scores__delta', signed(delta)));
+    // The cell stays even when it is empty: `.round-scores` is a three-column
+    // grid whose rows are `display: contents`, so a row that skips a cell
+    // shifts every cell after it into the wrong column.
+    row.appendChild(line('round-scores__delta', hasDeltas ? signed(delta) : ''));
     // A DELTA IS PER SEAT AND A TOTAL IS PER SIDE. What a seat took this hand is
     // genuinely that seat's — "you took four, your partner took eight" is the
     // conversation a partnership actually has — but the running total is the

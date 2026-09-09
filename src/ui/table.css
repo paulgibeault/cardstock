@@ -310,6 +310,23 @@ body {
   opacity: 0.65;
 }
 
+/* YOUR OWN BOARD, IN THE CHROME. The opponent wears their peg rail on their
+   seat plate; the human has no plate, so their board goes in the one place
+   that is always on screen and already says "this number is yours" (#124).
+   Empty for every pack whose primary counter is a quantity — no slot, no gap,
+   the pill is unchanged.
+
+   Narrower than the rail on a plate on purpose: this bar may never wrap
+   (see #status-bar), and every pixel the board takes comes out of the
+   sentence beside it, which ellipsises. Sixty pixels of road is enough to
+   read a position off; the printed number is right there for the value. */
+.score-chip__track:empty { display: none; }
+.score-chip__track { display: inline-flex; align-items: center; }
+.score-chip .seat__track { margin-left: 0; min-width: 0; }
+.score-chip .seat__track-rail { min-width: 3.2rem; }
+.score-chip .seat__track-value { min-width: 1.4rem; }
+.score-chip #score-chip-value[hidden] { display: none; }
+
 .danger-button {
   font: inherit;
   padding: 0.6rem 1.1rem;
@@ -1254,6 +1271,52 @@ body {
    belonging to the piles. */
 #felt-middle > #center-piles {
   flex: 0 1 auto;
+}
+
+/* WHAT THE TABLE IS COUNTING, beside the piles it is counted off.
+   A column, like the ladder on the other side, and sized to its content so it
+   cannot push the piles off centre. Hidden with no reserved slot for every
+   pack that declares no `tableCounters`, which is all of them but one.
+
+   Big, because it is arithmetic the player would otherwise be doing in their
+   head off two spread piles — at a count of 30 with three cards greyed out,
+   this number is the whole explanation. No animation of any kind: it changes
+   with every card and a pulse on every card is a strobe (§6d). */
+.table-counters {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.table-counters[hidden] { display: none; }
+
+.table-counter {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.05rem;
+  padding: 0.3rem 0.6rem;
+  border-radius: 10px;
+  background: var(--chip-bg);
+  border: 1px solid var(--chip-border);
+}
+.table-counter__label {
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.7;
+}
+.table-counter__value {
+  font-size: 1.5rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.05;
+}
+
+@media (max-width: 560px) {
+  .table-counter { padding: 0.2rem 0.45rem; }
+  .table-counter__value { font-size: 1.15rem; }
 }
 
 #center-piles {

@@ -37,6 +37,27 @@ import { meldDisplayOrder } from '../templates/melds.js';
 /** How many discards stay visible under the top one. Enough to read as a pile. */
 const DISCARD_DEPTH = 3;
 
+/**
+ * The fewest cards a SPREAD shows, whatever the table's size.
+ *
+ * A spread used to show `state.seats` cards, because the only spread that
+ * existed was a trick and a trick is one card per seat. Cribbage's `play` pile
+ * is a spread that is not a trick: it is one seat's four cards, laid down over
+ * a whole hand, and at a two-handed table `slice(-2)` hid the first two of them
+ * the moment the third went down — so the sequence you are supposed to be
+ * counting to thirty-one off was unreadable by the time it mattered (#124,
+ * item 38).
+ *
+ * Four rather than "all of them": `.pile-stack--spread` reserves a fixed box
+ * (2.11 card widths, which is exactly four cards at the 0.51 overlap) and a
+ * pile that grew its own slot would shove every neighbour sideways each time a
+ * card landed — the same rule the overlap slots are fixed for. Climbing's
+ * shared `pile` is a spread with no bound at all, and it keeps the old
+ * behaviour because `Math.max` leaves any table of four or more exactly where
+ * it was.
+ */
+const SPREAD_MIN = 4;
+
 /** §7b: this value reaches a class name, so it is an allow-list, not a passthrough. */
 const OVERLAP_MODES = new Set(['horizontal', 'vertical']);
 
@@ -199,7 +220,7 @@ export function createZoneRenderer({
     } else if (isSpread && !mini) {
       // A trick is not a pile: every card in it is live information about who
       // played what, so it spreads and shows the whole trick.
-      const visible = cards.slice(-state.seats);
+      const visible = cards.slice(-Math.max(state.seats, SPREAD_MIN));
       visible.forEach((cardId, i) => {
         const card = cardById(state, cardId);
         if (!card) return;

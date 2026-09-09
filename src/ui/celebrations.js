@@ -20,6 +20,10 @@ import { safeCssColor } from './css.js';
 import { handAddress } from './interaction.js';
 import { playTrickTaken, playActionCard } from '../arcade/audio.js';
 import { trickNarration } from './scoreDirection.js';
+// Built here rather than threaded through createCelebrations' parameter list:
+// it is a pure function OF `seatLabel`, which this module already has, and the
+// two describeEvent call sites must hand templates the same bag (#124).
+import { agrees } from './describe.js';
 
 /**
  * @param me          the seat lens (src/players/seats.js); everything is worded
@@ -37,6 +41,8 @@ import { trickNarration } from './scoreDirection.js';
 export function createCelebrations({
   me, seatLabel, seatPossessive, currentEpoch, el, art, zoneRect, seatRect, pulseSeat, cardById,
 }) {
+  /** "You peg 3", "Nell pegs 3" — see `agrees` in src/ui/describe.js. */
+  const seatVerb = (seat, verb) => agrees(seatLabel(seat), verb);
   /**
    * How many penalty cards are worth watching arrive.
    *
@@ -239,8 +245,9 @@ export function createCelebrations({
     if (ev.say && typeof ev.say.text === 'string') {
       return { text: ev.say.text, tone: ev.say.tone || 'neutral' };
     }
-    return state.pack.template.describeEvent?.(ev, { seatLabel, seatPossessive, viewerSeat: me.seat() })
-      ?? defaultEventText(ev);
+    return state.pack.template.describeEvent?.(ev, {
+      seatLabel, seatPossessive, seatVerb, viewerSeat: me.seat(),
+    }) ?? defaultEventText(ev);
   }
 
   /**

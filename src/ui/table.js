@@ -90,7 +90,7 @@ import { createDragController } from './dragController.js';
 import { attachInspector, hideInspector } from './inspector.js';
 import {
   describeCard, cardAriaLabel, cardName,
-  possessive,
+  possessive, agrees,
 } from './describe.js';
 import {
   interactionMode, gathers, stagedSelection, buildUiModel, dropCandidates, draggableSources,
@@ -153,7 +153,9 @@ const el = {
   statusText: document.getElementById('status-text'),
   lobbyButton: document.getElementById('lobby-button'),
   scoreChip: document.getElementById('score-chip'),
+  scoreChipTrack: document.getElementById('score-chip-track'),
   scoreChipValue: document.getElementById('score-chip-value'),
+  tableCounters: document.getElementById('table-counters'),
   opponentsTop: document.getElementById('opponents-top'),
   centerPiles: document.getElementById('center-piles'),
   playerPiles: document.getElementById('player-piles'),
@@ -277,6 +279,18 @@ function seatLabel(seat) {
  */
 function seatPossessive(seat) {
   return possessive(seatLabel(seat));
+}
+
+/**
+ * The same rule for a VERB — "You peg 3", "Nell pegs 3".
+ *
+ * Owned here for the reason `seatPossessive` is: whether a seat is second
+ * person is the table's fact, not a template's, and cribbage's narration got it
+ * wrong in exactly the way #107's possessive did (`${seatLabel(seat)} pegs`
+ * reads perfectly for every opponent and says "You pegs 3" to the player).
+ */
+function seatVerb(seat, verb) {
+  return agrees(seatLabel(seat), verb);
 }
 
 /**
@@ -566,8 +580,24 @@ function sharedZoneInstances(state) {
     // hidden zone that is ALSO a control says so with `interactive` in its
     // definition, which is how the draw pile keeps its place without this line
     // knowing that a draw pile is called "draw".
-    if (def.visibility === 'none' && !def.interactive) continue;
-    out.push(...instancesOf(def, null));
+    //
+    // `onFelt` is the other reason a hidden pile belongs on the table: it is
+    // FURNITURE — nobody may look through it, but everybody can see that it is
+    // there and how deep it is. Cribbage's crib is the case (#124, item 37):
+    // four cards go into it in front of both players, it decides the hand, and
+    // it was not drawn at all. What the felt showed instead was the `show`
+    // zone, empty, wearing the label "The crib" for the whole hand while the
+    // real crib was invisible.
+    if (def.visibility === 'none' && !def.interactive && !def.onFelt) continue;
+    // ...and `hideWhenEmpty` is the same question from the other side: a zone
+    // that exists only for a moment is not a place on the table until it has
+    // something in it. The crib's reveal pile is empty from the deal until the
+    // dealer turns it over, and an empty dashed box captioned "The crib"
+    // sitting beside the real crib is the felt saying the crib is empty.
+    for (const inst of instancesOf(def, null)) {
+      if (def.hideWhenEmpty && state.zones.count(inst.address) === 0) continue;
+      out.push(inst);
+    }
   }
   // The deck reads best on the left, whatever order the template declared.
   return out.sort((a, b) => (b.def.id === 'draw') - (a.def.id === 'draw'));
@@ -2116,10 +2146,66 @@ function renderStatusBar(state, acting) {
     // partnership they are two different numbers and the screen reader gets the
     // wrong one.
     const chip = scoreChipFor(state, mySeat());
-    el.scoreChipValue.textContent = chip.long;
+    // THE HUMAN GETS THE SAME BOARD THE OPPONENT HAS. Every seat plate draws
+    // its primary counter as a track where the template says it is one — and
+    // the human's own seat is not a plate, so at a cribbage table there was
+    // exactly one `.seat__track` in the document and it belonged to the bot
+    // (#124, item 39). The player's own peg, the thing the whole game is read
+    // off, was a bare number in the chrome.
+    //
+    // The same renderer, the same numbers, the same accessible sentence — this
+    // is `renderCounterTrack` being DOM-parameterised for the second time and
+    // not a second board. A pack whose primary counter is an ordinary quantity
+    // renders nothing here and keeps the plain pill.
+    const board = renderCounterTrack(seatCountersFor(state, mySeat(), { minimized: false })[0]);
+    el.scoreChipTrack.replaceChildren(...(board ? [board] : []));
+    // The track prints the number itself; two of them in one pill is the same
+    // score twice.
+    el.scoreChipValue.hidden = !!board;
+    if (!board) el.scoreChipValue.textContent = chip.long;
     el.scoreChip.setAttribute('aria-label',
-      `Your ${hasSides(state.pack, state.seats) ? "side's score" : 'score'}: ${chip.long}. `
+      `Your ${hasSides(state.pack, state.seats) ? "side's score" : 'score'}: `
+      + `${board ? board.getAttribute('aria-label') : chip.long}. `
       + 'Open the scoreboard.');
+  }
+  renderTableCounters(state);
+}
+
+/**
+ * WHAT THE TABLE ITSELF IS COUNTING — the running count in cribbage, and
+ * nothing at all for every pack that declares none.
+ *
+ * `seatCounters` one rung out. Some facts a felt has to keep on screen are not
+ * any seat's: the count in the play is the table's, it changes with every card
+ * from either hand, and a player who cannot see it is doing arithmetic off two
+ * piles to find out why three of their four cards are greyed out (#124, item
+ * 38). It was already in the state — cribbage publishes `count` in its
+ * `publicVars` — and simply not drawn.
+ *
+ * A hook rather than a `pack.id ===`, for the reason every row of the
+ * presentation table in src/templates/CONTRACT.md is a hook: the question
+ * "what is this table counting" has an answer in more games than this one, and
+ * the default — no strip at all — costs a pack that has nothing to say nothing.
+ */
+function renderTableCounters(state) {
+  const declared = state.pack.template.tableCounters?.(makeCtx(state)) || [];
+  el.tableCounters.replaceChildren();
+  el.tableCounters.hidden = !declared.length;
+  for (const counter of declared) {
+    const chip = document.createElement('div');
+    chip.className = 'table-counter';
+    const label = document.createElement('span');
+    label.className = 'table-counter__label';
+    label.textContent = counter.label;
+    const value = document.createElement('span');
+    value.className = 'table-counter__value';
+    value.textContent = counter.text;
+    chip.append(label, value);
+    // One name for the pair, for the same reason the track carries one: "Count
+    // 17" read as two unrelated things is worse than the sentence.
+    chip.setAttribute('role', 'img');
+    chip.setAttribute('aria-label', counter.aria || `${counter.label} ${counter.text}`);
+    el.tableCounters.appendChild(chip);
   }
 }
 
@@ -2948,8 +3034,11 @@ function playShowStep(finalState, step) {
     render(finalState);
   }
   const said = finalState.pack.template.describeEvent?.(
-    { type: 'showScored', seat: step.seat, isCrib: step.isCrib, points: step.points },
-    { seatLabel, seatPossessive, viewerSeat: mySeat() },
+    // `parts` too: the template says WHAT a hand was worth it for — fifteen
+    // two, a pair, his nobs — and a step stripped of them can only say a
+    // number (#124, item 41).
+    { type: 'showScored', seat: step.seat, isCrib: step.isCrib, points: step.points, parts: step.parts },
+    { seatLabel, seatPossessive, seatVerb, viewerSeat: mySeat() },
   );
   const text = said?.text
     || `${seatPossessive(step.seat)} ${step.isCrib ? 'crib' : 'hand'} is worth ${step.points}.`;

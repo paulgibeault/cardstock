@@ -55,6 +55,25 @@ export function possessive(label) {
   return label === SECOND_PERSON ? 'Your' : `${label}'s`;
 }
 
+/**
+ * A verb that AGREES with a seat label — "You peg 3", "Nell pegs 3".
+ *
+ * The same irregularity as `possessive`, one part of speech over, and it
+ * shipped the same way: cribbage's `describeEvent` wrote `${seatLabel(seat)}
+ * pegs ${n}`, which is right for every opponent at the table and says "You pegs
+ * 3" to the person playing (#124, item 41). Every seat label here is a proper
+ * noun and takes the third-person -s except the local player's, which is the
+ * pronoun "You" and takes the bare form.
+ *
+ * Deliberately not a conjugator. It appends `s`, which is right for every verb
+ * a felt has said out loud so far (peg, score, lead, win); a verb that inflects
+ * any other way should be written out at both call sites rather than guessed at
+ * here — the same bet `possessive` makes about names ending in `s`.
+ */
+export function agrees(label, verb) {
+  return label === SECOND_PERSON ? verb : `${verb}s`;
+}
+
 export function titleCase(word) {
   const s = String(word || '');
   return s ? s[0].toUpperCase() + s.slice(1) : s;
@@ -202,11 +221,24 @@ export function describeZone(state, { def, n, address }) {
  */
 export function zoneBadge(state, { def, n, address }) {
   const count = state.zones.count(address);
+  const named = () => ({ text: `${def.label || titleCase(def.id)}${n != null ? ` ${n}` : ''}`, kind: 'name' });
   if (count === 0) {
     // The empty slot already reads as zero; the word is the missing half.
-    return { text: `${def.label || titleCase(def.id)}${n != null ? ` ${n}` : ''}`, kind: 'name' };
+    return named();
   }
   if (def.capacity != null) return { text: `${count}/${def.capacity}`, kind: 'count' };
+  // ONE CARD IS NOT A COUNT WORTH PRINTING. The rule above is that a pile with
+  // cards in it introduces itself — you can see what it is — and that rule
+  // stops being true at the bottom of the range: a badge reading "1" under a
+  // single card says nothing the card has not already said, and it costs the
+  // pile its name. Cribbage's cut card is the case that made it visible (#124,
+  // item 44): "Starter" — the one word explaining why that card is face up
+  // beside the deck and counted in everybody's hand — became "1" the instant it
+  // was turned, and stayed "1" for the rest of the hand.
+  //
+  // BELOW the match check on purpose: a Crazy Eights discard holds exactly one
+  // card on the opening lead, and the suit in force is the loudest thing on the
+  // felt at that moment. The name only wins where there is no rule to print.
   const match = activeMatchOf(state);
   if (match && match.address === address) {
     // `kind: 'match'` is what lets the caller draw this one BIG. Everywhere else
@@ -221,6 +253,7 @@ export function zoneBadge(state, { def, n, address }) {
     const suit = Object.hasOwn(SUIT_GLYPH, match.value) ? match.value : null;
     return { text: suit ? SUIT_GLYPH[suit] : titleCase(match.value), kind: 'match', suit };
   }
+  if (count === 1) return named();
   return { text: String(count), kind: 'count' };
 }
 
