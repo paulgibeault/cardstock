@@ -517,8 +517,15 @@ Beyond `id`/`per`/`visibility`/`layout`/`order`/`facing`/`capacity`/`count`/`lab
 | Field | Meaning |
 |---|---|
 | `interactive` | invisible, but still a control the player taps (a draw pile) |
+| `onFelt` | invisible, and FURNITURE rather than a control: drawn as backs with its count, because everybody watched the cards go in (cribbage's crib) |
+| `hideWhenEmpty` | not a place on the table until it holds something |
+| `table` | a PER-PLAYER zone every seat's copy of which is drawn together in the felt's middle, full size and marked with its owner, instead of one copy in your pile row and a mini copy on each plate — for a per-player pile that is read across the seats (cribbage's `play`) |
 | `landing: 'play' \| 'discard' \| 'both'` | where a card lands when the move names no destination |
 | `showsHeldValue` | this pile's contents are worth points; the felt shows the running cost |
+
+The middle four are all about WHERE a pile is drawn and none of them about
+what may be seen in it — `visibility` remains the only thing that decides
+that.
 
 ## `visibility` as a FILTERING vocabulary — the per-seat audit
 

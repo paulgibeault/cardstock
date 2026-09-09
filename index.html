@@ -166,12 +166,6 @@
              under the finger that asked for it. -->
         <div id="center-piles"></div>
 
-        <!-- What the TABLE is counting, as opposed to what a seat is: the
-             running count in cribbage's play. Rendered from the template's
-             `tableCounters` and hidden — with no slot reserved — for every
-             pack that declares none. -->
-        <div id="table-counters" class="table-counters" hidden></div>
-
         <!-- THE BOARD: every seat's pegs on one road (src/ui/sharedBoard.js),
              for packs whose seat counters are POSITIONS rather than quantities.
              Hidden with no reserved slot for every other pack.
@@ -184,6 +178,30 @@
              ever applies to a table that HAS a board; every other pack's middle
              is the single unwrapped row it has always been. -->
         <div id="table-board" hidden></div>
+
+        <!-- THE SEQUENCE THE TABLE IS PLAYING, in one place (#138). A zone the
+             pack declares `table: true` on is per-player and still is — every
+             seat keeps its own pile, which is what cribbage's count, its "go"
+             and its show all read — but every seat's INSTANCE of it is drawn
+             here, side by side and full size, instead of one copy above your
+             hand and a 24px mini pile on each opponent's plate. Runs and pairs
+             in cribbage are made ACROSS both players' cards; a sequence split
+             between two ends of the felt is one nobody can count.
+
+             The count that belongs to that sequence rides with it rather than
+             beside the starter, which is why `#table-counters` moved in here.
+             The pair is one full-width line of the middle whenever there are
+             spreads on it, and collapses to the old content-sized slot beside
+             the piles for a pack that has a table counter and no such zone. -->
+        <div id="table-play" class="table-play" hidden>
+          <div id="table-zones"></div>
+
+          <!-- What the TABLE is counting, as opposed to what a seat is: the
+               running count in cribbage's play. Rendered from the template's
+               `tableCounters` and hidden — with no slot reserved — for every
+               pack that declares none. -->
+          <div id="table-counters" class="table-counters" hidden></div>
+        </div>
       </div>
 
       <!-- The human's own piles beyond the hand: a Stockpile stock and

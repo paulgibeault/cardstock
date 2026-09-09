@@ -2383,6 +2383,140 @@ preferring the declaration over the measurement, returning the measurement
 unconditionally, and dropping the positive guard each turned it red, and it
 went green again from a scratch copy.
 
+## One sequence, in one place (#138)
+
+### What was wrong
+
+Cribbage's `play` is a per-player zone, so the felt drew it the way it draws
+every per-player zone: the human's instance as a full spread in `#player-piles`
+above the hand, each opponent's as a compact copy on their seat plate. Measured
+mid-play at 375x812 that is your three cards at y=563 and theirs a 24px pile at
+y=290 showing ONE card, with the deck, the crib, the starter and the count in
+between. The sequence you are counting to thirty-one off — whose fifteens,
+pairs and runs are made from whatever went down last, whoever put it there — was
+in two places 270px apart, one of which showed a quarter of itself.
+
+The overlap constant #133 first pointed at is not the problem and was not
+touched: `.pile-stack--spread` gives each card a 26.5px strip at 375px
+(`--pile-w: 52px` x 0.51) and 48px at 1280, the slot is a fixed 2.11 card
+widths, and four cards at 0.51 already need 2.53 of them — the spread is
+already as open as its box allows.
+
+### The flag
+
+`table: true` on a per-player zone definition. The THIRD answer to "where is a
+pile drawn", beside `interactive` and `onFelt`, and like both of them it says
+nothing about what may be SEEN in the pile: `visibility` remains the only thing
+that decides that. What it says is that the zone is read ACROSS the seats, so
+every seat's instance of it is drawn together in the felt's middle — full size,
+in ring order with the human's nearest the hand — and neither the plate's mini
+copy nor the `#player-piles` copy is drawn at all.
+
+The alternative was one shared sequence zone with per-card owner tags, the
+trick's treatment. It reads better and it is not a presentation change: cribbage
+reads a SEAT's own `play` pile for the count, for the "go", and to hand each
+player their four cards back at the show, and the bot evaluates from it. That is
+the template's data, the simulator and the replay format. The zone model is
+untouched here — `play` is still `per: 'player'`, and `tests/tableZone.test.js`
+pins that as hard as it pins the flag.
+
+**The mark is a HEAD, not a tag per card.** The trick's `ownerTag` puts the
+roster's mark on each card because a trick's cards have different owners; every
+card in one seat's `play` pile has the same one, so four copies of one answer is
+noise. The caption is the same vocabulary — the roster's mark and colour, the
+accent rim on your own and the partner colour on a partner's — and the OWNER
+also reaches the pile's accessible name, which it did not before: `describeZone`
+titles a pile with its label, so two spreads side by side were both "Played, 4
+cards" to a screen reader. They are "Rook's played, 4 cards" and "Your played, 4
+cards" now.
+
+### Where it sits, and the two things the measurement decided
+
+**The count moved.** #124 put `#table-counters` beside the piles, which is
+beside the STARTER — the one card in the play the count has nothing to do with.
+It is the running total of the two spreads and of nothing else, so it rides at
+the end of their line. That is a `#table-play` wrapper holding `#table-zones`
+and `#table-counters`, and it is a wrapper rather than two siblings because the
+middle WRAPS (#136): two flex items with their own bases are separated by the
+first line break that lands between them, which in a 332px middle is every
+time. The wrapper takes a whole line only when there are spreads on it
+(`table-play--zoned`), so a pack with a table counter and no `table` zone keeps
+the content-sized slot beside the piles, and a pack with neither is `hidden` —
+no slot, no gap, and no child in `handSlack`'s union (#134).
+
+**Side by side, not stacked.** Two full-size spreads one above the other are
+218px, and at 375x812 the middle has 168 to give once the piles and the board
+have theirs. Side by side they are 251px WIDE in a 332px middle and cost one
+row. At 1280x860 the middle's first line is already 1078 of its 1221 — piles
+361, board 608, the gaps — so the row could only have joined it by squeezing
+#136's road from 608px to under 300, and the second line costs nothing the row
+above the hand was not already spending.
+
+**The gutter is a fraction of a card**, `--pile-w * 0.6`, and that is not
+taste. A four-card spread hangs 0.21 of a card over EACH end of its own
+2.11-wide box, so two of them with an ordinary 8px gap overlap by 14px at 375px
+— shipped in the first screenshot of this row, with the first card of your
+sequence drawn under the last card of theirs, which is precisely the confusion
+the whole thing exists to remove. 0.6 clears both overhangs and leaves a real
+gutter at every card size: 31px at 375, 57px at 1280.
+
+**The row appears with the first card played**, which is `hideWhenEmpty`'s rule
+asked of the row rather than of one pile. The play piles are empty through the
+deal and the whole discard, and two empty slots there would cost a phase that
+already overflows on a desktop a line it has nothing to put in. Once any seat
+has played, ALL of them are drawn — including one that has not yet — so the
+row's shape never moves under the player.
+
+### The plate keeps nothing, including behind a tap
+
+The issue left open whether the open plate popup should still show the mini
+copy. It does not. The popup is `buildSeatBody` with the same arguments, so
+"only in the popup" would mean a second, smaller, differently ordered rendering
+of the same sequence behind a tap — the split this flag exists to end rather
+than a convenience on top of it. The spreads are full size and always on the
+felt; there is nothing the popup copy could have been for.
+
+### Verified
+
+Driven through the crib discard, the pegging, the show and the round sheet
+against this branch and against a server running its unmodified base (#136), at
+375x812 and 1280x860 and in both themes, plus an eleven-viewport sweep from
+1600x900 to 320x690 at three phases each.
+
+| | before | after |
+|---|---|---|
+| your spread, 375 mid-play | 110px wide in `#player-piles`, y=530 | 110px wide in `#table-zones`, y=468 |
+| their spread, 375 | 24x34 mini pile on the plate, y=177 | 110px wide beside yours, y=468 |
+| their spread, 1280 | 34x48 | 200px, the same as yours |
+| per-card strip, 375 | 26.5px (yours), none (theirs) | 26.5px, both |
+| owner on the felt | none | the roster's mark and name over each |
+| pile's accessible name | "Played, 4 cards." twice | "Rook's played…" / "Your played…" |
+| `#table-screen` at 375, play and show | 812 = 812 | 812 = 812 |
+| `#table-screen` at 1280, crib discard | **933** > 860 | **860** = 860 |
+
+`#fly-layer` produces the same two flights a hand as it did on the base — a
+played card in this pack has never flown, because `implicitLandingZone` skips
+per-player zones and cribbage's `play` is one; that is untouched. What did move
+is the rect a flight WOULD be aimed at: `zoneRect('play.1')` was 24x34 on a
+plate and is 69x84 in the middle, and each card is still seen settling in
+(`markEntry`'s `.card-face--fresh`) inside its own seat's spread and no other.
+The show's spotlight (`spotlightZone`, `.pile-stack--counting`) lands on the
+right pile at both sizes — which now means a ring around four readable cards
+rather than around a 24px pile.
+
+All nine packs boot headlessly with no page errors; on the eight that are not
+cribbage `#table-play` is `hidden`, 0x0, with no children, and the middle's
+geometry is unchanged. `npm test` 837 passed / 0 failed,
+`node tools/pack-test.mjs --all` 137 passed / 0 failed across the nine packs,
+and `node tools/simulate.mjs cribbage --games=150` is 150 completed / 0 stalled
+/ 0 errored / 10.0 moves per game on this tree and on its base.
+
+**One thing landed that belongs to somebody else.** The crib discard overflowed
+`#table-screen` at 1600x900, 1280x860, 1041x860 and 768x1024 (#137). It no
+longer does at any of them, because the human's empty "Played 0" pile was the
+row above the hand during that phase and there is no such pile now. That is a
+side effect, not a fix — #137 should re-measure rather than assume its numbers.
+
 ## Next steps
 
 Multiplayer (Phase 8), per-pack UI polish (per-pack `theme.css`, custom
