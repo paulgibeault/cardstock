@@ -141,12 +141,18 @@ platform file.
 | `gathers` | `(ctx, seat) -> boolean` | `interaction.js`, `table.js` | whether the current mode is one that stages |
 | `pendingChoice` | `(ctx, move) -> Ask \| null` | `src/ui/table.js` | no question |
 | `activeMatch` | `(ctx) -> {address, attr, value, onCard} \| null` | `describe.js`, `table.js` | none |
+| `zoneFocus` | `(ctx, address) -> {cards, label, seat?} \| null` | `describe.js`, `zoneRenderer.js` | none |
 | `scoreChip` | `(ctx, seat) -> {short, long, aria} \| null` | `table.js` | the SIDE's total (the seat's own, where there are no sides) |
 | `seatCounters` | `(ctx, seat) -> {text, aria, kind?}[] \| null` | `table.js` | the hand count |
+| `tableCounters` | `(ctx) -> {text, label, aria?}[] \| null` | `table.js` | no strip at all |
 | `commitPrompt` | `(ctx, seat) -> {action, staging, waiting, count \| min+max, moveType?} \| null` | `interaction.js`, `table.js` | count and move type read off the enumeration; the button says "Commit" |
+| `poseMove` | `(ctx, move) -> boolean` | `src/ui/table.js` | no pose; the felt paints where the move ENDED |
+| `zoneReading` | `(ctx, inst) -> {badge, line?} \| null` | `src/ui/describe.js` | the pile's number is its card count |
 | `committedSelection` | `(ctx, seat) -> cardId[] \| null` | `table.js` | none |
+| `zoneCardOwners` | `(ctx, address) -> (seat\|null)[] \| null` | `src/ui/zoneRenderer.js` | none — a spread zone's cards carry no owner |
+| `contractChips` | `(ctx, seat) -> Chip[] \| null` | `src/ui/contractStrip.js` | none — the strip stays hidden |
 | `getMeldGroups` | `(ctx, seat) -> Group[]` | `table.js` | `[]` |
-| `describeEvent` | `(ev, {seatLabel, seatPossessive, viewerSeat}) -> {text, tone} \| null` | `table.js` | the engine-effect vocabulary |
+| `describeEvent` | `(ev, {seatLabel, seatPossessive, seatVerb, viewerSeat}) -> {text, tone, priority?} \| null` | `table.js` | the engine-effect vocabulary |
 | `ruleLines` | `(rules) -> string[]` | `src/ui/rules.js` | none |
 | `endingLines` | `(pack) -> string[]` | `src/ui/rules.js` | none |
 | `statLines` | `(seatStats) -> {label, value, always?}[]` | `src/stats/matchStats.js` | moves + cards played |
@@ -293,8 +299,11 @@ question with one answer is not a question.
 
 ```js
 {
-  attr,                 // 'suit' | 'color' | 'rank' | 'player' | anything
+  attr,                 // what is being chosen, in the TEMPLATE's words
+  art,                  // what to DRAW: 'suit' | 'color' | 'rank'; defaults to attr
   prompt,               // completes "Choose a …"; defaults to attr
+  question,             // a whole sentence, for a step that is not "choose a <noun>"
+  status,               // optional: what the status bar says while the dialog is open
   kind: 'value'|'seat', // 'seat' means the platform dresses the options from its roster
   cardId,               // optional: the card shown in the dialog
   options: [{ value, label? }],
@@ -304,6 +313,87 @@ question with one answer is not a question.
 
 `apply` is the whole point: the platform renders a chooser and knows nothing
 about effect schemas, so a pack-defined effect gets one for free.
+
+**`attr` is not `art` and neither is the sentence.** The chooser's pictures come
+from a closed platform vocabulary (`src/ui/cardStyles/chooser.js` knows `suit`,
+`color` and `rank`); `attr` is whatever the template calls the question. They
+were one field, which was invisible for as long as every Ask used a word from
+both lists and silently deleted the art the moment one did not: Pinochle's trump
+step asked for a tile called `trump`, got null, and drew four word buttons in
+the one pack whose entire vocabulary is pips (#125). The art is also looked up
+by an option's **`value`**, never its `label` — the value is the pack's own
+token, the label is prose about it.
+
+## `contractChips` — the contract strip
+
+One chip per fact the table has to keep saying: what is promised, by whom, and
+in what suit. Rendered above the felt's middle (`src/ui/contractStrip.js`);
+answer `null` and the row stays hidden and costs no height.
+
+```js
+{
+  key,     // a slug the stylesheet may dress ('trump', 'bid', 'contract', 'meld')
+  label,   // the word in front of the number
+  value,   // the number or word itself, already a string
+  suit,    // optional: drawn as the pack's own card (art.chooser)
+  seat,    // optional: whose it is — drawn with that seat's roster mark
+  aria,    // the whole chip as one phrase
+}
+```
+
+`seat` is the half of an auction a number cannot carry on its own: once two
+chairs have both bid, both their plate chips read the same gold and only a name
+says which one is ahead.
+
+## `poseMove` — the position a move passes THROUGH
+
+Some moves do two things at once because the rules say they do: the fourth card
+of a trick is played and the trick is gathered inside one `applyMove`, and a
+replay has to reach the same position at the same move. The felt renders what
+the move ENDED in, so that middle position — four cards on the table, before
+the seat that won them takes them away — was never on screen at all (#123).
+
+```js
+poseMove(ctx, move) -> boolean   // true: this fork is a pose worth holding
+```
+
+Called by `src/ui/table.js` on a **throwaway fork of the pre-move state**, the
+same copy `takeRoundFinal` advances for a round ending, and never on the live
+state: the pose is never logged, saved, published or scored. Answer `false` for
+a move with no middle worth showing and the half-applied fork is discarded —
+which is the only safe thing to do with a move that has been half made.
+
+Keep it cheap and keep it a subset: a pose that emitted events, ended a round or
+moved a card the real move does not move would be a second set of rules living
+in the renderer. Trick-taking's is one statement — the card onto the trick —
+and it answers `false` for every play but the one that completes it.
+
+## Which cards on a pile are still live — `zoneFocus`
+
+A pile can hold more than the thing you are answering. Thirteen's `pile` holds
+every card played this trick, in sequence, on purpose — it *is* the trick, and
+everybody watched it happen — but the combination you have to beat is only its
+tail, and the felt used to report the whole heap as a count. A `3` on a trick
+where three singles have been played is true and useless: the thing to beat is
+one card (#122).
+
+```js
+zoneFocus(ctx, address) -> { cards: cardId[], label: string, seat?: number } | null
+```
+
+`cards` are the ids still in play — the renderer rings those and draws the rest
+as history — and `label` is what to call them ("Pair of 4s"), which becomes the
+pile's badge, the first line of its inspector and part of its accessible name.
+Null for every zone with nothing standing on it, which is every zone in every
+pack that does not implement this.
+
+## Saying which event ENDED the move — `priority`
+
+`describeEvent` (and an event's own `say`) may carry `priority`, a number that
+defaults to 0. One move may emit two describable events, and the banner shows
+ONE: the pass that ends a Thirteen trick emits `passed` and then `trickCleared`.
+Highest priority wins, ties fall to the first emitted — so a template that says
+nothing about priority keeps the old behaviour exactly.
 
 ## Naming a seat in a sentence — `seatLabel` and `seatPossessive`
 

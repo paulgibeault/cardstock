@@ -19,6 +19,11 @@ import { flyCard, motionAllowed, rectOf, cardSizedRect } from './flight.js';
 import { safeCssColor } from './css.js';
 import { handAddress } from './interaction.js';
 import { playTrickTaken, playActionCard } from '../arcade/audio.js';
+import { trickNarration } from './scoreDirection.js';
+// Built here rather than threaded through createCelebrations' parameter list:
+// it is a pure function OF `seatLabel`, which this module already has, and the
+// two describeEvent call sites must hand templates the same bag (#124).
+import { agrees } from './describe.js';
 
 /**
  * @param me          the seat lens (src/players/seats.js); everything is worded
@@ -36,6 +41,8 @@ import { playTrickTaken, playActionCard } from '../arcade/audio.js';
 export function createCelebrations({
   me, seatLabel, seatPossessive, currentEpoch, el, art, zoneRect, seatRect, pulseSeat, cardById,
 }) {
+  /** "You peg 3", "Nell pegs 3" — see `agrees` in src/ui/describe.js. */
+  const seatVerb = (seat, verb) => agrees(seatLabel(seat), verb);
   /**
    * How many penalty cards are worth watching arrive.
    *
@@ -134,7 +141,15 @@ export function createCelebrations({
    */
   function celebrateTrick(session, state, ev) {
     const mine = me.holds(ev.seat);
-    const bad = mine && ev.points > 0;
+    // WHICH WAY IS UP IS THE PACK'S (src/ui/scoreDirection.js). `bad` used to be
+    // `mine && ev.points > 0` for every pack alike, which is Hearts' reading
+    // wearing a platform's clothes: it put every trick a Pinochle player won in
+    // the alarm-red tone and told a Spades player the trick they bid for was
+    // worth nothing. One read, spent four ways below — banner text, tone, cue
+    // and pulse — because those four disagreeing is what made it read as a bug
+    // rather than as a wording nit.
+    const said = trickNarration({ state, ev, mine, seatLabel });
+    const bad = said.bad;
 
     const from = zoneRect('trick');
     // One measurement, several copies, the last of them 550ms behind the first
@@ -153,11 +168,8 @@ export function createCelebrations({
       });
     }
 
-    const text = mine
-      ? (ev.points > 0 ? `You take the trick — ${ev.points} point${ev.points === 1 ? '' : 's'} against you` : 'Trick is yours — no points')
-      : `${seatLabel(ev.seat)} takes the trick${ev.points > 0 ? ` (+${ev.points})` : ''}`;
-    showBanner(session, text, mine ? (bad ? 'bad' : 'good') : 'neutral');
-    el.log.textContent = text;
+    showBanner(session, said.text, said.tone);
+    el.log.textContent = said.text;
     playTrickTaken({ bad });
 
     pulseSeat(ev.seat, bad ? 'bad' : 'good');
@@ -228,21 +240,35 @@ export function createCelebrations({
    * The candidate set is "every event that yields a sentence" rather than a
    * hardcoded list of six names — an event nobody describes simply returns null
    * and the next one is tried, which is what every non-action event does.
+   *
+   * `priority` is optional on all three and defaults to 0: it is how a describer
+   * says "this one is the conclusion of the move, not a step in it" — see
+   * celebrateAction.
    */
   function eventText(state, ev) {
     if (ev.say && typeof ev.say.text === 'string') {
-      return { text: ev.say.text, tone: ev.say.tone || 'neutral' };
+      return { text: ev.say.text, tone: ev.say.tone || 'neutral', priority: ev.say.priority || 0 };
     }
-    return state.pack.template.describeEvent?.(ev, { seatLabel, seatPossessive, viewerSeat: me.seat() })
-      ?? defaultEventText(ev);
+    return state.pack.template.describeEvent?.(ev, {
+      seatLabel, seatPossessive, seatVerb, viewerSeat: me.seat(),
+    }) ?? defaultEventText(ev);
   }
 
   /**
    * Announce an action card: banner, cue, and a pulse on whoever it landed on.
    *
-   * One event per move at most — an action card does one thing — so this takes
-   * the first rather than queueing, which would stack banners on a variant where
-   * two effects can fire (a seven-zero swap that also reverses).
+   * One event per move at most — an action card does one thing — so this picks
+   * ONE rather than queueing, which would stack banners on a variant where two
+   * effects can fire (a seven-zero swap that also reverses).
+   *
+   * WHICH one is `priority`, and the default is still "the first that says
+   * anything". A move can end more than the turn: the pass that ends a Thirteen
+   * trick emits `passed` and then `trickCleared`, and taking the first meant the
+   * banner announced somebody's pass while the trick silently came back to you —
+   * "the trick is yours" never appeared on the felt at all (#122, round-5 item
+   * 22). A describer that knows its event is the CONCLUSION of the move says so
+   * with a number; ties fall to the first, which is the order events were
+   * emitted in and the behaviour every other pack keeps.
    */
   function celebrateAction(session, state, events) {
     let ev = null;
@@ -250,9 +276,9 @@ export function createCelebrations({
     for (const candidate of events) {
       const text = eventText(state, candidate);
       if (!text) continue;
+      if (said && (text.priority || 0) <= (said.priority || 0)) continue;
       ev = candidate;
       said = text;
-      break;
     }
     if (!said) return null;
 

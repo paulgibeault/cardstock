@@ -452,7 +452,11 @@ export function commitPromptFor(state, seat, moves = []) {
  *                   be picked up as a source (Stockpile's stock/discards)
  *   readyTargets    Map zoneAddress -> move to apply when that pile is tapped
  *   readyMelds      Map "seat:index" -> hit move for that meld chip
- *   action          { label, makeMove() } for the action button, or null
+ *   action          { label, makeMove() } for the action button, or null.
+ *                   `disabled: true` with a `refusal` sentence is the third
+ *                   state: the slot keeps its meaning and the button says why
+ *                   it cannot be pressed, rather than vanishing and letting the
+ *                   sort toggle take the thumb's place (#122).
  */
 export function buildUiModel(state, { seat, moves = [], acts = false, selection = null } = {}) {
   const mode = interactionMode(state);
@@ -601,13 +605,19 @@ export function buildUiModel(state, { seat, moves = [], acts = false, selection 
     if (mine && sel.length) {
       // The live answer, asked of the engine on every tap — the button is the
       // feedback, and it is armed only where the commit would be accepted.
-      if (selectionLegality(state, seat, sel).legal) {
-        ui.action = {
-          // ACTION_LABEL_MAX_CHARS is 11: "Play 13" is the longest this gets.
-          label: `Play ${sel.length}`,
-          makeMove: () => ({ actor: seat, type: 'playCard', cards: sel.slice() }),
-        };
-      }
+      //
+      // A REFUSED SELECTION STILL GETS A BUTTON, and that is the fix rather than
+      // a nicety. `action: null` meant the thumb slot emptied and the sort
+      // toggle took it, so tapping where Pass had been reshuffled the hand —
+      // and two cards that are not a combination sat in the tray with no commit,
+      // no refusal and no Pass, leaving the player to work out on their own that
+      // the way back was to un-tap them (#122, round-5 item 19). The slot keeps
+      // its meaning; the button is simply off, and it says why.
+      const verdict = selectionLegality(state, seat, sel);
+      ui.action = verdict.legal
+        // ACTION_LABEL_MAX_CHARS is 11: "Play 13" is the longest this gets.
+        ? { label: `Play ${sel.length}`, makeMove: () => ({ actor: seat, type: 'playCard', cards: sel.slice() }) }
+        : { label: `Play ${sel.length}`, disabled: true, refusal: verdict.reason, makeMove: null };
       return ui;
     }
     // Nothing picked up: an empty selection is what "I have nothing for this"

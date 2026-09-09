@@ -50,15 +50,37 @@ const OPTIONAL_FUNCTIONS = [
   "matchStanding",
   "actingSeats", "enumerateAnnouncements", "applyAnnouncement",
   "interactionMode", "pendingChoice", "activeMatch", "scoreChip",
+  // Which cards in a shared pile are still the thing to answer, and what they
+  // are called — src/ui/describe.js. A pile that holds a whole trick cannot be
+  // reported as a count (#122).
+  "zoneFocus",
   // Whether a SEAT is still assembling something — the question interactionMode
   // cannot answer, because the mode comes from the table-wide turn.phase.
   "gathers",
   "seatCounters",
+  // What the TABLE is counting rather than what a seat is — cribbage's running
+  // count in the play (#124). Read by src/ui/table.js's renderTableCounters.
+  "tableCounters",
   // How many cards a simultaneous commit wants and what its button says — the
   // two things src/ui/interaction.js used to read out of trick-taking's own
   // `rules.passing` and `vars.passDirection` by name (#107).
   "commitPrompt",
+  // The position a move passes THROUGH, posed on a throwaway fork so the felt
+  // can hold it for a beat — four cards on a trick, before the move that put
+  // the fourth one there sweeps all four away (#123, src/ui/table.js).
+  "poseMove",
+  // What a pile's number MEANS when the count of cards is not it: a won pile is
+  // counted in tricks, and only the genre knows four cards are one (#123).
+  "zoneReading",
   "committedSelection", "getMeldGroups", "describeEvent",
+  // Who played which card in a shared zone — the trick's owner tags
+  // (src/ui/zoneRenderer.js). A rule the platform may not derive: which way
+  // round a trick is played, and from whom, is the template's.
+  "zoneCardOwners",
+  // The contract in force, as chips for the felt's strip
+  // (src/ui/contractStrip.js): the standing high bid and its holder, then trump
+  // and this seat's own meld.
+  "contractChips",
   "ruleLines", "endingLines", "statLines",
   "arrangeContract", "suggestMeld",
   // Not called by the engine but by the per-seat view filter

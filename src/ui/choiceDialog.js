@@ -23,7 +23,17 @@ const el = {
   prompt: document.getElementById('choice-prompt'),
   panel: document.getElementById('choice-options'),
   cancel: document.getElementById('choice-cancel'),
+  // WHAT THE TABLE HAS ALREADY SAID, for a question that is asked ABOUT the
+  // table rather than about a card (#123). Built here rather than in index.html
+  // because it belongs to this dialog and to nothing else, and because an empty
+  // element in the markup is one more thing that can be left showing.
+  context: document.createElement('div'),
 };
+el.context.id = 'choice-context';
+el.context.className = 'choice-context';
+el.context.hidden = true;
+// Between the question and the answers: it is what you read to decide.
+el.prompt?.after(el.context);
 
 // Resolves a pending prompt with null when the table closes under it, so the
 // awaiting move handler unwinds instead of applying a move to a match nobody is
@@ -44,15 +54,23 @@ let cancelPending = null;
  * and gets the mark that seat wears everywhere else instead; and a bare word
  * for anything a template invents that is neither.
  *
- * `label` is pack data on two paths and is handled as such on both: textContent
- * for the caption, and a lookup key for the art, which is generated inside
- * src/ui/cardStyles/chooser.js with everything escaped. `value` is what the
- * template gets back, and is NOT necessarily a string — a seat is a number.
+ * `label` is pack data and is handled as such: textContent for the caption.
+ * `value` is what the template gets back, is NOT necessarily a string (a seat
+ * is a number), and is ALSO the art's lookup key — see below.
+ *
+ * THE PICTURE IS LOOKED UP BY `value`, NOT BY `label`, and it used to be the
+ * other way round. That was invisible for as long as every chooser left the
+ * label to default to the value ("spades" both times), and it silently deleted
+ * the art the moment a template gave its options a readable caption: Pinochle's
+ * trump step offers `{ value: 'spades', label: 'Spades' }`, and
+ * `chooserTile('suit', 'Spades')` is a miss on a table keyed by the deck's own
+ * word. The value is the pack's token and the label is prose about it; only one
+ * of those is a key.
  */
-function buildChoiceOption(art, attr, { label, icon = null }) {
+function buildChoiceOption(art, attr, { value, label, icon = null }) {
   const btn = document.createElement('button');
   btn.type = 'button';
-  const face = art.chooser(attr, label);
+  const face = art.chooser(attr, value);
   btn.className = `choice-option ${face ? 'choice-option--card'
     : icon ? 'choice-option--seat' : 'choice-option--word'}`;
   // Named outright rather than left to name-from-content. The caption below is
@@ -98,10 +116,51 @@ function buildChoiceOption(art, attr, { label, icon = null }) {
  * does this become" is a question about a specific object and the answer reads
  * better next to it. Optional: a wild already lying in somebody's meld has no
  * single card to show.
+ *
+ * `attr` is WHAT IS BEING DRAWN — the platform's own art vocabulary ('suit',
+ * 'color', 'rank'), never the sentence. `sentence` is the whole question, for
+ * a step that is not "choose a <noun>"; without one the panel builds the
+ * "Choose a …" form it always did.
  */
-export async function promptChoice(art, attr, options, { card = null } = {}) {
+/**
+ * The state of play, as a row of small facts, above the answers.
+ *
+ * `rows` are `{ label, value, mine?, partner? }` — already dressed by the
+ * caller, because who a seat IS is the roster's business and not this
+ * dialog's. Nothing here knows what a bid is: it draws whatever the template
+ * said was worth knowing before answering (src/templates/CONTRACT.md).
+ *
+ * A LIST, NOT A TABLE, and read out as one: each row is one accessible string,
+ * so a screen reader hears "Wren, partner, 4" rather than three cells.
+ */
+function renderContext(rows) {
+  el.context.replaceChildren();
+  el.context.hidden = !rows.length;
+  if (!rows.length) return;
+  for (const row of rows) {
+    const item = document.createElement('div');
+    item.className = 'choice-context__row';
+    if (row.mine) item.classList.add('choice-context__row--mine');
+    if (row.partner) item.classList.add('choice-context__row--partner');
+    const name = document.createElement('span');
+    name.className = 'choice-context__name';
+    name.textContent = row.label;
+    const value = document.createElement('span');
+    value.className = 'choice-context__value';
+    value.textContent = row.value;
+    item.setAttribute('role', 'img');
+    item.setAttribute('aria-label',
+      `${row.label}${row.partner ? ', your partner' : ''}: ${row.value}`);
+    item.appendChild(name);
+    item.appendChild(value);
+    el.context.appendChild(item);
+  }
+}
+
+export async function promptChoice(art, attr, options, { card = null, sentence = null, context = [] } = {}) {
   const choices = options.map((o) => ({ icon: null, ...o, label: o.label ?? String(o.value) }));
-  el.prompt.textContent = `Choose a ${attr}`;
+  el.prompt.textContent = sentence || `Choose a ${attr}`;
+  renderContext(context);
   el.panel.replaceChildren();
   el.card.replaceChildren();
   if (card) el.card.appendChild(svgNode(art.face(card), 'choice-dialog__face'));
@@ -148,7 +207,7 @@ export async function promptChoice(art, attr, options, { card = null } = {}) {
       // answer is visible before it is committed — and the felt then washes in
       // that same colour when it is (flashFelt). §7b: through safeCssColor,
       // because a pack value is reaching a style property.
-      const tint = safeCssColor(art.chooserTint(attr, opt.label));
+      const tint = safeCssColor(art.chooserTint(attr, opt.value));
       const light = () => {
         if (tint) el.dialog.style.setProperty('--choice-tint', tint);
         else el.dialog.style.removeProperty('--choice-tint');

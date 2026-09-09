@@ -75,6 +75,7 @@ import { line, svgNode, clearSvgCache } from './dom.js';
 import { promptChoice, closeChoiceDialog } from './choiceDialog.js';
 import { createCelebrations } from './celebrations.js';
 import { createContractLadder } from './contractLadder.js';
+import { createContractStrip } from './contractStrip.js';
 import {
   createSeatLens, soloSeatTable, createSeatTable, deserializeSeatTable,
   LOCAL_DEVICE as LOCAL_VIEWER,
@@ -90,7 +91,7 @@ import { createDragController } from './dragController.js';
 import { attachInspector, hideInspector } from './inspector.js';
 import {
   describeCard, cardAriaLabel, cardName,
-  possessive,
+  possessive, agrees, zoneBadge,
 } from './describe.js';
 import {
   interactionMode, gathers, stagedSelection, buildUiModel, dropCandidates, draggableSources,
@@ -98,14 +99,15 @@ import {
   pruneSelection, toggleHandSelection, isSelected, handAddress, implicitLandingZone,
 } from './interaction.js';
 import {
-  orderHand, reorder, nextMode, isSortMode, fanStep, classifyHandGesture, SORT_LABELS,
+  orderHand, reorder, nextMode, isSortMode, fanStep, fanWidth, liftGap,
+  classifyHandGesture, SORT_LABELS,
 } from './handOrder.js';
 import {
   initPanels, showRoundSummary, hideRoundSummary,
   showScoreboard, showGameOver, hideAllPanels, showRules, awaitFinalLook,
 } from './panels.js';
 import { packRules } from './rules.js';
-import { roundBeatPlan } from './roundBeat.js';
+import { roundBeatPlan, trickRevealPlan } from './roundBeat.js';
 import {
   rememberPack, loadSettings, saveMatch, loadMatch, clearMatch, recordForfeit,
   loadHandPrefs, saveHandPrefs,
@@ -153,12 +155,15 @@ const el = {
   statusText: document.getElementById('status-text'),
   lobbyButton: document.getElementById('lobby-button'),
   scoreChip: document.getElementById('score-chip'),
+  scoreChipTrack: document.getElementById('score-chip-track'),
   scoreChipValue: document.getElementById('score-chip-value'),
+  tableCounters: document.getElementById('table-counters'),
   opponentsTop: document.getElementById('opponents-top'),
   centerPiles: document.getElementById('center-piles'),
   playerPiles: document.getElementById('player-piles'),
   announceBar: document.getElementById('announce-bar'),
   contractLadder: document.getElementById('contract-ladder'),
+  tableContract: document.getElementById('table-contract'),
   handRail: document.getElementById('hand-rail'),
   actionButton: document.getElementById('action-button'),
   hintButton: document.getElementById('hint-button'),
@@ -280,6 +285,18 @@ function seatPossessive(seat) {
 }
 
 /**
+ * The same rule for a VERB — "You peg 3", "Nell pegs 3".
+ *
+ * Owned here for the reason `seatPossessive` is: whether a seat is second
+ * person is the table's fact, not a template's, and cribbage's narration got it
+ * wrong in exactly the way #107's possessive did (`${seatLabel(seat)} pegs`
+ * reads perfectly for every opponent and says "You pegs 3" to the player).
+ */
+function seatVerb(seat, verb) {
+  return agrees(seatLabel(seat), verb);
+}
+
+/**
  * Who may act right now. Usually just turn.seat; a simultaneous-commit phase
  * (Hearts' passing) is every seat that has not committed yet — the template
  * says so via actingSeats, the same hook tools/simulate.mjs consults. This is
@@ -367,7 +384,12 @@ function livePack() {
  * the phone.
  */
 function feltState() {
-  return (session?.roundBeat && session.roundFinalState) || liveState();
+  // The trick reveal is the same idea one move smaller (#123): for one beat the
+  // felt holds the four cards of a completed trick while the engine has already
+  // given them to the seat that won them.
+  return (session?.trickBeat && session.trickPoseState)
+    || (session?.roundBeat && session.roundFinalState)
+    || liveState();
 }
 
 /**
@@ -422,6 +444,34 @@ function pulseSeat(seat, tone = 'good') {
 function turnToken() {
   const token = document.createElement('span');
   token.className = 'turn-token';
+  token.setAttribute('aria-hidden', 'true');
+  return token;
+}
+
+/**
+ * A SIMULTANEOUS PHASE IS NOT A TURN, and marking it with the turn token said
+ * the one thing that cannot be true: three seats "on turn" at once.
+ *
+ * Every seat that has not committed yet may act while a pass or a meld is open
+ * (`actingSeats`), which is the rule and is right — it is what un-stalls the
+ * phase and what the bot driver schedules against. What was wrong is that the
+ * felt spent the platform's ONE turn marker on all of them: a gold ▶ chip that
+ * everywhere else in the app means "it is this player's go, and nobody else's".
+ * Pinochle's meld phase lit three opponents with it simultaneously (#125 item
+ * 48) and Hearts' pass had always done the same.
+ *
+ * So the mark for "still to commit" is its own: same chip, no gold, no arrow,
+ * no pulse — a quiet ⋯ that says these seats are still choosing. The turn token
+ * keeps meaning exactly one thing.
+ *
+ * ASKED OF THE MODE, NOT THE PHASE NAME, the same way statusTextFor asks: the
+ * phase is called `pass` in Hearts, `meld` in Pinochle and `discard` in
+ * cribbage, and a platform file naming any of them is a platform file knowing
+ * one template's vocabulary.
+ */
+function committingToken() {
+  const token = document.createElement('span');
+  token.className = 'turn-token turn-token--waiting';
   token.setAttribute('aria-hidden', 'true');
   return token;
 }
@@ -566,8 +616,24 @@ function sharedZoneInstances(state) {
     // hidden zone that is ALSO a control says so with `interactive` in its
     // definition, which is how the draw pile keeps its place without this line
     // knowing that a draw pile is called "draw".
-    if (def.visibility === 'none' && !def.interactive) continue;
-    out.push(...instancesOf(def, null));
+    //
+    // `onFelt` is the other reason a hidden pile belongs on the table: it is
+    // FURNITURE — nobody may look through it, but everybody can see that it is
+    // there and how deep it is. Cribbage's crib is the case (#124, item 37):
+    // four cards go into it in front of both players, it decides the hand, and
+    // it was not drawn at all. What the felt showed instead was the `show`
+    // zone, empty, wearing the label "The crib" for the whole hand while the
+    // real crib was invisible.
+    if (def.visibility === 'none' && !def.interactive && !def.onFelt) continue;
+    // ...and `hideWhenEmpty` is the same question from the other side: a zone
+    // that exists only for a moment is not a place on the table until it has
+    // something in it. The crib's reveal pile is empty from the deal until the
+    // dealer turns it over, and an empty dashed box captioned "The crib"
+    // sitting beside the real crib is the felt saying the crib is empty.
+    for (const inst of instancesOf(def, null)) {
+      if (def.hideWhenEmpty && state.zones.count(inst.address) === 0) continue;
+      out.push(inst);
+    }
   }
   // The deck reads best on the left, whatever order the template declared.
   return out.sort((a, b) => (b.def.id === 'draw') - (a.def.id === 'draw'));
@@ -648,18 +714,35 @@ function seatScoreChip(state, seat) {
 /**
  * Which way play is going, for packs where that can change.
  *
- * Only rendered once a reverse has actually happened — `state.direction` is 1
- * in every game that never turns round, and a permanent arrow saying "play
- * goes left" on a table that has no other option is chrome that teaches
+ * Only rendered once a reverse has actually happened — a permanent arrow saying
+ * "play goes left" on a table that has no other option is chrome that teaches
  * nothing. It appears the moment a reverse lands and then stays, which is
  * exactly when a player needs to be able to check.
+ *
+ * "A REVERSE" IS A DEPARTURE FROM THE PACK'S OWN DIRECTION, not a negative
+ * number. This read `state.direction < 0`, which is true of Thirteen from the
+ * first card of the first deal — the pack simply deals counter-clockwise
+ * (`rules.direction`) — so a game that can never reverse wore a permanent badge
+ * announcing that it had, in the top-right corner where it read as a restart
+ * control and sat on the second seat plate at 375px (#122, round-5 item 24).
+ * Compared against the pack's declaration, Thirteen has no badge and Wildfire's
+ * still appears the instant a reverse card lands.
+ *
+ * `role="img"`: an aria-label on a bare <div> has no role to attach to and is
+ * dropped by most screen readers, which is why the playtest reported the badge
+ * as having no accessible name at all. It stays pointer-transparent, so there
+ * is no tooltip to give it — a sign that could be hovered could also be tapped,
+ * and it sits over a seat plate.
  */
 function directionBadge(state) {
-  if (state.direction >= 0) return null;
+  const natural = state.pack.manifest.rules?.direction === 'counterclockwise' ? -1 : 1;
+  if (Math.sign(state.direction || 1) === natural) return null;
   const badge = document.createElement('div');
   badge.className = 'direction-badge';
-  badge.textContent = '↺';
-  badge.setAttribute('aria-label', 'Play has reversed — it now goes to the right');
+  badge.textContent = natural < 0 ? '↻' : '↺';
+  const words = `Play has reversed — it now goes ${natural < 0 ? 'the other way round the table' : 'to the right'}`;
+  badge.setAttribute('role', 'img');
+  badge.setAttribute('aria-label', words);
   return badge;
 }
 
@@ -884,7 +967,15 @@ function buildSeatBody(state, seat, stagger, ui, into, { compactZones = true } =
         strip.appendChild(zones.buildMeldStrip(state, seat, ui, { mini: compactZones }));
       } else if (inst.def.visibility === 'none') {
         const pts = heldValueText(state, inst.def, inst.address);
-        const chip = line('seat__pilechip', `${inst.def.label || inst.def.id} ${state.zones.count(inst.address)}${pts ? ` · ${pts}` : ''}`);
+        // THE PILE'S OWN NUMBER, not a second opinion about it. This chip used
+        // to print the card count itself, so an opponent's won pile climbed in
+        // fours — "Won 4", "Won 8" — beside a bid counted in tricks (#123,
+        // item 29). `zoneBadge` is what the pile wears everywhere else, and it
+        // is the template that knows four cards are one trick.
+        const badge = zoneBadge(state, inst);
+        const label = inst.def.label || inst.def.id;
+        const chip = line('seat__pilechip',
+          `${badge.kind === 'name' ? badge.text : `${label} ${badge.text}`}${pts ? ` · ${pts}` : ''}`);
         chip.dataset.zone = inst.address;
         strip.appendChild(chip);
       } else {
@@ -1105,6 +1196,11 @@ function buildSeatRow(state, stagger, acting, ui, { tier, carousel, mustOpen, sh
   const collapsing = !carousel && tier >= TIER_COLLAPSED;
   const isCollapsed = (seat) => collapsing && !mustOpen(seat);
 
+  // Whether the seats that may act are TAKING TURNS or all choosing at once —
+  // see committingToken for why the marker differs. Asked of the interaction
+  // mode rather than the phase name, and asked once for the row.
+  const committing = interactionMode(state) === 'pass';
+
   // WHOSE PLATE IS SHOWING: the player's own pick if they made one, otherwise
   // whoever's turn it is. Their pick is retired when play moves on (see
   // renderSeats), so this follows the turn again by itself rather than leaving
@@ -1155,7 +1251,7 @@ function buildSeatRow(state, stagger, acting, ui, { tier, carousel, mustOpen, sh
     const targeted = collapsed && seatHasReadyTarget(state, seat, ui);
 
     const wrap = document.createElement('div');
-    wrap.className = `seat ${active ? 'seat--active' : ''} ${collapsed ? 'seat--collapsed' : ''} ${targeted ? 'seat--target' : ''} ${session.hint?.targetSeat === seat ? 'seat--hinted' : ''} ${marks.partner ? 'seat--partner' : ''}`;
+    wrap.className = `seat ${active ? 'seat--active' : ''} ${active && committing ? 'seat--committing' : ''} ${collapsed ? 'seat--collapsed' : ''} ${targeted ? 'seat--target' : ''} ${session.hint?.targetSeat === seat ? 'seat--hinted' : ''} ${marks.partner ? 'seat--partner' : ''}`;
     wrap.dataset.seat = String(seat);
     // A number the STYLESHEET may dress, chosen by the engine and never by pack
     // data (§7b). The word itself goes in the head below, as text rather than
@@ -1194,7 +1290,7 @@ function buildSeatRow(state, stagger, acting, ui, { tier, carousel, mustOpen, sh
     // this layout works to remove — a player would move sideways because their
     // neighbour's turn began. An open seat has room for it inline.
     if (active) {
-      const token = turnToken();
+      const token = committing ? committingToken() : turnToken();
       if (collapsed) {
         token.classList.add('turn-token--worn');
         wrap.appendChild(token);
@@ -1263,7 +1359,10 @@ function buildSeatRow(state, stagger, acting, ui, { tier, carousel, mustOpen, sh
       if (counter.kind) badge.dataset.counter = String(counter.kind).replace(/[^a-z0-9-]/gi, '');
       badge.textContent = counter.text;
       // The visible badge is a bare number, which reads as nothing on its own.
-      badge.setAttribute('aria-label', `${counter.aria}${i === 0 && active ? '. Their turn.' : ''}`);
+      // "Their turn" is false in a simultaneous phase, and it was being said on
+      // every seat that had not committed yet — see committingToken.
+      const says = !active || i !== 0 ? '' : (committing ? '. Still choosing.' : '. Their turn.');
+      badge.setAttribute('aria-label', `${counter.aria}${says}`);
       head.appendChild(badge);
     });
 
@@ -1643,8 +1742,69 @@ function renderCenterZones(state, ui, draggable) {
   }
 }
 
+/**
+ * The counter kinds that belong on the HUMAN's own seat.
+ *
+ * A closed platform vocabulary, exactly like `COUNTER_TRACK_KINDS`
+ * (src/ui/counterTrack.js), and for the same reason: which kind a counter is
+ * remains the template's, and what the platform does with each kind is the
+ * platform's. A kind this build has never heard of simply does not appear here,
+ * which is the safe direction — the seat plates still show it.
+ *
+ * WHY THIS EXISTS. Every seat but one wears its numbers on a plate, and the one
+ * that does not is yours: the human's seat is the hand, the rail and the piles,
+ * and there is no plate anywhere on the felt with your name on it. So a bid —
+ * the thing you promised, which the whole hand is then played against — was
+ * shown for all three opponents and nowhere at all for you (#123, item 28: "not
+ * on the status bar, not on any seat plate, not in the round summary". In a
+ * partnership the contract is your bid plus your partner's, and half of it was
+ * unreadable).
+ *
+ * What is NOT here is as deliberate: a hand count (the fan is right there), and
+ * anything `minimizedOnly` (redundant when a seat is open, and yours always
+ * is — the won pile beside this strip is the trick count in as many words).
+ */
+const MY_SEAT_KINDS = ['bid', 'bags'];
+
+/**
+ * Your side of the table's own numbers, as a row of labelled chips.
+ *
+ * Labelled, unlike a plate's badges, because there is room: the plates carry
+ * bare numbers whose meaning is learned from position, and this row is read
+ * once a hand rather than glanced at every turn.
+ */
+function buildMySeatStrip(state) {
+  const counters = seatCountersFor(state, mySeat(), { minimized: false })
+    .filter((counter) => MY_SEAT_KINDS.includes(counter.kind));
+  if (!counters.length) return null;
+
+  const strip = document.createElement('div');
+  strip.className = 'my-seat';
+  strip.id = 'my-seat-strip';
+  for (const counter of counters) {
+    const chip = document.createElement('span');
+    chip.className = 'my-seat__chip';
+    chip.dataset.counter = counter.kind;
+    // ONE ACCESSIBLE NAME for the pair, the counter's own sentence ("bid 3
+    // tricks", "2 bags"), with the halves hidden: a screen reader reading
+    // "Bid, 3, bid 3 tricks" is worse than either.
+    chip.setAttribute('role', 'img');
+    chip.setAttribute('aria-label', counter.aria || `${counter.label}: ${counter.text}`);
+    chip.appendChild(line('my-seat__name', counter.label || ''));
+    chip.appendChild(line('my-seat__value', counter.text));
+    strip.appendChild(chip);
+  }
+  return strip;
+}
+
 function renderPlayerZones(state, ui, draggable) {
   el.playerPiles.replaceChildren();
+  // FIRST IN THE ROW, so it reads as this seat's — the piles that follow are
+  // yours too. `#player-piles` collapses when it is empty and this is a child
+  // of it rather than a row of its own, so a pack with nothing to say here
+  // costs no vertical space on a phone.
+  const mine = buildMySeatStrip(state);
+  if (mine) el.playerPiles.appendChild(mine);
   for (const inst of perPlayerZoneInstances(state, mySeat())) {
     if (inst.def.id === 'melds') {
       el.playerPiles.appendChild(zones.buildMeldStrip(state, mySeat(), ui));
@@ -1707,11 +1867,23 @@ function renderStageTray(state, ui) {
   el.stageRow.inert = !staged.length;
   el.stageTray.replaceChildren();
   if (!staged.length) {
+    el.stageTray.classList.remove('stage-tray--refused');
     el.stageTray.setAttribute('aria-label', 'Gathered cards appear here.');
     return;
   }
-  el.stageTray.setAttribute('aria-label',
-    `Gathered: ${staged.length} cards. Tap one to put it back.`);
+  // THE TRAY SAYS NO. A selection the engine will not take used to sit here
+  // looking exactly like one it would — same dashed tray, same cards, no
+  // commit, no sentence (#122, round-5 item 19). The refusal is drawn on the
+  // tray itself, spoken in the tray's own name, and written to #log, which is
+  // the live region this table already uses for the words that are not on the
+  // felt (see showHint).
+  const refusal = ui.action?.disabled ? (ui.action.refusal || 'That is not a play.') : null;
+  el.stageTray.classList.toggle('stage-tray--refused', !!refusal);
+  if (refusal && session.lastRefusal !== refusal) el.log.textContent = refusal;
+  session.lastRefusal = refusal;
+  el.stageTray.setAttribute('aria-label', refusal
+    ? `Gathered: ${staged.length} cards. ${refusal} Tap one to put it back.`
+    : `Gathered: ${staged.length} cards. Tap one to put it back.`);
   for (const cardId of staged) {
     const card = cardById(state, cardId);
     if (!card) continue;
@@ -1836,6 +2008,7 @@ function layoutHand() {
   const count = el.hand.childElementCount;
   if (count < 2) {
     el.hand.style.removeProperty('--fan-step');
+    el.hand.style.removeProperty('--lift-gap');
     return;
   }
 
@@ -1861,7 +2034,18 @@ function layoutHand() {
   const available = Math.max(cardWidth, rowWidth - reserved - padding - 4);
 
   const step = fanStep({ count, cardWidth, available });
+
+  // HOW FAR THE FAN OPENS UNDER A LIFTED CARD, out of the room it did not need.
+  // The shift is a transform and moves no layout, so nothing else would stop
+  // the rightmost card sliding under the rail — this is what keeps it on the
+  // felt. `liftGap` is the whole overlap, which is the only shift that actually
+  // uncovers the neighbour's rank corner; whatever of that the row cannot spare
+  // is not taken, and a fan already closed to fit its row opens by nothing at
+  // all rather than tightening further to buy the animation room.
+  const spare = available - fanWidth({ count, cardWidth, step });
+  const gap = Math.max(0, Math.min(liftGap({ cardWidth, step }), spare));
   el.hand.style.setProperty('--fan-step', `${step.toFixed(2)}px`);
+  el.hand.style.setProperty('--lift-gap', `${gap.toFixed(2)}px`);
 }
 
 /**
@@ -2082,18 +2266,36 @@ function renderRail(state, ui, humanActs) {
   // renderSelection repaints the rail without rebuilding the fan, so a
   // `hidden` written from there would outlive the action that displaced it.
   const acting = !!(ui.action && humanActs);
+  // A REFUSED COMMIT IS STILL THE COMMIT'S SLOT. The button stays, disabled,
+  // carrying the engine's own sentence for why — because the alternative,
+  // measured on the felt, was the Pass pill disappearing under the thumb and
+  // the sort toggle appearing in its place the moment a card was tapped
+  // (#122, round-5 item 19). `disabled` and not `hidden`: same box, same
+  // height, and the reason reaches a screen reader through the name.
+  const refused = acting && !!ui.action.disabled;
   el.actionButton.hidden = !acting;
+  el.actionButton.disabled = refused;
+  el.actionButton.classList.toggle('action-button--refused', refused);
   el.handSort.hidden = acting || state.zones.cards(handAddress(mySeat())).length < 2;
   if (acting) {
     el.actionButton.textContent = ui.action.label;
-    el.actionButton.onclick = () => {
-      if (!liveState()) return;
-      const move = ui.action.makeMove();
-      // The button is the third tap that was launching cards from the wrong
-      // place: "Lay down" and "Pass 3 left" both carry cards that are sitting
-      // in the tray, and the flight was starting from the button.
-      performHumanMove(liveState(), move, tapOrigin(move));
-    };
+    if (refused) {
+      const why = ui.action.refusal || 'That is not a play.';
+      el.actionButton.setAttribute('aria-label', `${ui.action.label} — ${why}`);
+      el.actionButton.title = why;
+      el.actionButton.onclick = null;
+    } else {
+      el.actionButton.removeAttribute('aria-label');
+      el.actionButton.removeAttribute('title');
+      el.actionButton.onclick = () => {
+        if (!liveState()) return;
+        const move = ui.action.makeMove();
+        // The button is the third tap that was launching cards from the wrong
+        // place: "Lay down" and "Pass 3 left" both carry cards that are sitting
+        // in the tray, and the flight was starting from the button.
+        performHumanMove(liveState(), move, tapOrigin(move));
+      };
+    }
   } else {
     el.actionButton.onclick = null;
   }
@@ -2102,8 +2304,9 @@ function renderRail(state, ui, humanActs) {
 function renderStatusBar(state, acting) {
   el.statusText.textContent = statusTextFor(state, acting);
   // `session.roundBeat` for the same reason `render` reads it: while the felt
-  // holds a finished hand, nobody is on turn and the bar must not say so.
-  const humanActs = acting.some(isMySeat) && !session?.roundBeat;
+  // holds a finished hand, nobody is on turn and the bar must not say so. A
+  // trick reveal is the same claim for one beat (#123).
+  const humanActs = acting.some(isMySeat) && !session?.roundBeat && !session?.trickBeat;
   el.status.classList.toggle('status-bar--your-turn', humanActs);
   el.status.classList.toggle('status-bar--thinking', !state.gameOver && !humanActs);
 
@@ -2116,10 +2319,66 @@ function renderStatusBar(state, acting) {
     // partnership they are two different numbers and the screen reader gets the
     // wrong one.
     const chip = scoreChipFor(state, mySeat());
-    el.scoreChipValue.textContent = chip.long;
+    // THE HUMAN GETS THE SAME BOARD THE OPPONENT HAS. Every seat plate draws
+    // its primary counter as a track where the template says it is one — and
+    // the human's own seat is not a plate, so at a cribbage table there was
+    // exactly one `.seat__track` in the document and it belonged to the bot
+    // (#124, item 39). The player's own peg, the thing the whole game is read
+    // off, was a bare number in the chrome.
+    //
+    // The same renderer, the same numbers, the same accessible sentence — this
+    // is `renderCounterTrack` being DOM-parameterised for the second time and
+    // not a second board. A pack whose primary counter is an ordinary quantity
+    // renders nothing here and keeps the plain pill.
+    const board = renderCounterTrack(seatCountersFor(state, mySeat(), { minimized: false })[0]);
+    el.scoreChipTrack.replaceChildren(...(board ? [board] : []));
+    // The track prints the number itself; two of them in one pill is the same
+    // score twice.
+    el.scoreChipValue.hidden = !!board;
+    if (!board) el.scoreChipValue.textContent = chip.long;
     el.scoreChip.setAttribute('aria-label',
-      `Your ${hasSides(state.pack, state.seats) ? "side's score" : 'score'}: ${chip.long}. `
+      `Your ${hasSides(state.pack, state.seats) ? "side's score" : 'score'}: `
+      + `${board ? board.getAttribute('aria-label') : chip.long}. `
       + 'Open the scoreboard.');
+  }
+  renderTableCounters(state);
+}
+
+/**
+ * WHAT THE TABLE ITSELF IS COUNTING — the running count in cribbage, and
+ * nothing at all for every pack that declares none.
+ *
+ * `seatCounters` one rung out. Some facts a felt has to keep on screen are not
+ * any seat's: the count in the play is the table's, it changes with every card
+ * from either hand, and a player who cannot see it is doing arithmetic off two
+ * piles to find out why three of their four cards are greyed out (#124, item
+ * 38). It was already in the state — cribbage publishes `count` in its
+ * `publicVars` — and simply not drawn.
+ *
+ * A hook rather than a `pack.id ===`, for the reason every row of the
+ * presentation table in src/templates/CONTRACT.md is a hook: the question
+ * "what is this table counting" has an answer in more games than this one, and
+ * the default — no strip at all — costs a pack that has nothing to say nothing.
+ */
+function renderTableCounters(state) {
+  const declared = state.pack.template.tableCounters?.(makeCtx(state)) || [];
+  el.tableCounters.replaceChildren();
+  el.tableCounters.hidden = !declared.length;
+  for (const counter of declared) {
+    const chip = document.createElement('div');
+    chip.className = 'table-counter';
+    const label = document.createElement('span');
+    label.className = 'table-counter__label';
+    label.textContent = counter.label;
+    const value = document.createElement('span');
+    value.className = 'table-counter__value';
+    value.textContent = counter.text;
+    chip.append(label, value);
+    // One name for the pair, for the same reason the track carries one: "Count
+    // 17" read as two unrelated things is worse than the sentence.
+    chip.setAttribute('role', 'img');
+    chip.setAttribute('aria-label', counter.aria || `${counter.label} ${counter.text}`);
+    el.tableCounters.appendChild(chip);
   }
 }
 
@@ -2131,6 +2390,13 @@ function statusTextFor(state, acting) {
   // "Your turn" over a table where the player's hand was empty and nothing was
   // tappable. It is not a turn; it is the end of the hand.
   if (session?.roundBeat) return 'Round over.';
+  // THE TRICK BEAT IS NOBODY'S TURN EITHER (#123). The posed position's `turn`
+  // is still on whoever played the fourth card — the trick has not been
+  // resolved on this copy — so the bar would read "Your turn" over four cards
+  // that are about to be swept and a hand that cannot be played from. It says
+  // who is taking them instead, which is the question the beat exists to
+  // answer.
+  if (session?.trickBeat) return `${seatPossessive(session.trickBeat.seat)} trick.`;
   if (state.turn.phase === 'bid') {
     // The bid goes round the table one seat at a time, so "whose turn" is
     // already the right sentence — what this adds is WHICH KIND of turn, which
@@ -2226,8 +2492,10 @@ function render(state, message) {
   // runRoundBeat), so a card offered here would belong to a position that no
   // longer exists and tapping it would fail validation against the live state.
   // The beat is a second or two and it ends in the summary, which is nobody's
-  // turn either.
-  const humanActs = acting.some(isMySeat) && !session.roundBeat;
+  // turn either. A trick reveal (#123) is the same claim for one beat: the
+  // posed position still has the fourth player on turn because the trick has
+  // not been resolved on that copy, and their hand must not answer a tap.
+  const humanActs = acting.some(isMySeat) && !session.roundBeat && !session.trickBeat;
   // A remote seat's move, a resumed match, a view swapped in: none of them
   // pass through applyStateChange, so the hint is dropped here as well the
   // moment the human is no longer the one acting.
@@ -2242,6 +2510,9 @@ function render(state, message) {
   renderStatusBar(state, acting);
   renderSeats(state, stagger, acting, ui);
   if (ladder) ladder.render(state);
+  // The contract in force — trump, the bid and whose it is, your own meld.
+  // Above the middle of the felt, so it is drawn before the piles under it.
+  if (contractStrip) contractStrip.render(state);
   renderCenterZones(state, ui, draggable);
   renderPlayerZones(state, ui, draggable);
   // The two bars go BEFORE the hand, and the order is load-bearing: renderHand
@@ -2647,6 +2918,7 @@ function meldCardNode(state, seat, cardId) {
 
 let moments = null;
 let ladder = null;
+let contractStrip = null;
 let gestures = null;
 let zones = null;
 let record = null;
@@ -2899,6 +3171,54 @@ function takeRoundFinal(move) {
 }
 
 /**
+ * The position the move passes THROUGH, when the template says it has one.
+ *
+ * The trick reveal's half of the pre-move fork (#123), and deliberately a fork
+ * OF the fork: `takeRoundFinal` still wants the untouched pre-move copy a line
+ * later, because the last trick of a hand needs both — the four cards on the
+ * table, and then the position the round ended in.
+ *
+ * `template.poseMove` answering false means there is nothing to hold and the
+ * half-applied copy is dropped on the floor, which is the only safe thing to do
+ * with it: it is a move that has been half made.
+ */
+function takeTrickPose(move) {
+  if (!preMoveFork || !move) return null;
+  try {
+    const posed = forkState(preMoveFork);
+    posed.events.length = 0;
+    return posed.pack.template.poseMove?.(makeCtx(posed), move) ? posed : null;
+  } catch {
+    // A template that cannot pose its own move is a bug worth surviving: the
+    // felt falls straight through to the position the move actually reached.
+    return null;
+  }
+}
+
+/**
+ * Hold the completed trick on the felt, then let the move finish arriving.
+ *
+ * The fourth card lands on a trick that KEEPS it — `animateMove` flies it onto
+ * the posed position, so the copy that lands is the card the player then reads
+ * — and everything the sweep is (the gather flight, the banner, the seat pulse,
+ * the next turn, a round ending underneath it) waits behind `resume`.
+ */
+function runTrickReveal(poseState, move, from, reveal, resume) {
+  session.trickBeat = { seat: reveal.trick.seat };
+  session.trickPoseState = poseState;
+  render(poseState);
+  animateMove(poseState, move, from);
+
+  const myEpoch = epoch;
+  Arcade.session.setTimeout(() => {
+    if (myEpoch !== epoch || !session) return;
+    session.trickBeat = null;
+    session.trickPoseState = null;
+    resume();
+  }, reveal.holdMs);
+}
+
+/**
  * The same ending with the crib still face down.
  *
  * Cribbage turns the crib as part of the move that ends the hand — the reveal
@@ -2948,8 +3268,11 @@ function playShowStep(finalState, step) {
     render(finalState);
   }
   const said = finalState.pack.template.describeEvent?.(
-    { type: 'showScored', seat: step.seat, isCrib: step.isCrib, points: step.points },
-    { seatLabel, seatPossessive, viewerSeat: mySeat() },
+    // `parts` too: the template says WHAT a hand was worth it for — fifteen
+    // two, a pair, his nobs — and a step stripped of them can only say a
+    // number (#124, item 41).
+    { type: 'showScored', seat: step.seat, isCrib: step.isCrib, points: step.points, parts: step.parts },
+    { seatLabel, seatPossessive, seatVerb, viewerSeat: mySeat() },
   );
   const text = said?.text
     || `${seatPossessive(step.seat)} ${step.isCrib ? 'crib' : 'hand'} is worth ${step.points}.`;
@@ -2957,6 +3280,35 @@ function playShowStep(finalState, step) {
   el.log.textContent = text;
   pulseSeat(step.seat, step.points ? 'good' : 'neutral');
   spotlightZone(step.isCrib ? 'show' : `play.${step.seat}`);
+}
+
+/**
+ * WHAT EACH SEAT PROMISED AND WHAT IT TOOK, for the sheet that shows what that
+ * was worth.
+ *
+ * Read off the ENDING position rather than the live one, and that is the whole
+ * reason it is computed here: by the time the summary opens, the engine has
+ * crossed the round boundary and wiped every bid (src/engine/movePipeline.js),
+ * so `state.playerVars[seat].bid` is already the next hand's nothing. The fork
+ * #120 keeps for the felt still has them.
+ *
+ * The words are the template's own counters — a bid that reads "nil" reads
+ * "nil" here too — so nothing in this file knows what a bid is. Null for a pack
+ * that does not bid, and on the multiplayer path, where there is no fork.
+ */
+function roundContractLines(finalState) {
+  if (!finalState) return null;
+  const rows = [];
+  let any = false;
+  for (let seat = 0; seat < finalState.seats; seat++) {
+    const counters = seatCountersFor(finalState, seat, { minimized: true });
+    const bid = counters.find((c) => c.kind === 'bid');
+    const tricks = counters.find((c) => c.kind === 'tricks');
+    if (!bid) continue;
+    any = true;
+    rows[seat] = `Bid ${bid.text}${tricks ? `, took ${tricks.text}` : ''}`;
+  }
+  return any ? rows : null;
 }
 
 /**
@@ -2994,7 +3346,7 @@ function runRoundBeat(state, plan, finalState) {
   Arcade.session.setTimeout(() => {
     if (myEpoch !== epoch) return;
     session.roundSummaryOpen = true;
-    showRoundSummary(state, plan.roundOver, session.seating);
+    showRoundSummary(state, plan.roundOver, session.seating, roundContractLines(finalState));
   }, plan.summaryAt);
 }
 
@@ -3055,10 +3407,17 @@ function afterMove(state, move, from, message, { publish = true } = {}) {
   const passed = events.find((e) => e.type === 'cardsPassed');
   const roundOver = events.find((e) => e.type === 'roundOver' && !e.over);
 
+  // FOUR CARDS ON THE TABLE, claimed FIRST: `takeRoundFinal` consumes the
+  // pre-move snapshot, and the last trick of a hand wants both poses off it.
+  const trickPose = trick ? takeTrickPose(move) : null;
   // WHERE THE ROUND ENDED, claimed before anything can throw. `takeRoundFinal`
   // consumes the pre-move snapshot whether or not it is wanted, so a fork is
   // never left behind to be re-used by the next move.
   const finalState = takeRoundFinal(roundOver ? move : null);
+  const reveal = trick ? trickRevealPlan(events, {
+    flightMs: flightDurationMs(settings?.botDelayMs),
+    posed: !!trickPose,
+  }) : null;
   const plan = roundOver ? roundBeatPlan(events, {
     flightMs: flightDurationMs(settings?.botDelayMs),
     // No snapshot means no ending to pose or repaint, so the reveal degrades to
@@ -3076,50 +3435,78 @@ function afterMove(state, move, from, message, { publish = true } = {}) {
     // waits: the last card is the thing worth watching, and it is still in the
     // air on this frame.
     const ending = record.concludeMatch(state, { hints: session.hintsTaken });
-    render(state, message);
-    animateMove(state, move, from);
-    if (trick) celebrateTrick(state, trick);
-    playWin();
-    offerFinalLook(state, move, ending);
+    // THE LAST TRICK IS STILL A TRICK, and it is the one most worth seeing
+    // whole: the card that ends a match is the card that won it. The match is
+    // over either way, so nothing here races the hold — `offerFinalLook` waits
+    // for the player anyway.
+    const finish = () => {
+      render(state, message);
+      if (!reveal) animateMove(state, move, from);
+      if (trick) celebrateTrick(state, trick);
+      playWin();
+      offerFinalLook(state, move, ending);
+    };
+    if (reveal && trickPose) runTrickReveal(trickPose, move, from, reveal, finish);
+    else finish();
     return;
   }
 
   if (passed && !message) message = 'Cards passed. Play!';
-  // SET BEFORE THE RENDER, because `render` reads it: while the felt is showing
-  // a position the engine has already moved past, nothing on it is actable.
-  if (plan) {
-    session.roundBeat = true;
-    // Kept so anything that repaints for a reason of its own during the beat
-    // repaints the ending rather than the deal underneath it (feltState). Null
-    // on the path with no snapshot, where the felt is already the live state.
-    session.roundFinalState = finalState ? shown : null;
-  }
-  render(shown, message);
-  animateMove(shown, move, from);
-  if (trick) celebrateTrick(shown, trick);
-  // After the card has been seen to land, and only when a trick is not already
-  // holding the felt — two celebrations at once is neither. A show is the same
-  // rule again: its own steps are the narration, and the first `showScored`
-  // banner firing here would say pone's count over the last pegging card.
-  const action = (trick || plan?.steps.length) ? null : celebrateAction(shown, events);
-  // The action is the better sentence: "Rook played." says less than nothing
-  // next to "You draw 4 and lose your turn", and the log is the live region a
-  // screen reader hears.
-  if (action) el.log.textContent = action.text;
+  // BEFORE ANY ANIMATION, and no longer behind one: what is saved is the live
+  // state, which the beats below deliberately are not showing yet.
   persistMatch();
 
-  if (plan) {
-    // The engine has already dealt the next round beneath this move. The felt
-    // is holding the position it ended in; the summary opens over that, and the
-    // deal does not become visible until the summary is dismissed
-    // (dismissRoundSummary). Bot play already waits on `roundSummaryOpen`.
+  // Everything the completed trick CAUSES — the gather, the sentence, the next
+  // turn, a round ending underneath it. Held for one beat behind the four cards
+  // when the felt could pose them (#123), and run straight through otherwise.
+  const settle = () => {
+    // SET BEFORE THE RENDER, because `render` reads it: while the felt is
+    // showing a position the engine has already moved past, nothing on it is
+    // actable.
+    if (plan) {
+      session.roundBeat = true;
+      // Kept so anything that repaints for a reason of its own during the beat
+      // repaints the ending rather than the deal underneath it (feltState). Null
+      // on the path with no snapshot, where the felt is already the live state.
+      session.roundFinalState = finalState ? shown : null;
+    }
+    render(shown, message);
+    // The played card has already flown onto the posed trick; flying it again
+    // here would be the same card arriving twice.
+    if (!reveal) animateMove(shown, move, from);
+    if (trick) celebrateTrick(shown, trick);
+    // After the card has been seen to land, and only when a trick is not already
+    // holding the felt — two celebrations at once is neither. A show is the same
+    // rule again: its own steps are the narration, and the first `showScored`
+    // banner firing here would say pone's count over the last pegging card.
+    const action = (trick || plan?.steps.length) ? null : celebrateAction(shown, events);
+    // The action is the better sentence: "Rook played." says less than nothing
+    // next to "You draw 4 and lose your turn", and the log is the live region a
+    // screen reader hears.
+    if (action) el.log.textContent = action.text;
+
+    if (plan) {
+      // The engine has already dealt the next round beneath this move. The felt
+      // is holding the position it ended in; the summary opens over that, and the
+      // deal does not become visible until the summary is dismissed
+      // (dismissRoundSummary). Bot play already waits on `roundSummaryOpen`.
+      cancelAnnouncementBeats();
+      runRoundBeat(state, plan, finalState || state);
+      return;
+    }
+
+    scheduleNextTurn();
+    scheduleAnnouncementBeats();
+  };
+
+  if (reveal && trickPose) {
+    // No bot is scheduled and nothing is announced until `settle` runs: the
+    // beat is a pause in the game, not a pause the game plays through.
     cancelAnnouncementBeats();
-    runRoundBeat(state, plan, finalState || state);
+    runTrickReveal(trickPose, move, from, reveal, settle);
     return;
   }
-
-  scheduleNextTurn();
-  scheduleAnnouncementBeats();
+  settle();
 }
 
 /* ------------------------------------------------------------------ *
@@ -3153,6 +3540,33 @@ const MAX_PENDING_CHOICES = 6;
  *
  * @returns the completed move, or null if the player backed out.
  */
+/**
+ * The Ask's context rows, with the seats dressed.
+ *
+ * A SEAT IS A NUMBER THE TEMPLATE CANNOT DRESS — the same rule its `kind:
+ * 'seat'` options follow, one rung up: the name is the roster's
+ * (src/players/roster.js) and who is partnered with whom is the pack's
+ * (src/engine/sides.js), and a template that had to know either would be a
+ * template that had to know what a player is called.
+ *
+ * `you` and `partner` are marks rather than words in the label because the
+ * dialog draws them, and because "You" as a name is already this table's
+ * convention everywhere else (seatLabel).
+ */
+function dressedContext(state, rows) {
+  if (!Array.isArray(rows) || !rows.length) return [];
+  return rows.map((row) => {
+    if (!Number.isInteger(row.seat)) return { label: row.label ?? '', value: String(row.value ?? '') };
+    const marks = seatSideMarks(state.pack, state.seats, mySeat(), row.seat);
+    return {
+      label: seatLabel(row.seat),
+      value: String(row.value ?? ''),
+      mine: isMySeat(row.seat),
+      partner: marks.partner,
+    };
+  });
+}
+
 async function fillPendingChoices(state, move, myEpoch) {
   const template = state.pack.template;
   if (!template.pendingChoice) return move;
@@ -3172,8 +3586,24 @@ async function fillPendingChoices(state, move, myEpoch) {
     if (options.length === 1) {
       picked = options[0].value;
     } else {
-      picked = await promptChoice(art(), ask.prompt || ask.attr, options,
-        { card: ask.cardId ? cardById(state, ask.cardId) : null });
+      // TWO STRINGS, NOT ONE, and passing the same one for both is what left
+      // Pinochle's trump step as four word buttons reading "Choose a suit to
+      // play it in". `art` is the drawing vocabulary the chooser tiles are
+      // keyed by; `prompt`/`question` is the words. See the Ask table in
+      // src/templates/CONTRACT.md.
+      const drawn = ask.art || ask.attr;
+      const sentence = ask.question || `Choose a ${ask.prompt || ask.attr}`;
+      // The bar behind an open dialog is still saying whatever the step BEFORE
+      // this one said. Repainted for as long as the question is up, and put
+      // back by the render that follows whichever way it is answered.
+      if (ask.status) el.statusText.textContent = ask.status;
+      picked = await promptChoice(art(), drawn, options, {
+        card: ask.cardId ? cardById(state, ask.cardId) : null,
+        sentence,
+        // #123: the auction's rows, dressed from the roster.
+        context: dressedContext(state, ask.context),
+      });
+      if (ask.status && liveState()) renderStatusBar(state, actingSeatsOf(state));
       // Backed out, or the table closed while the prompt was open — either way
       // this move belongs to a match that is no longer the one on screen.
       if (picked === null || myEpoch !== epoch) return null;
@@ -3799,6 +4229,7 @@ export function closeTable() {
   session = null;
   hideAllPanels();
   if (ladder) ladder.hide();
+  if (contractStrip) contractStrip.hide();
 }
 
 export function isTableOpen() {
@@ -3928,6 +4359,13 @@ export function initTable({ onExit }) {
     identityOf,
     attachInspector,
     isBusy: () => !!drag && drag.isDragging(),
+  });
+
+  contractStrip = createContractStrip({
+    el: el.tableContract,
+    me,
+    identityOf,
+    art,
   });
 
   moments = createCelebrations({

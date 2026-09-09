@@ -119,6 +119,50 @@ function checkLadder(css) {
   return steps;
 }
 
+/**
+ * WHICH LIFT STATES OPEN A GAP BEHIND THEM.
+ *
+ * Coming to the front is only half of a lift, and the other half is what the
+ * playtest measured: the fan overlaps LEFTWARD, so each card is read by its own
+ * left edge, and the card a lifted one comes to the front of is precisely the
+ * neighbour whose left edge it lands on — down to a single pip (#122, round-5
+ * item 23). The stylesheet answers that by sliding everything after a lifted
+ * card right by `--lift-gap`, so a state with a rung and no gap rule is a state
+ * that still buries its neighbour.
+ *
+ * Read the same way the ladder is: out of the stylesheet, by selector, with no
+ * hardcoded list of states.
+ */
+function gapStates(css) {
+  const found = new Set();
+  for (const { selector, body } of rules(css)) {
+    if (!/translateX\(\s*var\(\s*--lift-gap/.test(body)) continue;
+    for (const part of selector.split(",")) {
+      // `.hand .card-face-wrap--peek ~ .card-face-wrap` — the state is what
+      // stands BEFORE the sibling combinator; the thing after it is the
+      // neighbour being moved and names no state of its own.
+      const [head] = part.split("~");
+      if (!head || !head.includes("card-face") || NOT_IN_HAND.test(head)) continue;
+      for (const s of statesIn(head)) found.add(s);
+    }
+  }
+  return found;
+}
+
+function checkGaps(css) {
+  const ranked = ladderSteps(css).filter((s) => s.rung > 0);
+  assert.ok(ranked.length, "no ranked lift states were read out of the stylesheet");
+  const gaps = gapStates(css);
+  for (const step of ranked) {
+    assert.ok(gaps.has(step.state),
+      `${step.state} lifts to z-index ${step.rung} but opens no gap behind it, so it `
+      + "paints over the only strip of its right-hand neighbour that is visible. "
+      + "Add it to the `~ .card-face-wrap { transform: translateX(var(--lift-gap)) }` "
+      + "rule in src/ui/table.css.");
+  }
+  return { ranked: ranked.map((s) => s.state), gaps: [...gaps] };
+}
+
 test("the hand's z-order ladder climbs with its lifts", () => {
   const steps = checkLadder(fs.readFileSync(CSS_PATH, "utf8"));
 
@@ -162,4 +206,43 @@ test("the ladder check refuses a shared rung and an unranked lift", () => {
   assert.throws(() => checkLadder(good
     + ".hand .card-face-wrap--nudged .card-face { transform: translateY(-6px); }"),
     /does not out-rank/);
+});
+
+test("every lift that comes to the front opens a gap behind it", () => {
+  const css = fs.readFileSync(CSS_PATH, "utf8");
+  const { ranked, gaps } = checkGaps(css);
+  // A parser that quietly stops matching passes vacuously. These are the states
+  // that actually have a rung today; finding fewer means the reading broke.
+  assert.deepEqual([...ranked].sort(), ["hinted", "hover", "peek", "selected"],
+    "the ranked lift states could not be read out of src/ui/table.css");
+  assert.ok(gaps.length >= ranked.length, "no gap rules were read out of src/ui/table.css");
+});
+
+// PROVE THE GATE BITES — the same rule as the ladder above.
+test("the gap check refuses a ranked lift with no gap rule", () => {
+  const good = `
+    .hand .card-face-wrap--hinted { z-index: 1; }
+    .hand .card-face-wrap:hover { z-index: 2; }
+    .hand .card-face-wrap--peek { z-index: 4; }
+    .card-face-wrap--playable .card-face { transform: translateY(-4px); }
+    .hand .card-face-wrap--hinted .card-face { transform: translateY(-8px); }
+    .hand .card-face:hover { transform: translateY(-10px); }
+    .hand .card-face-wrap--peek .card-face { transform: translateY(-20px); }
+    .hand .card-face-wrap--hinted ~ .card-face-wrap { transform: translateX(var(--lift-gap, 0px)); }
+    .hand .card-face-wrap:hover ~ .card-face-wrap { transform: translateX(var(--lift-gap, 0px)); }
+    .hand .card-face-wrap--peek ~ .card-face-wrap { transform: translateX(var(--lift-gap, 0px)); }
+  `;
+  assert.deepEqual(checkGaps(good).ranked.sort(), ["hinted", "hover", "peek"]);
+
+  // One rung's gap rule dropped: that state's neighbour goes back to a pip.
+  assert.throws(() => checkGaps(good.replace(
+    ".hand .card-face-wrap--peek ~ .card-face-wrap { transform: translateX(var(--lift-gap, 0px)); }",
+    ".hand .card-face-wrap--peek ~ .card-face-wrap { opacity: 1; }")),
+    /peek lifts to z-index 4 but opens no gap/);
+
+  // A new ranked lift state that nobody gave a gap.
+  assert.throws(() => checkGaps(good
+    + ".hand .card-face-wrap--nudged { z-index: 6; }"
+    + ".hand .card-face-wrap--nudged .card-face { transform: translateY(-30px); }"),
+    /nudged lifts to z-index 6 but opens no gap/);
 });

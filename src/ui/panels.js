@@ -13,7 +13,8 @@
 // markup anywhere in this file, which is the rule §17.8 exists for.
 
 import { statLinesFor } from '../stats/matchStats.js';
-import { sideScoreOf, sideScores } from '../engine/sides.js';
+import { sideScoreOf, sidesOf, foldToSides } from '../engine/sides.js';
+import { targetSentence as matchTargetSentence, winDirection } from './scoreDirection.js';
 import { line } from './dom.js';
 
 const el = {
@@ -74,28 +75,112 @@ function signed(n) {
 }
 
 /* ------------------------------------------------------------------ *
+ * A SIDE IS A ROW — the sheet's unit, and it used to be a chair
+ * ------------------------------------------------------------------ *
+ *
+ * A PARTNERSHIP SCORES ONCE. This sheet listed four players and, for every
+ * partnership pack we ship, two of those rows were structurally dead: both
+ * scorers in src/engine/scoring.js bank a side's whole result on `members[0]`
+ * (`bids-and-bags` and `meld-and-tricks` alike), so the partner's DELTA was
+ * `+0` every round for the whole match while the TOTAL beside it climbed to
+ * 682 — the same number as the banker's, because the total was already folded
+ * to the side. One sheet, saying both that this player scored nothing and that
+ * they have 682. Whichever a player believed, the sheet had told them the other
+ * (#125 item 50).
+ *
+ * THE PREVIOUS SPLIT AND WHY IT DOES NOT SURVIVE. The rule here was "a delta is
+ * per seat and a total is per side", reasoned as: what a seat took this hand is
+ * genuinely that seat's, and "you took four, your partner took eight" is the
+ * conversation a partnership actually has. That reasoning was sound and its
+ * premise is not true of this platform — no scorer we ship splits a side's
+ * round score between its members, so the per-seat delta was never the sentence
+ * it was defended as. It was one seat's total wearing four rows. A scorer that
+ * genuinely does divide a hand between partners can take the split back, and
+ * this is the note that says what to check first: whether `scoreRound` returns
+ * a nonzero delta for more than one seat of a side.
+ *
+ * A TEAMLESS PACK IS UNCHANGED, and not by a branch: `sidesOf` gives a pack
+ * with no partnerships one side per seat, so every row below is exactly the
+ * row it was — same order, same name, same delta, same total.
+ */
+
+/** The rows this sheet has, one per side, in side order. */
+function sideRowsOf(state, seating) {
+  return sidesOf(state.pack, state.seats).map((members) => ({
+    members,
+    // The row the player is reading their own score off, which is any row
+    // holding a chair they are sitting in.
+    mine: members.some((s) => seating[s] && !seating[s].isBot),
+  }));
+}
+
+/**
+ * The name on a side's row: one player, or a pair spelled out.
+ *
+ * Both names, never "Your side" — a score sheet is read afterwards and at a
+ * table where the seating rotates, "your side" is the one label that stops
+ * meaning anything the moment the panel is screenshotted or the match is
+ * resumed from storage.
+ */
+function sideNameCell(className, members, seating) {
+  const wrap = document.createElement('span');
+  wrap.className = className;
+  members.forEach((seat, i) => {
+    if (i > 0) wrap.appendChild(document.createTextNode(' & '));
+    // `.name-cell` and not the bare row class: the row class is a flex box with
+    // a gap, and a nested cell with no class of its own put the icon hard
+    // against the name — "★You & 🦔Fig".
+    wrap.appendChild(nameCell('name-cell', seating[seat]));
+  });
+  return wrap;
+}
+
+/* ------------------------------------------------------------------ *
  * Round summary
  * ------------------------------------------------------------------ */
 
-/** The score sheet between rounds. Bot turns stay parked until it is dismissed. */
-export function showRoundSummary(state, ev, seating) {
+/**
+ * The score sheet between rounds. Bot turns stay parked until it is dismissed.
+ *
+ * `contract` is an optional per-seat phrase — "Bid 3, took 4" — supplied by the
+ * table from the position the round ENDED in (#120's fork; the live state has
+ * already wiped the bids and dealt the next hand, so this cannot be re-derived
+ * here). It rides INSIDE the name cell rather than as a fourth column, because
+ * the sheet is a three-column grid and a row is `display: contents`.
+ *
+ * A delta of `-30` is the arithmetic; "Bid 4, took 3" is the reason, and the
+ * reason was nowhere on this sheet — least of all for the human, whose own bid
+ * was not shown anywhere at all (#123, item 28).
+ */
+export function showRoundSummary(state, ev, seating, contract = null) {
   el.roundTitle.textContent = `Round ${ev.round} over`;
   el.roundScores.replaceChildren();
-  for (let s = 0; s < state.seats; s++) {
-    const delta = ev.scores[s] ?? 0;
+  // A COLUMN WITH NOTHING TO SAY SAYS NOTHING (#124, item 43): a pack that pegs
+  // its points live scores nothing at the round boundary, and `roundScores`
+  // comes back empty. Tested structurally, so a pack that genuinely scored
+  // nobody still prints "+0". The cell stays because the grid is `display:
+  // contents` and a skipped cell shifts every cell after it.
+  const hasDeltas = Object.keys(ev.scores || {}).length > 0;
+  // ONE ROW PER SIDE (#125): both partnership scorers bank a side's whole result
+  // on its first member, so a per-seat delta at a partnership pack is
+  // structurally "+0" beside a total the seat never earned alone. A teamless
+  // pack is unchanged — `sidesOf` gives it one side per seat and the fold is
+  // the identity. The contract note (#123, "Bid 3, took 2") is per seat, so a
+  // side's row carries one per member in member order.
+  const sides = sidesOf(state.pack, state.seats);
+  const deltas = foldToSides(ev.scores, sides);
+  const totals = foldToSides(ev.totals, sides);
+  sideRowsOf(state, seating).forEach(({ members, mine }, side) => {
     const row = document.createElement('div');
-    row.className = `round-scores__row ${seating[s] && !seating[s].isBot ? 'round-scores__row--you' : ''}`;
-    row.appendChild(nameCell('round-scores__name', seating[s]));
-    row.appendChild(line('round-scores__delta', signed(delta)));
-    // A DELTA IS PER SEAT AND A TOTAL IS PER SIDE. What a seat took this hand is
-    // genuinely that seat's — "you took four, your partner took eight" is the
-    // conversation a partnership actually has — but the running total is the
-    // side's, or this sheet says thirteen while the chip on the felt says
-    // twenty-six and one of them is wrong. For a game with no partnerships both
-    // are the seat's, exactly as before (src/engine/sides.js).
-    row.appendChild(line('round-scores__total', `${sideScoreOf(state.pack, state.seats, ev.totals, s)}`));
+    row.className = `round-scores__row ${mine ? 'round-scores__row--you' : ''}`;
+    const name = sideNameCell('round-scores__name', members, seating);
+    const notes = members.map((s) => contract?.[s]).filter(Boolean);
+    if (notes.length) name.appendChild(line('round-scores__note', notes.join(' · ')));
+    row.appendChild(name);
+    row.appendChild(line('round-scores__delta', hasDeltas ? signed(deltas[side] ?? 0) : ''));
+    row.appendChild(line('round-scores__total', `${totals[side] ?? 0}`));
     el.roundScores.appendChild(row);
-  }
+  });
   el.roundContinue.textContent = `Deal round ${state.roundNumber}`;
   el.roundTarget.textContent = targetSentence(state, ev);
   el.roundTarget.hidden = !el.roundTarget.textContent;
@@ -105,23 +190,16 @@ export function showRoundSummary(state, ev, seating) {
 /**
  * How much further this match has to run.
  *
- * "The match continues indefinitely" was the complaint, and it was a complaint
- * about not being able to SEE the end rather than about there not being one:
- * Wildfire runs to 500 and nothing on the felt ever said so, so every round
- * summary looked like it could be the first of arbitrarily many. Read from the
- * pack's own declared threshold, so a pack that ends some other way (Milestones
- * on its tenth contract) simply says nothing here.
+ * The sentence itself is in src/ui/scoreDirection.js, with the reasoning for its
+ * two directions: this file resolves its element table on its first line, so
+ * nothing in it can be loaded by a Node test, and the text of a line that was
+ * false for Thirteen and Hearts for a whole playtest (#121) is precisely the
+ * thing that wants pinning by one. This wrapper stays because the panel's own
+ * subject is a state and a roundOver event, and the pure function's is a pack
+ * and a totals array.
  */
 function targetSentence(state, ev) {
-  const when = state.pack.scoring?.gameOver?.when;
-  const m = /^anyScore\s*>=\s*(\d+)$/.exec(when || '');
-  if (!m) return '';
-  const target = Number(m[1]);
-  // The threshold is a SIDE's, the same reading `evaluateGameOver` takes.
-  const leader = Math.max(...sideScores(state.pack, state.seats, ev.totals));
-  const togo = target - leader;
-  if (togo <= 0) return '';
-  return `First to ${target} wins — ${togo} to go.`;
+  return matchTargetSentence(state.pack, state.seats, ev.totals);
 }
 
 export function hideRoundSummary() {
@@ -138,25 +216,28 @@ function roundHistoryInto(node, rounds, seating, seats, pack = null) {
     node.appendChild(line('round-history__empty', 'No rounds have been scored yet.'));
     return;
   }
+  // A COLUMN PER SIDE, for the same reason the summary above has a row per side
+  // — and a pack with no partnerships gets one side per seat, so its grid is
+  // the grid it always was.
+  const sides = sidesOf(pack, seats);
   const table = document.createElement('div');
   table.className = 'round-history__grid';
-  table.style.setProperty('--history-cols', String(seats));
+  table.style.setProperty('--history-cols', String(sides.length));
 
   table.appendChild(line('round-history__head', ''));
-  for (let s = 0; s < seats; s++) {
-    table.appendChild(nameCell('round-history__head', seating[s]));
+  for (const members of sides) {
+    table.appendChild(sideNameCell('round-history__head', members, seating));
   }
   for (const round of rounds) {
     table.appendChild(line('round-history__label', `R${round.round}`));
-    for (let s = 0; s < seats; s++) {
-      table.appendChild(line('round-history__cell', signed(round.scores[s] ?? 0)));
+    for (const delta of foldToSides(round.scores, sides)) {
+      table.appendChild(line('round-history__cell', signed(delta)));
     }
   }
   table.appendChild(line('round-history__label round-history__label--total', 'Total'));
   const last = rounds[rounds.length - 1];
-  for (let s = 0; s < seats; s++) {
-    table.appendChild(line('round-history__cell round-history__cell--total',
-      `${pack ? sideScoreOf(pack, seats, last.totals, s) : last.totals[s]}`));
+  for (const total of foldToSides(last.totals, sides)) {
+    table.appendChild(line('round-history__cell round-history__cell--total', `${total}`));
   }
   node.appendChild(table);
 }
@@ -170,15 +251,19 @@ function roundHistoryInto(node, rounds, seating, seats, pack = null) {
  */
 export function showScoreboard(state, seating, stats) {
   el.scoreTotals.replaceChildren();
-  for (let s = 0; s < state.seats; s++) {
+  const totals = foldToSides(state.scores, sidesOf(state.pack, state.seats));
+  sideRowsOf(state, seating).forEach(({ members, mine }, side) => {
     const row = document.createElement('div');
-    row.className = `round-scores__row ${seating[s] && !seating[s].isBot ? 'round-scores__row--you' : ''}`;
-    row.appendChild(nameCell('round-scores__name', seating[s]));
-    row.appendChild(line('round-scores__delta', seating[s]?.isBot ? (seating[s].persona?.label || '') : ''));
-    row.appendChild(line('round-scores__total',
-      `${sideScoreOf(state.pack, state.seats, state.scores, s)}`));
+    row.className = `round-scores__row ${mine ? 'round-scores__row--you' : ''}`;
+    row.appendChild(sideNameCell('round-scores__name', members, seating));
+    // The difficulty label is a fact about ONE bot, so it is only said where
+    // the row is one bot — a pair of personas in this slot is a second name
+    // column, and where they differ it would be two answers to one question.
+    const solo = members.length === 1 ? seating[members[0]] : null;
+    row.appendChild(line('round-scores__delta', solo?.isBot ? (solo.persona?.label || '') : ''));
+    row.appendChild(line('round-scores__total', `${totals[side] ?? 0}`));
     el.scoreTotals.appendChild(row);
-  }
+  });
   roundHistoryInto(el.scoreHistory, stats ? stats.rounds : [], seating, state.seats, state.pack);
   el.scoreOverlay.hidden = false;
 }
@@ -246,12 +331,23 @@ export function hideFinalLook() {
  * Game over
  * ------------------------------------------------------------------ */
 
-function statsInto(node, template, stats, seating, seats, winner, { hints = 0, hintSeat = null } = {}) {
+/**
+ * @param scoreLine (seat) => {label, value} | null — the number that DECIDED
+ *                  the match, first on every card. It used to be absent: the
+ *                  panel that closes a match led with Moves and Cards played
+ *                  and put the scores a click away under "Round by round", so
+ *                  the default view of the result was trivia (#122, round-5
+ *                  item 26). Passed in rather than read here because which way
+ *                  the number counts is the pack's (src/ui/scoreDirection.js).
+ */
+function statsInto(node, template, stats, seating, seats, winner, { hints = 0, hintSeat = null, scoreLine = null } = {}) {
   node.replaceChildren();
   if (!stats) return;
 
   for (let s = 0; s < seats; s++) {
     const lines = statLinesFor(template, stats.perSeat[s]);
+    const score = scoreLine?.(s);
+    if (score) lines.unshift(score);
     // Hints are not in the log (src/ui/hint.js), so they are not in `stats`;
     // they are the one line added here, on the card of the seat that asked.
     if (s === hintSeat && hints > 0) lines.push({ label: 'Hints taken', value: String(hints) });
@@ -315,7 +411,21 @@ export function showGameOver(state, {
   }
 
   el.gameOverRecord.textContent = recordText || '';
-  statsInto(el.gameOverStats, state.pack.template, stats, seating, state.seats, winner, { hints, hintSeat });
+  // THE SCORES THAT DECIDED IT, FIRST. `sideScoreOf` is the same reading the
+  // scoreboard takes, so a partnership's card shows the side's number rather
+  // than half of it; the LABEL is the pack's direction, because at Thirteen and
+  // Hearts calling a penalty total a "Score" is the same misdirection #121 took
+  // out of the round panel's target line. Only a declared `lowestScore` earns
+  // the penalty word: a template-owned ending (Cribbage, Milestones) is a score
+  // its owner counts up, and `pointsArePrize` declines to answer for those.
+  const scoreWord = winDirection(state.pack) === 'lowestScore' ? 'Penalty points' : 'Score';
+  statsInto(el.gameOverStats, state.pack.template, stats, seating, state.seats, winner, {
+    hints,
+    hintSeat,
+    scoreLine: (seat) => (Array.isArray(state.scores)
+      ? { label: scoreWord, value: String(sideScoreOf(state.pack, state.seats, state.scores, seat)) }
+      : null),
+  });
 
   const rounds = stats ? stats.rounds : [];
   el.gameOverRoundsToggle.hidden = rounds.length === 0;

@@ -118,8 +118,13 @@
       <!-- Your score, always on screen, and the way into the full sheet.
            A number you have to open a menu to see is a number you stop
            checking. -->
+      <!-- The slot the human's own BOARD goes in, where the pack's primary
+           counter is a position rather than a quantity (a cribbage board).
+           Empty and display:none for every other pack, so the chip is the
+           same pill it has always been. See renderStatusBar. -->
       <button type="button" id="score-chip" class="score-chip" hidden>
         <span class="score-chip__label">You</span>
+        <span id="score-chip-track" class="score-chip__track" aria-hidden="true"></span>
         <span id="score-chip-value"></span>
       </button>
     </div>
@@ -132,6 +137,15 @@
 
     <div id="table">
       <div class="opponent-row" id="opponents-top"></div>
+
+      <!-- The contract in force: the standing high bid and who holds it during
+           an auction, then the trump suit, the contract and your own meld
+           (src/ui/contractStrip.js). Rendered only for a pack whose template
+           answers `contractChips` — every other table keeps the row's height.
+           Above the felt's middle rather than beside the piles, because a
+           player checks trump between plays and the middle is where their eyes
+           already are. -->
+      <div id="table-contract" class="contract-strip" hidden></div>
 
       <!-- The middle of the felt: the ladder standing beside the piles rather
            than above them. Horizontal room is what a table runs out of first —
@@ -151,6 +165,12 @@
              drawing works at a real table, and it puts the card's flight start
              under the finger that asked for it. -->
         <div id="center-piles"></div>
+
+        <!-- What the TABLE is counting, as opposed to what a seat is: the
+             running count in cribbage's play. Rendered from the template's
+             `tableCounters` and hidden — with no slot reserved — for every
+             pack that declares none. -->
+        <div id="table-counters" class="table-counters" hidden></div>
       </div>
 
       <!-- The human's own piles beyond the hand: a Stockpile stock and

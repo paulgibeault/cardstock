@@ -49,6 +49,15 @@ const findAll = (node, className) => {
   for (const child of node.children) out.push(...findAll(child, className));
   return out;
 };
+/** The element a `left: n%` on `node` is actually a percentage OF. */
+const parentOf = (root, node) => {
+  if (root.children.includes(node)) return root;
+  for (const child of root.children) {
+    const hit = parentOf(child, node);
+    if (hit) return hit;
+  }
+  return null;
+};
 
 test("a counter with no track kind, or no numbers, is not a track", () => {
   assert.strictEqual(counterTrack(null), null);
@@ -110,6 +119,24 @@ test("the rendered track is one labelled group, two pegs, and a number", () => {
   const front = pegs.find((p) => p.className.includes("--front"));
   assert.strictEqual(front.style.left, `${((78 / 121) * 100).toFixed(2)}%`);
   assert.strictEqual(back.style.left, `${((66 / 121) * 100).toFixed(2)}%`);
+
+  // A PERCENTAGE IS ONLY A NUMBER UNTIL YOU SAY OF WHAT (issue #124). Both pegs
+  // above carry the right fraction of 121, and for the first sixty holes of
+  // every match they still drew in the right place while being a percentage of
+  // the WRONG BOX — the wrap, which is the rail plus the printed number after
+  // it. `left: 97.52%` of an 88px wrap put the peg at x=86 on a rail that ended
+  // at 57: past every hole, on top of the score it was meant to be pointing at.
+  // The geometry assertions above cannot see that, because the bug is not in
+  // the geometry; it is in which element the geometry is measured against. So
+  // the parent is the assertion.
+  const rail = find(node, "seat__track-rail");
+  for (const peg of pegs) {
+    assert.strictEqual(parentOf(node, peg), rail,
+      "a peg's `left` is a percentage of its containing block — parent it to anything "
+      + "but the rail and the percentage is of the rail plus whatever sits beside it");
+  }
+  assert.ok(!rail.children.includes(find(node, "seat__track-value")),
+    "the printed number must stay OUT of the rail, or it becomes part of the road");
 
   assert.strictEqual(find(node, "seat__track-value").textContent, "78",
     "the number is still printed — the track is a picture of it, not a replacement");

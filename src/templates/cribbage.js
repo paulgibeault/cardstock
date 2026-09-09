@@ -178,6 +178,46 @@ function partsOf(breakdown) {
   }));
 }
 
+/* ------------------------------------------------------------------ *
+ * Saying what scored
+ * ------------------------------------------------------------------ */
+
+/**
+ * WHAT ONE PART OF A SCORE IS CALLED OUT LOUD.
+ *
+ * Every scoring event in this template carried its breakdown from the day it
+ * shipped and the felt said only the total, so a fifteen, a pair and a run all
+ * read "Nell pegs 2" — three completely different things to have happen to you
+ * (#124, item 41). These are the words a cribbage player uses; they are the
+ * whole reason the game has a vocabulary at all.
+ *
+ * `n` is the number of CARDS in the part (`partsOf`), which is what separates a
+ * pair from a pair royal and sizes a run.
+ */
+function partPhrase(part) {
+  const n = part?.n ?? 0;
+  switch (part?.kind) {
+    case 'fifteen': return 'fifteen';
+    case 'thirty-one': return 'thirty-one';
+    // Three of a kind is a pair royal and four is a double pair royal — six and
+    // twelve holes. Calling either of them "a pair" undersells the hand badly.
+    case 'pair': return n >= 4 ? 'double pair royal' : n === 3 ? 'pair royal' : 'a pair';
+    case 'run': return `a run of ${n}`;
+    case 'flush': return `a flush of ${n}`;
+    // The one this pack puts in its own tagline and had never once printed.
+    case 'nobs': return 'his nobs';
+    default: return null;
+  }
+}
+
+/** The breakdown as one clause: "fifteen, fifteen and a pair". */
+function namedParts(parts) {
+  const words = (parts || []).map(partPhrase).filter(Boolean);
+  if (!words.length) return '';
+  if (words.length === 1) return words[0];
+  return `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`;
+}
+
 /**
  * MOVE A PEG, AND STOP THE GAME IF IT WENT OUT.
  *
@@ -500,7 +540,21 @@ const cribbage = {
       // everybody, INCLUDING the dealer who owns it — which is right: the crib
       // is turned over at the show and not before, and its owner may not leaf
       // through it in the meantime. The `showScored` event is what reveals it.
-      { id: 'crib', per: 'shared', visibility: 'none', layout: 'stack', order: 'stack', facing: 'down', label: 'Crib' },
+      //
+      // `onFelt` because a hidden pile is not the same as an absent one, and
+      // the felt was drawing this one as absent (#124, item 37). Four cards go
+      // into the crib in front of both players, everybody can count them in,
+      // and the whole discard decision is about what is in there — so the pile
+      // is furniture: face-down backs with its count, exactly what a real table
+      // shows. The visibility is untouched; `onFelt` says where it is drawn,
+      // never what may be seen in it.
+      // `hideWhenEmpty` as well, and the two flags together are the crib's whole
+      // life on the felt: nothing before the first card is thrown, a growing
+      // face-down pile through the discard and the play, and gone again at the
+      // moment its cards move to `show` and come up face up. Without it the
+      // reveal leaves an empty box captioned "Crib" sitting beside the four
+      // cards that just came out of it.
+      { id: 'crib', per: 'shared', visibility: 'none', layout: 'stack', order: 'stack', facing: 'down', label: 'Crib', onFelt: true, hideWhenEmpty: true },
       // WHERE THE CRIB IS TURNED OVER, and the reason it is a zone rather than
       // an event payload. The first cut of the show emitted the crib's card ids
       // in `showScored` and left them sitting in a `visibility: 'none'` pile —
@@ -508,7 +562,14 @@ const cribbage = {
       // was sent clubs-8, which it may not see"): a card is revealed by MOVING
       // it somewhere everyone can see, not by mentioning it. Turning the crib
       // face up is also exactly what the dealer does with their hands.
-      { id: 'show', per: 'shared', visibility: 'all', layout: 'spread', order: 'sequence', facing: 'up', label: 'The crib' },
+      //
+      // `hideWhenEmpty` because this pile does not exist yet for most of the
+      // hand and an empty box captioned "The crib" is a lie told beside the
+      // real one: through the deal, the cut and the whole play, the felt read
+      // "The crib, 0 cards" while four cards sat in `crib` (#124, item 37).
+      // It appears at the moment the dealer turns the crib over, which is
+      // exactly when a real one appears.
+      { id: 'show', per: 'shared', visibility: 'all', layout: 'spread', order: 'sequence', facing: 'up', label: 'The crib', hideWhenEmpty: true },
       // Each seat lays in front of themselves and takes their own four back at
       // the show — which is what a real table does, and what saves this
       // template from having to remember who played what.
@@ -717,9 +778,38 @@ const cribbage = {
     return {
       count: ctx.rules.crib,
       action: owner,
-      staging: `Crib — pick ${ctx.rules.crib}`,
+      // WHOSE CRIB, BEFORE THE DECISION AND NOT AFTER IT (#124, item 42). The
+      // button already said it, and the button does not appear until both cards
+      // are staged — which is after the only choice in the hand has been made.
+      // `dealer` is a public var from the deal onward, so the bar can say it
+      // from the first card the player touches. Same two words as the button,
+      // so the sentence and the commit agree.
+      staging: `${owner} — pick ${ctx.rules.crib}`,
       waiting: 'Waiting for the crib…',
     };
+  },
+
+  /**
+   * WHAT THE TABLE IS COUNTING — the running total in the play.
+   *
+   * `count` has been a public var since this template shipped and was drawn
+   * nowhere: a player reaching thirty found three of their four cards greyed
+   * out with nothing on the felt explaining why, and had to add two spread
+   * piles up by eye to get the number every real player says out loud after
+   * every card (#124, item 38).
+   *
+   * Only during the play. In the discard there is no count yet, and at the show
+   * the number is a leftover from the last card laid — a stale 24 sitting
+   * beside a hand being counted for something else entirely.
+   */
+  tableCounters(ctx) {
+    if (ctx.turn.phase !== 'play') return [];
+    const count = ctx.var('count') ?? 0;
+    return [{
+      label: 'Count',
+      text: String(count),
+      aria: `The count is ${count}, of ${ctx.rules.countTo}.`,
+    }];
   },
 
   /**
@@ -785,12 +875,31 @@ const cribbage = {
    * would say something out loud, which is the test for whether it earns a
    * banner: "fifteen two", "go", "two for his heels".
    */
-  describeEvent(ev, { seatLabel, seatPossessive }) {
+  describeEvent(ev, { seatLabel, seatPossessive, seatVerb }) {
     if (ev.type === 'pegPlay' && ev.points) {
-      return { text: `${seatLabel(ev.seat)} pegs ${ev.points} — the count is ${ev.count}.`, tone: 'good' };
+      // WHAT SCORED, not just how much (#124, item 41). "Nell pegs 2" is the
+      // same sentence for a fifteen, a pair and a run, and at a real table
+      // those are three completely different things to have happened to you —
+      // a pair says she is holding another one, a run says the sequence is
+      // live. `parts` has been on the event since the template shipped.
+      //
+      // `seatVerb`, not `${seatLabel(seat)} pegs`: "You" takes the bare verb.
+      // Same irregularity as `seatPossessive` below, one part of speech over.
+      const what = namedParts(ev.parts);
+      return {
+        text: `${seatLabel(ev.seat)} ${seatVerb(ev.seat, 'peg')} ${ev.points}`
+          + `${what ? ` — ${what}` : ''} — the count is ${ev.count}.`,
+        tone: 'good',
+      };
     }
     if (ev.type === 'go' && ev.closes) return { text: `Go — one for ${seatLabel(ev.seat)}.`, tone: 'neutral' };
     if (ev.type === 'hisHeels') return { text: `Two for his heels — ${seatLabel(ev.seat)}.`, tone: 'good' };
+    // The last card is a hole nobody was told about: it is pegged inside
+    // `advancePlay` with no event of its own beyond `pegged`, so the only
+    // narration was a score silently changing.
+    if (ev.type === 'pegged' && ev.reason === 'last-card') {
+      return { text: `One for the last card — ${seatLabel(ev.seat)}.`, tone: 'neutral' };
+    }
     if (ev.type === 'showScored') {
       // `seatPossessive`, not `${seatLabel(seat)}'s`. This table calls the local
       // player "You", and "You" is the one label in the vocabulary that does not
@@ -798,7 +907,14 @@ const cribbage = {
       // worth 2." on the felt, in this issue's own screenshot. Whose name it is
       // and how to inflect it are both the table's business (src/ui/table.js).
       const whose = ev.isCrib ? `${seatPossessive(ev.seat)} crib` : `${seatPossessive(ev.seat)} hand`;
-      return { text: `${whose} is worth ${ev.points}.`, tone: ev.points ? 'good' : 'neutral' };
+      // The breakdown, in the same voice. "His nobs" is in this pack's own
+      // tagline and its manifest and had never once appeared on the felt: it
+      // only ever comes out of `scoreHand`, and the show said a number.
+      const what = namedParts(ev.parts);
+      return {
+        text: `${whose} is worth ${ev.points}${what ? ` — ${what}` : ''}.`,
+        tone: ev.points ? 'good' : 'neutral',
+      };
     }
     return null;
   },
