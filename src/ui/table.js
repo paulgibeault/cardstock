@@ -43,6 +43,7 @@
 import { createState } from '../engine/state.js';
 import { makeCtx } from '../engine/context.js';
 import { validateMove, applyMove, legalMovesFor } from '../engine/movePipeline.js';
+import { forkState } from '../engine/fork.js';
 import { rehydrateMatch, packVersionChanged } from '../engine/replay.js';
 import { baseId } from '../engine/selectors.js';
 import { handValue } from '../engine/scoring.js';
@@ -104,6 +105,7 @@ import {
   showScoreboard, showGameOver, hideAllPanels, showRules, awaitFinalLook,
 } from './panels.js';
 import { packRules } from './rules.js';
+import { roundBeatPlan } from './roundBeat.js';
 import {
   rememberPack, loadSettings, saveMatch, loadMatch, clearMatch, recordForfeit,
   loadHandPrefs, saveHandPrefs,
@@ -2197,7 +2199,13 @@ function render(state, message) {
   session.enteringKeys = new Set();
   session.selection = pruneSelection(state, session.selection);
   const acting = actingSeatsOf(state);
-  const humanActs = acting.some(isMySeat);
+  // NOBODY ACTS DURING THE ROUND BEAT. The felt is holding the position the
+  // round ended in while the engine has already dealt the next one (see
+  // runRoundBeat), so a card offered here would belong to a position that no
+  // longer exists and tapping it would fail validation against the live state.
+  // The beat is a second or two and it ends in the summary, which is nobody's
+  // turn either.
+  const humanActs = acting.some(isMySeat) && !session.roundBeat;
   // A remote seat's move, a resumed match, a view swapped in: none of them
   // pass through applyStateChange, so the hint is dropped here as well the
   // moment the human is no longer the one acting.
@@ -2663,6 +2671,7 @@ async function endMatchFromSummary() {
   clearMatch(state.pack.id);
   recordForfeit(state.pack.id, session.seating);
   session.roundSummaryOpen = false;
+  session.roundBeat = false;
   hideRoundSummary();
   exitToLobby();
 }
@@ -2674,6 +2683,11 @@ function dismissRoundSummary() {
   // that any other code path hiding the overlay would silently erase.
   if (!session || !session.roundSummaryOpen || !liveState()) return;
   session.roundSummaryOpen = false;
+  // THIS IS WHERE THE NEXT HAND BECOMES VISIBLE. The engine dealt it inside the
+  // round-ending move; until this line the felt has been showing where the
+  // round ended (runRoundBeat), which is why the render below is the first
+  // sight of the new cards and why it deals them with the full stagger.
+  session.roundBeat = false;
   hideRoundSummary();
   session.dealAnimation = true;
   playDeal(liveState().seats);
@@ -2800,6 +2814,156 @@ function openScoreboard() {
 }
 
 /* ------------------------------------------------------------------ *
+ * The round ending, held on the felt
+ *
+ * WHY A SNAPSHOT AT ALL. The engine deals the next round inside the move that
+ * ends the old one (movePipeline's maybeFinishRound) and that is not
+ * negotiable — the redeal consumes seeded RNG, so a replay has to cross the
+ * boundary at exactly the same move. By the time `afterMove` runs there is no
+ * longer a position on the state that shows the hand that just finished: the
+ * zones are cleared, the turn has advanced, six new cards are in the hand. So
+ * the felt keeps its own copy of where the round ENDED and paints that, and the
+ * real state — which is the one that is saved, published and played on — waits
+ * behind the summary's Continue. WHEN THE FELT SHOWS THE DEAL, not when the
+ * engine makes it (issue #120).
+ * ------------------------------------------------------------------ */
+
+/**
+ * The position as it was before the move now being applied.
+ *
+ * Taken before EVERY local move rather than only the ones that end a round,
+ * because "does this move end the round" is a question only the engine can
+ * answer and only after the fact. A fork is array copies and a 52-entry Map
+ * (src/engine/fork.js); the bot makes hundreds of them per turn.
+ */
+let preMoveFork = null;
+
+function notePreMove(state) {
+  preMoveFork = state ? forkState(state) : null;
+}
+
+/**
+ * Where the round ENDED: the pre-move position with `move` applied to it and
+ * the round boundary deliberately not run.
+ *
+ * `template.applyMove` rather than the pipeline's `applyMove` is the whole
+ * trick, and it is a RENDERING decision rather than a rules one — the fork is a
+ * throwaway the engine has never heard of, it is never logged, saved or
+ * published, and the live state has already crossed the boundary for real.
+ * What comes back is the felt as the last card left it: the card on the pile it
+ * landed on, the trick still there to be gathered, cribbage's four hands and
+ * its crib turned face up in `show`.
+ *
+ * Null on the multiplayer path, where the host module applied the move before
+ * this device heard about it and there is no pre-move copy to advance. That
+ * degrades to what the felt did before: the hold still happens, the repaint
+ * still shows the fresh deal underneath it.
+ */
+function takeRoundFinal(move) {
+  const fork = preMoveFork;
+  preMoveFork = null;
+  if (!fork || !move) return null;
+  try {
+    fork.events.length = 0;
+    fork.pack.template.applyMove(makeCtx(fork), move);
+    return fork;
+  } catch {
+    // A template that cannot re-apply its own move is a bug worth surviving:
+    // the round is over either way and the felt falls back to the live state.
+    return null;
+  }
+}
+
+/**
+ * The same ending with the crib still face down.
+ *
+ * Cribbage turns the crib as part of the move that ends the hand — the reveal
+ * IS `moveCards crib -> show` (src/templates/cribbage.js) — so the ending
+ * position already has it face up. Posing it back is what makes the crib's step
+ * an actual turn on the felt rather than a caption on cards that have been
+ * sitting there through the other two counts.
+ */
+function posedForShow(finalState, plan) {
+  if (!plan.steps.some((s) => s.isCrib)) return finalState;
+  try {
+    const posed = forkState(finalState);
+    if (!posed.zones.has('show') || !posed.zones.has('crib')) return finalState;
+    const ids = posed.zones.cards('show').slice();
+    if (!ids.length) return finalState;
+    makeCtx(posed).moveCards(ids, 'show', 'crib');
+    return posed;
+  } catch {
+    return finalState;
+  }
+}
+
+/** Light the cards a step is counting, and only those. */
+function spotlightZone(address) {
+  for (const node of el.screen.querySelectorAll('.pile-stack--counting')) {
+    node.classList.remove('pile-stack--counting');
+  }
+  const node = address ? zoneStackNode(address) : null;
+  if (node) node.classList.add('pile-stack--counting');
+}
+
+/**
+ * One step of a show: whose count it is, what it is worth, and the cards.
+ *
+ * The sentence is the TEMPLATE's — cribbage already knows how to say "Your hand
+ * is worth 8" and gets the possessive right (`describeEvent`, and the
+ * possessive comment there is about this exact sentence). The event handed back
+ * to it is rebuilt from the step rather than kept, because `describeEvent`
+ * reads type/seat/isCrib/points and the step is those four things; the card ids
+ * are for the spotlight and do not belong in a sentence.
+ */
+function playShowStep(finalState, step) {
+  // The crib's step is the turn. Everything before it has been looking at the
+  // pose (posedForShow); this render is the four cards coming face up.
+  if (step.isCrib) render(finalState);
+  const said = finalState.pack.template.describeEvent?.(
+    { type: 'showScored', seat: step.seat, isCrib: step.isCrib, points: step.points },
+    { seatLabel, seatPossessive, viewerSeat: mySeat() },
+  );
+  const text = said?.text
+    || `${seatPossessive(step.seat)} ${step.isCrib ? 'crib' : 'hand'} is worth ${step.points}.`;
+  showBanner(text, said?.tone || (step.points ? 'good' : 'neutral'));
+  el.log.textContent = text;
+  pulseSeat(step.seat, step.points ? 'good' : 'neutral');
+  spotlightZone(step.isCrib ? 'show' : `play.${step.seat}`);
+}
+
+/**
+ * Run a round ending: hold the felt on it, walk the show, then open the sheet.
+ *
+ * NO SECOND ACKNOWLEDGEMENT. `awaitFinalLook` is the pattern (issue #120 says
+ * so) and this is deliberately not a second copy of it: the round summary IS
+ * the acknowledgement here — its Continue is the button that deals the next
+ * hand — so a Continue bar in front of it would be two clicks for one decision.
+ * What `awaitFinalLook` buys at match end, which is that the player decides
+ * when the ending stops being on screen, is bought here by the deal moving from
+ * `afterMove` to `dismissRoundSummary`. The felt holds, the sheet asks, and the
+ * new hand does not exist on screen until the player says go.
+ *
+ * @param state      the LIVE state — the one the summary reads its round number
+ *                   and totals from, and the one the next deal is already in
+ * @param finalState what the felt is showing: where the round ended
+ */
+function runRoundBeat(state, plan, finalState) {
+  const myEpoch = epoch;
+  for (const step of plan.steps) {
+    Arcade.session.setTimeout(() => {
+      if (myEpoch !== epoch || !session?.roundBeat) return;
+      playShowStep(finalState, step);
+    }, step.at);
+  }
+  Arcade.session.setTimeout(() => {
+    if (myEpoch !== epoch) return;
+    session.roundSummaryOpen = true;
+    showRoundSummary(state, plan.roundOver, session.seating);
+  }, plan.summaryAt);
+}
+
+/* ------------------------------------------------------------------ *
  * Applying moves
  * ------------------------------------------------------------------ */
 
@@ -2811,6 +2975,9 @@ function openScoreboard() {
 // announce themselves on state.events (src/engine/state.js), and 'recycled'
 // during a move IS the shuffle, whoever's move surfaced it.
 function applyStateChange(state, move, { far }) {
+  // BEFORE the engine sees it: if this move turns out to have ended the round,
+  // the position it ended in is gone the instant `applyMove` returns.
+  notePreMove(state);
   applyMove(state, move);
   // A hint is advice about the position that was; this move made it a
   // different one. Cleared before the render so nothing stale is painted.
@@ -2853,6 +3020,20 @@ function afterMove(state, move, from, message, { publish = true } = {}) {
   const passed = events.find((e) => e.type === 'cardsPassed');
   const roundOver = events.find((e) => e.type === 'roundOver' && !e.over);
 
+  // WHERE THE ROUND ENDED, claimed before anything can throw. `takeRoundFinal`
+  // consumes the pre-move snapshot whether or not it is wanted, so a fork is
+  // never left behind to be re-used by the next move.
+  const finalState = takeRoundFinal(roundOver ? move : null);
+  const plan = roundOver ? roundBeatPlan(events, {
+    flightMs: flightDurationMs(settings?.botDelayMs),
+    // No snapshot means no ending to pose or repaint, so the reveal degrades to
+    // the plain hold — the multiplayer path (afterRemoteMove).
+    narrate: !!finalState,
+  }) : null;
+  // What the felt paints. The LIVE state everywhere else: it is what is saved,
+  // what the summary reads, and what the next deal is already in.
+  const shown = (plan && finalState) ? posedForShow(finalState, plan) : state;
+
   if (state.gameOver) {
     // Recorded before the render, so the panel that is eventually built can
     // show the updated record — this game's counters are ours to display (§4:
@@ -2869,29 +3050,30 @@ function afterMove(state, move, from, message, { publish = true } = {}) {
   }
 
   if (passed && !message) message = 'Cards passed. Play!';
-  render(state, message);
-  animateMove(state, move, from);
-  if (trick) celebrateTrick(state, trick);
+  // SET BEFORE THE RENDER, because `render` reads it: while the felt is showing
+  // a position the engine has already moved past, nothing on it is actable.
+  if (plan) session.roundBeat = true;
+  render(shown, message);
+  animateMove(shown, move, from);
+  if (trick) celebrateTrick(shown, trick);
   // After the card has been seen to land, and only when a trick is not already
-  // holding the felt — two celebrations at once is neither.
-  const action = trick ? null : celebrateAction(state, events);
+  // holding the felt — two celebrations at once is neither. A show is the same
+  // rule again: its own steps are the narration, and the first `showScored`
+  // banner firing here would say pone's count over the last pegging card.
+  const action = (trick || plan?.steps.length) ? null : celebrateAction(shown, events);
   // The action is the better sentence: "Rook played." says less than nothing
   // next to "You draw 4 and lose your turn", and the log is the live region a
   // screen reader hears.
   if (action) el.log.textContent = action.text;
   persistMatch();
 
-  if (roundOver) {
-    // The engine has already dealt the next round beneath this move; the
-    // summary sits on top of the fresh deal and bot play waits for its
-    // dismissal. A beat of delay lets a closing trick's gather land first.
+  if (plan) {
+    // The engine has already dealt the next round beneath this move. The felt
+    // is holding the position it ended in; the summary opens over that, and the
+    // deal does not become visible until the summary is dismissed
+    // (dismissRoundSummary). Bot play already waits on `roundSummaryOpen`.
     cancelAnnouncementBeats();
-    const myEpoch = epoch;
-    Arcade.session.setTimeout(() => {
-      if (myEpoch !== epoch) return;
-      session.roundSummaryOpen = true;
-      showRoundSummary(state, roundOver, session.seating);
-    }, trick ? 900 : 250);
+    runRoundBeat(state, plan, finalState || state);
     return;
   }
 
@@ -3120,6 +3302,10 @@ function performAnnouncement(state, move, myEpoch = epoch) {
   // the target played. That is an ordinary outcome, not an error.
   if (!check.legal) return;
 
+  // An announcement can be the thing that ends the round (see the roundOver
+  // branch at the foot of this function), and if it is, the position it ended
+  // in is gone the instant applyMove returns.
+  notePreMove(state);
   applyMove(state, move);
   // An announcement IS a move — it has an actor, it goes through applyMove, it
   // lands in the log — so a party has to be told about it too. This path
@@ -3144,27 +3330,30 @@ function performAnnouncement(state, move, myEpoch = epoch) {
     showBanner(message, isMySeat(caught.target) ? 'bad' : 'good');
   }
 
-  render(state, message);
-  // After the render, so the hand the cards are flying INTO is the one on
-  // screen. A catch costs cards exactly the way a Draw 2 does, and it is the
-  // same flight for the same reason — the number in the banner is the whole
-  // point of the rule, and a number is not a thing you watch happen.
-  if (caught) animatePenaltyDraw(state, caught.target, caught.drew, 120);
-  persistMatch();
   // An announcement can end a round — a challenge penalty that empties the
   // draw pile, a declaration that is the last thing before somebody goes out —
   // and the summary is `afterMove`'s job, which this path deliberately does not
   // re-enter (re-scheduling the turn would restart a bot's think time every
   // time anybody spoke). So the ONE thing it has to notice for itself is that.
   const roundOver = state.events.find((e) => e.type === 'roundOver' && !e.over);
-  if (roundOver) {
+  const finalState = takeRoundFinal(roundOver ? move : null);
+  const plan = roundOver ? roundBeatPlan(state.events, {
+    flightMs: flightDurationMs(settings?.botDelayMs),
+    narrate: !!finalState,
+  }) : null;
+  if (plan) session.roundBeat = true;
+
+  render(plan && finalState ? finalState : state, message);
+  // After the render, so the hand the cards are flying INTO is the one on
+  // screen. A catch costs cards exactly the way a Draw 2 does, and it is the
+  // same flight for the same reason — the number in the banner is the whole
+  // point of the rule, and a number is not a thing you watch happen.
+  if (caught) animatePenaltyDraw(state, caught.target, caught.drew, 120);
+  persistMatch();
+
+  if (plan) {
     cancelAnnouncementBeats();
-    const beatEpoch = epoch;
-    Arcade.session.setTimeout(() => {
-      if (beatEpoch !== epoch) return;
-      session.roundSummaryOpen = true;
-      showRoundSummary(state, roundOver, session.seating);
-    }, 250);
+    runRoundBeat(state, plan, finalState || state);
     return;
   }
   scheduleAnnouncementBeats();
@@ -3216,6 +3405,9 @@ function adoptMatch(pack, state, message, {
 } = {}) {
   epoch += 1;
   stopSession(session);
+  // A pre-move copy belongs to the match it was taken in, and this is a
+  // different one (see notePreMove).
+  preMoveFork = null;
   if (drag) drag.cancel();
   session = createSession({
     pack,
@@ -3559,6 +3751,7 @@ export function closeTable() {
   // in adoptMatch.
   hideBanner();
   stopSession(session);
+  preMoveFork = null;
   session = null;
   hideAllPanels();
   if (ladder) ladder.hide();
