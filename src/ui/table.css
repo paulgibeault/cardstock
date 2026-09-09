@@ -1508,12 +1508,22 @@ body {
   --board-street-ink: rgba(20, 38, 28, 0.5);
 }
 
-/* Phones: the name gives up a third of its room before the road does. A lane
-   is read by its coloured mark first — the same mark the seat plate wears — so
-   what a narrow screen spends on four more letters of a name it is taking
-   directly off the thing the component exists to draw. Measured at 375x812:
-   4.2rem of name leaves a 188px road, 2.6rem leaves 223px. */
-@media (max-width: 420px) {
+/* A NARROW BOARD, NOT A NARROW WINDOW, and the difference is the whole reason
+   this is a container query. Because the board sits beside the piles wherever
+   the row can hold it, its width is not a function of the viewport's: at
+   1280x860 it is 608px, at 820x860 it is 334px BESIDE the piles, and at
+   768x1024 it is 608px again UNDERNEATH them. A viewport breakpoint would
+   dress the 608px board at 768 as though it were the 334px one.
+
+   What gives way is the name. A lane is read by its coloured mark first — the
+   same mark the seat plate and the trick's owner tags wear — so what a cramped
+   board spends on four more letters it is taking directly off the thing the
+   component exists to draw, and the name is on the lane's accessible name
+   either way. Measured: at 375x812 this takes the road from 188px to 223px,
+   and at 820x860 from 187px to 220px. */
+#table-board { container-type: inline-size; container-name: board; }
+
+@container board (max-width: 430px) {
   .board {
     --board-name: 2.6rem;
     --board-value: 1.6rem;
