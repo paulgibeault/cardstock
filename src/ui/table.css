@@ -1821,6 +1821,130 @@ body {
 }
 #player-piles:empty { display: none; }
 
+/* THE PILES AND THE TRAY SHARE A ROW ON A SHORT WINDOW (#137).
+ *
+ * The felt is a stack of bands and it was taller than the window for the whole
+ * of a staging phase: at 1280x860 Cribbage's crib discard measured 931px of
+ * #table-screen against 860 of viewport and Pinochle's meld declaration 921,
+ * so the hand sat below the fold and the first pick SCROLLED the felt under
+ * the finger that made it. Two of those bands are the same thing said twice —
+ * #player-piles is "yours, above the hand" and so is #stage-row — and on a
+ * window with width to spare they fit side by side. Sharing the row gives back
+ * the shorter band plus the gap above it: 931 -> 860 and 921 -> 860, both
+ * inside the window with 61px going back to #felt-middle.
+ *
+ * MEASURED AGAINST THE OTHER TWO CANDIDATES, not chosen. Shrinking the empty
+ * slot fits the felt (860) but the first staged card then grows the row and
+ * shoves the fan 71px down the table — the exact thing #stage-row's own note
+ * forbids, reproduced. Stepping the felt's gaps and padding down is not enough
+ * on its own: 0.625rem/0.75rem/0.5rem still leaves Cribbage 20px over, and the
+ * depth that does fit (0.375rem gaps, a 4px margin) is TIGHTER THAN THE 660px
+ * BLOCK at the bottom of this sheet, which would invert the ladder's
+ * "each block below is a tighter constraint" rule for every pack at every
+ * short window, to buy one phase 71px.
+ *
+ * THE PILES KEEP THE FELT'S CENTRE LINE. A pile is a place on the table and a
+ * place does not move because something landed on it (see .pile-stack--overlap
+ * above) — so the piles sit in a centre column with equal 1fr gutters either
+ * side, and the tray lives in the right-hand one. Centring the two as one
+ * group instead was measured and rejected: the empty tray's 8rem minimum is
+ * wider than the one card that replaces it, so the first pick slid the piles
+ * 21px sideways. The tray takes the handed side, the same side as the button
+ * that commits it.
+ *
+ * `display: contents` is the resting state, so the wrapper has no box and the
+ * felt's flex column is byte-identical to what it was at every other size —
+ * 375x812 included, which is the size this pass must not touch.
+ *
+ * THE ONE CONDITION IS THE PILES, AND IT ASKS WHETHER THEY DRAW ANYTHING. A
+ * pack with nothing above the hand has no centre column to sit beside, and a
+ * lone tray sent to a gutter reads as a tray shoved into a corner — measured
+ * on Milestones, whose tray moved 318px off the felt's centre line before this
+ * condition was tightened. `#player-piles:empty` is not the question: it is
+ * `:empty` only for the hand-only packs (Thirteen, Wildfire, Crazy Eights),
+ * while Milestones keeps a `.meld-strip` in it from the deal that is 0x0 until
+ * something is laid down. So `:has` asks for a child that is itself not empty,
+ * which is true of a pile, a my-seat strip and a meld strip with chips in it,
+ * and false of the placeholder. A hidden TRAY needs no condition of its own:
+ * the piles are in the centre column either way, so the felt looks the same
+ * whether the phase gathers or not.
+ *
+ * The height gate is where the overflow is, measured pack by pack: the felt
+ * fits unaided at 800px and below (the `max-height: 800px` block already
+ * spends the gaps and the card size on it) and again from about 1056px up,
+ * where the window is finally taller than the bands; in between, Cribbage is
+ * over by 87px at 820 falling to 3px at 1050. Above the gate the row would
+ * cost a band of height nothing needs and hand it to the middle as empty
+ * green, so it stays a stack there. */
+#player-row { display: contents; }
+
+@media (min-width: 721px) and (max-height: 1060px) {
+  #player-row:has(> #player-piles > :not(:empty)) {
+    display: grid;
+    /* Equal gutters, so the centre column is centred on the felt however wide
+       the tray in the one beside it grows. */
+    grid-template-columns: 1fr auto 1fr;
+    align-items: end;
+    /* The felt's own gap, for the announce and emote bars when they show. */
+    row-gap: 1rem;
+    column-gap: clamp(0.7rem, 2.5vw, 1.6rem);
+  }
+  /* These three are written unguarded on purpose: `grid-column` does nothing
+     at all to a flex item, so they are inert in the resting `display: contents`
+     state and there is no second copy of the selector above to keep in step
+     with it. `order` is NOT one of them — flex honours it — so the left-handed
+     rule below carries the guard. */
+  /* A line of their own, above the piles, exactly where they were in the
+     stack. Auto-placement then puts the piles on the next line and the tray
+     beside them, so a bar appearing does not change what shares a row. */
+  #player-row > #announce-bar,
+  #player-row > #emote-bar { grid-column: 1 / -1; }
+  #player-row > #player-piles { grid-column: 2; }
+  /* Stretched across its gutter rather than sized to its contents, which is
+     what lets the tray inside it shrink instead of wrap (below) — and it means
+     the tray grows out from the gutter's centre, a point that does not move,
+     rather than from an edge. */
+  #player-row > #stage-row { grid-column: 3; }
+  /* Handedness: the tray belongs on the side the thumb and the commit button
+     are already on. Column 1 rather than 3 — and `order` puts it before the
+     piles so grid's placement cursor, which only ever moves forward, still
+     lands the pair on one line. */
+  [data-handedness="left"] #player-row:has(> #player-piles > :not(:empty)) > #stage-row {
+    grid-column: 1;
+    order: -1;
+  }
+
+  /* THE TRAY KEEPS ONE LINE, AND BUYS IT FROM THE CARDS.
+     A gutter is narrower than the whole felt, and the tray takes whatever a
+     pack lets a player gather — Pinochle's Declare accepts anything from one
+     card to a whole twelve-card hand, measured. Left to wrap, the tray grew a
+     third line at the ninth card, the row grew past what #felt-middle could
+     give back, and the felt jumped 100px with the hand on it: the same sin in
+     the same place, moved from the first pick to the ninth.
+     So in the shared row the tray does not wrap — it narrows its cards, which
+     is the trade the `max-height: 660px` block at the foot of this sheet
+     already makes for this exact element ("smaller cards here, not a
+     collapsing row"). It is a continuous one: six staged cards are still a
+     full 74px at 1280, and five are 67px at 1041; nothing on the felt moves at
+     any count, at any width the gate lets in. */
+  #player-row:has(> #player-piles > :not(:empty)) > #stage-row #stage-tray {
+    flex-wrap: nowrap;
+  }
+  /* This is the whole mechanism: a flex item's automatic minimum is its
+     min-content, and a card's min-content is the card. Zeroed here (and only
+     here) the row of them can be shrunk to the gutter. The tray keeps its own
+     `min-width` rules, so an EMPTY tray is still the 8rem dashed outline that
+     says "cards go here". */
+  #player-row:has(> #player-piles > :not(:empty)) > #stage-row .stage-card {
+    min-width: 0;
+  }
+  /* The wrapper is what shrinks; the card follows it and keeps its aspect from
+     its own viewBox. */
+  #player-row:has(> #player-piles > :not(:empty)) > #stage-row .stage-card .card-face {
+    max-width: 100%;
+  }
+}
+
 .pile { text-align: center; }
 
 /* YOUR OWN SEAT'S NUMBERS (#123).

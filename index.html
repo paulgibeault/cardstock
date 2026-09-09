@@ -204,31 +204,41 @@
         </div>
       </div>
 
-      <!-- The human's own piles beyond the hand: a Stockpile stock and
-           discards, Milestones melds, a Hearts won pile. Empty (and
-           collapsed) for packs whose only personal zone is the hand. -->
-      <div id="player-piles"></div>
+      <!-- YOUR OWN BAND OF THE FELT: the piles that are yours and the tray you
+           gather into, which on a short window share one row instead of taking
+           two (#137). A plain wrapper with `display: contents` everywhere else,
+           so the felt's flex column is exactly what it was — the row only forms
+           where the sheet says so, and only when both halves are really there.
+           #announce-bar and #emote-bar are inside it to keep the reading order
+           they had; each takes a full line of the row when it is showing. -->
+      <div id="player-row">
+        <!-- The human's own piles beyond the hand: a Stockpile stock and
+             discards, Milestones melds, a Hearts won pile. Empty (and
+             collapsed) for packs whose only personal zone is the hand. -->
+        <div id="player-piles"></div>
 
-      <!-- Out-of-turn declarations: "Last card!", and whatever else a pack's
-           `announcements` block offers (§E2). Separate from the action bar
-           because these are legal when it is NOT your turn, which is the whole
-           point of them — and the labels come from the pack, not from here. -->
-      <div id="announce-bar" hidden></div>
+        <!-- Out-of-turn declarations: "Last card!", and whatever else a pack's
+             `announcements` block offers (§E2). Separate from the action bar
+             because these are legal when it is NOT your turn, which is the
+             whole point of them — and the labels come from the pack, not from
+             here. -->
+        <div id="announce-bar" hidden></div>
 
-      <!-- A fixed set of eight, indexed on the wire (src/match/protocol.js).
-           There is no free-text channel at this table on purpose: free text is
-           a moderation problem, a localisation problem and an XSS surface, and
-           the whole feature is "let them know you saw that". -->
-      <div id="emote-bar" class="emote-bar" hidden></div>
+        <!-- A fixed set of eight, indexed on the wire (src/match/protocol.js).
+             There is no free-text channel at this table on purpose: free text
+             is a moderation problem, a localisation problem and an XSS surface,
+             and the whole feature is "let them know you saw that". -->
+        <div id="emote-bar" class="emote-bar" hidden></div>
 
-      <!-- Cards you have picked out but not yet committed — a meld you are
-           assembling, the three you are about to pass. They leave the fan and
-           wait here, which is what makes the next pick easier: the fan opens
-           up as it empties, and what you have gathered so far is legible at
-           full size instead of being read off slivers. A VIEW of the
-           selection, never state of its own (renderStageTray). -->
-      <div id="stage-row" hidden>
-        <div id="stage-tray" role="group"></div>
+        <!-- Cards you have picked out but not yet committed — a meld you are
+             assembling, the three you are about to pass. They leave the fan and
+             wait here, which is what makes the next pick easier: the fan opens
+             up as it empties, and what you have gathered so far is legible at
+             full size instead of being read off slivers. A VIEW of the
+             selection, never state of its own (renderStageTray). -->
+        <div id="stage-row" hidden>
+          <div id="stage-tray" role="group"></div>
+        </div>
       </div>
 
       <!-- THE RAIL, and why nothing stands above the hand any more.

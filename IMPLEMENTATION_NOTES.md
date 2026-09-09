@@ -2516,6 +2516,155 @@ and `node tools/simulate.mjs cribbage --games=150` is 150 completed / 0 stalled
 longer does at any of them, because the human's empty "Played 0" pile was the
 row above the hand during that phase and there is no such pile now. That is a
 side effect, not a fix — #137 should re-measure rather than assume its numbers.
+## Your piles and your tray share a row (#137)
+
+### What was wrong
+
+The felt is a stack of bands and it was taller than the window for the whole
+of a staging phase. At 1280x860, measured on v0.1.62: Cribbage's crib discard
+`#table-screen.scrollHeight` 931 against 860 of viewport, Pinochle's meld
+declaration 921, Hearts' passing 885. The hand sat below the fold, and because
+the screen could scroll, clicking the first card scrolled it — every band on
+the felt moved up by 14px on Cribbage and 4px on Pinochle with no band changing
+height, which is the signature of a scroll rather than a reflow. So the
+"nothing moves on the first pick" promise was already broken here, by the
+overflow itself.
+
+The bands, Cribbage: status 50, seats 163, middle 172, `#player-piles` 160,
+`#stage-row` 117, hand 123, plus four 1rem gaps, 1.25rem of padding and a
+0.85rem margin. It is not the polish stack's doing — #123's BID/BAGS strip and
+#125's Won caption added 12–35px to a felt that was already 60 over — and it
+is not the cards: `--hand-card-w` is `clamp(70px, 8.6vh, 104px)`, which at
+860px tall is 74px, close enough to its floor that shrinking them is not a
+lever. Swept across viewport heights, the felt overflows from 801px (below
+that the `max-height: 800px` block already spends the gaps and the card size
+on it) to about 1056px, worst at the bottom of the band: Cribbage is 87px over
+at 820 and still 3px over at 1050.
+
+### The three candidates, measured
+
+The issue named three and asked for measurements rather than taste. All three
+were injected into the running felt and re-measured at 1280x860 and 1041x860.
+
+**Shrinking the reserved slot while the tray is `--empty`** fits the felt —
+860 exactly — and then shoves the fan 71px DOWN the table when the first card
+lands in the tray, putting the felt straight back to 931. The slot is already
+one card plus the tray's padding, so "shrink it" can only mean reserving less
+than the tray will need, and the issue's own precondition ("only if the fan
+provably does not move on the first pick") is what rules it out. Reproduced,
+not assumed.
+
+**Stepping `#table`'s gaps and padding down** is short. At 0.625rem gaps with
+0.75rem padding and a 0.5rem margin, Cribbage is still 20px over and Pinochle
+4px. The depth that does fit — 0.375rem gaps, 0.5rem padding, a 4px margin — is
+tighter than the `max-height: 660px` block at the foot of the sheet, which
+would invert that ladder's "each block below is a tighter constraint" rule for
+every pack at every short window, to buy one phase 71px.
+
+**Letting the tray share `#player-piles`' row** gives back the shorter of the
+two bands and the gap above it. 931 -> 860 and 921 -> 860, both exactly the
+window, with 61px handed back to `#felt-middle`. It is the only one of the
+three that fits, and it fits with room.
+
+### What changed
+
+**A wrapper, `display: contents` at rest.** `#player-piles`, `#announce-bar`,
+`#emote-bar` and `#stage-row` are now children of `#player-row` in index.html.
+With `display: contents` the wrapper has no box at all and they are still
+direct flex items of `#table` with `#table`'s own gap between them — which is
+why every size the row does not apply to is byte-identical rather than merely
+similar. At 375x812 all nine packs agree with main on 195 of 198 geometry
+fields, and the three that differ are `#center-piles`' own box on Thirteen and
+Cribbage, which changes with the number of cards in the trick and the crib at
+the moment of the snapshot and differs the same way between two runs of the
+SAME server. `#player-row` computes to `contents` on every pack at 375.
+
+**A grid, gated on width and height.** `(min-width: 721px) and (max-height:
+1060px)`: the width is the sheet's own "narrow" boundary, above which the felt
+is not in its tablet mode, and the height is where the overflow measurably
+stops. Above the gate the row would cost a band of height nothing needs and
+hand it to `#felt-middle` as more empty green, which is #136's complaint, so
+the felt stays a stack there.
+
+**The piles keep the felt's centre line.** They sit in the middle column of a
+`1fr auto 1fr` template and the tray lives in a gutter. Centring the pair as
+one group — the obvious first cut — was measured and rejected: an empty tray's
+`min-width: 8rem` is wider than the one card that replaces it, so the first
+pick slid the piles 21px sideways, which is the horizontal version of the bug
+this whole pass is about. In the grid the piles' rect is byte-identical from
+an empty tray through twelve staged cards, at every width tested. The tray
+takes the handed side; left-handed puts it in column 1 with `order: -1`,
+because grid's placement cursor only moves forward and would otherwise drop it
+onto the next line.
+
+**The tray in the gutter narrows its cards instead of wrapping.** A gutter is
+narrower than the felt, and Pinochle's Declare accepts any stage from one card
+to a whole twelve-card hand — checked, every count from 1 to 12 offers the
+button. Left to wrap, the tray took a third line at the ninth card, the row
+grew past what `#felt-middle` had to give, and the felt jumped 100px with the
+hand on it: the same sin in the same place, moved from the first pick to the
+ninth. So `#stage-tray` is `nowrap` in the shared row and `.stage-card` gets
+`min-width: 0`, which is the whole mechanism — a flex item's automatic minimum
+is its content, and zeroing it lets the row of cards be shrunk to the gutter.
+This is the trade the `max-height: 660px` block already makes for this exact
+element ("smaller cards here, not a collapsing row"), and it is continuous: at
+1280 six staged cards are still 74px each, at 1041 five are 67px and six are
+55px. Nothing on the felt moves at any count, at any width.
+
+**The condition is that the piles DRAW something, not that they exist.**
+`#player-piles:empty` is true only for the hand-only packs; Milestones keeps a
+`.meld-strip` in it from the deal that measures 0x0 until a meld is laid down,
+so the first cut formed a row around nothing and sent Milestones' tray 318px
+off centre into an empty gutter. `:has(> #player-piles > :not(:empty))` asks
+for a child that is itself not empty — a pile, a my-seat strip, a meld strip
+with chips in it — and Milestones is back on `contents` with its tray at 640.
+A hidden tray needs no condition of its own: the piles are in the centre column
+either way.
+
+### How it was verified
+
+Two dev servers, this branch and its base, driven by the same probes.
+Cribbage's crib discard and Pinochle's meld declaration both go **931/921 ->
+860 at 1280x860 and at 1041x860**, `scrollHeight === innerHeight` in all four,
+and `#hand-row`'s rect is byte-identical before and after the first staged card
+with `scrollTop` 0 on both sides — where on the base every band moved 14px and
+4px. Hearts' passing phase comes along for the ride, 885 -> 860.
+
+All nine packs boot clean at 375x812 and 1280x860, no page errors and no
+console errors, seats rendered. At 1280x860 nothing else moved: Thirteen,
+Wildfire, Crazy Eights and Milestones stay on `contents`; Team Spades,
+Pinochle and Stockpile take the grid outside their staging phases and report
+the same `scrollHeight` as the base, Stockpile included at its pre-existing
+863 (it declares no staging, and its 3px is not this issue's).
+
+Held at twelve staged cards — the largest stage Pinochle allows — at 1280,
+1041, 900, 760 and 721 wide: `scrollHeight` 860 at every count at every width,
+`#player-piles` byte-identical throughout, `#hand-row` byte-identical until the
+hand is actually empty. Without the `nowrap`/`min-width: 0` pair the same run
+reads 860 -> 961 -> 1070.
+
+`npm test` 822 pass / 0 fail; `node tools/pack-test.mjs --all` all nine packs
+0 failed. `tests/stagingRow.test.js` is a markup-and-stylesheet gate — there is
+no DOM in `npm test` — and each of its five was broken on purpose and each went
+red: `#stage-row` pulled back out of the wrapper, the resting state changed to
+`display: flex`, the gate dropped to a phone width, the gutters made `1fr auto
+2fr`, the tray allowed to wrap, and `.stage-card`'s minimum returned to `auto`.
+Both files restored from scratch copies to the same md5 they started with, and
+the gate went green again. No JS was edited, so there is nothing for
+`node --check`.
+
+**Not done, and why.** Stockpile is 3px over at 1280x860 before and after. It
+has no staging phase, so this row is not its lever; its `#player-piles` is a
+five-pile 575px row 224px tall and that is what does not fit. Left alone. The
+tray's cards do narrow when a gutter is crowded, which is a real cost to the
+"gathered cards are readable at full size" promise, and it is steepest on the
+narrowest windows the gate lets in: five staged cards are 74px at 1280, 67px
+at 1041 and 37px at 721. The alternative shapes were measured and are all
+worse — a wrapping tray moves the felt, a group-centred row moves the piles,
+and giving the tray the middle with the piles in a gutter parks your own piles
+against the felt's edge for the whole game. If it wants a floor later, the
+place to put one is a `--stage-card-w` that this rule and the 660px block both
+read.
 
 ## Next steps
 
