@@ -23,6 +23,7 @@ import assert from "node:assert";
 
 import {
   roundBeatPlan, showSteps, MIN_HOLD_MS, MIN_TRICK_HOLD_MS, SHOW_STEP_MS,
+  trickRevealPlan, MIN_TRICK_REVEAL_MS, READ_AFTER_LANDING_MS,
 } from "../src/ui/roundBeat.js";
 
 /** A cribbage show as `theShow` emits it: pone, dealer, then the crib. */
@@ -163,4 +164,72 @@ test("a show step survives an event with no card ids", () => {
   assert.equal(steps.length, 1);
   assert.deepEqual(steps[0].cards, []);
   assert.equal(steps[0].points, 6);
+});
+
+/* ------------------------------------------------------------------ *
+ * THE TRICK REVEAL (issue #123)
+ * ------------------------------------------------------------------ *
+ *
+ * The same bug one move smaller, and found the same way: driven frame by frame
+ * on unmodified main, the trick pile went 1 → 2 → 3 → 0 across six consecutive
+ * tricks, because the fourth card is played and all four are swept into the
+ * winner's pile inside one `applyMove`. The deciding card — usually the one
+ * that settles who wins — was never on the felt as a rendered card.
+ *
+ * What is testable without a browser is again the arithmetic: how long the four
+ * cards stay whole, measured so that the beat begins when the LAST OF THEM
+ * LANDS rather than when the move returned.
+ */
+
+test("an ordinary play gets no reveal", () => {
+  assert.equal(trickRevealPlan([{ type: 'bidMade', seat: 1, bid: 3 }]), null);
+  assert.equal(trickRevealPlan([]), null);
+  assert.equal(trickRevealPlan(undefined), null);
+});
+
+test("a gathered trick is held, and the plan names the seat taking it", () => {
+  const plan = trickRevealPlan([{ type: 'trickWon', seat: 2, points: 0, cards: ['h-2', 'h-9', 'h-K', 'h-A'] }],
+    { flightMs: 0 });
+  assert.equal(plan.trick.seat, 2);
+  assert.equal(plan.holdMs, MIN_TRICK_REVEAL_MS);
+});
+
+// THE FLIGHT IS INSIDE THE HOLD, and this is the assertion that says so. A flat
+// hold spent itself watching the fourth card arrive: measured on the felt at
+// the default 420ms flight, the first cut of this fix showed four cards for
+// 283ms of its 700. Every flight has to leave the whole reading time behind it.
+test("the reading time survives a slow flight", () => {
+  const trick = [{ type: 'trickWon', seat: 0, points: 3, cards: [] }];
+  for (const flightMs of [0, 260, 420, 700, 1200]) {
+    const plan = trickRevealPlan(trick, { flightMs });
+    assert.ok(plan.holdMs - flightMs >= READ_AFTER_LANDING_MS,
+      `at a ${flightMs}ms flight the hold leaves only ${plan.holdMs - flightMs}ms to read four cards`);
+  }
+});
+
+// No pre-move snapshot means no position with four cards on it to pose — the
+// multiplayer path, where the host applied the move before this device heard
+// about it. The gather then happens exactly as it always did.
+test("without a pose there is nothing to hold", () => {
+  const trick = [{ type: 'trickWon', seat: 1, points: 0, cards: [] }];
+  assert.equal(trickRevealPlan(trick, { flightMs: 420, posed: false }), null);
+  assert.ok(trickRevealPlan(trick, { flightMs: 420, posed: true }));
+});
+
+// The round beat's own arithmetic is unchanged by any of this: a reveal is a
+// DELAY IN FRONT of it (src/ui/table.js runs one and then the other), not a
+// term inside it, so the hand that ends on a trick is still held for the gather
+// and its summary still opens last.
+test("the round beat's schedule is untouched by the trick reveal", () => {
+  const events = [
+    { type: 'trickWon', seat: 3, points: 0, cards: [] },
+    { type: 'roundOver', round: 4, scores: {}, totals: [90, 120], over: false },
+  ];
+  const plan = roundBeatPlan(events, { flightMs: 420 });
+  // The gather's own allowance, exactly as #120 set it: the last of four
+  // staggered copies is in the air until flight + 640.
+  assert.equal(plan.holdMs, Math.max(MIN_TRICK_HOLD_MS, 420 + 640));
+  assert.equal(roundBeatPlan(events, { flightMs: 200 }).holdMs, MIN_TRICK_HOLD_MS);
+  assert.equal(plan.summaryAt, plan.holdMs);
+  assert.ok(plan.gathered);
 });

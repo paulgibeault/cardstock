@@ -101,6 +101,18 @@ export function createSession({ pack, state, seats, seating, cardArt, handPrefs,
     // A throwaway `forkState` copy, never logged, saved or published.
     roundFinalState: null,
 
+    // THE SAME IDEA, ONE MOVE SMALLER (#123). A trick is completed and gathered
+    // inside a single move, so the position with all four cards on the table
+    // existed only inside `applyMove`. `{ seat }` — who is about to take
+    // it — while the felt holds that position; null the rest of the time.
+    // Nothing is actable while it is set, for the same reason `roundBeat`
+    // offers nothing: the engine has moved past what is on screen.
+    trickBeat: null,
+    // The posed position itself: a throwaway `forkState` copy with the move's
+    // placement applied and its consequences deliberately not run
+    // (`template.poseMove`). Never logged, saved or published.
+    trickPoseState: null,
+
     // Which collapsed seat the player has PICKED to open, or null to let the
     // plate follow whoever is playing. The opponent row is rebuilt wholesale on
     // every render, so an open plate cannot live in the DOM alone — a bot

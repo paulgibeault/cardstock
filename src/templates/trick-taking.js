@@ -1472,7 +1472,18 @@ function resolveTrick(ctx) {
   ctx.setTurnSeat(winnerSeat);
 }
 
-function applyPlayCard(ctx, move) {
+/**
+ * THE CARD ON THE TABLE, and nothing that follows from it.
+ *
+ * Split out of applyPlayCard because the felt needs this half on its own: the
+ * fourth card of a trick is played and the trick is swept in the same move, so
+ * the only position in which four cards are on the table is the one BETWEEN
+ * these two statements, and before this split there was no way to ask for it
+ * (see `poseMove` below and issue #123). Everything here is the placement — the
+ * card, what it led, what it broke — and everything the placement CAUSES stays
+ * with the caller.
+ */
+function placeCard(ctx, move) {
   const seat = move.actor;
   const cardId = move.cards[0];
   const card = ctx.cardById(cardId);
@@ -1487,9 +1498,13 @@ function applyPlayCard(ctx, move) {
 
   const broken = breakingSelectorAndVar(ctx);
   if (broken && selectorMatches(card, broken.selector)) ctx.setVar(broken.varName, true);
+}
+
+function applyPlayCard(ctx, move) {
+  placeCard(ctx, move);
 
   if (ctx.countIn('trick') === ctx.seats) resolveTrick(ctx);
-  else ctx.setTurnSeat(ctx.nextSeat(seat));
+  else ctx.setTurnSeat(ctx.nextSeat(move.actor));
 }
 
 function passTarget(ctx, seat, direction) {
@@ -1765,6 +1780,37 @@ const trickTaking = {
     else if (move.type === 'passCards') applyPassCards(ctx, move);
     else if (move.type === 'bid') applyBid(ctx, move);
     else if (move.type === 'declareMeld') applyDeclareMeld(ctx, move);
+  },
+
+  /**
+   * THE POSITION THIS MOVE PASSES THROUGH: four cards on the table, before the
+   * hand that won them takes them away.
+   *
+   * A trick is completed and gathered inside one move — `applyPlayCard` plays
+   * the fourth card and `resolveTrick` sweeps all four into the winner's pile
+   * before `applyMove` returns — which is correct and is not negotiable: a
+   * replay has to reach the same position at the same move. What was wrong was
+   * that the FELT had nothing else to paint, so the deciding card, usually the
+   * one that settles who wins, was never once on screen as a rendered card
+   * (issue #123: the pile went 1, 2, 3, then 0).
+   *
+   * So the felt asks for the half-move. Called by src/ui/table.js on a
+   * THROWAWAY fork of the pre-move state — never on the live state, never
+   * logged, saved or published, exactly as `takeRoundFinal` uses
+   * `applyMove` — and answering true means "this fork is a position worth
+   * holding for a beat before the real one". Answering false leaves the fork to
+   * be discarded, so a partially-applied move can never be mistaken for a
+   * played one.
+   *
+   * ONLY A COMPLETED TRICK. A first, second or third card lands on a trick that
+   * stays on the table anyway; there is nothing to hold, and posing every play
+   * would put a beat between every card and the next.
+   */
+  poseMove(ctx, move) {
+    if (move?.type !== 'playCard' || ctx.turn.phase !== 'play') return false;
+    if (ctx.countIn('trick') + 1 !== ctx.seats) return false;
+    placeCard(ctx, move);
+    return true;
   },
 
   enumerateLegalMoves(ctx, seat) {

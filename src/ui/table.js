@@ -105,7 +105,7 @@ import {
   showScoreboard, showGameOver, hideAllPanels, showRules, awaitFinalLook,
 } from './panels.js';
 import { packRules } from './rules.js';
-import { roundBeatPlan } from './roundBeat.js';
+import { roundBeatPlan, trickRevealPlan } from './roundBeat.js';
 import {
   rememberPack, loadSettings, saveMatch, loadMatch, clearMatch, recordForfeit,
   loadHandPrefs, saveHandPrefs,
@@ -367,7 +367,12 @@ function livePack() {
  * the phone.
  */
 function feltState() {
-  return (session?.roundBeat && session.roundFinalState) || liveState();
+  // The trick reveal is the same idea one move smaller (#123): for one beat the
+  // felt holds the four cards of a completed trick while the engine has already
+  // given them to the seat that won them.
+  return (session?.trickBeat && session.trickPoseState)
+    || (session?.roundBeat && session.roundFinalState)
+    || liveState();
 }
 
 /**
@@ -2102,8 +2107,9 @@ function renderRail(state, ui, humanActs) {
 function renderStatusBar(state, acting) {
   el.statusText.textContent = statusTextFor(state, acting);
   // `session.roundBeat` for the same reason `render` reads it: while the felt
-  // holds a finished hand, nobody is on turn and the bar must not say so.
-  const humanActs = acting.some(isMySeat) && !session?.roundBeat;
+  // holds a finished hand, nobody is on turn and the bar must not say so. A
+  // trick reveal is the same claim for one beat (#123).
+  const humanActs = acting.some(isMySeat) && !session?.roundBeat && !session?.trickBeat;
   el.status.classList.toggle('status-bar--your-turn', humanActs);
   el.status.classList.toggle('status-bar--thinking', !state.gameOver && !humanActs);
 
@@ -2131,6 +2137,13 @@ function statusTextFor(state, acting) {
   // "Your turn" over a table where the player's hand was empty and nothing was
   // tappable. It is not a turn; it is the end of the hand.
   if (session?.roundBeat) return 'Round over.';
+  // THE TRICK BEAT IS NOBODY'S TURN EITHER (#123). The posed position's `turn`
+  // is still on whoever played the fourth card — the trick has not been
+  // resolved on this copy — so the bar would read "Your turn" over four cards
+  // that are about to be swept and a hand that cannot be played from. It says
+  // who is taking them instead, which is the question the beat exists to
+  // answer.
+  if (session?.trickBeat) return `${seatPossessive(session.trickBeat.seat)} trick.`;
   if (state.turn.phase === 'bid') {
     // The bid goes round the table one seat at a time, so "whose turn" is
     // already the right sentence — what this adds is WHICH KIND of turn, which
@@ -2226,8 +2239,10 @@ function render(state, message) {
   // runRoundBeat), so a card offered here would belong to a position that no
   // longer exists and tapping it would fail validation against the live state.
   // The beat is a second or two and it ends in the summary, which is nobody's
-  // turn either.
-  const humanActs = acting.some(isMySeat) && !session.roundBeat;
+  // turn either. A trick reveal (#123) is the same claim for one beat: the
+  // posed position still has the fourth player on turn because the trick has
+  // not been resolved on that copy, and their hand must not answer a tap.
+  const humanActs = acting.some(isMySeat) && !session.roundBeat && !session.trickBeat;
   // A remote seat's move, a resumed match, a view swapped in: none of them
   // pass through applyStateChange, so the hint is dropped here as well the
   // moment the human is no longer the one acting.
@@ -2899,6 +2914,54 @@ function takeRoundFinal(move) {
 }
 
 /**
+ * The position the move passes THROUGH, when the template says it has one.
+ *
+ * The trick reveal's half of the pre-move fork (#123), and deliberately a fork
+ * OF the fork: `takeRoundFinal` still wants the untouched pre-move copy a line
+ * later, because the last trick of a hand needs both — the four cards on the
+ * table, and then the position the round ended in.
+ *
+ * `template.poseMove` answering false means there is nothing to hold and the
+ * half-applied copy is dropped on the floor, which is the only safe thing to do
+ * with it: it is a move that has been half made.
+ */
+function takeTrickPose(move) {
+  if (!preMoveFork || !move) return null;
+  try {
+    const posed = forkState(preMoveFork);
+    posed.events.length = 0;
+    return posed.pack.template.poseMove?.(makeCtx(posed), move) ? posed : null;
+  } catch {
+    // A template that cannot pose its own move is a bug worth surviving: the
+    // felt falls straight through to the position the move actually reached.
+    return null;
+  }
+}
+
+/**
+ * Hold the completed trick on the felt, then let the move finish arriving.
+ *
+ * The fourth card lands on a trick that KEEPS it — `animateMove` flies it onto
+ * the posed position, so the copy that lands is the card the player then reads
+ * — and everything the sweep is (the gather flight, the banner, the seat pulse,
+ * the next turn, a round ending underneath it) waits behind `resume`.
+ */
+function runTrickReveal(poseState, move, from, reveal, resume) {
+  session.trickBeat = { seat: reveal.trick.seat };
+  session.trickPoseState = poseState;
+  render(poseState);
+  animateMove(poseState, move, from);
+
+  const myEpoch = epoch;
+  Arcade.session.setTimeout(() => {
+    if (myEpoch !== epoch || !session) return;
+    session.trickBeat = null;
+    session.trickPoseState = null;
+    resume();
+  }, reveal.holdMs);
+}
+
+/**
  * The same ending with the crib still face down.
  *
  * Cribbage turns the crib as part of the move that ends the hand — the reveal
@@ -3055,10 +3118,17 @@ function afterMove(state, move, from, message, { publish = true } = {}) {
   const passed = events.find((e) => e.type === 'cardsPassed');
   const roundOver = events.find((e) => e.type === 'roundOver' && !e.over);
 
+  // FOUR CARDS ON THE TABLE, claimed FIRST: `takeRoundFinal` consumes the
+  // pre-move snapshot, and the last trick of a hand wants both poses off it.
+  const trickPose = trick ? takeTrickPose(move) : null;
   // WHERE THE ROUND ENDED, claimed before anything can throw. `takeRoundFinal`
   // consumes the pre-move snapshot whether or not it is wanted, so a fork is
   // never left behind to be re-used by the next move.
   const finalState = takeRoundFinal(roundOver ? move : null);
+  const reveal = trick ? trickRevealPlan(events, {
+    flightMs: flightDurationMs(settings?.botDelayMs),
+    posed: !!trickPose,
+  }) : null;
   const plan = roundOver ? roundBeatPlan(events, {
     flightMs: flightDurationMs(settings?.botDelayMs),
     // No snapshot means no ending to pose or repaint, so the reveal degrades to
@@ -3076,50 +3146,78 @@ function afterMove(state, move, from, message, { publish = true } = {}) {
     // waits: the last card is the thing worth watching, and it is still in the
     // air on this frame.
     const ending = record.concludeMatch(state, { hints: session.hintsTaken });
-    render(state, message);
-    animateMove(state, move, from);
-    if (trick) celebrateTrick(state, trick);
-    playWin();
-    offerFinalLook(state, move, ending);
+    // THE LAST TRICK IS STILL A TRICK, and it is the one most worth seeing
+    // whole: the card that ends a match is the card that won it. The match is
+    // over either way, so nothing here races the hold — `offerFinalLook` waits
+    // for the player anyway.
+    const finish = () => {
+      render(state, message);
+      if (!reveal) animateMove(state, move, from);
+      if (trick) celebrateTrick(state, trick);
+      playWin();
+      offerFinalLook(state, move, ending);
+    };
+    if (reveal && trickPose) runTrickReveal(trickPose, move, from, reveal, finish);
+    else finish();
     return;
   }
 
   if (passed && !message) message = 'Cards passed. Play!';
-  // SET BEFORE THE RENDER, because `render` reads it: while the felt is showing
-  // a position the engine has already moved past, nothing on it is actable.
-  if (plan) {
-    session.roundBeat = true;
-    // Kept so anything that repaints for a reason of its own during the beat
-    // repaints the ending rather than the deal underneath it (feltState). Null
-    // on the path with no snapshot, where the felt is already the live state.
-    session.roundFinalState = finalState ? shown : null;
-  }
-  render(shown, message);
-  animateMove(shown, move, from);
-  if (trick) celebrateTrick(shown, trick);
-  // After the card has been seen to land, and only when a trick is not already
-  // holding the felt — two celebrations at once is neither. A show is the same
-  // rule again: its own steps are the narration, and the first `showScored`
-  // banner firing here would say pone's count over the last pegging card.
-  const action = (trick || plan?.steps.length) ? null : celebrateAction(shown, events);
-  // The action is the better sentence: "Rook played." says less than nothing
-  // next to "You draw 4 and lose your turn", and the log is the live region a
-  // screen reader hears.
-  if (action) el.log.textContent = action.text;
+  // BEFORE ANY ANIMATION, and no longer behind one: what is saved is the live
+  // state, which the beats below deliberately are not showing yet.
   persistMatch();
 
-  if (plan) {
-    // The engine has already dealt the next round beneath this move. The felt
-    // is holding the position it ended in; the summary opens over that, and the
-    // deal does not become visible until the summary is dismissed
-    // (dismissRoundSummary). Bot play already waits on `roundSummaryOpen`.
+  // Everything the completed trick CAUSES — the gather, the sentence, the next
+  // turn, a round ending underneath it. Held for one beat behind the four cards
+  // when the felt could pose them (#123), and run straight through otherwise.
+  const settle = () => {
+    // SET BEFORE THE RENDER, because `render` reads it: while the felt is
+    // showing a position the engine has already moved past, nothing on it is
+    // actable.
+    if (plan) {
+      session.roundBeat = true;
+      // Kept so anything that repaints for a reason of its own during the beat
+      // repaints the ending rather than the deal underneath it (feltState). Null
+      // on the path with no snapshot, where the felt is already the live state.
+      session.roundFinalState = finalState ? shown : null;
+    }
+    render(shown, message);
+    // The played card has already flown onto the posed trick; flying it again
+    // here would be the same card arriving twice.
+    if (!reveal) animateMove(shown, move, from);
+    if (trick) celebrateTrick(shown, trick);
+    // After the card has been seen to land, and only when a trick is not already
+    // holding the felt — two celebrations at once is neither. A show is the same
+    // rule again: its own steps are the narration, and the first `showScored`
+    // banner firing here would say pone's count over the last pegging card.
+    const action = (trick || plan?.steps.length) ? null : celebrateAction(shown, events);
+    // The action is the better sentence: "Rook played." says less than nothing
+    // next to "You draw 4 and lose your turn", and the log is the live region a
+    // screen reader hears.
+    if (action) el.log.textContent = action.text;
+
+    if (plan) {
+      // The engine has already dealt the next round beneath this move. The felt
+      // is holding the position it ended in; the summary opens over that, and the
+      // deal does not become visible until the summary is dismissed
+      // (dismissRoundSummary). Bot play already waits on `roundSummaryOpen`.
+      cancelAnnouncementBeats();
+      runRoundBeat(state, plan, finalState || state);
+      return;
+    }
+
+    scheduleNextTurn();
+    scheduleAnnouncementBeats();
+  };
+
+  if (reveal && trickPose) {
+    // No bot is scheduled and nothing is announced until `settle` runs: the
+    // beat is a pause in the game, not a pause the game plays through.
     cancelAnnouncementBeats();
-    runRoundBeat(state, plan, finalState || state);
+    runTrickReveal(trickPose, move, from, reveal, settle);
     return;
   }
-
-  scheduleNextTurn();
-  scheduleAnnouncementBeats();
+  settle();
 }
 
 /* ------------------------------------------------------------------ *

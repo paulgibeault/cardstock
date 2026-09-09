@@ -144,6 +144,7 @@ platform file.
 | `scoreChip` | `(ctx, seat) -> {short, long, aria} \| null` | `table.js` | the SIDE's total (the seat's own, where there are no sides) |
 | `seatCounters` | `(ctx, seat) -> {text, aria, kind?}[] \| null` | `table.js` | the hand count |
 | `commitPrompt` | `(ctx, seat) -> {action, staging, waiting, count \| min+max, moveType?} \| null` | `interaction.js`, `table.js` | count and move type read off the enumeration; the button says "Commit" |
+| `poseMove` | `(ctx, move) -> boolean` | `src/ui/table.js` | no pose; the felt paints where the move ENDED |
 | `committedSelection` | `(ctx, seat) -> cardId[] \| null` | `table.js` | none |
 | `getMeldGroups` | `(ctx, seat) -> Group[]` | `table.js` | `[]` |
 | `describeEvent` | `(ev, {seatLabel, seatPossessive, viewerSeat}) -> {text, tone} \| null` | `table.js` | the engine-effect vocabulary |
@@ -304,6 +305,29 @@ question with one answer is not a question.
 
 `apply` is the whole point: the platform renders a chooser and knows nothing
 about effect schemas, so a pack-defined effect gets one for free.
+
+## `poseMove` — the position a move passes THROUGH
+
+Some moves do two things at once because the rules say they do: the fourth card
+of a trick is played and the trick is gathered inside one `applyMove`, and a
+replay has to reach the same position at the same move. The felt renders what
+the move ENDED in, so that middle position — four cards on the table, before
+the seat that won them takes them away — was never on screen at all (#123).
+
+```js
+poseMove(ctx, move) -> boolean   // true: this fork is a pose worth holding
+```
+
+Called by `src/ui/table.js` on a **throwaway fork of the pre-move state**, the
+same copy `takeRoundFinal` advances for a round ending, and never on the live
+state: the pose is never logged, saved, published or scored. Answer `false` for
+a move with no middle worth showing and the half-applied fork is discarded —
+which is the only safe thing to do with a move that has been half made.
+
+Keep it cheap and keep it a subset: a pose that emitted events, ended a round or
+moved a card the real move does not move would be a second set of rules living
+in the renderer. Trick-taking's is one statement — the card onto the trick —
+and it answers `false` for every play but the one that completes it.
 
 ## Naming a seat in a sentence — `seatLabel` and `seatPossessive`
 

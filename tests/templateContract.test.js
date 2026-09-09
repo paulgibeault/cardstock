@@ -58,6 +58,10 @@ const OPTIONAL_FUNCTIONS = [
   // two things src/ui/interaction.js used to read out of trick-taking's own
   // `rules.passing` and `vars.passDirection` by name (#107).
   "commitPrompt",
+  // The position a move passes THROUGH, posed on a throwaway fork so the felt
+  // can hold it for a beat — four cards on a trick, before the move that put
+  // the fourth one there sweeps all four away (#123, src/ui/table.js).
+  "poseMove",
   "committedSelection", "getMeldGroups", "describeEvent",
   "ruleLines", "endingLines", "statLines",
   "arrangeContract", "suggestMeld",

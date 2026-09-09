@@ -34,6 +34,44 @@ export const MIN_HOLD_MS = 700;
 export const MIN_TRICK_HOLD_MS = 900;
 
 /**
+ * The floor on how long a completed trick stays WHOLE on the felt, before the
+ * winner gathers it (issue #123).
+ *
+ * Long enough to look from the card that was led to the card that beat it,
+ * which is two saccades and a decision; short enough that thirteen of them in a
+ * hand is not thirteen pauses.
+ *
+ * MEASURED FROM WHEN THE FOURTH CARD LANDS, not from the move, and that is the
+ * whole reason `READ_AFTER_LANDING_MS` is a separate term rather than a bigger
+ * floor. The card is still in the air when `applyMove` returns — the flight is
+ * the player's own pace setting (src/ui/flight.js) — so a flat hold spends
+ * itself watching the card arrive: at the default 420ms flight the first
+ * measurement of this fix showed four cards on the felt for 283ms, most of the
+ * hold having gone on the flight.
+ */
+export const MIN_TRICK_REVEAL_MS = 700;
+
+/** How long all four cards stay whole once the last of them has landed. */
+export const READ_AFTER_LANDING_MS = 500;
+
+/**
+ * How long the felt holds the four cards of a completed trick, or null when
+ * this move did not complete one.
+ *
+ * `posed` is false when the felt could not reconstruct that position — the
+ * multiplayer path, where the host applied the move before this device heard
+ * about it and there is no pre-move copy to advance (the same degradation
+ * `narrate` describes below). There is nothing to hold then, so nothing is
+ * held: the gather happens as it always did.
+ */
+export function trickRevealPlan(events, { flightMs = 0, posed = true } = {}) {
+  if (!posed) return null;
+  const trick = (events || []).find((e) => e.type === 'trickWon');
+  if (!trick) return null;
+  return { trick, holdMs: Math.max(MIN_TRICK_REVEAL_MS, flightMs + READ_AFTER_LANDING_MS) };
+}
+
+/**
  * How long one step of a show stays up before the next replaces it.
  *
  * "Fifteen two, fifteen four, and a pair is six" is a sentence a person says
