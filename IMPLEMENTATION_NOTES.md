@@ -1364,6 +1364,179 @@ held now. Thirteen and Team Spades were checked the same way: Team Spades'
 status bar read "Rook is bidding…" behind the sheet before, and "Round over."
 after.
 
+## The trick you never saw, and the bid nobody showed you (#123)
+
+### What was wrong
+
+Five findings from the round-5 playtest, all of them numbers or cards that
+existed and were not on screen.
+
+**The fourth card of a trick never rendered.** `applyPlayCard` plays it and
+`resolveTrick` moves all four into the winner's pile inside the same
+`applyMove` (`src/templates/trick-taking.js`), and the felt paints where a move
+ENDED — so the position with four cards on the table existed only inside a
+function call. Driven frame by frame against unmodified main on 4833, across
+five consecutive Team Spades tricks, the pile went 1, 2, 3, 0 and the peak was
+three. Counting VISIBLE cards rather than DOM nodes made it worse: `landOn`
+(src/ui/flight.js) holds a card at `opacity: 0` while its flying copy is in the
+air, so the third card was usually two, and the deciding card — the one that
+settles who wins — was never once on the felt. Hearts on the same probe peaked
+at TWO of its three, and Pinochle at three of four.
+
+**Your own bid was displayed nowhere.** Not the status bar, not a seat plate,
+not the round summary — searching the whole rendered page text for `/bid/i`
+found nothing. The reason is structural: every seat but yours wears a plate,
+and yours is the hand, the rail and the piles. In a partnership the contract is
+your bid plus your partner's, so half of your own contract was unreadable.
+
+**The won pile counted cards.** "Won 4", "Won 8" — climbing in fours beside a
+bid counted in tricks, on the plate and on your own pile, so every comparison
+needed dividing by four first.
+
+**Bags never appeared at all.** They accumulate correctly (verified against
+score deltas across a twelve-round match) and the word "bag" was not in the
+rendered page text anywhere. The only explanation of them was two clicks behind
+the score chip.
+
+**The bid dialog knew nothing about the auction.** A bare Nil/1–13 grid. At
+375px the partner's plate is clipped mid-word by the seat carousel and the
+third opponent is off the screen entirely, so a bid was made without being able
+to check either.
+
+### What changed
+
+**The trick beat reuses #120's seam rather than inventing a second one.**
+`template.poseMove(ctx, move)` is the position a move passes THROUGH, applied
+to a throwaway fork of the pre-move state — the same copy `takeRoundFinal`
+advances for a round ending, which is why `takeTrickPose` forks the fork: the
+last trick of a hand needs both poses off it. Trick-taking's implementation is
+one statement (`placeCard`, split out of `applyPlayCard` with no behaviour
+change) and it answers false for every play but the one that completes a trick.
+`trickRevealPlan` is the schedule, `session.trickBeat` says the felt is
+deliberately behind the engine, and `feltState` paints the pose for anything
+that repaints for a reason of its own.
+
+**The hold is measured from when the fourth card LANDS.** The first cut used a
+flat 700ms floor and measured 283ms of four visible cards, because the flight
+is inside the hold: at the default 420ms pace, most of the beat was spent
+watching the card arrive. `READ_AFTER_LANDING_MS` is a separate term for that
+reason, and `tests/roundBeat.test.js` asserts the reading time survives every
+flight from 0 to 1200ms.
+
+**Nothing is actable during the beat**, for the same reason nothing is actable
+during a round beat, and it is not the same reason it looks like: the posed
+position still has the fourth player on turn, because the trick has not been
+resolved on that copy. If the human played the fourth card, the felt would
+otherwise say "Your turn" over four cards about to be swept. It says whose
+trick it is instead — "Your trick.", "Cass's trick." — which is the question
+the beat exists to answer.
+
+**Your own seat got the plate it never had.** `#player-piles` grows a labelled
+strip built from the counters the template already declares. Which counters
+belong there is `MY_SEAT_KINDS`, a closed platform vocabulary in the style of
+`COUNTER_TRACK_KINDS`: a kind this build has never heard of simply does not
+appear, which is the safe direction, since the seat plates still show it. What
+is deliberately NOT there is the hand count (the fan is right there) and
+anything `minimizedOnly` (redundant when a seat is open, and yours always is).
+
+**`template.zoneReading` is what a pile's number MEANS** when the count of
+cards is not it — asked of the genre the way `activeMatch` is, because only
+trick-taking knows that four cards are one trick. The badge carries its unit
+("3 tricks"), which is a departure from the label diet in `describe.js`, and
+deliberately: a bare 3 under a stack of twelve cards is the same ambiguity the
+other way round. The inspector keeps both numbers. The seat plate's own pile
+chip goes through `zoneBadge` now rather than printing a second opinion of the
+same pile.
+
+**Bags are a side's counter**, banked plus the ones being taken this hand — a
+trick past a made contract is already a bag, so the number does not sit still
+for a whole hand and then jump. Null for a pack that does not declare
+`scoring.bids.bags`, so Hearts and Pinochle grow nothing.
+
+**The bid dialog carries the auction.** The Ask gained an optional `context`:
+rows the template fills with SEAT NUMBERS and the platform dresses from its
+roster (`dressedContext`), exactly as it dresses a `kind: 'seat'` option. Team
+Spades sends every seat's bid and the side's running promise; Pinochle's points
+auction sends what a bid has to beat. That is the compact form the issue asks
+for — the partner and the third seat are checkable without the carousel.
+
+**And the round sheet says what the delta was the arithmetic of** — "Bid 3,
+took 2" — read off the ending fork, because the engine wipes every bid crossing
+the round boundary and by the time the summary opens the live state's bids are
+the next hand's nothing.
+
+### Decisions
+
+**A pose is a strict subset of the move, and the contract says so.** The
+temptation is to let `poseMove` do a little more (emit the event early, pulse
+the winner) and the answer is no: a pose that scored, gathered or emitted would
+be a second set of rules living in the renderer, and it would be the renderer's
+version that a player saw. `tests/trickPose.test.js` pins all four halves of
+that — no events, no score, no turn change, and the state it was forked from
+untouched and still able to apply the real move.
+
+**Every trick-taking pack gets it, and that is the point.** Hearts three-handed
+holds three cards, Pinochle four; `ctx.seats` is the only number involved.
+Hearts was audited on the felt because its gather is the one #120 measured, and
+it still gathers: six gathers seen before, five and six after, with the pile
+emptying every time.
+
+**A beat per trick is thirteen beats a hand.** ~920ms at the default flight,
+about half of it the flight itself. That is the cost of the issue's own
+acceptance criterion ("shows all four cards for a beat before it sweeps") and
+it is bounded by the player's pace setting like every other flight in the game.
+
+**Bags on every plate, not only your own.** Bags are a side's number and the
+race is between two sides, so a side carrying seven of them is a fact the whole
+table is playing to. That is a fourth chip on a seat head; it is one or two
+characters wide and it was checked at 375px against the carousel.
+
+### Verified
+
+Both builds driven with the same playwright probe — the worktree on 4823,
+`polish/121-score-direction` on 4833 — and compared frame by frame with a
+`requestAnimationFrame` loop counting cards in the trick zone that are actually
+VISIBLE (computed opacity, not DOM presence).
+
+| | before | after |
+|---|---|---|
+| Team Spades, peak cards visible on a trick | 3 | 4 |
+| frames with four visible / longest stretch | 0 / 0ms | 146 / 484ms |
+| Hearts (3-handed), peak visible | 2 | 3 |
+| Pinochle, peak visible | 3 | 4 |
+| `/bag/i` in the rendered page text during a hand | no match | `BAGS 0` |
+| `/bid/i` in the rendered page text during a hand | no match | `BID 3` |
+| the human's own won pile | `4` | `1 trick` |
+| an opponent's plate chip | `Won 4` | `Won 1 trick` |
+
+The bid dialog was photographed at 1280x860 and 375x812 on both builds: before,
+the dialog is a bare grid and behind it the partner's plate ends at x=424 on a
+375px screen with the third opponent at 434–574, entirely off it; after, all
+three opponents' bids and the side's running promise are inside the dialog and
+fit on one line at 375px.
+
+The round summary was photographed after a full thirteen-trick hand: four rows
+reading "Bid 3, took 2", "Bid 5, took 6", "Bid 1, took 2", "Bid 4, took 3"
+against deltas of +40, +90, 0, 0 — and #120's hold behind it intact, the felt
+still showing the ending position rather than the deal.
+
+### Not done
+
+**Item 34, the hand desaturating for three turns in four**, is untouched. It is
+correct as the only legal/illegal signal and the playtest says so; what makes
+it unreadable is the 14px sliver a thirteen-card hand becomes at 375px, which
+is the hand's own layout and not this issue's. Sized separately.
+
+**The `card-face--fresh` "blank first frame" is not a bug and was measured as
+one.** The newest card on a pile is held at `opacity: 0` by `landOn` for
+exactly as long as its flying copy is in the air, so a frame counter sees a
+card in the DOM that nobody can see, and a DOM counter sees the same card
+twice — the "double render" of the playtest's item 27 is the copy and the
+original, correctly ordered (`flyCard` removes the copy before `landOn`
+restores the card; the reveal cannot precede the removal because it chains off
+the same promise). The practical complaint underneath it — that the newest card
+is not legible while it matters — is what the beat fixes.
+
 ## Next steps
 
 Multiplayer (Phase 8), per-pack UI polish (per-pack `theme.css`, custom
