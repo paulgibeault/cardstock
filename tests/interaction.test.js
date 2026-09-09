@@ -27,7 +27,7 @@ import {
   ladderRungs, ACTION_LABEL_MAX_CHARS,
 } from "../src/ui/interaction.js";
 import {
-  orderHand, applyManual, reorder, nextMode, fanStep, fanWidth, SORT_MODES,
+  orderHand, applyManual, reorder, nextMode, fanStep, fanWidth, liftGap, SORT_MODES,
   classifyHandGesture,
 } from "../src/ui/handOrder.js";
 
@@ -566,9 +566,20 @@ test("the sort toggle cycles through every mode and back", () => {
 
 test("the fan closes until the hand fits, and never past readability", () => {
   const cardWidth = 70;
-  // Roomy: nothing to solve, so the fan sits at its natural spacing.
+  // Roomy: the fan OPENS rather than keeping the thirteen-card overlap on an
+  // empty table. It used to stop at the natural 0.69, which is how a five-card
+  // hand kept a third of every card buried with a thousand pixels going spare
+  // (#122, round-5 item 23).
   const roomy = fanStep({ count: 5, cardWidth, available: 2000 });
-  assert.strictEqual(roomy, cardWidth * 0.69);
+  assert.strictEqual(roomy, cardWidth * 0.94);
+  assert.ok(roomy > cardWidth * 0.69, "a hand with room to spare must open past natural");
+  // Never past touching: a hand with gaps in it is a hand somebody has already
+  // played out of.
+  assert.ok(fanStep({ count: 2, cardWidth, available: 99999 }) <= cardWidth);
+
+  // In between, the room decides and `natural` is what it lands on.
+  const middling = fanStep({ count: 13, cardWidth, available: cardWidth + 12 * cardWidth * 0.69 });
+  assert.ok(Math.abs(middling - cardWidth * 0.69) < 0.01, "natural is what the middle case gives");
 
   // Cramped: the fan closes to fit rather than overflowing.
   const cramped = fanStep({ count: 13, cardWidth, available: 400 });
@@ -598,6 +609,33 @@ test("the fan never overflows for any hand a launch pack can deal", () => {
     assert.ok(width <= c.available + 0.5 || floored,
       `${c.count} cards overflowed: ${Math.round(width)} > ${c.available}`);
   }
+});
+
+test("the gap a lifted card opens is exactly the overlap it would bury", () => {
+  // A LIFTED CARD LANDS ON THE ONE STRIP ITS NEIGHBOUR IS READ BY. The fan
+  // overlaps leftward, so the neighbour's visible strip IS the step, and the
+  // part the lifted card covers is everything past it — `cardWidth - step`
+  // (#122, round-5 item 23). Anything less leaves the neighbour's rank corner
+  // buried; anything more is motion for its own sake.
+  const cases = [
+    { cardWidth: 70, available: 500, count: 13 },   // desktop, tight
+    { cardWidth: 46, available: 220, count: 13 },   // 375px, tighter
+    { cardWidth: 70, available: 2000, count: 5 },   // desktop, open
+  ];
+  for (const c of cases) {
+    const step = fanStep(c);
+    const gap = liftGap({ cardWidth: c.cardWidth, step });
+    assert.ok(gap >= 0, "a gap is never negative");
+    assert.ok(Math.abs(gap - Math.max(0, c.cardWidth - step)) < 0.05,
+      `${c.count} cards at ${c.cardWidth}px: the gap must uncover the whole overlap`);
+    assert.ok(step + gap >= c.cardWidth - 0.05,
+      "after the shift the neighbour must be clear of the lifted card entirely");
+  }
+
+  // A fan with room to spare barely overlaps, so barely anything has to move.
+  assert.ok(liftGap({ cardWidth: 70, step: fanStep({ count: 5, cardWidth: 70, available: 2000 }) })
+    < liftGap({ cardWidth: 70, step: fanStep({ count: 13, cardWidth: 70, available: 500 }) }),
+    "an open fan must not shove cards around for a lift that hides nothing");
 });
 
 test("a single card has nothing to overlap", () => {

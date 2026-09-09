@@ -207,6 +207,38 @@ function classify(ctx, cardIds) {
   return null;
 }
 
+/**
+ * WHAT THE STANDING COMBINATION IS CALLED — "Pair of 4s", "Run of 5".
+ *
+ * The whole of this game is "what am I answering", and the felt used to say it
+ * with a number: the pile wore a count of every card played this trick, so a
+ * trick with three singles in it read `3` while the thing to beat was one card
+ * (#122, round-5 item 18). A count cannot answer that question — the SHAPE is
+ * what `matchShape` compares — so the pile is named instead.
+ *
+ * The rank is the top card's, which is also the card being beaten: for every
+ * shape this game has, the highest card is what a higher answer has to clear.
+ * Ranks are the glyphs the cards themselves print (`A`, `K`, `10`), because
+ * that is what a player is reading them off.
+ */
+function comboName(ctx, combo) {
+  if (!combo) return null;
+  const ladder = rankLadderOf(ctx.pack);
+  let best = null;
+  for (const id of combo.cards || []) {
+    const card = ctx.cardById(id);
+    if (card && (!best || cardOrder(card, ladder) > cardOrder(best, ladder))) best = card;
+  }
+  const rank = best?.rank == null ? '' : String(best.rank);
+  if (combo.kind === 'run') return `Run of ${combo.size}`;
+  if (combo.kind === 'consecutive-pairs') return `${combo.size} consecutive pairs`;
+  if (combo.kind === 'single') return rank ? `Single ${rank}` : 'A single';
+  if (combo.kind === 'pair') return rank ? `Pair of ${rank}s` : 'A pair';
+  if (combo.kind === 'triple') return rank ? `Triple ${rank}s` : 'A triple';
+  if (combo.kind === 'quad') return rank ? `Four ${rank}s` : 'Four of a kind';
+  return null;
+}
+
 /* ------------------------------------------------------------------ *
  * Beating what is on the table
  * ------------------------------------------------------------------ */
@@ -1209,19 +1241,60 @@ const climbing = {
     }];
   },
 
+  /**
+   * WHICH CARDS IN THE PILE ARE THE THING TO ANSWER, and what they are called.
+   *
+   * `pile` holds every card played this trick, in sequence — that is deliberate
+   * (it is the trick, and everybody watched it happen) and it is also why the
+   * felt could not say what you were beating: a count of the pile is a count of
+   * the trick, not of the standing combination. The template already knows the
+   * answer, because `combo` IS the standing combination and carries its own card
+   * ids; this hands that to the renderer instead of making it re-derive one.
+   *
+   * Null while nobody has led: an empty pile wears its own name, and "you are
+   * leading" is what an empty pile in this game means.
+   */
+  zoneFocus(ctx, address) {
+    if (address !== 'pile') return null;
+    const combo = ctx.var('combo');
+    if (!combo) return null;
+    const label = comboName(ctx, combo);
+    if (!label) return null;
+    return { cards: (combo.cards || []).slice(), label, seat: combo.seat };
+  },
+
+  /**
+   * `priority` is what stops the pass from swallowing the trick. A move here
+   * can emit two describable events — `passed` and then `trickCleared`, because
+   * the pass that ends the trick is one move — and the banner takes ONE. Taking
+   * the first meant a trick that came back to you was announced as somebody
+   * else's pass, and "the trick is yours" never appeared on the felt at all
+   * (#122, round-5 item 22).
+   */
   describeEvent(ev, { seatLabel, viewerSeat }) {
     const who = (seat) => (seat === viewerSeat ? 'You' : seatLabel(seat));
+    const mine = (seat) => seat === viewerSeat;
     if (ev.type === 'passed') {
       return { text: `${who(ev.seat)} passed`, tone: 'neutral' };
     }
     if (ev.type === 'trickCleared') {
-      return { text: `${who(ev.seat)} took the pile and lead`, tone: 'neutral' };
+      // The one sentence this game was missing. Distinct from a pass in wording
+      // AND in tone: winning the trick is the good outcome of the decision the
+      // whole game is made of, and the next thing that happens is your lead.
+      return mine(ev.seat)
+        ? { text: 'Everybody passed — the lead is yours', tone: 'good', priority: 2 }
+        : { text: `${who(ev.seat)} takes the trick and leads`, tone: 'neutral', priority: 2 };
     }
     if (ev.type === 'instantWin') {
-      return { text: `${who(ev.seat)} was dealt ${ev.shape} — the hand is over`, tone: 'good' };
+      return { text: `${who(ev.seat)} was dealt ${ev.shape} — the hand is over`, tone: 'good', priority: 3 };
     }
-    if (ev.type === 'combinationPlayed' && ev.size > 1) {
-      const shape = ev.kind === 'consecutive-pairs' ? `${ev.size} consecutive pairs` : `a ${ev.kind}`;
+    if (ev.type === 'combinationPlayed') {
+      // SINGLES SAY SOMETHING TOO. They used to return null, so the banner kept
+      // whatever it last had — which is how a pass from three turns ago was
+      // still standing over your own lead (item 22 again).
+      const shape = ev.kind === 'consecutive-pairs' ? `${ev.size} consecutive pairs`
+        : ev.kind === 'single' ? 'a single'
+          : `a ${ev.kind}`;
       return { text: `${who(ev.seat)} played ${shape}`, tone: 'neutral' };
     }
     return null;

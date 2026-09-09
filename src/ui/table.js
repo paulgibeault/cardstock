@@ -98,7 +98,8 @@ import {
   pruneSelection, toggleHandSelection, isSelected, handAddress, implicitLandingZone,
 } from './interaction.js';
 import {
-  orderHand, reorder, nextMode, isSortMode, fanStep, classifyHandGesture, SORT_LABELS,
+  orderHand, reorder, nextMode, isSortMode, fanStep, fanWidth, liftGap,
+  classifyHandGesture, SORT_LABELS,
 } from './handOrder.js';
 import {
   initPanels, showRoundSummary, hideRoundSummary,
@@ -648,18 +649,35 @@ function seatScoreChip(state, seat) {
 /**
  * Which way play is going, for packs where that can change.
  *
- * Only rendered once a reverse has actually happened — `state.direction` is 1
- * in every game that never turns round, and a permanent arrow saying "play
- * goes left" on a table that has no other option is chrome that teaches
+ * Only rendered once a reverse has actually happened — a permanent arrow saying
+ * "play goes left" on a table that has no other option is chrome that teaches
  * nothing. It appears the moment a reverse lands and then stays, which is
  * exactly when a player needs to be able to check.
+ *
+ * "A REVERSE" IS A DEPARTURE FROM THE PACK'S OWN DIRECTION, not a negative
+ * number. This read `state.direction < 0`, which is true of Thirteen from the
+ * first card of the first deal — the pack simply deals counter-clockwise
+ * (`rules.direction`) — so a game that can never reverse wore a permanent badge
+ * announcing that it had, in the top-right corner where it read as a restart
+ * control and sat on the second seat plate at 375px (#122, round-5 item 24).
+ * Compared against the pack's declaration, Thirteen has no badge and Wildfire's
+ * still appears the instant a reverse card lands.
+ *
+ * `role="img"`: an aria-label on a bare <div> has no role to attach to and is
+ * dropped by most screen readers, which is why the playtest reported the badge
+ * as having no accessible name at all. It stays pointer-transparent, so there
+ * is no tooltip to give it — a sign that could be hovered could also be tapped,
+ * and it sits over a seat plate.
  */
 function directionBadge(state) {
-  if (state.direction >= 0) return null;
+  const natural = state.pack.manifest.rules?.direction === 'counterclockwise' ? -1 : 1;
+  if (Math.sign(state.direction || 1) === natural) return null;
   const badge = document.createElement('div');
   badge.className = 'direction-badge';
-  badge.textContent = '↺';
-  badge.setAttribute('aria-label', 'Play has reversed — it now goes to the right');
+  badge.textContent = natural < 0 ? '↻' : '↺';
+  const words = `Play has reversed — it now goes ${natural < 0 ? 'the other way round the table' : 'to the right'}`;
+  badge.setAttribute('role', 'img');
+  badge.setAttribute('aria-label', words);
   return badge;
 }
 
@@ -1707,11 +1725,23 @@ function renderStageTray(state, ui) {
   el.stageRow.inert = !staged.length;
   el.stageTray.replaceChildren();
   if (!staged.length) {
+    el.stageTray.classList.remove('stage-tray--refused');
     el.stageTray.setAttribute('aria-label', 'Gathered cards appear here.');
     return;
   }
-  el.stageTray.setAttribute('aria-label',
-    `Gathered: ${staged.length} cards. Tap one to put it back.`);
+  // THE TRAY SAYS NO. A selection the engine will not take used to sit here
+  // looking exactly like one it would — same dashed tray, same cards, no
+  // commit, no sentence (#122, round-5 item 19). The refusal is drawn on the
+  // tray itself, spoken in the tray's own name, and written to #log, which is
+  // the live region this table already uses for the words that are not on the
+  // felt (see showHint).
+  const refusal = ui.action?.disabled ? (ui.action.refusal || 'That is not a play.') : null;
+  el.stageTray.classList.toggle('stage-tray--refused', !!refusal);
+  if (refusal && session.lastRefusal !== refusal) el.log.textContent = refusal;
+  session.lastRefusal = refusal;
+  el.stageTray.setAttribute('aria-label', refusal
+    ? `Gathered: ${staged.length} cards. ${refusal} Tap one to put it back.`
+    : `Gathered: ${staged.length} cards. Tap one to put it back.`);
   for (const cardId of staged) {
     const card = cardById(state, cardId);
     if (!card) continue;
@@ -1836,6 +1866,7 @@ function layoutHand() {
   const count = el.hand.childElementCount;
   if (count < 2) {
     el.hand.style.removeProperty('--fan-step');
+    el.hand.style.removeProperty('--lift-gap');
     return;
   }
 
@@ -1860,9 +1891,22 @@ function layoutHand() {
   const reserved = el.handRail.offsetWidth + 12;
   const available = Math.max(cardWidth, rowWidth - reserved - padding - 4);
 
-  const step = fanStep({ count, cardWidth, available });
+  // ROOM FOR THE FAN TO OPEN UNDER A LIFTED CARD, taken off the top rather than
+  // borrowed at the moment it is needed: the shift is a transform and moves no
+  // layout, so nothing would stop the rightmost card sliding under the rail.
+  // Capped at a third of a card, which is more than the rank corner a
+  // neighbour has to keep — a phone gives up ~1.5px of resting spacing for it
+  // (`liftGap` says what the shift is for).
+  const reserveForLift = Math.min(cardWidth * 0.34, LIFT_RESERVE_MAX_PX);
+  const step = fanStep({ count, cardWidth, available: Math.max(cardWidth, available - reserveForLift) });
+  const spare = available - fanWidth({ count, cardWidth, step });
+  const gap = Math.min(liftGap({ cardWidth, step }), Math.max(0, spare));
   el.hand.style.setProperty('--fan-step', `${step.toFixed(2)}px`);
+  el.hand.style.setProperty('--lift-gap', `${gap.toFixed(2)}px`);
 }
+
+/** The most `layoutHand` will hold back for the lift gap, whatever the card. */
+const LIFT_RESERVE_MAX_PX = 20;
 
 /**
  * Re-fan whenever the row's width changes, whatever changed it.
@@ -2082,18 +2126,36 @@ function renderRail(state, ui, humanActs) {
   // renderSelection repaints the rail without rebuilding the fan, so a
   // `hidden` written from there would outlive the action that displaced it.
   const acting = !!(ui.action && humanActs);
+  // A REFUSED COMMIT IS STILL THE COMMIT'S SLOT. The button stays, disabled,
+  // carrying the engine's own sentence for why — because the alternative,
+  // measured on the felt, was the Pass pill disappearing under the thumb and
+  // the sort toggle appearing in its place the moment a card was tapped
+  // (#122, round-5 item 19). `disabled` and not `hidden`: same box, same
+  // height, and the reason reaches a screen reader through the name.
+  const refused = acting && !!ui.action.disabled;
   el.actionButton.hidden = !acting;
+  el.actionButton.disabled = refused;
+  el.actionButton.classList.toggle('action-button--refused', refused);
   el.handSort.hidden = acting || state.zones.cards(handAddress(mySeat())).length < 2;
   if (acting) {
     el.actionButton.textContent = ui.action.label;
-    el.actionButton.onclick = () => {
-      if (!liveState()) return;
-      const move = ui.action.makeMove();
-      // The button is the third tap that was launching cards from the wrong
-      // place: "Lay down" and "Pass 3 left" both carry cards that are sitting
-      // in the tray, and the flight was starting from the button.
-      performHumanMove(liveState(), move, tapOrigin(move));
-    };
+    if (refused) {
+      const why = ui.action.refusal || 'That is not a play.';
+      el.actionButton.setAttribute('aria-label', `${ui.action.label} — ${why}`);
+      el.actionButton.title = why;
+      el.actionButton.onclick = null;
+    } else {
+      el.actionButton.removeAttribute('aria-label');
+      el.actionButton.removeAttribute('title');
+      el.actionButton.onclick = () => {
+        if (!liveState()) return;
+        const move = ui.action.makeMove();
+        // The button is the third tap that was launching cards from the wrong
+        // place: "Lay down" and "Pass 3 left" both carry cards that are sitting
+        // in the tray, and the flight was starting from the button.
+        performHumanMove(liveState(), move, tapOrigin(move));
+      };
+    }
   } else {
     el.actionButton.onclick = null;
   }

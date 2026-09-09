@@ -14,7 +14,7 @@
 
 import { statLinesFor } from '../stats/matchStats.js';
 import { sideScoreOf } from '../engine/sides.js';
-import { targetSentence as matchTargetSentence } from './scoreDirection.js';
+import { targetSentence as matchTargetSentence, pointsArePrize } from './scoreDirection.js';
 import { line } from './dom.js';
 
 const el = {
@@ -240,12 +240,23 @@ export function hideFinalLook() {
  * Game over
  * ------------------------------------------------------------------ */
 
-function statsInto(node, template, stats, seating, seats, winner, { hints = 0, hintSeat = null } = {}) {
+/**
+ * @param scoreLine (seat) => {label, value} | null — the number that DECIDED
+ *                  the match, first on every card. It used to be absent: the
+ *                  panel that closes a match led with Moves and Cards played
+ *                  and put the scores a click away under "Round by round", so
+ *                  the default view of the result was trivia (#122, round-5
+ *                  item 26). Passed in rather than read here because which way
+ *                  the number counts is the pack's (src/ui/scoreDirection.js).
+ */
+function statsInto(node, template, stats, seating, seats, winner, { hints = 0, hintSeat = null, scoreLine = null } = {}) {
   node.replaceChildren();
   if (!stats) return;
 
   for (let s = 0; s < seats; s++) {
     const lines = statLinesFor(template, stats.perSeat[s]);
+    const score = scoreLine?.(s);
+    if (score) lines.unshift(score);
     // Hints are not in the log (src/ui/hint.js), so they are not in `stats`;
     // they are the one line added here, on the card of the seat that asked.
     if (s === hintSeat && hints > 0) lines.push({ label: 'Hints taken', value: String(hints) });
@@ -309,7 +320,19 @@ export function showGameOver(state, {
   }
 
   el.gameOverRecord.textContent = recordText || '';
-  statsInto(el.gameOverStats, state.pack.template, stats, seating, state.seats, winner, { hints, hintSeat });
+  // THE SCORES THAT DECIDED IT, FIRST. `sideScoreOf` is the same reading the
+  // scoreboard takes, so a partnership's card shows the side's number rather
+  // than half of it; the LABEL is the pack's direction, because at Thirteen and
+  // Hearts calling a penalty total a "Score" is the same misdirection #121 took
+  // out of the round panel's target line.
+  const scoreWord = pointsArePrize(state.pack) ? 'Score' : 'Penalty points';
+  statsInto(el.gameOverStats, state.pack.template, stats, seating, state.seats, winner, {
+    hints,
+    hintSeat,
+    scoreLine: (seat) => (Array.isArray(state.scores)
+      ? { label: scoreWord, value: String(sideScoreOf(state.pack, state.seats, state.scores, seat)) }
+      : null),
+  });
 
   const rounds = stats ? stats.rounds : [];
   el.gameOverRoundsToggle.hidden = rounds.length === 0;
