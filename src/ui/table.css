@@ -1439,6 +1439,118 @@ button.pile-stack:focus-visible { outline: 2px solid var(--accent); outline-offs
   transform: translateX(calc(var(--stack-index, 0) * var(--pile-w, 90px) * 0.51)) rotate(var(--stack-tilt, 0deg));
 }
 
+/* WHOSE CARD THAT IS. A tag on the bottom-left corner of each card in the
+   trick, carrying the same mark and the same name that seat wears on its plate
+   — one vocabulary for "this is a player", wherever it turns up.
+   ON THE LEFT, because the fan overlaps by half and the strip of each card that
+   is not covered by the next one is its left half. Capped at that half's width
+   for the same reason: a wider pill would reach under its neighbour's tag.
+   NO TILT. The cards each carry a small random rotation (--stack-tilt) and a
+   caption inheriting it would be four labels at four angles; the tag takes the
+   translation and leaves the rotation on the card.
+   Decorative — aria-hidden, and the pile's own accessible name says the same
+   thing in play order (src/ui/zoneRenderer.js). */
+.trick-owner {
+  left: 50%;
+  right: auto;
+  top: auto;
+  /* On the card's bottom-left corner, so it sits on the paper rather than in
+     the felt's gaps — the card is the thing it is labelling. */
+  bottom: 0.25rem;
+  width: 1.1rem;
+  height: 1.1rem;
+  margin-left: calc(var(--pile-w, 90px) / -2 + 0.22rem);
+  transform: translateX(calc(var(--stack-index, 0) * var(--pile-w, 90px) * 0.51));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 2px solid var(--panel-bg);
+  box-shadow: 0 1px 3px var(--card-shadow);
+  font-size: 0.6rem;
+  line-height: 1;
+  pointer-events: none;
+  /* Above the cards, which all sit at z-index 1 (see .pile-stack > *). */
+  z-index: 2;
+}
+/* YOUR SIDE, in the colour the seat plate's bottom rule already uses. "Is my
+   side winning this trick?" is the question a partnership player is actually
+   asking of the middle of the felt, and a mark that only said WHICH PLAYER left
+   them one lookup short of it. */
+.trick-owner--partner { border-color: var(--partner); }
+.trick-owner--mine { border-color: var(--accent); }
+
+/* ------------------------------------------------------------------ *
+ * The contract strip (src/ui/contractStrip.js)
+ * ------------------------------------------------------------------ */
+
+/* One row, above the middle of the felt, for a pack whose template answers
+   `contractChips` — the high bid and its holder during an auction, then the
+   trump suit, the contract and your own meld. Hidden for every other pack, so
+   nobody else's felt loses the height. */
+.contract-strip {
+  display: flex;
+  justify-content: center;
+  align-items: stretch;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  /* Negative block margins claw back most of #table's 1rem row gap: this strip
+     is chrome about the hand, and it must not cost the felt a card's worth of
+     height on a phone. */
+  margin: -0.35rem 0 -0.4rem;
+}
+.contract-strip[hidden] { display: none; }
+
+.contract-chip {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.16rem 0.5rem;
+  border-radius: 999px;
+  background: var(--chip-bg);
+  border: 1px solid var(--chip-border);
+  color: var(--chrome-text);
+}
+/* THE SUIT IN FORCE IS THE LOUD ONE. Trump governs every card played for the
+   rest of the hand; the contract and the meld are numbers you check. */
+.contract-chip[data-chip="trump"] {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+/* The pack's own card, at strip size (src/ui/cardStyles/chooser.js). */
+.contract-chip__art {
+  width: 1.05rem;
+  height: 1.47rem;
+  flex: none;
+  border-radius: 2px;
+  box-shadow: 0 1px 2px var(--card-shadow);
+}
+.contract-chip__body { display: flex; align-items: baseline; gap: 0.3rem; }
+.contract-chip__label {
+  font-size: 0.6rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.75;
+}
+.contract-chip__value { font-size: 0.85rem; font-weight: 700; }
+.contract-chip__who {
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
+  font-size: 0.7rem;
+  padding-left: 0.35rem;
+  border-left: 1px solid var(--chip-border);
+}
+.contract-chip__mark {
+  width: 0.85rem;
+  height: 0.85rem;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.55rem;
+}
+
 /* ------------------------------------------------------------------ *
  * Overlapping piles
  * ------------------------------------------------------------------ */
@@ -1967,6 +2079,44 @@ body.is-dragging .card-face { cursor: grabbing; }
   pointer-events: none;
 }
 
+/* STILL CHOOSING, WHICH IS NOT THE SAME AS ON TURN.
+   In a simultaneous-commit phase — Hearts' pass, Pinochle's meld — every seat
+   that has not committed yet may act, so three opponents were wearing the gold
+   ▶ at once and the platform's one turn marker was saying something that cannot
+   be true (#125 item 48). Same chip, same slot, same geometry — so a seat does
+   not change size when the phase does — in the felt's neutral chrome instead of
+   the accent, with ⋯ for the arrow.
+   AND NO PULSE. The turn token pulses because the turn MOVED and that is news.
+   Four seats thinking at once is a state, not an event, and three chips
+   flashing in unison is the loudest thing on the felt saying the least. */
+.turn-token--waiting {
+  /* The panel surface, not the accent and not a translucent chip: this sits on
+     a seat plate in both themes and a wash of white-on-white was invisible in
+     the light one. */
+  background: var(--panel-bg);
+  box-shadow: 0 0 0 1px var(--panel-border);
+}
+.turn-token--waiting::before { animation: none; }
+.turn-token--waiting::after {
+  content: "\2026"; /* … */
+  color: var(--panel-text);
+  font-size: 0.6rem;
+  /* The ellipsis sits on its own baseline; nudged up so it reads as centred in
+     a 0.95rem circle rather than as three dots resting on the rim. */
+  align-items: flex-start;
+  line-height: 0.7;
+}
+
+/* The ring the acting seat wears, quietened for the same reason. A gold halo
+   round three chairs at once is the turn cue three times over; a plain lift and
+   a neutral rule says "these seats are still choosing" without claiming any of
+   them is on turn. */
+.seat--committing {
+  box-shadow: 0 0 0 1px var(--chip-border), 0 4px 14px var(--panel-shadow);
+}
+.seat--committing .seat__name { font-weight: 600; text-shadow: none; }
+.seat--committing .seat__name::after { content: none; }
+
 
 /* ------------------------------------------------------------------ *
  * The rail's controls
@@ -2341,7 +2491,15 @@ body.is-dragging .card-face { cursor: grabbing; }
   left: 50%;
   top: 34%;
   transform: translate(-50%, -50%);
-  z-index: 8;
+  /* ABOVE THE CARDS IN FLIGHT (#fly-layer, one below), and it used to be under
+     them. The gather that follows a trick flies four copies scaled up through
+     the middle of the felt, which is exactly where this pill sits — so a
+     message was cut in half mid-word by a card on its way to somebody's pile
+     (#125 item 52). The banner is the sentence; the gather is the decoration
+     that illustrates it, and a decoration does not get to redact its own
+     caption. Still below the modals at 10: a scoreboard opened over the felt
+     covers everything on it, banner included. */
+  z-index: 9;
   padding: 0.55rem 1.3rem;
   border-radius: 999px;
   font-weight: 700;
@@ -3418,7 +3576,10 @@ body.is-dragging .card-face { cursor: grabbing; }
   position: fixed;
   inset: 0;
   pointer-events: none;
-  z-index: 9;
+  /* One below #event-banner — see the note there. Everything on the felt is at
+     6 or less, so a card in flight still passes over the whole table; what it
+     no longer passes over is the one element whose entire job is to be read. */
+  z-index: 8;
 }
 
 .fly-card {

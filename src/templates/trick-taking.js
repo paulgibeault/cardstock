@@ -1868,7 +1868,24 @@ const trickTaking = {
       if (bid === 0 || ctx.rules.bidding.namesTrump !== true || bidTrumpOf(move)) return null;
       return {
         attr: 'trump',
-        prompt: 'suit to play it in',
+        // WHAT IS BEING NAMED IS NOT WHAT IS BEING DRAWN, and conflating the
+        // two is what left this step as four word buttons. `attr` is the
+        // template's word for the question; `art` is the platform's word for
+        // the picture (src/ui/cardStyles/chooser.js knows 'suit', 'color' and
+        // 'rank' and nothing else), and 'trump' is not one of them — so the
+        // chooser asked for a tile called "trump", got null, and fell back to
+        // text in the one pack whose whole vocabulary is pips.
+        art: 'suit',
+        // A COMPLETE SENTENCE, because this one is not "choose a <noun>".
+        // `prompt` completes "Choose a …" and read as "Choose a suit to play it
+        // in" — which names no referent for "it" and describes choosing a suit
+        // to play SOMETHING in rather than naming trump for the whole hand.
+        // The bid is in it because that is the fact the answer turns on: you
+        // are picking the suit you have to make 140 in.
+        question: `You won the auction at ${bid}. Name the trump suit.`,
+        // The bar behind the dialog said "Your bid" throughout, which is the
+        // previous step. Its own sentence, so the felt agrees with the modal.
+        status: 'Naming trump',
         kind: 'value',
         options: [...perilOf(ctx).suits].map((suit) => ({ value: suit, label: suitLabel(suit) })),
         apply: (m, value) => ({ ...m, choice: { ...(m.choice || {}), trump: value } }),
@@ -2038,6 +2055,163 @@ const trickTaking = {
    */
   committedSelection(ctx, seat) {
     return ctx.playerVar(seat, '__pendingPass') ?? pendingMeldOf(ctx, seat) ?? null;
+  },
+
+  /**
+   * WHO PLAYED WHICH CARD IN THE TRICK — the one fact the trick fan could not
+   * say for itself.
+   *
+   * Four cards face up in the middle and no way to tell whose is whose: with a
+   * partner at the table, "is my side winning this?" was a question you
+   * answered by remembering the play order, and the felt had the answer the
+   * whole time. It is not in the zone — a zone holds card ids — and the felt
+   * may not derive it, because "the leader played the first one and the rest
+   * follow round" is a RULE (which way round, and from whom), and the platform
+   * is the one file in the stack that must not know it.
+   *
+   * DERIVED, NOT STORED, the same judgement `contractSeatOf` makes: `leader`
+   * is already public (`publicVars`) because who led is the most-watched fact
+   * at a trick table, and the seat order is the table's. A second var recording
+   * "seat per card" would be a copy free to disagree with it after a replay.
+   *
+   * Only the trick. A won pile is `visibility: 'none'` and nobody may leaf back
+   * through it; a hand is its owner's.
+   */
+  zoneCardOwners(ctx, address) {
+    if (address !== 'trick') return null;
+    const ids = ctx.cardIdsIn('trick');
+    const leader = ctx.var('leader');
+    if (!ids.length || !Number.isInteger(leader)) return null;
+    const owners = [];
+    let seat = leader;
+    for (let i = 0; i < ids.length; i++) {
+      owners.push(seat);
+      seat = ctx.nextSeat(seat);
+    }
+    return owners;
+  },
+
+  /**
+   * THE CONTRACT, KEPT ON SCREEN — what was promised, by whom, and in what suit.
+   *
+   * Everything here was already in the state and nowhere on the felt (#125).
+   * The auction ran with no visible high bid, so once two seats had both bid
+   * their chips read the same gold and the leader could not be told from the
+   * seat that had just been outbid. Then the suit was named and the table said
+   * nothing at all about it — no text, no badge, no attribute — in a game whose
+   * every play is governed by must-follow-and-beat and mandatory over-trump.
+   *
+   * ONLY WHERE THE TRUMP SUIT IS A ROUND'S ANSWER (`trump: 'chosen'`). Spades'
+   * trump is in the pack's name and never changes, and a strip that says the
+   * same word on every hand of every match is the "play goes left" arrow
+   * src/ui/table.js's `directionBadge` refuses to draw. Here it changes hand to
+   * hand and half the time somebody else chose it.
+   *
+   * THE MELD CHIP IS THE VIEWER'S OWN, and it is here because there is nowhere
+   * else for it. Every other seat's meld is on that seat's plate
+   * (`seatCounters`); the seat doing the looking has no plate, so its own
+   * declaration — the number the whole phase exists to produce — was the one
+   * that never appeared anywhere.
+   *
+   * @returns chips the felt draws in order, or null for a pack with no contract
+   */
+  contractChips(ctx, seat) {
+    if (ctx.rules.trump !== 'chosen') return null;
+    const chips = [];
+    const bidding = ctx.turn.phase === 'bid';
+    const holder = contractSeatOf(ctx);
+    const trump = trumpSuitOf(ctx);
+
+    if (bidding) {
+      const standing = highestBidSoFar(ctx);
+      chips.push({
+        key: 'bid',
+        label: 'High bid',
+        value: standing > 0 ? String(standing) : '—',
+        // Whose it is, said with the mark that seat wears everywhere else. A
+        // number with nobody's name on it is the half of this that was missing.
+        seat: standing > 0 ? holder : null,
+        // What they fancied playing it in — public the moment it is said
+        // (`bidTrump`), and the thing the seats bidding after them are reading.
+        suit: holder === null ? null : (ctx.playerVar(holder, 'bidTrump') ?? null),
+        aria: standing > 0 ? `High bid ${standing}` : 'No bid yet',
+      });
+      return chips;
+    }
+
+    if (trump) {
+      chips.push({
+        key: 'trump',
+        label: 'Trump',
+        value: suitLabel(trump),
+        suit: trump,
+        aria: `${suitLabel(trump)} are trump`,
+      });
+    }
+    if (holder !== null) {
+      const bid = bidOf(ctx, holder) ?? 0;
+      chips.push({
+        key: 'contract', label: 'Contract', value: String(bid), seat: holder, aria: `Contract ${bid}`,
+      });
+    }
+    const meld = Number.isInteger(seat) ? ctx.playerVar(seat, 'meld') : null;
+    if (meld) {
+      chips.push({
+        key: 'meld',
+        label: 'Your meld',
+        // A DECLARATION OF NOTHING IS STILL A DECLARATION, and it has to read
+        // as one: "0" beside "Your meld" is the same shape as a real score and
+        // says the phase produced a number. "None" says the hand held nothing.
+        value: meld.points > 0 ? String(meld.points) : 'None',
+        aria: meld.points > 0 ? `Your meld: ${meld.points}` : 'You declared no meld',
+      });
+    }
+    return chips.length ? chips : null;
+  },
+
+  /**
+   * WHAT THE AUCTION AND THE MELD SAY OUT LOUD.
+   *
+   * Both phases used to be silent on the felt. The auction's log read "Pip bid.
+   * Bruno bid. Sable bid." — the bot verbs and nothing else — so on any hand
+   * the player did not win, the trump suit was never announced at all and had
+   * to be inferred from watching what beat what. And the meld was a button that
+   * did nothing visible either way: a hand holding two kings and neither queen
+   * and a hand holding a run in trump produced the identical silence.
+   *
+   * THE MELD SENTENCE IS THE VIEWER'S OWN. Everybody else's is a number on
+   * their plate the moment it lands (`seatCounters`), and four banners in a row
+   * would be four seats' worth of arithmetic thrown at a player who wanted one.
+   * `viewerSeat` is what makes that possible without the template knowing who
+   * is looking — and returning null for the other three seats is also what
+   * makes the platform's "first event that yields a sentence" loop
+   * (src/ui/celebrations.js) land on the right one, whatever order the four
+   * declarations were emitted in.
+   */
+  describeEvent(ev, { seatLabel, viewerSeat } = {}) {
+    const name = (seat) => (seat === viewerSeat ? 'You' : (seatLabel?.(seat) ?? `Seat ${seat}`));
+    if (ev.type === 'contractSet') {
+      if (!ev.trump) return null;
+      const suit = suitLabel(ev.trump);
+      const won = ev.seat === viewerSeat;
+      // "Stuck with it" is a different sentence from "won it", and the auction
+      // already knows which happened (`forced`).
+      const how = ev.forced ? 'is stuck with the bid at' : 'won the auction at';
+      const mine = ev.forced ? 'are stuck with the bid at' : 'won the auction at';
+      return {
+        text: `${name(ev.seat)} ${won ? mine : how} ${ev.bid} — ${suit} are trump.`,
+        tone: won ? 'good' : 'neutral',
+      };
+    }
+    if (ev.type === 'meldDeclared') {
+      if (ev.seat !== viewerSeat) return null;
+      if (!ev.points) return { text: 'Nothing to declare — no meld in your hand.', tone: 'neutral' };
+      const named = (ev.melds || [])
+        .map((m) => (m.suit ? `${m.label} in ${m.suit}` : m.label))
+        .join(', ');
+      return { text: `You meld ${ev.points}: ${named}.`, tone: 'good' };
+    }
+    return null;
   },
 
   ruleLines(rules) {

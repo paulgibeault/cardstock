@@ -145,6 +145,8 @@ platform file.
 | `seatCounters` | `(ctx, seat) -> {text, aria, kind?}[] \| null` | `table.js` | the hand count |
 | `commitPrompt` | `(ctx, seat) -> {action, staging, waiting, count \| min+max, moveType?} \| null` | `interaction.js`, `table.js` | count and move type read off the enumeration; the button says "Commit" |
 | `committedSelection` | `(ctx, seat) -> cardId[] \| null` | `table.js` | none |
+| `zoneCardOwners` | `(ctx, address) -> (seat\|null)[] \| null` | `src/ui/zoneRenderer.js` | none — a spread zone's cards carry no owner |
+| `contractChips` | `(ctx, seat) -> Chip[] \| null` | `src/ui/contractStrip.js` | none — the strip stays hidden |
 | `getMeldGroups` | `(ctx, seat) -> Group[]` | `table.js` | `[]` |
 | `describeEvent` | `(ev, {seatLabel, seatPossessive, viewerSeat}) -> {text, tone} \| null` | `table.js` | the engine-effect vocabulary |
 | `ruleLines` | `(rules) -> string[]` | `src/ui/rules.js` | none |
@@ -293,8 +295,11 @@ question with one answer is not a question.
 
 ```js
 {
-  attr,                 // 'suit' | 'color' | 'rank' | 'player' | anything
+  attr,                 // what is being chosen, in the TEMPLATE's words
+  art,                  // what to DRAW: 'suit' | 'color' | 'rank'; defaults to attr
   prompt,               // completes "Choose a …"; defaults to attr
+  question,             // a whole sentence, for a step that is not "choose a <noun>"
+  status,               // optional: what the status bar says while the dialog is open
   kind: 'value'|'seat', // 'seat' means the platform dresses the options from its roster
   cardId,               // optional: the card shown in the dialog
   options: [{ value, label? }],
@@ -304,6 +309,37 @@ question with one answer is not a question.
 
 `apply` is the whole point: the platform renders a chooser and knows nothing
 about effect schemas, so a pack-defined effect gets one for free.
+
+**`attr` is not `art` and neither is the sentence.** The chooser's pictures come
+from a closed platform vocabulary (`src/ui/cardStyles/chooser.js` knows `suit`,
+`color` and `rank`); `attr` is whatever the template calls the question. They
+were one field, which was invisible for as long as every Ask used a word from
+both lists and silently deleted the art the moment one did not: Pinochle's trump
+step asked for a tile called `trump`, got null, and drew four word buttons in
+the one pack whose entire vocabulary is pips (#125). The art is also looked up
+by an option's **`value`**, never its `label` — the value is the pack's own
+token, the label is prose about it.
+
+## `contractChips` — the contract strip
+
+One chip per fact the table has to keep saying: what is promised, by whom, and
+in what suit. Rendered above the felt's middle (`src/ui/contractStrip.js`);
+answer `null` and the row stays hidden and costs no height.
+
+```js
+{
+  key,     // a slug the stylesheet may dress ('trump', 'bid', 'contract', 'meld')
+  label,   // the word in front of the number
+  value,   // the number or word itself, already a string
+  suit,    // optional: drawn as the pack's own card (art.chooser)
+  seat,    // optional: whose it is — drawn with that seat's roster mark
+  aria,    // the whole chip as one phrase
+}
+```
+
+`seat` is the half of an auction a number cannot carry on its own: once two
+chairs have both bid, both their plate chips read the same gold and only a name
+says which one is ahead.
 
 ## Naming a seat in a sentence — `seatLabel` and `seatPossessive`
 

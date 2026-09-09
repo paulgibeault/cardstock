@@ -59,6 +59,14 @@ const OPTIONAL_FUNCTIONS = [
   // `rules.passing` and `vars.passDirection` by name (#107).
   "commitPrompt",
   "committedSelection", "getMeldGroups", "describeEvent",
+  // Who played which card in a shared zone — the trick's owner tags
+  // (src/ui/zoneRenderer.js). A rule the platform may not derive: which way
+  // round a trick is played, and from whom, is the template's.
+  "zoneCardOwners",
+  // The contract in force, as chips for the felt's strip
+  // (src/ui/contractStrip.js): the standing high bid and its holder, then trump
+  // and this seat's own meld.
+  "contractChips",
   "ruleLines", "endingLines", "statLines",
   "arrangeContract", "suggestMeld",
   // Not called by the engine but by the per-seat view filter

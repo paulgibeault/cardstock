@@ -75,6 +75,7 @@ import { line, svgNode, clearSvgCache } from './dom.js';
 import { promptChoice, closeChoiceDialog } from './choiceDialog.js';
 import { createCelebrations } from './celebrations.js';
 import { createContractLadder } from './contractLadder.js';
+import { createContractStrip } from './contractStrip.js';
 import {
   createSeatLens, soloSeatTable, createSeatTable, deserializeSeatTable,
   LOCAL_DEVICE as LOCAL_VIEWER,
@@ -159,6 +160,7 @@ const el = {
   playerPiles: document.getElementById('player-piles'),
   announceBar: document.getElementById('announce-bar'),
   contractLadder: document.getElementById('contract-ladder'),
+  tableContract: document.getElementById('table-contract'),
   handRail: document.getElementById('hand-rail'),
   actionButton: document.getElementById('action-button'),
   hintButton: document.getElementById('hint-button'),
@@ -422,6 +424,34 @@ function pulseSeat(seat, tone = 'good') {
 function turnToken() {
   const token = document.createElement('span');
   token.className = 'turn-token';
+  token.setAttribute('aria-hidden', 'true');
+  return token;
+}
+
+/**
+ * A SIMULTANEOUS PHASE IS NOT A TURN, and marking it with the turn token said
+ * the one thing that cannot be true: three seats "on turn" at once.
+ *
+ * Every seat that has not committed yet may act while a pass or a meld is open
+ * (`actingSeats`), which is the rule and is right — it is what un-stalls the
+ * phase and what the bot driver schedules against. What was wrong is that the
+ * felt spent the platform's ONE turn marker on all of them: a gold ▶ chip that
+ * everywhere else in the app means "it is this player's go, and nobody else's".
+ * Pinochle's meld phase lit three opponents with it simultaneously (#125 item
+ * 48) and Hearts' pass had always done the same.
+ *
+ * So the mark for "still to commit" is its own: same chip, no gold, no arrow,
+ * no pulse — a quiet ⋯ that says these seats are still choosing. The turn token
+ * keeps meaning exactly one thing.
+ *
+ * ASKED OF THE MODE, NOT THE PHASE NAME, the same way statusTextFor asks: the
+ * phase is called `pass` in Hearts, `meld` in Pinochle and `discard` in
+ * cribbage, and a platform file naming any of them is a platform file knowing
+ * one template's vocabulary.
+ */
+function committingToken() {
+  const token = document.createElement('span');
+  token.className = 'turn-token turn-token--waiting';
   token.setAttribute('aria-hidden', 'true');
   return token;
 }
@@ -1105,6 +1135,11 @@ function buildSeatRow(state, stagger, acting, ui, { tier, carousel, mustOpen, sh
   const collapsing = !carousel && tier >= TIER_COLLAPSED;
   const isCollapsed = (seat) => collapsing && !mustOpen(seat);
 
+  // Whether the seats that may act are TAKING TURNS or all choosing at once —
+  // see committingToken for why the marker differs. Asked of the interaction
+  // mode rather than the phase name, and asked once for the row.
+  const committing = interactionMode(state) === 'pass';
+
   // WHOSE PLATE IS SHOWING: the player's own pick if they made one, otherwise
   // whoever's turn it is. Their pick is retired when play moves on (see
   // renderSeats), so this follows the turn again by itself rather than leaving
@@ -1155,7 +1190,7 @@ function buildSeatRow(state, stagger, acting, ui, { tier, carousel, mustOpen, sh
     const targeted = collapsed && seatHasReadyTarget(state, seat, ui);
 
     const wrap = document.createElement('div');
-    wrap.className = `seat ${active ? 'seat--active' : ''} ${collapsed ? 'seat--collapsed' : ''} ${targeted ? 'seat--target' : ''} ${session.hint?.targetSeat === seat ? 'seat--hinted' : ''} ${marks.partner ? 'seat--partner' : ''}`;
+    wrap.className = `seat ${active ? 'seat--active' : ''} ${active && committing ? 'seat--committing' : ''} ${collapsed ? 'seat--collapsed' : ''} ${targeted ? 'seat--target' : ''} ${session.hint?.targetSeat === seat ? 'seat--hinted' : ''} ${marks.partner ? 'seat--partner' : ''}`;
     wrap.dataset.seat = String(seat);
     // A number the STYLESHEET may dress, chosen by the engine and never by pack
     // data (§7b). The word itself goes in the head below, as text rather than
@@ -1194,7 +1229,7 @@ function buildSeatRow(state, stagger, acting, ui, { tier, carousel, mustOpen, sh
     // this layout works to remove — a player would move sideways because their
     // neighbour's turn began. An open seat has room for it inline.
     if (active) {
-      const token = turnToken();
+      const token = committing ? committingToken() : turnToken();
       if (collapsed) {
         token.classList.add('turn-token--worn');
         wrap.appendChild(token);
@@ -1263,7 +1298,10 @@ function buildSeatRow(state, stagger, acting, ui, { tier, carousel, mustOpen, sh
       if (counter.kind) badge.dataset.counter = String(counter.kind).replace(/[^a-z0-9-]/gi, '');
       badge.textContent = counter.text;
       // The visible badge is a bare number, which reads as nothing on its own.
-      badge.setAttribute('aria-label', `${counter.aria}${i === 0 && active ? '. Their turn.' : ''}`);
+      // "Their turn" is false in a simultaneous phase, and it was being said on
+      // every seat that had not committed yet — see committingToken.
+      const says = !active || i !== 0 ? '' : (committing ? '. Still choosing.' : '. Their turn.');
+      badge.setAttribute('aria-label', `${counter.aria}${says}`);
       head.appendChild(badge);
     });
 
@@ -2242,6 +2280,9 @@ function render(state, message) {
   renderStatusBar(state, acting);
   renderSeats(state, stagger, acting, ui);
   if (ladder) ladder.render(state);
+  // The contract in force — trump, the bid and whose it is, your own meld.
+  // Above the middle of the felt, so it is drawn before the piles under it.
+  if (contractStrip) contractStrip.render(state);
   renderCenterZones(state, ui, draggable);
   renderPlayerZones(state, ui, draggable);
   // The two bars go BEFORE the hand, and the order is load-bearing: renderHand
@@ -2647,6 +2688,7 @@ function meldCardNode(state, seat, cardId) {
 
 let moments = null;
 let ladder = null;
+let contractStrip = null;
 let gestures = null;
 let zones = null;
 let record = null;
@@ -3172,8 +3214,20 @@ async function fillPendingChoices(state, move, myEpoch) {
     if (options.length === 1) {
       picked = options[0].value;
     } else {
-      picked = await promptChoice(art(), ask.prompt || ask.attr, options,
-        { card: ask.cardId ? cardById(state, ask.cardId) : null });
+      // TWO STRINGS, NOT ONE, and passing the same one for both is what left
+      // Pinochle's trump step as four word buttons reading "Choose a suit to
+      // play it in". `art` is the drawing vocabulary the chooser tiles are
+      // keyed by; `prompt`/`question` is the words. See the Ask table in
+      // src/templates/CONTRACT.md.
+      const drawn = ask.art || ask.attr;
+      const sentence = ask.question || `Choose a ${ask.prompt || ask.attr}`;
+      // The bar behind an open dialog is still saying whatever the step BEFORE
+      // this one said. Repainted for as long as the question is up, and put
+      // back by the render that follows whichever way it is answered.
+      if (ask.status) el.statusText.textContent = ask.status;
+      picked = await promptChoice(art(), drawn, options,
+        { card: ask.cardId ? cardById(state, ask.cardId) : null, sentence });
+      if (ask.status && liveState()) renderStatusBar(state, actingSeatsOf(state));
       // Backed out, or the table closed while the prompt was open — either way
       // this move belongs to a match that is no longer the one on screen.
       if (picked === null || myEpoch !== epoch) return null;
@@ -3799,6 +3853,7 @@ export function closeTable() {
   session = null;
   hideAllPanels();
   if (ladder) ladder.hide();
+  if (contractStrip) contractStrip.hide();
 }
 
 export function isTableOpen() {
@@ -3928,6 +3983,13 @@ export function initTable({ onExit }) {
     identityOf,
     attachInspector,
     isBusy: () => !!drag && drag.isDragging(),
+  });
+
+  contractStrip = createContractStrip({
+    el: el.tableContract,
+    me,
+    identityOf,
+    art,
   });
 
   moments = createCelebrations({

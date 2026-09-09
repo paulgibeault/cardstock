@@ -133,6 +133,15 @@
     <div id="table">
       <div class="opponent-row" id="opponents-top"></div>
 
+      <!-- The contract in force: the standing high bid and who holds it during
+           an auction, then the trump suit, the contract and your own meld
+           (src/ui/contractStrip.js). Rendered only for a pack whose template
+           answers `contractChips` — every other table keeps the row's height.
+           Above the felt's middle rather than beside the piles, because a
+           player checks trump between plays and the middle is where their eyes
+           already are. -->
+      <div id="table-contract" class="contract-strip" hidden></div>
+
       <!-- The middle of the felt: the ladder standing beside the piles rather
            than above them. Horizontal room is what a table runs out of first —
            the ladder used to take a whole row of the felt's HEIGHT to say ten

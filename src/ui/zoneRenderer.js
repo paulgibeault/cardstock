@@ -25,6 +25,7 @@ import { line, svgNode } from './dom.js';
 import { safeCssColor } from './css.js';
 import { isSelected, describeContractItem } from './interaction.js';
 import { describeZone, zoneAriaLabel, zoneBadge, cardName } from './describe.js';
+import { seatSideMarks } from './seatRing.js';
 import { handValue } from '../engine/scoring.js';
 import { makeCtx } from '../engine/context.js';
 // A ui/ file reaching into templates/ the way lobby.js and cardStyles/ already
@@ -133,6 +134,66 @@ export function createZoneRenderer({
   }
 
   /**
+   * Who played each of the cards currently visible in a spread zone, or null
+   * where the template does not say (which is every zone but a trick, and every
+   * template but trick-taking).
+   *
+   * Aligned to the SLICE the fan is drawing, not to the zone: the fan shows the
+   * last `seats` cards and the hook answers for the whole zone, so the tail has
+   * to be taken from both or a five-card zone would label card 0 with card 1's
+   * player. There is no such zone today; getting it right costs one line.
+   */
+  function ownersOf(state, address, cards, visibleCount) {
+    const all = state.pack.template.zoneCardOwners?.(makeCtx(state), address) ?? null;
+    if (!Array.isArray(all) || all.length !== cards.length) return null;
+    return all.slice(-visibleCount);
+  }
+
+  /**
+   * The tag under one card in the trick — whose card it is.
+   *
+   * THE ROSTER'S MARK, the same one the seat plate wears and the chooser's seat
+   * options use, in the same colour — so "this is a player" is one vocabulary
+   * wherever it turns up and the tag is read by matching it to a chair rather
+   * than by reading anything.
+   *
+   * THE MARK AND NOT THE NAME, which was the first cut and does not fit. The
+   * fan overlaps by half a card, so the strip each tag may occupy without
+   * reaching under its neighbour is half a card wide — 45px on a desktop and 26
+   * at 375px. A name in that is two letters and an ellipsis, which identifies
+   * nobody; the coloured mark identifies everybody at every width. The NAME is
+   * on the pile's accessible name in play order (see buildPileNode).
+   *
+   * AND WHICH SIDE, because that is the question actually being asked. A tag
+   * that only said which player would leave a partnership player one lookup
+   * short of "is my side winning this" — so the rim carries the partner colour
+   * the seat plate's bottom rule already uses (seatSideMarks), and the accent
+   * for their own card.
+   *
+   * A SIBLING OF THE CARDS, not a child of one: the card nodes carry a small
+   * random rotation (--stack-tilt) and a caption inside one would inherit it,
+   * so a trick of four would be four tags at four angles.
+   */
+  function ownerTag(state, seat, i, visibleCount) {
+    const identity = identityOf(seat);
+    const marks = seatSideMarks(state.pack, state.seats, me.seat(), seat);
+    const tag = document.createElement('span');
+    tag.className = `trick-owner ${me.holds(seat) ? 'trick-owner--mine' : ''} `
+      + `${marks.partner ? 'trick-owner--partner' : ''}`;
+    tag.style.setProperty('--stack-index', String(i - (visibleCount - 1) / 2));
+    // A number the STYLESHEET may dress, chosen by the engine and never by pack
+    // data (§7b) — the same attribute the seat plate carries.
+    if (marks.side !== null) tag.dataset.side = String(marks.side);
+    // Own value from the roster, never a manifest one — inline style (§7b).
+    tag.style.background = identity.color;
+    tag.textContent = identity.icon || identity.initials;
+    // Decorative: the pile's own accessible name says who played what, in play
+    // order, and a second rendering of it here would read every trick twice.
+    tag.setAttribute('aria-hidden', 'true');
+    return tag;
+  }
+
+  /**
    * One pile on the felt, for any zone. Always a <button>: whether it does
    * anything this render is decided by the UI model (a ready target applies its
    * move, a source top picks itself up), and a pile that does neither is simply
@@ -188,6 +249,11 @@ export function createZoneRenderer({
     };
 
     let topNode = null;
+    // Who played which card in a spread zone, and the same fact as a sentence
+    // for the pile's accessible name — set inside the spread branch below,
+    // because it is the only one where "who played this" is a question.
+    let owners = null;
+    let spokenOrder = null;
     if (faceDown) {
       topNode = svgNode(count > 0
         ? art().back()
@@ -199,15 +265,38 @@ export function createZoneRenderer({
     } else if (isSpread && !mini) {
       // A trick is not a pile: every card in it is live information about who
       // played what, so it spreads and shows the whole trick.
+      //
+      // AND IT SAYS WHO, WHICH IT DID NOT. "Live information about who played
+      // what" was half true: the cards were all there and the WHO was nowhere,
+      // so reading the trick meant remembering the play order — and at a
+      // partnership table the question is not "who is winning" but "is my SIDE
+      // winning", which is one step further from anything on screen (#125 item
+      // 52). The template answers it (`zoneCardOwners`); this draws it.
       const visible = cards.slice(-state.seats);
+      owners = ownersOf(state, address, cards, visible.length);
+      spokenOrder = owners ? visible.map((id, i) => {
+        const card = cardById(state, id);
+        const seat = owners[i];
+        if (!card || !Number.isInteger(seat)) return null;
+        return `${me.holds(seat) ? 'You' : identityOf(seat).name}: ${cardName(card)}`;
+      }).filter(Boolean) : null;
+      // THE TAGS GO ON LAST, all of them, and that is not tidiness. Every child
+      // of .pile-stack is absolutely placed at the same z-index, so paint order
+      // is source order: a tag appended beside its own card is painted UNDER
+      // the next card, and in a fan that overlaps by half that is every tag but
+      // the last one buried.
+      const tags = [];
       visible.forEach((cardId, i) => {
         const card = cardById(state, cardId);
         if (!card) return;
         const isTop = i === visible.length - 1;
         const node = placeCard(art().face(card), i, visible.length, cardId, isTop);
         node.style.setProperty('--stack-tilt', `${tiltFor(cardId, 7).toFixed(2)}deg`);
+        const owner = owners ? owners[i] : null;
+        if (Number.isInteger(owner)) tags.push(ownerTag(state, owner, i, visible.length));
         if (isTop) topNode = node;
       });
+      for (const tag of tags) stack.appendChild(tag);
       if (!visible.length) stack.appendChild(svgNode('<div class="card-face card-face--empty"></div>', 'pile-stack__top'));
     } else {
       // A face-up pile keeps a few cards of HISTORY under the top one, stacked —
@@ -227,7 +316,12 @@ export function createZoneRenderer({
       if (!visible.length) stack.appendChild(svgNode('<div class="card-face card-face--empty"></div>', 'pile-stack__top'));
     }
 
-    stack.dataset.zoneLabel = zoneAriaLabel(state, inst);
+    // THE TAGS ON THE FELT ARE aria-hidden, so this is where the same fact
+    // reaches a screen reader: the pile's own name, in play order, which is the
+    // order it is read out in. Without it the trick's owners would be a purely
+    // visual answer to a question the felt is being asked to stop hiding.
+    stack.dataset.zoneLabel = zoneAriaLabel(state, inst)
+      + (spokenOrder?.length ? ` Played: ${spokenOrder.join(', ')}.` : '');
 
     // LATE-BOUND, and bound unconditionally. The handler asks the current UI
     // model what this pile does at the moment it is clicked instead of closing
