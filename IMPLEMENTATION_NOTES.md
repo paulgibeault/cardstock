@@ -2057,6 +2057,77 @@ which `row-reverse` inverts, so a left-handed scrub reads each card's strip off
 the wrong edge. That is pre-existing, it is one row's worth of the same bug it
 always was, and fixing it is a change to which strip a finger is answered by
 rather than to where the rows are.
+## The card width the fan was actually given (#135)
+
+### What was wrong
+
+`layoutHand` measured the row and then read the card off the stylesheet:
+
+```js
+const cardWidth = parseFloat(styles.getPropertyValue('--hand-card-w')) || 70;
+```
+
+A custom property comes back from `getComputedStyle` as the token stream that
+was written — no viewport units resolved, no `clamp()` evaluated — and on a
+desktop window `--hand-card-w` is `clamp(70px, 8.6vh, 104px)` (`table.css`).
+`parseFloat` read that as `NaN`, the `|| 70` swallowed it, and every desktop
+fan was laid out for 70px cards whatever size the cards on screen were. At
+375px the property is a plain `46px` and parses, which is why the bug was
+invisible on a phone and invisible to `fanStep`'s tests.
+
+The consequence was the round-5 complaint that the hand "keeps a ~40% overlap
+between cards even down to three cards in a 1041px-wide row" (item 44c).
+`fanStep`'s ceiling is `0.94 × cardWidth`, so the widest any desktop fan could
+open was 65.8px — measured at 1041×1200, Cribbage: 103px cards at a 65.8px
+step, a 36% overlap with 300px of the row going spare, and the same 65.8px at
+six cards and at three. `fanStep` was never wrong; the number going into it
+was. #122's "the fan flexes both ways" fix therefore only worked on windows
+short enough for the clamp to sit near its floor. `liftGap` and `fanWidth`
+share the same `cardWidth`, so the reserve that keeps the rightmost card off
+the rail was computed for the wrong card too.
+
+### What changed
+
+A pure `resolveCardWidth({ rendered, declared, fallback })` in
+`src/ui/handOrder.js` — a finite positive measurement wins, else the parsed
+declaration, else the fallback — and `layoutHand` passes it the first hand
+card's width and the property string. The DOM half stays one measurement; the
+rule is pinned in `tests/interaction.test.js`.
+
+`offsetWidth` rather than `getBoundingClientRect().width`, which is the one
+non-obvious decision here. `layoutHand` runs at the end of `renderHand`, when
+freshly dealt cards still carry `card-deal`, whose `deal-in` keyframes open at
+`scale(0.85)` with `both` fill — and a client rect includes that transform.
+Measured in-page on a 103.19px card: `offsetWidth` 103, the rect 100.33 mid
+animation and 87.7 at the "from" keyframe. A layout width is the honest one; a
+0.19px rounding loss is not worth a fan that resizes as the deal settles.
+
+The declaration stays as the fallback rather than being dropped: on a phone it
+is a real length, and it is all there is before the hand has been laid out.
+Nothing else in `src/` parses a custom property — `getPropertyValue(` appears
+exactly once outside the CSS — so `--pile-w`, which is also a `clamp()` on
+desktop, has no equivalent bug. (The `pileW: null` the research probe saw was
+the probe's own `parseFloat`.)
+
+### How it was verified
+
+Playwright against two servers, this branch and unmodified main, same probe.
+Cribbage at 1041×1200: `--fan-step` 65.80px → 96.82px against a 103.19px card,
+0.638 → 0.938 of the card's width, at six cards and again at three (played
+through the crib discard into pegging). Team Spades at 1280×860, thirteen
+cards: step 65.80px → 69.56px on 73.95px cards, rightmost card's right edge
+1050.3 against the rail's left edge at 1066.3, `#table-screen.scrollWidth ===
+clientWidth`, one row — the wider real width opens the fan without pushing it
+under the rail. At 375×812 the numbers are byte-identical before and after, all
+nine packs: a 13-card hand still fans at 14.50px, Hearts' 17 at 10.88px.
+
+All nine packs boot clean at both viewports with no page errors, and none puts
+a card under the rail (Hearts closes to 64.69px at 1280px for its 17 cards).
+`npm test` 811/811, `node tools/pack-test.mjs --all` green for all nine packs,
+`node --check src/ui/table.js`. The new test was proved to bite three ways:
+preferring the declaration over the measurement, returning the measurement
+unconditionally, and dropping the positive guard each turned it red, and it
+went green again from a scratch copy.
 
 ## Next steps
 

@@ -27,7 +27,7 @@ import {
   ladderRungs, ACTION_LABEL_MAX_CHARS,
 } from "../src/ui/interaction.js";
 import {
-  orderHand, applyManual, reorder, nextMode, fanStep, fanWidth, liftGap, SORT_MODES,
+  orderHand, applyManual, reorder, nextMode, fanStep, fanWidth, liftGap, resolveCardWidth, SORT_MODES,
   fanLayout, handRows,
   classifyHandGesture,
 } from "../src/ui/handOrder.js";
@@ -637,6 +637,41 @@ test("the gap a lifted card opens is exactly the overlap it would bury", () => {
   assert.ok(liftGap({ cardWidth: 70, step: fanStep({ count: 5, cardWidth: 70, available: 2000 }) })
     < liftGap({ cardWidth: 70, step: fanStep({ count: 13, cardWidth: 70, available: 500 }) }),
     "an open fan must not shove cards around for a lift that hides nothing");
+});
+
+test("the fan is sized by a measured card, not by the declaration", () => {
+  // THE DECLARATION IS NOT ALWAYS A NUMBER. `--hand-card-w` is
+  // `clamp(70px, 8.6vh, 104px)` on a desktop window, and a custom property
+  // comes back from getComputedStyle exactly as it was written — so parsing it
+  // gave NaN, the fallback put 70px in, and every desktop fan was spaced for a
+  // phone's cards (#135, round-5 item 44c).
+  assert.strictEqual(
+    resolveCardWidth({ rendered: 103, declared: 'clamp(70px, 8.6vh, 104px)', fallback: 70 }),
+    103, "a measured card must win over a declaration that cannot be parsed");
+  // And over one that CAN be: a length that parses is not thereby the length
+  // on screen — `70px` is the desktop clamp's floor, not its value — so the
+  // measurement is preferred outright rather than only when parsing fails.
+  assert.strictEqual(
+    resolveCardWidth({ rendered: 103, declared: '70px', fallback: 70 }),
+    103, "a measured card must win over a parseable declaration too");
+  // The declaration is a fallback, not a discard: at 375px it is a plain length
+  // and it is all there is before the hand has been laid out.
+  assert.strictEqual(
+    resolveCardWidth({ rendered: NaN, declared: '46px', fallback: 70 }),
+    46, "an unmeasurable hand still gets the declared width");
+  // A zero measurement is a hand that has not been laid out, not a zero-width
+  // card — taking it literally would collapse the fan onto one point.
+  assert.strictEqual(
+    resolveCardWidth({ rendered: 0, declared: 'clamp(70px, 8.6vh, 104px)', fallback: 70 }),
+    70, "neither a usable measurement nor a usable declaration falls through");
+  assert.strictEqual(resolveCardWidth({ rendered: undefined, declared: '' }), 70,
+    "the fallback defaults rather than returning NaN");
+
+  // And the width it resolves is what opens the fan: the desktop bug was
+  // 65.8px of step under 103px cards, a 36% overlap on a roomy window.
+  const real = resolveCardWidth({ rendered: 103, declared: 'clamp(70px, 8.6vh, 104px)' });
+  assert.ok(fanStep({ count: 6, cardWidth: real, available: 900 }) >= 0.9 * real,
+    "six cards with 900px of room must fan at nearly their full width");
 });
 
 test("a single card has nothing to overlap", () => {

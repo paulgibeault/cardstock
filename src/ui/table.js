@@ -100,7 +100,7 @@ import {
 } from './interaction.js';
 import {
   orderHand, reorder, nextMode, isSortMode, fanStep, fanWidth, liftGap,
-  fanLayout, handRows,
+  fanLayout, handRows, resolveCardWidth,
   classifyHandGesture, SORT_LABELS,
 } from './handOrder.js';
 import {
@@ -2049,8 +2049,13 @@ function layoutHand() {
   // `card-deal` is on screen, and the whole fan is then spaced for a card 2.5%
   // too small. The used width is a layout fact and no transform touches it.
   const cardStyles = getComputedStyle(cards[0]);
-  const cardWidth = parseFloat(cardStyles.width)
-    || parseFloat(styles.getPropertyValue('--hand-card-w')) || 70;
+  // The measurement goes through `resolveCardWidth` (#135) so the order —
+  // rendered, then declared, then 70 — is the one its test pins.
+  const cardWidth = resolveCardWidth({
+    rendered: parseFloat(cardStyles.width),
+    declared: styles.getPropertyValue('--hand-card-w'),
+    fallback: 70,
+  });
   // The wrapper, not the card art: the inline svg sits on a line box, so the
   // few px under its baseline are part of what a row of these actually costs.
   const cardHeight = parseFloat(cardStyles.height) || cardWidth * 1.4;
