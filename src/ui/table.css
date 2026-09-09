@@ -1412,7 +1412,8 @@ body {
  * has always been — a wrapping middle would let Milestones' contract ladder
  * fall under the piles on a narrow window, which is a layout nobody asked for.
  */
-#felt-middle.felt-middle--boarded {
+#felt-middle.felt-middle--boarded,
+#felt-middle.felt-middle--tabled {
   flex-wrap: wrap;
   /* `stretch` is the default and it spreads the two lines to fill the middle,
      which put 74px of empty felt between the piles and the board they belong
@@ -1633,10 +1634,125 @@ body {
   .board__value { font-size: 0.72rem; }
 }
 
+/* ------------------------------------------------------------------ *
+ * THE PLAY ROW (#138)
+ * ------------------------------------------------------------------ *
+ *
+ * Every seat's copy of a `table` zone, side by side and full size, with the
+ * count that belongs to them at the end of the line. One sequence, one place.
+ *
+ * WHY IT IS A WRAPPER AND NOT TWO FLEX ITEMS. The middle wraps (see the board
+ * above), and two items with their own flex bases are separated by the first
+ * line break that lands between them — which at 375px, where the middle is
+ * 332px and the spreads want 230 of it, is every time. Wrapped together they
+ * are one item and cannot be split.
+ *
+ * A WHOLE LINE, and only when there are spreads on it. `--zoned` is what makes
+ * the wrapper full width; a pack with a table counter and no `table` zone
+ * keeps the content-sized slot beside the piles that #table-counters has
+ * always been, and a pack with neither has the wrapper `hidden`.
+ *
+ * At 1280x860 the middle's first line is already 1078px of its 1221 (piles
+ * 361, board 608, the gaps) so a 430px play row could only join it by
+ * squeezing the board's road from 608px to under 300 — the whole point of
+ * #136 — and the second line costs nothing the row above the hand was not
+ * already spending. At 375x812 nothing beside the piles fits at all. */
+.table-play {
+  flex: 0 0 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(0.4rem, 2vw, 1.5rem);
+}
+.table-play[hidden] { display: none; }
+.table-play--zoned { flex: 1 1 100%; }
+
+/* Side by side rather than stacked, and measured: two spreads one above the
+   other are 218px of a 375px felt's middle, which during the play has 168 to
+   give once the piles and the board have theirs. Side by side they are 230px
+   WIDE in a 332px middle and cost one row's height between them. `wrap` for
+   the table that has more than two seats' worth to show, though no pack
+   declares one today. Bottom-aligned so the spreads sit on one line whatever
+   their captions do. */
+#table-zones {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  flex-wrap: wrap;
+  row-gap: 0.3rem;
+  /* THE GAP IS A FRACTION OF A CARD, and it has to be: `.pile-stack--spread`
+     reserves 2.11 card widths and four cards at the 0.51 overlap are 2.53 of
+     them, so a full spread hangs 0.21 of a card over each end of its own box.
+     Two of them side by side with an ordinary 8px gutter therefore OVERLAP by
+     14px at 375px — the first card of your sequence drawn under the last card
+     of theirs, which is the one confusion this whole row exists to remove.
+     0.6 clears both overhangs (0.42) and leaves a real gutter between them at
+     every card size: 31px at 375px, 57px at 1280. */
+  column-gap: calc(var(--pile-w, 90px) * 0.6);
+  min-width: 0;
+}
+
+.table-zone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+/* WHOSE SPREAD THIS IS. The roster's mark and the seat's name, in the same
+   vocabulary the plate, the board's lane and the trick's owner tag already
+   wear — a mark is how a player is identified everywhere on this felt, so it
+   is how they are identified here. A HEAD rather than a tag per card: every
+   card in one seat's pile has the same owner, and four copies of one answer is
+   noise the trick's fan needs and this row does not.
+   Capped at the spread's own width so a long name cannot widen the column and
+   push its neighbour off the line. */
+.table-zone__head {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  max-width: calc(var(--pile-w, 90px) * 2.11);
+  min-width: 0;
+}
+
+.table-zone__mark {
+  flex: 0 0 auto;
+  width: 1.05rem;
+  height: 1.05rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 2px solid var(--chip-border);
+  font-size: 0.55rem;
+  line-height: 1;
+  overflow: hidden;
+}
+/* Your own and your partner's, in the rim colours the seat plate's bottom rule
+   and the trick tag already use. */
+.table-zone--mine .table-zone__mark { border-color: var(--accent); }
+.table-zone--partner .table-zone__mark { border-color: var(--partner); }
+
+.table-zone__name {
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  opacity: 0.85;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
 /* WHAT THE TABLE IS COUNTING, beside the piles it is counted off.
    A column, like the ladder on the other side, and sized to its content so it
    cannot push the piles off centre. Hidden with no reserved slot for every
    pack that declares no `tableCounters`, which is all of them but one.
+
+   With the play spreads on the felt (#138) it rides at the end of THEIR line
+   rather than beside the starter — the count is the sum of the cards in those
+   two piles and of nothing else on the table.
 
    Big, because it is arithmetic the player would otherwise be doing in their
    head off two spread piles — at a count of 30 with three cards greyed out,

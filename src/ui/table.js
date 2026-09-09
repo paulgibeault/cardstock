@@ -160,6 +160,8 @@ const el = {
   scoreChipTrack: document.getElementById('score-chip-track'),
   scoreChipValue: document.getElementById('score-chip-value'),
   tableCounters: document.getElementById('table-counters'),
+  tablePlay: document.getElementById('table-play'),
+  tableZones: document.getElementById('table-zones'),
   tableBoard: document.getElementById('table-board'),
   feltMiddle: document.getElementById('felt-middle'),
   opponentsTop: document.getElementById('opponents-top'),
@@ -653,6 +655,47 @@ function perPlayerZoneInstances(state, seat) {
   return out;
 }
 
+/**
+ * A per-player zone that is drawn in the MIDDLE for every seat at once (#138).
+ *
+ * The third answer to "where is a pile drawn", beside `interactive` and
+ * `onFelt`, and like both of them it says nothing about what may be SEEN in
+ * the pile — `visibility` remains the only thing that decides that. What it
+ * says is that the zone is read ACROSS the seats: cribbage's play is one
+ * sequence that both players add to and that both of them score runs and pairs
+ * off, and drawing it as a full spread above your own hand plus a 24px pile on
+ * the opponent's plate made the one thing the phase is about the one thing you
+ * could not read (#133 items 3–4).
+ */
+function isTableZone(def) {
+  return def.per === 'player' && def.table === true;
+}
+
+/** The per-player zones a SEAT still draws for itself — its plate, your row. */
+function ownZoneInstances(state, seat) {
+  return perPlayerZoneInstances(state, seat).filter((inst) => !isTableZone(inst.def));
+}
+
+/**
+ * Every seat's instance of every `table` zone, in the order they are drawn.
+ *
+ * RING ORDER WITH THE HUMAN LAST, which is the board's rule (#136) and the
+ * seat row's: the row sits above the hand, so "nearest the hand" is the end of
+ * it, and your own cards are the ones you look down at.
+ */
+function tableZoneInstances(state) {
+  const seat = mySeat();
+  const order = [...opponentRing(state.seats, seat), seat]
+    .filter((s) => Number.isInteger(s) && s >= 0 && s < state.seats);
+  const out = [];
+  for (const s of order) {
+    for (const inst of perPlayerZoneInstances(state, s)) {
+      if (isTableZone(inst.def)) out.push({ ...inst, seat: s });
+    }
+  }
+  return out;
+}
+
 function zoneStackNode(address) {
   return el.screen.querySelector(`[data-zone="${CSS.escape(address)}"]`);
 }
@@ -1009,7 +1052,15 @@ function buildSeatBody(state, seat, stagger, ui, into, { compactZones = true } =
 
   // The seat's own piles, compact: a Stockpile stock and discards, laid-down
   // melds (live hit targets), a Hearts won pile with the points it holds.
-  const seatZones = perPlayerZoneInstances(state, seat);
+  //
+  // A `table` zone is NOT among them, on the plate or in the popup the plate
+  // opens — ONE PLACE, NOT THREE (#138). The popup was the tempting exception
+  // and it is the wrong one: it would put a second, smaller, differently
+  // ordered rendering of the same sequence behind a tap, which is the split
+  // this flag exists to end rather than a convenience on top of it. The
+  // spreads in the middle are full size and always visible, so there is
+  // nothing the popup copy could have been for.
+  const seatZones = ownZoneInstances(state, seat);
   if (seatZones.length) {
     const strip = document.createElement('div');
     strip.className = 'seat__zones';
@@ -1849,6 +1900,107 @@ function renderCenterZones(state, ui, draggable) {
 }
 
 /**
+ * THE SEQUENCE THE WHOLE TABLE IS PLAYING, drawn once (#138).
+ *
+ * Every seat's instance of every `table` zone, side by side in the middle of
+ * the felt, full size, each under the mark and the name of the seat it belongs
+ * to. The zone stays per player — cribbage's count, its "go" and its show all
+ * read a seat's own pile, and none of that is touched — but the two piles are
+ * one sequence to READ, so they are drawn as one thing. Before this, yours was
+ * a full spread above your hand and theirs was a 24px mini pile on their plate
+ * 270px away showing only its top card, with the count between them.
+ *
+ * THE ROW IS NOT A PLACE ON THE TABLE UNTIL SOMETHING IS IN IT, which is
+ * `hideWhenEmpty`'s rule asked of the row rather than of one pile. Cribbage's
+ * play piles are empty through the deal and the whole discard, and a row of
+ * empty slots there costs a phase that already struggles for height on a
+ * desktop (#137) a line it has nothing to put in. Once ANY seat has played, all
+ * of them are drawn — including the one that has not yet — so the row's shape
+ * does not move underneath the player for the rest of the hand.
+ *
+ * @returns whether any spread was drawn
+ */
+function renderTableZones(state, ui, draggable) {
+  const insts = tableZoneInstances(state);
+  el.tableZones.replaceChildren();
+  const live = insts.some((inst) => state.zones.count(inst.address) > 0);
+  if (!live) return false;
+
+  for (const inst of insts) {
+    const { seat } = inst;
+    const identity = identityOf(seat);
+    const marks = seatSideMarks(state.pack, state.seats, mySeat(), seat);
+    const wrap = document.createElement('div');
+    wrap.className = `table-zone ${isMySeat(seat) ? 'table-zone--mine' : ''} `
+      + `${marks.partner ? 'table-zone--partner' : ''}`;
+
+    const head = document.createElement('div');
+    head.className = 'table-zone__head';
+    const mark = document.createElement('span');
+    mark.className = 'table-zone__mark';
+    // A number the STYLESHEET may dress, chosen by the engine and never by
+    // pack data (§7b) — the same attribute the plate and the trick tag carry.
+    if (marks.side !== null) mark.dataset.side = String(marks.side);
+    // Own value from the roster, never a manifest one — inline style (§7b).
+    mark.style.background = identity.color;
+    mark.textContent = identity.icon || identity.initials || String(seat + 1);
+    head.appendChild(mark);
+    head.appendChild(line('table-zone__name', seatLabel(seat)));
+    // Decorative: the pile's own accessible name is possessive below, so a
+    // reader that spoke both would hear the owner twice per pile.
+    head.setAttribute('aria-hidden', 'true');
+    wrap.appendChild(head);
+
+    const pile = zones.buildPileNode(state, inst, ui, {
+      draggableTop: isMySeat(seat) ? (draggable.piles.get(inst.address) || null) : null,
+    });
+    // WHOSE PILE THIS IS, IN ITS NAME. `describeZone`'s title is the zone's
+    // label — "Played" — and two spreads side by side both called "Played, 3
+    // cards" are one pile as far as a screen reader is concerned. The caption
+    // beside them is the visual answer; this is the spoken one, and it has to
+    // be re-painted because paintPileState builds the name from this dataset.
+    const stack = pile.querySelector('.pile-stack');
+    if (stack) {
+      const said = stack.dataset.zoneLabel || '';
+      stack.dataset.zoneLabel = `${seatPossessive(seat)} ${said.charAt(0).toLowerCase()}${said.slice(1)}`;
+      zones.paintPileState(stack, ui);
+    }
+    wrap.appendChild(pile);
+    el.tableZones.appendChild(wrap);
+  }
+  return true;
+}
+
+/**
+ * The play row and the number that belongs to it, as one line of the middle.
+ *
+ * WHY THEY SHARE A SLOT. The count is the running total of the sequence beside
+ * it — "why are three of my four cards greyed out" is answered by the cards and
+ * the number together — and #124 had put it beside the STARTER, which is the
+ * one card in the play it has nothing to do with. Once the spreads are in the
+ * middle the count belongs with them, and a wrapper is what keeps the pair on
+ * one line of a wrapping middle whatever the width: two flex items with their
+ * own bases get separated the moment the line is tight, which at 375px is
+ * every time.
+ *
+ * FULL WIDTH ONLY WHEN THERE ARE SPREADS. `table-play--zoned` is what gives the
+ * wrapper a whole line; without it the wrapper is the content-sized slot beside
+ * the piles that `#table-counters` has always been, so a pack with a table
+ * counter and no `table` zone keeps the felt it had. And with neither, the
+ * wrapper is `hidden` — no slot, no gap, no child in handSlack's measurement.
+ */
+function renderTablePlay(state, ui, draggable) {
+  const zoned = renderTableZones(state, ui, draggable);
+  el.tablePlay.classList.toggle('table-play--zoned', zoned);
+  el.tablePlay.hidden = !zoned && el.tableCounters.hidden;
+  // The middle wraps for a table that HAS a full-width line to wrap, and for
+  // no other — the same rule and the same reason as the board's (#136): a
+  // permanently wrapping middle would let Milestones' contract ladder fall
+  // under the piles on a narrow window.
+  el.feltMiddle.classList.toggle('felt-middle--tabled', zoned);
+}
+
+/**
  * The counter kinds that belong on the HUMAN's own seat.
  *
  * A closed platform vocabulary, exactly like `COUNTER_TRACK_KINDS`
@@ -1911,7 +2063,9 @@ function renderPlayerZones(state, ui, draggable) {
   // costs no vertical space on a phone.
   const mine = buildMySeatStrip(state);
   if (mine) el.playerPiles.appendChild(mine);
-  for (const inst of perPlayerZoneInstances(state, mySeat())) {
+  // ...and not a `table` zone, which is drawn in the middle with everybody
+  // else's copy of it (renderTableZones).
+  for (const inst of ownZoneInstances(state, mySeat())) {
     if (inst.def.id === 'melds') {
       el.playerPiles.appendChild(zones.buildMeldStrip(state, mySeat(), ui));
     } else if (inst.def.visibility === 'none') {
@@ -2876,6 +3030,10 @@ function render(state, message) {
   if (contractStrip) contractStrip.render(state);
   renderCenterZones(state, ui, draggable);
   renderPlayerZones(state, ui, draggable);
+  // AFTER the status bar, which is where renderTableCounters runs: the count
+  // shares this row and whether it is on screen decides whether the row exists
+  // at all for a pack that has one and no `table` zone.
+  renderTablePlay(state, ui, draggable);
   // The two bars go BEFORE the hand, and the order is load-bearing: renderHand
   // ends by measuring how much room the fan has. Measured with the previous
   // render's bars still showing, the fan was laid out against a row of the
