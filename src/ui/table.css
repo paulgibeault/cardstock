@@ -1983,9 +1983,17 @@ button.pile-stack:focus-visible { outline: 2px solid var(--accent); outline-offs
   }
   /* The thumb reaches the same side it always did. */
   [data-handedness="left"] .hand-rail__stack { flex-direction: row-reverse; }
-  .hand-rail__stack #action-button {
-    width: auto;
-    min-width: 6.2em;
+  /* ONE SLOT, ONE WIDTH — the rail's own 5rem, which is the width the action
+     button is laid out to everywhere else and the width its label budget
+     (ACTION_LABEL_MAX_CHARS, src/ui/interaction.js) is written against. Left to
+     size themselves, the button and the toggle it shares the slot with come out
+     a few pixels apart, and the token and the lamp beside them would step
+     sideways every time the turn changed. */
+  .hand-rail__stack #action-button,
+  .hand-rail__stack .hand-sort {
+    flex: none;
+    width: 5rem;
+    min-width: 0;
   }
 }
 

@@ -706,6 +706,38 @@ test("a felt with no room to spare keeps the fan on one row", () => {
   assert.strictEqual(fanLayout({ ...PHONE, count: 17, available: 312, slack: 300 }).rows, 2);
 });
 
+test("a split fan comes back together later than it split", () => {
+  // A HAND SHRINKS A CARD AT A TIME, and what it is judged on is the ONE-ROW
+  // step — which crosses the floor while the fan is still drawn in two. Without
+  // hysteresis, staging one card out of thirteen would re-join the fan and take
+  // it from 43px a card to 24px, jumping the whole hand 70px up the felt, as a
+  // reward for playing.
+  const at = (count, current) => fanLayout({ ...PHONE, count, available: 312, slack: ROOMY, current });
+
+  assert.strictEqual(at(13, 1).rows, 2, "thirteen cards split");
+  for (const count of [12, 11, 10]) {
+    assert.strictEqual(at(count, 2).rows, 2, `${count} cards must keep the two rows they are drawn in`);
+    assert.ok(at(count, 2).step >= 40, "and keep the open fan that made them worth splitting");
+    // The same hand arrived at fresh is a one-row hand: the difference IS the
+    // hysteresis, not a different answer to the same question.
+    assert.strictEqual(at(count, 1).rows, 1);
+  }
+  // Far enough down and one row is the natural spacing again, so it re-joins.
+  assert.strictEqual(at(9, 2).rows, 1, "a nine-card hand fits one row at its natural spacing");
+  assert.strictEqual(at(9, 1).rows, 1);
+
+  // It cannot flap: the count that splits and the count that re-joins are far
+  // apart, so no single card played can send the fan back and forth.
+  let rows = 1;
+  const seen = [];
+  for (const count of [13, 12, 11, 10, 9, 10, 11, 12, 13, 12]) {
+    rows = at(count, rows).rows;
+    seen.push(rows);
+  }
+  assert.deepEqual(seen, [2, 2, 2, 2, 1, 1, 1, 1, 2, 2],
+    "the fan must not flip rows as a hand is played down and drawn back up");
+});
+
 test("a row is never left holding one card, however much felt there is", () => {
   // Rows are a way of fanning a hand, not a way of spending height: splitting
   // past pairs would draw a "fan" of singletons.

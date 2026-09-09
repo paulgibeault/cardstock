@@ -2082,9 +2082,13 @@ function layoutHand() {
   // real change of room is a change of key.
   const key = `${count}:${Math.round(cardWidth)}:${Math.round(cardHeight)}`
     + `:${Math.round(available)}:${Math.round(slack / SLACK_STEP)}`;
+  // The shape it is in NOW is an input, not just a cache: a fan re-joins later
+  // than it split, so that staging one card out of thirteen does not drop the
+  // hand back to one row and take 20px off every card's strip (fanLayout).
+  const current = session?.handFit?.rows || 1;
   const rows = session?.handFit?.key === key
     ? session.handFit.rows
-    : fanLayout({ count, cardWidth, cardHeight, available, rowGap, slack }).rows;
+    : fanLayout({ count, cardWidth, cardHeight, available, rowGap, slack, current }).rows;
   if (session) session.handFit = { key, rows };
 
   const perRow = placeHandRows(cards, rows);
@@ -2148,8 +2152,16 @@ function handSlack(rowCost) {
     if (child.hidden) continue;
     content = Math.max(content, child.offsetHeight);
   }
+  // AND WHAT THE FELT IS ALREADY OVER BY. The middle's spare room is the answer
+  // only while the column fits the screen; a felt that has outgrown it has
+  // taken height it did not have, and a second row would take more. Without
+  // this term the middle simply grows to whatever it is asked for, the spare
+  // reads as zero however far the hand has pushed the table off the bottom, and
+  // the gate never closes — which is exactly what a probe that ate the felt's
+  // middle showed it doing.
+  const over = Math.max(0, el.screen.scrollHeight - el.screen.clientHeight);
   const extraRows = Math.max(0, el.hand.querySelectorAll('.hand__row').length - 1);
-  return Math.max(0, middle.clientHeight - content) + extraRows * rowCost;
+  return middle.clientHeight - content - over + extraRows * rowCost;
 }
 
 /**

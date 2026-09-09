@@ -277,6 +277,16 @@ const READABLE = 0.5;
  * row — so reading order and `handOrder` are untouched: the second row is the
  * end of the same hand, not a second hand.
  *
+ * AND IT COMES BACK TOGETHER LATER THAN IT SPLIT. A hand shrinks a card at a
+ * time, and the step it is judged on is the ONE-ROW step, which crosses the
+ * floor while the fan is drawn in two — so a fan that re-joined the moment one
+ * row was merely acceptable would go from 43px a card to 24px, and jump 70px up
+ * the felt, because the player staged a card. Splitting asks for READABLE;
+ * re-joining asks for NATURAL, the spacing a fan sits at when it is not short
+ * of room at all. Between the two the fan keeps the shape it has. On a 375px
+ * phone that is: split at thirteen cards, stay split down to ten, one row again
+ * at nine — each of those a step the player will only ever see once.
+ *
  * Pure, like everything else in here; the DOM half is three measurements.
  *
  * @param count      cards in the fan
@@ -285,13 +295,15 @@ const READABLE = 0.5;
  * @param available  px a single row may occupy
  * @param slack      px of height the felt can give up, beyond the first row
  * @param rowGap     px between rows (the stylesheet's, read back by layoutHand)
+ * @param current    how many rows the fan is drawn in right now
  * @returns { rows, step, perRow }
  */
-export function fanLayout({ count, cardWidth, cardHeight, available, slack, rowGap = 0 }) {
+export function fanLayout({ count, cardWidth, cardHeight, available, slack, rowGap = 0, current = 1 }) {
   const one = { rows: 1, step: fanStep({ count, cardWidth, available }), perRow: count };
   if (count < 2) return one;
   const readable = Math.max(FLOOR_PX, cardWidth * READABLE);
-  if (one.step >= readable) return one;
+  const rejoin = Math.max(FLOOR_PX, cardWidth * NATURAL);
+  if (one.step >= (current > 1 ? rejoin : readable)) return one;
 
   // A row costs its own height plus the gap above it. What `slack` buys is
   // rows BEYOND the first, which the hand is already paying for.
