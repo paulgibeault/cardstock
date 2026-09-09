@@ -1175,6 +1175,84 @@ keyframe animation anywhere on the component: the pegs move on a one-shot
 transition and then sit still, so there is nothing for `--arcade-pulse-count`
 to cap.
 
+## Which way is up, in the sentences the table says (#121)
+
+Two narration surfaces assumed points are a penalty, because both were written
+while Hearts was the only pack that had any. They were not unpolished; they were
+false, for three shipped packs, with every test green.
+
+* the round summary's target line read the HIGHEST score as the leader —
+  `First to 50 wins — 17 to go.` — so Thirteen, whose lowest score wins, told a
+  playtester that the pile they were losing with was progress. They finished on
+  53 having been promised "17 to go" for most of the match. Hearts shared the
+  function and the bug.
+* the trick banner said `N points against you` or `no points`. Pinochle showed
+  every trick the human won — the object of the game — in the alarm-red
+  `event-banner--bad`, and Team Spades announced a trick that was exactly what
+  the player had bid for as "no points".
+
+The fact both were missing is declared per pack and read everywhere else:
+`scoring.gameOver.winner`. `evaluateGameOver` reads it to pick a winner, the
+bot's match standing signs its accumulated score by it, and trick-taking turns
+both of its evaluators round on it once (`prizeSign`) — "which way is up is the
+pack's, and an evaluator must read it" (`src/templates/CONTRACT.md`). The
+narration was the one layer that never got the reading.
+
+**`src/ui/scoreDirection.js`** is that reading plus the two sentences, and it is
+pure and DOM-free on purpose: `src/ui/panels.js` resolves its element table on
+its first line and `src/ui/celebrations.js` imports the audio and flight layers,
+so no Node test can load either, and the text that was wrong for three packs is
+exactly what wants pinning. Both call sites keep their own subjects and delegate
+the wording. `prizeSign` was deliberately left alone — it is the bot's read, it
+is correct, and the point was to make the UI agree with it, not to refactor the
+evaluator underneath it.
+
+**The distance was never the wrong number.** `anyScore >= N` fires on the first
+side to REACH N whichever way the pack scores, so the side nearest the end is
+the highest one either way and `Math.max` stands. What was wrong was the claim
+attached to it. A penalty-scored race reads:
+
+> Match ends when anyone reaches 50 — 17 away. Lowest score wins.
+
+The first clause is the fact a player wants (how much longer), the second is the
+direction, and neither says the number going up is progress. It names no seat:
+the sheet directly above it already shows every name against its total, and a
+name here would be the third copy of the same fact. `First to N wins — X to go.`
+is untouched for `highestScore`, and a pack whose template owns the ending
+(Cribbage, Milestones) still says nothing at all.
+
+**The trick banner** now spends one direction read four ways — text, tone, cue
+and seat pulse — because those four disagreeing is what made it read as a bug
+rather than a wording nit. At a points-are-the-prize pack a trick the human won
+is `good`, and:
+
+* Team Spades counts it against the bid — `Trick is yours — 3 of your 5`. The
+  contract is the SIDE's (partners' bids add up, which is the rule that makes
+  overtaking your partner pointless), and past it every trick is a bag, so the
+  count keeps running and says what it has turned into: `6 of your 5, that's a
+  bag`. Both numbers are cheap at the moment of `trickWon` — a won pile's depth
+  is public even at a remote seat, and `bid` is a public playerVar.
+* Pinochle bids POINTS (`rules.bidding.unit`), so "3 of your 250" would be two
+  units in one sentence. It gets `Trick is yours — worth 23 points`.
+* a broken nil is the mirror image of the bug being fixed, and is called what it
+  is — `You take the trick — your nil is broken`, in the bad tone. A table that
+  cheered every trick at a highestScore pack would be just as wrong for the seat
+  that promised to take none.
+* Hearts is byte-identical to what shipped, and so is a bot's trick, which is
+  neutral either direction: the felt says what happened and does not
+  editorialise about other people's hands.
+
+Unknown direction — `winner: 'template'`, or no threshold at all — is narrated
+as the penalty it always was, matching `prizeSign`'s own fallback. A UI that
+disagreed with the bot about which way is up is the same bug wearing different
+clothes.
+
+`tests/scoreDirection.test.js` pins the text for one `lowestScore` and one
+`highestScore` pack for both functions, off packs loaded from disk, and ends
+with a source gate in the style of `tests/repo-gates.test.js`: a pure function
+nobody calls is green forever, and reverting either call site alone restores the
+whole bug with every other assertion passing.
+
 ## Next steps
 
 Multiplayer (Phase 8), per-pack UI polish (per-pack `theme.css`, custom
