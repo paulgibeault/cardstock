@@ -14,7 +14,7 @@
 
 import { statLinesFor } from '../stats/matchStats.js';
 import { sideScoreOf } from '../engine/sides.js';
-import { targetSentence as matchTargetSentence, pointsArePrize } from './scoreDirection.js';
+import { targetSentence as matchTargetSentence, winDirection } from './scoreDirection.js';
 import { line } from './dom.js';
 
 const el = {
@@ -324,8 +324,10 @@ export function showGameOver(state, {
   // scoreboard takes, so a partnership's card shows the side's number rather
   // than half of it; the LABEL is the pack's direction, because at Thirteen and
   // Hearts calling a penalty total a "Score" is the same misdirection #121 took
-  // out of the round panel's target line.
-  const scoreWord = pointsArePrize(state.pack) ? 'Score' : 'Penalty points';
+  // out of the round panel's target line. Only a declared `lowestScore` earns
+  // the penalty word: a template-owned ending (Cribbage, Milestones) is a score
+  // its owner counts up, and `pointsArePrize` declines to answer for those.
+  const scoreWord = winDirection(state.pack) === 'lowestScore' ? 'Penalty points' : 'Score';
   statsInto(el.gameOverStats, state.pack.template, stats, seating, state.seats, winner, {
     hints,
     hintSeat,
