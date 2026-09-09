@@ -96,6 +96,13 @@ export const SHOW_STEP_MS = 1500;
  * `partsOf`). A step with no cards still has a seat, a number and a sentence,
  * which is the whole of what the beat needs — the spotlight is the part that
  * degrades.
+ *
+ * `parts` is the WORDS half of the same payload — fifteen, a pair, his nobs —
+ * and it survives the wire where the card ids do not. It is carried here for
+ * one reason: the sentence for a step is rebuilt from the step
+ * (src/ui/table.js's `playShowStep`), so anything the template's narration
+ * reads has to be on it. Dropping it is how "his nobs" stayed invisible while
+ * being in the pack's own tagline (#124, item 41).
  */
 export function showSteps(events) {
   const out = [];
@@ -106,6 +113,7 @@ export function showSteps(events) {
       isCrib: !!ev.isCrib,
       points: ev.points ?? 0,
       cards: Array.isArray(ev.cards) ? ev.cards.slice() : [],
+      parts: Array.isArray(ev.parts) ? ev.parts.slice() : [],
     });
   }
   return out;

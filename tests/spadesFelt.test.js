@@ -105,7 +105,8 @@ const wonInst = (state) => ({
 
 test("the won pile's badge counts tricks, and says so", async () => {
   const { state } = await table({ tricks: [3, 0, 0, 0] });
-  assert.deepEqual(zoneBadge(state, wonInst(state)), { text: "3 tricks", kind: "count" });
+  // `name` rides beside the count on every pile since #122/#124 ("Won / 3 tricks").
+  assert.deepEqual(zoneBadge(state, wonInst(state)), { text: "3 tricks", kind: "count", name: "Won" });
   assert.equal(zoneAriaLabel(state, wonInst(state)), "Won, 3 tricks. Face down.");
 });
 
@@ -147,7 +148,9 @@ test("a pile with no reading of its own is untouched", async () => {
   const state = createState({ pack, seats: 4, seed: "eights" });
   put(state, "draw", [...pack.cardsById.keys()].slice(0, 30));
   const inst = { def: state.zones.defs.get("draw"), n: null, address: "draw" };
-  assert.deepEqual(zoneBadge(state, inst), { text: "30", kind: "count" });
+  const plain = zoneBadge(state, inst);
+  assert.equal(plain.text, "30");
+  assert.equal(plain.kind, "count");
 });
 
 /* ------------------------------------------------------------------ *

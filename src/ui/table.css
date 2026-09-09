@@ -310,6 +310,23 @@ body {
   opacity: 0.65;
 }
 
+/* YOUR OWN BOARD, IN THE CHROME. The opponent wears their peg rail on their
+   seat plate; the human has no plate, so their board goes in the one place
+   that is always on screen and already says "this number is yours" (#124).
+   Empty for every pack whose primary counter is a quantity — no slot, no gap,
+   the pill is unchanged.
+
+   Narrower than the rail on a plate on purpose: this bar may never wrap
+   (see #status-bar), and every pixel the board takes comes out of the
+   sentence beside it, which ellipsises. Sixty pixels of road is enough to
+   read a position off; the printed number is right there for the value. */
+.score-chip__track:empty { display: none; }
+.score-chip__track { display: inline-flex; align-items: center; }
+.score-chip .seat__track { margin-left: 0; min-width: 0; }
+.score-chip .seat__track-rail { min-width: 3.2rem; }
+.score-chip .seat__track-value { min-width: 1.4rem; }
+.score-chip #score-chip-value[hidden] { display: none; }
+
 .danger-button {
   font: inherit;
   padding: 0.6rem 1.1rem;
@@ -744,6 +761,13 @@ body {
 }
 .seat__score + .seat__count { margin-left: 0.3rem; }
 
+/* CARDS LEFT IS SHAPED LIKE A CARD. It and the score pill next to it were two
+   grey lozenges differing only in their digits, so a seat read "Nell 12 1" and
+   left you to work out which number was which (#122, round-5 item 24). A count
+   of cards is drawn as a small card — square corners, a thin edge — and a score
+   stays the round pill every chip on this table uses for a number. Shape rather
+   than a glyph or a word: it survives the collapsed row, the 375px width and
+   both themes, and costs the plate no room. */
 .seat__count {
   margin-left: auto;
   font-size: 0.7rem;
@@ -751,8 +775,10 @@ body {
   min-width: 1.35rem;
   padding: 0.08rem 0.35rem;
   text-align: center;
-  border-radius: 999px;
+  border-radius: 3px;
+  border: 1px solid var(--chip-border);
   background: var(--chip-border);
+  font-variant-numeric: tabular-nums;
 }
 
 /* ------------------------------------------------------------------ *
@@ -1256,6 +1282,52 @@ body {
   flex: 0 1 auto;
 }
 
+/* WHAT THE TABLE IS COUNTING, beside the piles it is counted off.
+   A column, like the ladder on the other side, and sized to its content so it
+   cannot push the piles off centre. Hidden with no reserved slot for every
+   pack that declares no `tableCounters`, which is all of them but one.
+
+   Big, because it is arithmetic the player would otherwise be doing in their
+   head off two spread piles — at a count of 30 with three cards greyed out,
+   this number is the whole explanation. No animation of any kind: it changes
+   with every card and a pulse on every card is a strobe (§6d). */
+.table-counters {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.table-counters[hidden] { display: none; }
+
+.table-counter {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.05rem;
+  padding: 0.3rem 0.6rem;
+  border-radius: 10px;
+  background: var(--chip-bg);
+  border: 1px solid var(--chip-border);
+}
+.table-counter__label {
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.7;
+}
+.table-counter__value {
+  font-size: 1.5rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.05;
+}
+
+@media (max-width: 560px) {
+  .table-counter { padding: 0.2rem 0.45rem; }
+  .table-counter__value { font-size: 1.15rem; }
+}
+
 #center-piles {
   flex: 1;
   /* Without this a flex child refuses to shrink below its content, so adding
@@ -1359,6 +1431,30 @@ body {
   background: var(--chip-bg);
   border: 1px solid var(--chip-border);
 }
+
+/* THE PILE'S OWN WORD, BACK ON THE FELT. It was dropped the instant a card
+   landed, which left a Thirteen table showing two spread stacks wearing `2` and
+   `28` with nothing to say which was the trick and which was the graveyard
+   (#122 item 18). The word is the part that identifies the pile and the number
+   is the part that moves, so the word leads and is drawn quieter — this is one
+   badge, not two, and it stays inside the same `--pile-w` cap. */
+.pile-count__name {
+  display: block;
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  opacity: 0.72;
+}
+.pile-count__value { display: block; }
+
+/* A pile whose badge is the STANDING COMBINATION rather than a count
+   (`zoneFocus`). It is a rule in force, like the active suit is, so it is inked
+   in the accent — but it is prose and not a glyph, so it keeps the pill. */
+.pile-count--focus {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--chip-border));
+  color: var(--accent);
+}
+.pile-count--focus .pile-count__value { font-weight: 800; }
 
 /* Piles stack in place: every card sits at the same spot, so the discard can
    keep a few cards of history under the top one and the draw pile can look as
@@ -1484,6 +1580,24 @@ button.pile-stack:focus-visible { outline: 2px solid var(--accent); outline-offs
   transform: translateX(calc(var(--stack-index, 0) * var(--pile-w, 90px) * 0.51)) rotate(var(--stack-tilt, 0deg));
 }
 
+/* WHICH OF THESE CARDS AM I ACTUALLY ANSWERING? On a pile that holds a whole
+   trick in sequence, that is the one question, and the pile used to answer it
+   with a count of every card in it (#122 item 18). Where the template names a
+   focus (`zoneFocus`), the standing combination is ringed in the accent — the
+   same ring the hint drew, which was the only place on the felt that ever said
+   this — and everything the trick has already answered falls back to being
+   history behind it.
+
+   A ring and a fade, not a filter: both are cheap, both survive `prefers-
+   reduced-motion`, and neither costs a composited layer per card. */
+.pile-stack__card--live {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-radius: 8px;
+  z-index: 2;
+}
+.pile-stack__card--spent { opacity: 0.42; }
+
 /* ------------------------------------------------------------------ *
  * Overlapping piles
  * ------------------------------------------------------------------ */
@@ -1580,6 +1694,19 @@ button.pile-stack:focus-visible { outline: 2px solid var(--accent); outline-offs
 /* Empty, the tray is a dotted outline saying "cards go here" rather than an
    invisible gap that appears to do nothing. */
 #stage-tray:empty { border-style: dashed; opacity: 0.45; min-width: 8rem; }
+
+/* THE TRAY SAYING NO. A gathered selection the engine will not take used to
+   look exactly like one it would — same dashed outline, same cards — while the
+   commit button quietly went away (#122 item 19). A solid warning edge is the
+   glanceable half of the answer; the sentence is in the button's name, the
+   tray's name and #log. No animation: this state can last as long as the
+   player leaves the cards there, and a tray that keeps shaking is a tray that
+   is shouting. */
+#stage-tray.stage-tray--refused {
+  border-style: solid;
+  border-color: var(--danger-bg);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--danger-bg) 45%, transparent);
+}
 
 .stage-card {
   display: block;
@@ -1730,6 +1857,33 @@ button.pile-stack:focus-visible { outline: 2px solid var(--accent); outline-offs
 .hand .card-face-wrap:hover { z-index: 2; }
 .hand .card-face-wrap--selected { z-index: 3; }
 .hand .card-face:hover { transform: translateY(-10px); }
+
+/* AND EVERY RUNG OPENS A GAP BEHIND IT.
+ *
+ * Coming to the front is only half of a lift. The fan overlaps LEFTWARD, so
+ * each card is read by its own left edge and nothing else — and the card that a
+ * lifted one comes to the front of is precisely the neighbour whose left edge
+ * it lands on. The playtest measured that neighbour down to a single pip (#122
+ * item 23). Ranking the lift lower is not the answer: then the lift is the
+ * thing that disappears, which is the bug the ladder above exists to prevent.
+ *
+ * So the fan opens: every card AFTER a lifted one slides right by `--lift-gap`,
+ * which layoutHand sets to the overlap (capped by the room it reserved, and 0
+ * when the fan is not overlapping at all). A transform, so nothing re-lays-out
+ * and no card can be pushed off the row; a general sibling combinator, so one
+ * gap opens however many cards are lit at once.
+ *
+ * It cannot oscillate under a mouse: only the cards after the hovered one move,
+ * and the hovered card itself never does — so the pointer stays on whatever it
+ * landed on. Every state with a rung has a rule here; tests/handZOrder.test.js
+ * holds the two lists together. */
+.hand .card-face-wrap--hinted ~ .card-face-wrap,
+.hand .card-face-wrap:hover ~ .card-face-wrap,
+.hand .card-face-wrap--selected ~ .card-face-wrap,
+.hand .card-face-wrap--peek ~ .card-face-wrap {
+  transform: translateX(var(--lift-gap, 0px));
+  transition: transform 0.1s ease;
+}
 /* A card you cannot play lies FLAT on the felt — no shadow, no lift — on top
    of being printed on grey stock by the card art itself (dullPaper/dullInk in
    src/ui/cardStyles/shared.js, and the `.card-face--muted` rules below). The
@@ -2105,6 +2259,23 @@ body.is-dragging .card-face { cursor: grabbing; }
 }
 #action-button:hover { background: var(--action-bg-hover); }
 #action-button[hidden] { display: none; }
+
+/* THE COMMIT, REFUSED. Same box, same slot, same height — only the button is
+   off, because the alternative measured on the felt was the Pass pill
+   disappearing the instant a card was tapped and the sort toggle taking the
+   thumb's place (#122 item 19). It reads as a control that is switched off
+   rather than as one that is missing, and the reason is on its accessible name
+   and its tooltip. */
+#action-button:disabled,
+#action-button.action-button--refused {
+  cursor: not-allowed;
+  background: var(--chip-bg);
+  color: var(--chrome-text);
+  opacity: 0.72;
+  border: 1px dashed var(--danger-bg);
+  padding: calc(0.3rem - 1px) calc(0.25rem - 1px);
+}
+#action-button:disabled:hover { background: var(--chip-bg); }
 
 /* ------------------------------------------------------------------ *
  * Compact piles on the seats, and melds

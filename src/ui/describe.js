@@ -17,6 +17,7 @@
 
 import { cardValue } from '../engine/scoring.js';
 import { makeCtx } from '../engine/context.js';
+import { winDirection } from './scoreDirection.js';
 
 const SUIT_GLYPH = { clubs: '♣', diamonds: '♦', hearts: '♥', spades: '♠' };
 
@@ -53,6 +54,25 @@ export const SECOND_PERSON = 'You';
  */
 export function possessive(label) {
   return label === SECOND_PERSON ? 'Your' : `${label}'s`;
+}
+
+/**
+ * A verb that AGREES with a seat label — "You peg 3", "Nell pegs 3".
+ *
+ * The same irregularity as `possessive`, one part of speech over, and it
+ * shipped the same way: cribbage's `describeEvent` wrote `${seatLabel(seat)}
+ * pegs ${n}`, which is right for every opponent at the table and says "You pegs
+ * 3" to the person playing (#124, item 41). Every seat label here is a proper
+ * noun and takes the third-person -s except the local player's, which is the
+ * pronoun "You" and takes the bare form.
+ *
+ * Deliberately not a conjugator. It appends `s`, which is right for every verb
+ * a felt has said out loud so far (peg, score, lead, win); a verb that inflects
+ * any other way should be written out at both call sites rather than guessed at
+ * here — the same bet `possessive` makes about names ending in `s`.
+ */
+export function agrees(label, verb) {
+  return label === SECOND_PERSON ? verb : `${verb}s`;
 }
 
 export function titleCase(word) {
@@ -123,12 +143,26 @@ export function describeCard(card, pack) {
   return { title: cardName(card), lines, notes };
 }
 
-/** The full sentence a screen reader hears for a card. */
+/**
+ * The full sentence a screen reader hears for a card.
+ *
+ * "WORTH 1" IS A CLAIM ABOUT WHICH WAY IS UP, and at a penalty-scored pack it is
+ * the wrong way round: nothing in Thirteen is worth anything until you are
+ * caught holding it, and every card in the hand announcing itself as worth
+ * something reads as a prize (#122, round-5 item 26). Which way is up is
+ * `winDirection`'s answer and nobody else's (#121) — and it deliberately
+ * declines to answer for a pack whose template owns the ending, so those keep
+ * the neutral wording rather than being guessed at.
+ */
 export function cardAriaLabel(card, pack, { position, of } = {}) {
   const { title, lines, notes } = describeCard(card, pack);
   const where = position ? `, position ${position}${of ? ` of ${of}` : ''}` : '';
   const points = lines.find((l) => l.label === 'Points');
-  const worth = points ? `, worth ${points.value}` : '';
+  const n = points ? Number(points.value) : 0;
+  const worth = !points ? ''
+    : winDirection(pack) === 'lowestScore'
+      ? `, ${points.value} penalty point${n === 1 ? '' : 's'} if you are caught with it`
+      : `, worth ${points.value}`;
   return `${title}${worth}${where}.${notes.length ? ` ${notes.join(' ')}` : ''}`;
 }
 
@@ -166,6 +200,21 @@ function zoneReadingOf(state, inst) {
   return state.pack.template.zoneReading?.(makeCtx(state), inst) ?? null;
 }
 
+/**
+ * The LIVE part of a pile, where a template has one: which of the cards in it
+ * are the thing being answered, and what that thing is called.
+ *
+ * Asked of the template rather than derived here, for the same reason
+ * `activeMatch` is: a pile that accumulates a whole trick is a rules fact, and
+ * only the rules know which tail of it is still standing (climbing's `combo`).
+ * Every other zone in every other pack answers null and is unaffected.
+ */
+export function zoneFocusOf(state, address) {
+  const focus = state.pack.template.zoneFocus?.(makeCtx(state), address) ?? null;
+  if (!focus || typeof focus.label !== 'string' || !focus.label) return null;
+  return { label: focus.label, cards: Array.isArray(focus.cards) ? focus.cards : [], seat: focus.seat };
+}
+
 export function describeZone(state, inst) {
   const { def, n, address } = inst;
   const count = state.zones.count(address);
@@ -173,6 +222,14 @@ export function describeZone(state, inst) {
   const lines = [{ label: 'Cards', value: String(count) }];
   const notes = [];
 
+  // The standing combination goes FIRST and in words: on a pile holding a whole
+  // trick, "Cards: 4" is true and useless, and the shape is the only thing a
+  // player is reading the pile for.
+  const focus = zoneFocusOf(state, address);
+  if (focus) {
+    lines.unshift({ label: 'To beat', value: focus.label });
+    notes.push(`${focus.label} is standing — beat it or pass.`);
+  }
   // BOTH NUMBERS, and the pile's own first: "twelve cards, which is three
   // tricks" is the whole of what there is to say about a won pile, and the
   // inspector is where there is room to say it.
@@ -206,33 +263,47 @@ export function describeZone(state, inst) {
 /**
  * The compact badge left on the felt once the words move to the inspector.
  *
- * A PILE WITH CARDS IN IT INTRODUCES ITSELF; AN EMPTY ONE CANNOT. That is the
- * whole rule, and it is what stops the label diet from going too far. Stripping
- * "Draw" off a pile of eighty-six cards loses nothing — you can see what it is.
- * Stripping "Trick" off an empty dashed rectangle leaves a box with `0` under
- * it and no way to know what the box is for, which is worse than the noise the
- * diet was meant to cut. So the count is the badge while there are cards, and
- * the name is the badge while there are none.
+ * A PILE WITH CARDS IN IT INTRODUCES ITSELF; AN EMPTY ONE CANNOT. That was the
+ * whole rule, and it went one step too far: the name was DROPPED the instant a
+ * card landed, so a table with two spread piles in the middle showed one wearing
+ * `2` and one wearing `28` and nothing saying which was which (#122, round-5
+ * item 18 — the same complaint Cribbage's "Starter" makes in #124). "You can see
+ * what it is" holds for a draw pile and not for a row of look-alike stacks.
  *
- * Returns `{ text, kind, suit }` rather than a bare string. `kind` is how loud
- * the badge should be — 'count' and 'name' are labels, 'match' is the suit or
- * colour the table is playing to — and `suit` is the four-suit name behind a
- * 'match' glyph when there is one, so the caller can ink a heart red.
+ * So the name STAYS and the count joins it: `name` beside the number, the name
+ * first, because the name is what tells you which pile you are looking at and
+ * the number is what changes. A pile whose count IS its identity is untouched —
+ * a capacity pile still reads `3/4`, and an active-suit badge is still the rule
+ * in force drawn big, with no name in front of it.
+ *
+ * A pile with a FOCUS — a standing combination the rest of it is history to
+ * (`zoneFocus`) — wears the focus's own words instead of a count, because on
+ * that pile the count is the trick and the words are the play.
+ *
+ * Returns `{ text, kind, suit, name }` rather than a bare string. `kind` is how
+ * loud the badge should be — 'count' and 'name' are labels, 'focus' is the thing
+ * the pile is currently asking of you, 'match' is the suit or colour the table
+ * is playing to — `suit` is the four-suit name behind a 'match' glyph when there
+ * is one, and `name` is the pile's own word to set beside a count.
  */
 export function zoneBadge(state, inst) {
   const { def, n, address } = inst;
   const count = state.zones.count(address);
+  const name = `${def.label || titleCase(def.id)}${n != null ? ` ${n}` : ''}`;
+  const named = () => ({ text: name, kind: 'name' });
   if (count === 0) {
     // The empty slot already reads as zero; the word is the missing half.
-    return { text: `${def.label || titleCase(def.id)}${n != null ? ` ${n}` : ''}`, kind: 'name' };
+    return named();
   }
   // THE UNIT COMES WITH IT when the template says the count of cards is not the
   // number (`zoneReading`). "3 tricks" rather than "12", because the badge on a
   // won pile is read against a bid that is counted in tricks — and because a
   // bare 3 under a stack of twelve cards would need the same explaining.
   const reading = zoneReadingOf(state, inst);
-  if (reading?.badge) return { text: reading.badge, kind: 'count' };
-  if (def.capacity != null) return { text: `${count}/${def.capacity}`, kind: 'count' };
+  if (reading?.badge) return { text: reading.badge, kind: 'count', name };
+  const focus = zoneFocusOf(state, address);
+  if (focus) return { text: focus.label, kind: 'focus', name };
+  if (def.capacity != null) return { text: `${count}/${def.capacity}`, kind: 'count', name };
   const match = activeMatchOf(state);
   if (match && match.address === address) {
     // `kind: 'match'` is what lets the caller draw this one BIG. Everywhere else
@@ -247,7 +318,7 @@ export function zoneBadge(state, inst) {
     const suit = Object.hasOwn(SUIT_GLYPH, match.value) ? match.value : null;
     return { text: suit ? SUIT_GLYPH[suit] : titleCase(match.value), kind: 'match', suit };
   }
-  return { text: String(count), kind: 'count' };
+  return { text: String(count), kind: 'count', name };
 }
 
 /** The accessible name for a pile — the words the badge no longer shows. */

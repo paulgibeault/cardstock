@@ -14,7 +14,7 @@
 
 import { statLinesFor } from '../stats/matchStats.js';
 import { sideScoreOf } from '../engine/sides.js';
-import { targetSentence as matchTargetSentence } from './scoreDirection.js';
+import { targetSentence as matchTargetSentence, winDirection } from './scoreDirection.js';
 import { line } from './dom.js';
 
 const el = {
@@ -94,6 +94,19 @@ function signed(n) {
 export function showRoundSummary(state, ev, seating, contract = null) {
   el.roundTitle.textContent = `Round ${ev.round} over`;
   el.roundScores.replaceChildren();
+  // A COLUMN WITH NOTHING TO SAY SAYS NOTHING (#124, item 43).
+  //
+  // The delta is what the ROUND BOUNDARY scored, and a pack whose points are
+  // pegged the moment they are earned has no such number: cribbage's every hole
+  // is already in `totals` by the time the hand ends, so its `scoreRound`
+  // returns nothing and `roundScores` comes back empty. What the sheet showed
+  // was `?? 0` — an unlabelled column reading 0 for both players, every round,
+  // sitting beside one that moved.
+  //
+  // The test is whether the event carries any per-seat entries AT ALL, not
+  // whether they are zero: a pack that genuinely scored nobody this hand still
+  // has a delta column, and it is still correct to print "+0" in it.
+  const hasDeltas = Object.keys(ev.scores || {}).length > 0;
   for (let s = 0; s < state.seats; s++) {
     const delta = ev.scores[s] ?? 0;
     const row = document.createElement('div');
@@ -101,7 +114,10 @@ export function showRoundSummary(state, ev, seating, contract = null) {
     const name = nameCell('round-scores__name', seating[s]);
     if (contract?.[s]) name.appendChild(line('round-scores__note', contract[s]));
     row.appendChild(name);
-    row.appendChild(line('round-scores__delta', signed(delta)));
+    // The cell stays even when it is empty: `.round-scores` is a three-column
+    // grid whose rows are `display: contents`, so a row that skips a cell
+    // shifts every cell after it into the wrong column.
+    row.appendChild(line('round-scores__delta', hasDeltas ? signed(delta) : ''));
     // A DELTA IS PER SEAT AND A TOTAL IS PER SIDE. What a seat took this hand is
     // genuinely that seat's — "you took four, your partner took eight" is the
     // conversation a partnership actually has — but the running total is the
@@ -254,12 +270,23 @@ export function hideFinalLook() {
  * Game over
  * ------------------------------------------------------------------ */
 
-function statsInto(node, template, stats, seating, seats, winner, { hints = 0, hintSeat = null } = {}) {
+/**
+ * @param scoreLine (seat) => {label, value} | null — the number that DECIDED
+ *                  the match, first on every card. It used to be absent: the
+ *                  panel that closes a match led with Moves and Cards played
+ *                  and put the scores a click away under "Round by round", so
+ *                  the default view of the result was trivia (#122, round-5
+ *                  item 26). Passed in rather than read here because which way
+ *                  the number counts is the pack's (src/ui/scoreDirection.js).
+ */
+function statsInto(node, template, stats, seating, seats, winner, { hints = 0, hintSeat = null, scoreLine = null } = {}) {
   node.replaceChildren();
   if (!stats) return;
 
   for (let s = 0; s < seats; s++) {
     const lines = statLinesFor(template, stats.perSeat[s]);
+    const score = scoreLine?.(s);
+    if (score) lines.unshift(score);
     // Hints are not in the log (src/ui/hint.js), so they are not in `stats`;
     // they are the one line added here, on the card of the seat that asked.
     if (s === hintSeat && hints > 0) lines.push({ label: 'Hints taken', value: String(hints) });
@@ -323,7 +350,21 @@ export function showGameOver(state, {
   }
 
   el.gameOverRecord.textContent = recordText || '';
-  statsInto(el.gameOverStats, state.pack.template, stats, seating, state.seats, winner, { hints, hintSeat });
+  // THE SCORES THAT DECIDED IT, FIRST. `sideScoreOf` is the same reading the
+  // scoreboard takes, so a partnership's card shows the side's number rather
+  // than half of it; the LABEL is the pack's direction, because at Thirteen and
+  // Hearts calling a penalty total a "Score" is the same misdirection #121 took
+  // out of the round panel's target line. Only a declared `lowestScore` earns
+  // the penalty word: a template-owned ending (Cribbage, Milestones) is a score
+  // its owner counts up, and `pointsArePrize` declines to answer for those.
+  const scoreWord = winDirection(state.pack) === 'lowestScore' ? 'Penalty points' : 'Score';
+  statsInto(el.gameOverStats, state.pack.template, stats, seating, state.seats, winner, {
+    hints,
+    hintSeat,
+    scoreLine: (seat) => (Array.isArray(state.scores)
+      ? { label: scoreWord, value: String(sideScoreOf(state.pack, state.seats, state.scores, seat)) }
+      : null),
+  });
 
   const rounds = stats ? stats.rounds : [];
   el.gameOverRoundsToggle.hidden = rounds.length === 0;

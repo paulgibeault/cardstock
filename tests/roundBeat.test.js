@@ -29,7 +29,9 @@ import {
 /** A cribbage show as `theShow` emits it: pone, dealer, then the crib. */
 const cribbageShow = [
   { type: 'pegPlay', seat: 0, points: 1, count: 26 },
-  { type: 'showScored', seat: 1, isCrib: false, points: 8, parts: [], cards: ['h-5', 'd-5', 's-J', 'c-4'] },
+  { type: 'showScored', seat: 1, isCrib: false, points: 8, cards: ['h-5', 'd-5', 's-J', 'c-4'],
+    parts: [{ kind: 'fifteen', points: 2, n: 2 }, { kind: 'fifteen', points: 2, n: 2 },
+      { kind: 'pair', points: 2, n: 2 }, { kind: 'nobs', points: 1, n: 1 }] },
   { type: 'pegged', seat: 1, points: 8, reason: 'show' },
   { type: 'showScored', seat: 0, isCrib: false, points: 11, parts: [], cards: ['h-6', 'd-9', 's-6', 'c-9'] },
   { type: 'pegged', seat: 0, points: 11, reason: 'show' },
@@ -122,6 +124,12 @@ test("a cribbage show is three steps: pone, dealer, crib", () => {
   assert.deepEqual(steps.map((s) => s.points), [8, 11, 4]);
   // The cards are what the spotlight lights; a local table has them.
   assert.deepEqual(steps[0].cards, ['h-5', 'd-5', 's-J', 'c-4']);
+  // ...and `parts` is what the SENTENCE is built from. The step is the only
+  // thing playShowStep has when it asks the template to narrate, so a step
+  // that drops the breakdown can only say a number — which is how "his nobs"
+  // stayed invisible for a whole playtest (#124).
+  assert.ok(steps.some((s) => s.parts.length),
+    'a show step must carry the breakdown it was scored from');
 });
 
 test("each step is legible before the next replaces it", () => {

@@ -90,7 +90,7 @@ import { createDragController } from './dragController.js';
 import { attachInspector, hideInspector } from './inspector.js';
 import {
   describeCard, cardAriaLabel, cardName,
-  possessive, zoneBadge,
+  possessive, agrees, zoneBadge,
 } from './describe.js';
 import {
   interactionMode, gathers, stagedSelection, buildUiModel, dropCandidates, draggableSources,
@@ -98,7 +98,8 @@ import {
   pruneSelection, toggleHandSelection, isSelected, handAddress, implicitLandingZone,
 } from './interaction.js';
 import {
-  orderHand, reorder, nextMode, isSortMode, fanStep, classifyHandGesture, SORT_LABELS,
+  orderHand, reorder, nextMode, isSortMode, fanStep, fanWidth, liftGap,
+  classifyHandGesture, SORT_LABELS,
 } from './handOrder.js';
 import {
   initPanels, showRoundSummary, hideRoundSummary,
@@ -153,7 +154,9 @@ const el = {
   statusText: document.getElementById('status-text'),
   lobbyButton: document.getElementById('lobby-button'),
   scoreChip: document.getElementById('score-chip'),
+  scoreChipTrack: document.getElementById('score-chip-track'),
   scoreChipValue: document.getElementById('score-chip-value'),
+  tableCounters: document.getElementById('table-counters'),
   opponentsTop: document.getElementById('opponents-top'),
   centerPiles: document.getElementById('center-piles'),
   playerPiles: document.getElementById('player-piles'),
@@ -277,6 +280,18 @@ function seatLabel(seat) {
  */
 function seatPossessive(seat) {
   return possessive(seatLabel(seat));
+}
+
+/**
+ * The same rule for a VERB — "You peg 3", "Nell pegs 3".
+ *
+ * Owned here for the reason `seatPossessive` is: whether a seat is second
+ * person is the table's fact, not a template's, and cribbage's narration got it
+ * wrong in exactly the way #107's possessive did (`${seatLabel(seat)} pegs`
+ * reads perfectly for every opponent and says "You pegs 3" to the player).
+ */
+function seatVerb(seat, verb) {
+  return agrees(seatLabel(seat), verb);
 }
 
 /**
@@ -571,8 +586,24 @@ function sharedZoneInstances(state) {
     // hidden zone that is ALSO a control says so with `interactive` in its
     // definition, which is how the draw pile keeps its place without this line
     // knowing that a draw pile is called "draw".
-    if (def.visibility === 'none' && !def.interactive) continue;
-    out.push(...instancesOf(def, null));
+    //
+    // `onFelt` is the other reason a hidden pile belongs on the table: it is
+    // FURNITURE — nobody may look through it, but everybody can see that it is
+    // there and how deep it is. Cribbage's crib is the case (#124, item 37):
+    // four cards go into it in front of both players, it decides the hand, and
+    // it was not drawn at all. What the felt showed instead was the `show`
+    // zone, empty, wearing the label "The crib" for the whole hand while the
+    // real crib was invisible.
+    if (def.visibility === 'none' && !def.interactive && !def.onFelt) continue;
+    // ...and `hideWhenEmpty` is the same question from the other side: a zone
+    // that exists only for a moment is not a place on the table until it has
+    // something in it. The crib's reveal pile is empty from the deal until the
+    // dealer turns it over, and an empty dashed box captioned "The crib"
+    // sitting beside the real crib is the felt saying the crib is empty.
+    for (const inst of instancesOf(def, null)) {
+      if (def.hideWhenEmpty && state.zones.count(inst.address) === 0) continue;
+      out.push(inst);
+    }
   }
   // The deck reads best on the left, whatever order the template declared.
   return out.sort((a, b) => (b.def.id === 'draw') - (a.def.id === 'draw'));
@@ -653,18 +684,35 @@ function seatScoreChip(state, seat) {
 /**
  * Which way play is going, for packs where that can change.
  *
- * Only rendered once a reverse has actually happened — `state.direction` is 1
- * in every game that never turns round, and a permanent arrow saying "play
- * goes left" on a table that has no other option is chrome that teaches
+ * Only rendered once a reverse has actually happened — a permanent arrow saying
+ * "play goes left" on a table that has no other option is chrome that teaches
  * nothing. It appears the moment a reverse lands and then stays, which is
  * exactly when a player needs to be able to check.
+ *
+ * "A REVERSE" IS A DEPARTURE FROM THE PACK'S OWN DIRECTION, not a negative
+ * number. This read `state.direction < 0`, which is true of Thirteen from the
+ * first card of the first deal — the pack simply deals counter-clockwise
+ * (`rules.direction`) — so a game that can never reverse wore a permanent badge
+ * announcing that it had, in the top-right corner where it read as a restart
+ * control and sat on the second seat plate at 375px (#122, round-5 item 24).
+ * Compared against the pack's declaration, Thirteen has no badge and Wildfire's
+ * still appears the instant a reverse card lands.
+ *
+ * `role="img"`: an aria-label on a bare <div> has no role to attach to and is
+ * dropped by most screen readers, which is why the playtest reported the badge
+ * as having no accessible name at all. It stays pointer-transparent, so there
+ * is no tooltip to give it — a sign that could be hovered could also be tapped,
+ * and it sits over a seat plate.
  */
 function directionBadge(state) {
-  if (state.direction >= 0) return null;
+  const natural = state.pack.manifest.rules?.direction === 'counterclockwise' ? -1 : 1;
+  if (Math.sign(state.direction || 1) === natural) return null;
   const badge = document.createElement('div');
   badge.className = 'direction-badge';
-  badge.textContent = '↺';
-  badge.setAttribute('aria-label', 'Play has reversed — it now goes to the right');
+  badge.textContent = natural < 0 ? '↻' : '↺';
+  const words = `Play has reversed — it now goes ${natural < 0 ? 'the other way round the table' : 'to the right'}`;
+  badge.setAttribute('role', 'img');
+  badge.setAttribute('aria-label', words);
   return badge;
 }
 
@@ -1781,11 +1829,23 @@ function renderStageTray(state, ui) {
   el.stageRow.inert = !staged.length;
   el.stageTray.replaceChildren();
   if (!staged.length) {
+    el.stageTray.classList.remove('stage-tray--refused');
     el.stageTray.setAttribute('aria-label', 'Gathered cards appear here.');
     return;
   }
-  el.stageTray.setAttribute('aria-label',
-    `Gathered: ${staged.length} cards. Tap one to put it back.`);
+  // THE TRAY SAYS NO. A selection the engine will not take used to sit here
+  // looking exactly like one it would — same dashed tray, same cards, no
+  // commit, no sentence (#122, round-5 item 19). The refusal is drawn on the
+  // tray itself, spoken in the tray's own name, and written to #log, which is
+  // the live region this table already uses for the words that are not on the
+  // felt (see showHint).
+  const refusal = ui.action?.disabled ? (ui.action.refusal || 'That is not a play.') : null;
+  el.stageTray.classList.toggle('stage-tray--refused', !!refusal);
+  if (refusal && session.lastRefusal !== refusal) el.log.textContent = refusal;
+  session.lastRefusal = refusal;
+  el.stageTray.setAttribute('aria-label', refusal
+    ? `Gathered: ${staged.length} cards. ${refusal} Tap one to put it back.`
+    : `Gathered: ${staged.length} cards. Tap one to put it back.`);
   for (const cardId of staged) {
     const card = cardById(state, cardId);
     if (!card) continue;
@@ -1910,6 +1970,7 @@ function layoutHand() {
   const count = el.hand.childElementCount;
   if (count < 2) {
     el.hand.style.removeProperty('--fan-step');
+    el.hand.style.removeProperty('--lift-gap');
     return;
   }
 
@@ -1935,7 +1996,18 @@ function layoutHand() {
   const available = Math.max(cardWidth, rowWidth - reserved - padding - 4);
 
   const step = fanStep({ count, cardWidth, available });
+
+  // HOW FAR THE FAN OPENS UNDER A LIFTED CARD, out of the room it did not need.
+  // The shift is a transform and moves no layout, so nothing else would stop
+  // the rightmost card sliding under the rail — this is what keeps it on the
+  // felt. `liftGap` is the whole overlap, which is the only shift that actually
+  // uncovers the neighbour's rank corner; whatever of that the row cannot spare
+  // is not taken, and a fan already closed to fit its row opens by nothing at
+  // all rather than tightening further to buy the animation room.
+  const spare = available - fanWidth({ count, cardWidth, step });
+  const gap = Math.max(0, Math.min(liftGap({ cardWidth, step }), spare));
   el.hand.style.setProperty('--fan-step', `${step.toFixed(2)}px`);
+  el.hand.style.setProperty('--lift-gap', `${gap.toFixed(2)}px`);
 }
 
 /**
@@ -2156,18 +2228,36 @@ function renderRail(state, ui, humanActs) {
   // renderSelection repaints the rail without rebuilding the fan, so a
   // `hidden` written from there would outlive the action that displaced it.
   const acting = !!(ui.action && humanActs);
+  // A REFUSED COMMIT IS STILL THE COMMIT'S SLOT. The button stays, disabled,
+  // carrying the engine's own sentence for why — because the alternative,
+  // measured on the felt, was the Pass pill disappearing under the thumb and
+  // the sort toggle appearing in its place the moment a card was tapped
+  // (#122, round-5 item 19). `disabled` and not `hidden`: same box, same
+  // height, and the reason reaches a screen reader through the name.
+  const refused = acting && !!ui.action.disabled;
   el.actionButton.hidden = !acting;
+  el.actionButton.disabled = refused;
+  el.actionButton.classList.toggle('action-button--refused', refused);
   el.handSort.hidden = acting || state.zones.cards(handAddress(mySeat())).length < 2;
   if (acting) {
     el.actionButton.textContent = ui.action.label;
-    el.actionButton.onclick = () => {
-      if (!liveState()) return;
-      const move = ui.action.makeMove();
-      // The button is the third tap that was launching cards from the wrong
-      // place: "Lay down" and "Pass 3 left" both carry cards that are sitting
-      // in the tray, and the flight was starting from the button.
-      performHumanMove(liveState(), move, tapOrigin(move));
-    };
+    if (refused) {
+      const why = ui.action.refusal || 'That is not a play.';
+      el.actionButton.setAttribute('aria-label', `${ui.action.label} — ${why}`);
+      el.actionButton.title = why;
+      el.actionButton.onclick = null;
+    } else {
+      el.actionButton.removeAttribute('aria-label');
+      el.actionButton.removeAttribute('title');
+      el.actionButton.onclick = () => {
+        if (!liveState()) return;
+        const move = ui.action.makeMove();
+        // The button is the third tap that was launching cards from the wrong
+        // place: "Lay down" and "Pass 3 left" both carry cards that are sitting
+        // in the tray, and the flight was starting from the button.
+        performHumanMove(liveState(), move, tapOrigin(move));
+      };
+    }
   } else {
     el.actionButton.onclick = null;
   }
@@ -2191,10 +2281,66 @@ function renderStatusBar(state, acting) {
     // partnership they are two different numbers and the screen reader gets the
     // wrong one.
     const chip = scoreChipFor(state, mySeat());
-    el.scoreChipValue.textContent = chip.long;
+    // THE HUMAN GETS THE SAME BOARD THE OPPONENT HAS. Every seat plate draws
+    // its primary counter as a track where the template says it is one — and
+    // the human's own seat is not a plate, so at a cribbage table there was
+    // exactly one `.seat__track` in the document and it belonged to the bot
+    // (#124, item 39). The player's own peg, the thing the whole game is read
+    // off, was a bare number in the chrome.
+    //
+    // The same renderer, the same numbers, the same accessible sentence — this
+    // is `renderCounterTrack` being DOM-parameterised for the second time and
+    // not a second board. A pack whose primary counter is an ordinary quantity
+    // renders nothing here and keeps the plain pill.
+    const board = renderCounterTrack(seatCountersFor(state, mySeat(), { minimized: false })[0]);
+    el.scoreChipTrack.replaceChildren(...(board ? [board] : []));
+    // The track prints the number itself; two of them in one pill is the same
+    // score twice.
+    el.scoreChipValue.hidden = !!board;
+    if (!board) el.scoreChipValue.textContent = chip.long;
     el.scoreChip.setAttribute('aria-label',
-      `Your ${hasSides(state.pack, state.seats) ? "side's score" : 'score'}: ${chip.long}. `
+      `Your ${hasSides(state.pack, state.seats) ? "side's score" : 'score'}: `
+      + `${board ? board.getAttribute('aria-label') : chip.long}. `
       + 'Open the scoreboard.');
+  }
+  renderTableCounters(state);
+}
+
+/**
+ * WHAT THE TABLE ITSELF IS COUNTING — the running count in cribbage, and
+ * nothing at all for every pack that declares none.
+ *
+ * `seatCounters` one rung out. Some facts a felt has to keep on screen are not
+ * any seat's: the count in the play is the table's, it changes with every card
+ * from either hand, and a player who cannot see it is doing arithmetic off two
+ * piles to find out why three of their four cards are greyed out (#124, item
+ * 38). It was already in the state — cribbage publishes `count` in its
+ * `publicVars` — and simply not drawn.
+ *
+ * A hook rather than a `pack.id ===`, for the reason every row of the
+ * presentation table in src/templates/CONTRACT.md is a hook: the question
+ * "what is this table counting" has an answer in more games than this one, and
+ * the default — no strip at all — costs a pack that has nothing to say nothing.
+ */
+function renderTableCounters(state) {
+  const declared = state.pack.template.tableCounters?.(makeCtx(state)) || [];
+  el.tableCounters.replaceChildren();
+  el.tableCounters.hidden = !declared.length;
+  for (const counter of declared) {
+    const chip = document.createElement('div');
+    chip.className = 'table-counter';
+    const label = document.createElement('span');
+    label.className = 'table-counter__label';
+    label.textContent = counter.label;
+    const value = document.createElement('span');
+    value.className = 'table-counter__value';
+    value.textContent = counter.text;
+    chip.append(label, value);
+    // One name for the pair, for the same reason the track carries one: "Count
+    // 17" read as two unrelated things is worse than the sentence.
+    chip.setAttribute('role', 'img');
+    chip.setAttribute('aria-label', counter.aria || `${counter.label} ${counter.text}`);
+    el.tableCounters.appendChild(chip);
   }
 }
 
@@ -3080,8 +3226,11 @@ function playShowStep(finalState, step) {
     render(finalState);
   }
   const said = finalState.pack.template.describeEvent?.(
-    { type: 'showScored', seat: step.seat, isCrib: step.isCrib, points: step.points },
-    { seatLabel, seatPossessive, viewerSeat: mySeat() },
+    // `parts` too: the template says WHAT a hand was worth it for — fifteen
+    // two, a pair, his nobs — and a step stripped of them can only say a
+    // number (#124, item 41).
+    { type: 'showScored', seat: step.seat, isCrib: step.isCrib, points: step.points, parts: step.parts },
+    { seatLabel, seatPossessive, seatVerb, viewerSeat: mySeat() },
   );
   const text = said?.text
     || `${seatPossessive(step.seat)} ${step.isCrib ? 'crib' : 'hand'} is worth ${step.points}.`;

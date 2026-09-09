@@ -461,6 +461,16 @@
           "default": false,
           "description": "A zone with visibility:none that is still a control the player taps (a draw pile). Without it the table leaves invisible zones off the felt."
         },
+        "onFelt": {
+          "type": "boolean",
+          "default": false,
+          "description": "A zone with visibility:none that is FURNITURE rather than a control: drawn as face-down backs with its count, because everybody watched the cards go in and can see how deep it is (cribbage's crib). Says where a pile is drawn, never what may be seen in it — `visibility` is still the only thing that decides that."
+        },
+        "hideWhenEmpty": {
+          "type": "boolean",
+          "default": false,
+          "description": "This zone is not a place on the table until it holds something. For a pile that exists only for a moment — cribbage's crib is turned face up into one at the show — an empty slot wearing its label for the rest of the hand is worse than no slot at all."
+        },
         "landing": {
           "enum": [
             "play",

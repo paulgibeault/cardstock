@@ -24,7 +24,7 @@
 import { line, svgNode } from './dom.js';
 import { safeCssColor } from './css.js';
 import { isSelected, describeContractItem } from './interaction.js';
-import { describeZone, zoneAriaLabel, zoneBadge, cardName } from './describe.js';
+import { describeZone, zoneAriaLabel, zoneBadge, zoneFocusOf, cardName } from './describe.js';
 import { handValue } from '../engine/scoring.js';
 import { makeCtx } from '../engine/context.js';
 // A ui/ file reaching into templates/ the way lobby.js and cardStyles/ already
@@ -36,6 +36,30 @@ import { meldDisplayOrder } from '../templates/melds.js';
 
 /** How many discards stay visible under the top one. Enough to read as a pile. */
 const DISCARD_DEPTH = 3;
+
+/**
+ * The fewest cards a SPREAD shows, whatever the table's size.
+ *
+ * A spread used to show `state.seats` cards, because the only spread that
+ * existed was a trick and a trick is one card per seat. Cribbage's `play` pile
+ * is a spread that is not a trick: it is one seat's four cards, laid down over
+ * a whole hand, and at a two-handed table `slice(-2)` hid the first two of them
+ * the moment the third went down — so the sequence you are supposed to be
+ * counting to thirty-one off was unreadable by the time it mattered (#124,
+ * item 38).
+ *
+ * Four rather than "all of them": `.pile-stack--spread` reserves a fixed box
+ * (2.11 card widths, which is exactly four cards at the 0.51 overlap) and a
+ * pile that grew its own slot would shove every neighbour sideways each time a
+ * card landed — the same rule the overlap slots are fixed for. Climbing's
+ * shared `pile` is a spread with no bound at all, and it keeps the old
+ * behaviour because `Math.max` leaves any table of four or more exactly where
+ * it was.
+ */
+const SPREAD_MIN = 4;
+
+/** The most cards a spread pile draws at once — the slot is a fixed place. */
+const SPREAD_MAX = 6;
 
 /** §7b: this value reaches a class name, so it is an allow-list, not a passthrough. */
 const OVERLAP_MODES = new Set(['horizontal', 'vertical']);
@@ -199,13 +223,31 @@ export function createZoneRenderer({
     } else if (isSpread && !mini) {
       // A trick is not a pile: every card in it is live information about who
       // played what, so it spreads and shows the whole trick.
-      const visible = cards.slice(-state.seats);
+      //
+      // BUT NOT EVERY CARD IN IT IS STILL LIVE. Where the template names a focus
+      // — climbing's standing combination — the cards that are no longer the
+      // thing to answer are drawn as history behind it, and the ones that are
+      // get the same ring the hint uses to point at them. The hint was already
+      // the only thing on the felt that said which cards you were beating
+      // (#122, round-5 item 25); this makes that the default rather than
+      // something you have to ask for.
+      const focus = zoneFocusOf(state, address);
+      const live = focus ? new Set(focus.cards) : null;
+      // Enough room for one card per seat, and never less than the standing
+      // combination itself — a five-consecutive-pairs bomb is ten cards, and the
+      // pile that is asking you to beat it may not be showing half of it.
+      // Capped, because the slot is a fixed place on the table (see
+      // .pile-stack--spread) and not a box that grows.
+      // ...and never fewer than SPREAD_MIN, which is what a cribbage play pile
+      // needs at a two-handed table (#124) — the two bounds compose.
+      const visible = cards.slice(-Math.min(SPREAD_MAX, Math.max(state.seats, SPREAD_MIN, live ? live.size : 0)));
       visible.forEach((cardId, i) => {
         const card = cardById(state, cardId);
         if (!card) return;
         const isTop = i === visible.length - 1;
         const node = placeCard(art().face(card), i, visible.length, cardId, isTop);
         node.style.setProperty('--stack-tilt', `${tiltFor(cardId, 7).toFixed(2)}deg`);
+        if (live) node.classList.add(live.has(cardId) ? 'pile-stack__card--live' : 'pile-stack__card--spent');
         if (isTop) topNode = node;
       });
       if (!visible.length) stack.appendChild(svgNode('<div class="card-face card-face--empty"></div>', 'pile-stack__top'));
@@ -261,10 +303,20 @@ export function createZoneRenderer({
     if (!mini) {
       const badge = document.createElement('div');
       badge.className = 'pile-count';
-      // The words moved to the accessible name and the inspector; what is left
-      // on the felt is the number you actually watch.
-      const { text: badgeText, kind, suit } = zoneBadge(state, inst);
-      badge.textContent = badgeText;
+      // THE NAME STAYS, and the number joins it. A pile that dropped its own
+      // word the moment a card landed left two spread stacks in the middle of a
+      // Thirteen table wearing nothing but `2` and `28` (#122 item 18) — so the
+      // badge is now the pile's word with the count after it, and a pile the
+      // template gives a FOCUS to wears the focus's words instead, because there
+      // the number is the trick and the words are the play.
+      const { text: badgeText, kind, suit, name } = zoneBadge(state, inst);
+      if (name && (kind === 'count' || kind === 'focus')) {
+        badge.appendChild(line('pile-count__name', name));
+        badge.appendChild(line('pile-count__value', badgeText));
+      } else {
+        badge.textContent = badgeText;
+      }
+      if (kind === 'focus') badge.classList.add('pile-count--focus');
       if (kind === 'match') {
         // THE SUIT IN FORCE IS NOT A PILE LABEL, so it does not get a pile
         // label's voice. It is the rule every hand at the table is playing to,

@@ -50,10 +50,17 @@ const OPTIONAL_FUNCTIONS = [
   "matchStanding",
   "actingSeats", "enumerateAnnouncements", "applyAnnouncement",
   "interactionMode", "pendingChoice", "activeMatch", "scoreChip",
+  // Which cards in a shared pile are still the thing to answer, and what they
+  // are called — src/ui/describe.js. A pile that holds a whole trick cannot be
+  // reported as a count (#122).
+  "zoneFocus",
   // Whether a SEAT is still assembling something — the question interactionMode
   // cannot answer, because the mode comes from the table-wide turn.phase.
   "gathers",
   "seatCounters",
+  // What the TABLE is counting rather than what a seat is — cribbage's running
+  // count in the play (#124). Read by src/ui/table.js's renderTableCounters.
+  "tableCounters",
   // How many cards a simultaneous commit wants and what its button says — the
   // two things src/ui/interaction.js used to read out of trick-taking's own
   // `rules.passing` and `vars.passDirection` by name (#107).
