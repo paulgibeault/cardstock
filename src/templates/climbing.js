@@ -1061,10 +1061,17 @@ const climbing = {
       if (!current) return ctx.ok();
       if (beatsInShape(ctx, played, current)) return ctx.ok();
       if (chops(ctx, played, current)) return ctx.ok();
+      // NAMED, BECAUSE THE FELT SHOWS THIS SENTENCE NOW. A refused selection puts
+      // the reason under the tray it is sitting in (#122), and "a pair of 2" —
+      // the shape's kind and its SIZE — was read as a pair of twos. The pile
+      // wears the same words (`zoneFocus`), so the refusal and the thing being
+      // refused cannot describe the position differently.
+      const standing = comboName(ctx, current) || 'the combination on the table';
+      const said = standing[0].toLowerCase() + standing.slice(1);
       if (played.kind === current.kind && played.size === current.size) {
-        return ctx.fail('not-higher', 'That does not beat the combination on the table.');
+        return ctx.fail('not-higher', `That does not beat the ${said}.`);
       }
-      return ctx.fail('wrong-shape', `Answer a ${current.kind} of ${current.size} with the same shape, or pass.`);
+      return ctx.fail('wrong-shape', `Answer the ${said} with the same shape, or pass.`);
     }
 
     if (move.type === 'pass') {

@@ -1891,22 +1891,20 @@ function layoutHand() {
   const reserved = el.handRail.offsetWidth + 12;
   const available = Math.max(cardWidth, rowWidth - reserved - padding - 4);
 
-  // ROOM FOR THE FAN TO OPEN UNDER A LIFTED CARD, taken off the top rather than
-  // borrowed at the moment it is needed: the shift is a transform and moves no
-  // layout, so nothing would stop the rightmost card sliding under the rail.
-  // Capped at a third of a card, which is more than the rank corner a
-  // neighbour has to keep — a phone gives up ~1.5px of resting spacing for it
-  // (`liftGap` says what the shift is for).
-  const reserveForLift = Math.min(cardWidth * 0.34, LIFT_RESERVE_MAX_PX);
-  const step = fanStep({ count, cardWidth, available: Math.max(cardWidth, available - reserveForLift) });
+  const step = fanStep({ count, cardWidth, available });
+
+  // HOW FAR THE FAN OPENS UNDER A LIFTED CARD, out of the room it did not need.
+  // The shift is a transform and moves no layout, so nothing else would stop
+  // the rightmost card sliding under the rail — this is what keeps it on the
+  // felt. `liftGap` is the whole overlap, which is the only shift that actually
+  // uncovers the neighbour's rank corner; whatever of that the row cannot spare
+  // is not taken, and a fan already closed to fit its row opens by nothing at
+  // all rather than tightening further to buy the animation room.
   const spare = available - fanWidth({ count, cardWidth, step });
-  const gap = Math.min(liftGap({ cardWidth, step }), Math.max(0, spare));
+  const gap = Math.max(0, Math.min(liftGap({ cardWidth, step }), spare));
   el.hand.style.setProperty('--fan-step', `${step.toFixed(2)}px`);
   el.hand.style.setProperty('--lift-gap', `${gap.toFixed(2)}px`);
 }
-
-/** The most `layoutHand` will hold back for the lift gap, whatever the card. */
-const LIFT_RESERVE_MAX_PX = 20;
 
 /**
  * Re-fan whenever the row's width changes, whatever changed it.
