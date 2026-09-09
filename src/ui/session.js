@@ -88,6 +88,19 @@ export function createSession({ pack, state, seats, seating, cardArt, handPrefs,
     // record of "we are between rounds".
     roundSummaryOpen: false,
 
+    // THE FELT IS BEHIND THE ENGINE, ON PURPOSE. Between a round-ending move
+    // and the summary being dismissed, the table paints the position the round
+    // ended in while `state` already holds the next deal (src/ui/table.js's
+    // runRoundBeat). Nothing on that felt is actable — the cards under the
+    // player's finger belong to a position the engine has moved past — so
+    // `render` reads this and offers nothing while it is true.
+    roundBeat: false,
+    // The position the round ended in, held for as long as `roundBeat` is true
+    // so a repaint with a reason of its own — a resume, a settings change, a
+    // seat being claimed — paints the ending rather than the deal underneath.
+    // A throwaway `forkState` copy, never logged, saved or published.
+    roundFinalState: null,
+
     // Which collapsed seat the player has PICKED to open, or null to let the
     // plate follow whoever is playing. The opponent row is rebuilt wholesale on
     // every render, so an open plate cannot live in the DOM alone — a bot
