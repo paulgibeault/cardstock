@@ -90,21 +90,24 @@ test("a pack with no sides draws a chip on every chair, exactly as it always did
   assert.deepStrictEqual([...scoreBearers(solo(), 4, 2)].sort((a, b) => a - b), [0, 1, 2, 3]);
 });
 
+// `label` is the word a seat plate prints under the number (#133) and it is
+// part of the chip's shape, so the deep-equals below carry it. It is the same
+// word for every chair: which SIDE'S total this is, is the aria text's job.
 test("a chip shows the SIDE's total, and says so out loud", () => {
   const pack = partners();
   const scores = [7, 5, 9, 4];
   assert.deepStrictEqual(defaultScoreChip(pack, 4, scores, 0),
-    { short: "16", long: "16", aria: "16 points for this side" });
+    { short: "16", long: "16", label: "Score", aria: "16 points for this side" });
   assert.deepStrictEqual(defaultScoreChip(pack, 4, scores, 2),
-    { short: "16", long: "16", aria: "16 points for this side" },
+    { short: "16", long: "16", label: "Score", aria: "16 points for this side" },
     "a partner's chair must report the same number as its partner's — one score, one side");
   assert.deepStrictEqual(defaultScoreChip(pack, 4, scores, 1),
-    { short: "9", long: "9", aria: "9 points for this side" });
+    { short: "9", long: "9", label: "Score", aria: "9 points for this side" });
 
   // Unchanged for a game with no partnerships, down to the aria text: nothing
   // needs telling apart when every chair is its own side.
   assert.deepStrictEqual(defaultScoreChip(solo(), 4, scores, 0),
-    { short: "7", long: "7", aria: "7 points" });
+    { short: "7", long: "7", label: "Score", aria: "7 points" });
 });
 
 test("every chair knows which side it is on, and which one is yours", () => {

@@ -1919,6 +1919,133 @@ game, and changing the deck's identity is a bigger call than this issue. The
 only that to `goToTable`, and the seat count comes from the new-game sheet — no
 URL plumbing was added, per the issue.
 
+## The numbers on a plate, named — and an edge that says the row goes on (#133)
+
+Round-5 items 49 and 53, the two the research pass left inside #133 after items
+1–4 became #134–#138.
+
+### What was wrong
+
+**A seat plate was a row of anonymous digits.** `buildSeatRow` drew a seat's
+score, hand count, bid, tricks, bags and meld as six bare numbers whose only
+difference was their position in the head — `Bruno 0 12 150 —` on Pinochle,
+`Nell 12 4 0` on Team Spades. #122 had already made the CARD COUNT a different
+shape from the SCORE (a card, not a pill), and that is as far as shape goes:
+four pills in a row are four pills. The human's own seat had been labelled as a
+side effect of #123 (`BID`, `BAGS`) and #125 (`YOUR MELD`), so the two halves of
+the table said the same fact two different ways.
+
+The badges' one name was an `aria-label` on a roleless `<span>`, which is the
+exact shape `directionBadge` grew a `role="img"` to fix in #122: most screen
+readers drop it. So the plate had no visible name and, in practice, no spoken
+one either.
+
+Pinochle's `—` is what settles the argument. The template draws it twice, for
+"passed" and for "has not declared a meld yet". A dash with no word beside it is
+not a number that is missing; it is a plate with nothing on it.
+
+**The seat carousel scrolls and nothing said so.** #125 measured item 53 and
+found it was never a clipping bug — every seat is reachable, and the toggle
+shows all three at once — and flagged the likely real complaint: nobody can see
+that the row scrolls. Measured again here at 375×812: the row is 683–741px of
+seats in a 332px port, the second plate is cut at the edge with ~91px showing,
+and the third is off screen. A cut edge is ambiguous. It reads as a felt that
+ends there just as easily as one that continues.
+
+### What changed
+
+**A caption under each number, in the template's own word.**
+`fillCounterBadge` (`src/ui/table.js`) builds every badge as a value line plus a
+`.seat__count-label` line, and gives the pair `role="img"` with the counter's
+sentence as its accessible name — one name, not "12, cards, 12 cards". The word
+is `counter.label`, which every template already supplied; `seatCountersFor`'s
+platform default and `defaultScoreChip` (`src/ui/seatRing.js`) grew theirs, and
+the contract now says `label` is required and DRAWN rather than, as it read
+before, filed away for an inspector that no longer exists.
+
+`scoreChip` grew an optional `label` for one pack. Contract rummy's chip is the
+contract reached and the points are its tiebreak (that is why it overrides the
+hook at all), so `Ph 1` under the word SCORE is wrong twice; Milestones now says
+CONTRACT and everything else takes the default.
+
+*Under the number, not beside it, and that was measured rather than argued.*
+Both shapes were injected into a live felt during the research pass. Captions
+UNDER: Team Spades' seats 209→269px at 375px (+29%), carousel scroll 683→776px,
+plate height +1px, and the 1280 row still fits with ~350px to spare. Captions
+BESIDE: +50% width, scroll 912–993px. The row already scrolls; making it half
+again as long to say the same six words is paying twice. Re-measured after the
+fact on the shipped build: Team Spades 375 seats 212/251/172 → 278/280/206 and
+scroll 654→783, row height 130→131; Stockpile at six seats 159→159px per plate
+(the word is narrower than the pile row above it) with the row 149→151 tall;
+Milestones four-handed 167–172 → 203–207 and scroll 528→634 (its plates carry
+the longest caption on the platform, CONTRACT, next to a two-character number).
+
+*Faces keep the bare number,* by a stylesheet rule (`.seat--collapsed
+.seat__count-label { display: none }`) rather than by building a different DOM.
+That is deliberate: which rung the row settles on is MEASURED by the fit loop,
+and building the caption conditionally would put the ladder's own output inside
+the question it is answering. Collapsed seat widths are unchanged to the pixel —
+18px and 15px badges at 375px, 22px and 21px at 1280 — so the crowded-row
+collapse other packs rely on is untouched. The open PLATE popup shows no
+captions for the simplest possible reason: it has no head. `buildPlateFor` calls
+`buildSeatBody`, which is the fan and the seat's piles; the numbers stay on the
+face the plate hangs off, where they always were.
+
+**A scroll-edge fade, and only where there is something to scroll to.**
+`paintSeatRowEdges` toggles `.opponent-row--more-left` / `--more-right` from the
+row's own geometry, and the stylesheet turns them into one `mask-image` gradient
+whose two ends are switched independently. Three things drive it and each is a
+real hole without the others: a passive `scroll` listener follows the finger;
+`renderSeats` repaints after issuing its scroll, because a bot laying a meld
+lengthens the row without any scroll event being fired; and the row's
+`ResizeObserver` repaints before its width gate, since the same width can hold a
+different length.
+
+*A mask rather than two overlay pseudo-elements* — `::before`/`::after` inside a
+scrollport scroll WITH the content, so they would slide off the edge they were
+drawn for. A mask applies to the element's painted result against its border
+box, which stays still. Nothing that overflows on purpose is clipped: the mask
+is uniform in the block axis, so `.seat--active`'s 2px lift and its glow (inside
+the block padding, inside the border box) are untouched, the open plate is not
+in this row at all (`#seat-plate-layer`), and the view toggle is positioned
+against `#table`. No animation — the fade is a state, not a pulse (cardstock#24).
+
+### How it was verified
+
+Two servers, the worktree on 4833 and unmodified main on 4843, driven headless
+by playwright at 375×812 and 1280×860.
+
+- Team Spades and Pinochle, open plates: every badge's rendered text went from
+  `🐺Sable071404` to `🐻Otto0Score9Cards—Bid6Meld`, both viewports, both packs.
+- Minimized faces: identical badge widths and row heights before and after
+  (42px at 375, 44px at 1280), and the plate still opens on tap.
+- Stockpile at six seats and Milestones four-handed (lobby tile → new-game sheet
+  → seat count), both views: the ladder still lands on `faces` at 375 and
+  `tight` at 1280, and the acting seat's plate still opens.
+- The fade at scrollLeft 0 / middle / max on both packs: right only, both, left
+  only, with the mask's own computed value read back each time. Cribbage and
+  two-handed Thirteen carry no classes and `mask-image: none`.
+- Both themes at 375: the caption is `currentColor` at 0.7 opacity, so it is
+  ink-on-felt in dark and ink-on-paper in light with no second colour to keep in
+  step.
+- `npm test` 817/817, `node tools/pack-test.mjs --all` 137/137 across nine
+  packs, `node --check src/ui/table.js`, and all nine packs booted headlessly
+  with no page errors and a non-empty seat row.
+
+`tests/seatPlate.test.js` is new: a runtime sweep asserting every counter every
+shipped pack declares carries a short label (with a floor on the count, so a
+renamed hook cannot leave it green over nothing), plus source gates on the two
+call sites that draw it, the rule that hides it on a face, and the three drivers
+of the edge fade. Each of its eight assertions was proved to bite by breaking
+what it watches and restoring from a scratch copy.
+
+### Not done
+
+The felt at 1280×860 scrolls by 5px on a six-handed Stockpile table, where it
+scrolled by 3px before. That is #137's measurement, worsened by the 2px the
+captions add to the seat row; it is not a new class of problem and #137 owns the
+three candidate fixes. Cribbage's peg track carries no caption — it short
+circuits the badge branch entirely, and #136 is replacing it.
 ## The hand takes a second row, and the rail gets out of its way (#134)
 
 ### What was wrong
