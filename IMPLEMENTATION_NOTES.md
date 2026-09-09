@@ -1977,7 +1977,8 @@ again as long to say the same six words is paying twice. Re-measured after the
 fact on the shipped build: Team Spades 375 seats 212/251/172 → 278/280/206 and
 scroll 654→783, row height 130→131; Stockpile at six seats 159→159px per plate
 (the word is narrower than the pile row above it) with the row 149→151 tall;
-Milestones four-handed 170→186 and scroll 528→599.
+Milestones four-handed 167–172 → 203–207 and scroll 528→634 (its plates carry
+the longest caption on the platform, CONTRACT, next to a two-character number).
 
 *Faces keep the bare number,* by a stylesheet rule (`.seat--collapsed
 .seat__count-label { display: none }`) rather than by building a different DOM.
