@@ -2046,6 +2046,342 @@ geometry is byte-identical to main (Pinochle's middle varies by 8px on BOTH
 servers — its contract strip wraps or does not depending on the bid).
 `node tools/simulate.mjs cribbage --games=150` is 150 completed / 0 stalled /
 0 errored / 10.0 moves per game on both trees.
+## The numbers on a plate, named — and an edge that says the row goes on (#133)
+
+Round-5 items 49 and 53, the two the research pass left inside #133 after items
+1–4 became #134–#138.
+
+### What was wrong
+
+**A seat plate was a row of anonymous digits.** `buildSeatRow` drew a seat's
+score, hand count, bid, tricks, bags and meld as six bare numbers whose only
+difference was their position in the head — `Bruno 0 12 150 —` on Pinochle,
+`Nell 12 4 0` on Team Spades. #122 had already made the CARD COUNT a different
+shape from the SCORE (a card, not a pill), and that is as far as shape goes:
+four pills in a row are four pills. The human's own seat had been labelled as a
+side effect of #123 (`BID`, `BAGS`) and #125 (`YOUR MELD`), so the two halves of
+the table said the same fact two different ways.
+
+The badges' one name was an `aria-label` on a roleless `<span>`, which is the
+exact shape `directionBadge` grew a `role="img"` to fix in #122: most screen
+readers drop it. So the plate had no visible name and, in practice, no spoken
+one either.
+
+Pinochle's `—` is what settles the argument. The template draws it twice, for
+"passed" and for "has not declared a meld yet". A dash with no word beside it is
+not a number that is missing; it is a plate with nothing on it.
+
+**The seat carousel scrolls and nothing said so.** #125 measured item 53 and
+found it was never a clipping bug — every seat is reachable, and the toggle
+shows all three at once — and flagged the likely real complaint: nobody can see
+that the row scrolls. Measured again here at 375×812: the row is 683–741px of
+seats in a 332px port, the second plate is cut at the edge with ~91px showing,
+and the third is off screen. A cut edge is ambiguous. It reads as a felt that
+ends there just as easily as one that continues.
+
+### What changed
+
+**A caption under each number, in the template's own word.**
+`fillCounterBadge` (`src/ui/table.js`) builds every badge as a value line plus a
+`.seat__count-label` line, and gives the pair `role="img"` with the counter's
+sentence as its accessible name — one name, not "12, cards, 12 cards". The word
+is `counter.label`, which every template already supplied; `seatCountersFor`'s
+platform default and `defaultScoreChip` (`src/ui/seatRing.js`) grew theirs, and
+the contract now says `label` is required and DRAWN rather than, as it read
+before, filed away for an inspector that no longer exists.
+
+`scoreChip` grew an optional `label` for one pack. Contract rummy's chip is the
+contract reached and the points are its tiebreak (that is why it overrides the
+hook at all), so `Ph 1` under the word SCORE is wrong twice; Milestones now says
+CONTRACT and everything else takes the default.
+
+*Under the number, not beside it, and that was measured rather than argued.*
+Both shapes were injected into a live felt during the research pass. Captions
+UNDER: Team Spades' seats 209→269px at 375px (+29%), carousel scroll 683→776px,
+plate height +1px, and the 1280 row still fits with ~350px to spare. Captions
+BESIDE: +50% width, scroll 912–993px. The row already scrolls; making it half
+again as long to say the same six words is paying twice. Re-measured after the
+fact on the shipped build: Team Spades 375 seats 212/251/172 → 278/280/206 and
+scroll 654→783, row height 130→131; Stockpile at six seats 159→159px per plate
+(the word is narrower than the pile row above it) with the row 149→151 tall;
+Milestones four-handed 167–172 → 203–207 and scroll 528→634 (its plates carry
+the longest caption on the platform, CONTRACT, next to a two-character number).
+
+*Faces keep the bare number,* by a stylesheet rule (`.seat--collapsed
+.seat__count-label { display: none }`) rather than by building a different DOM.
+That is deliberate: which rung the row settles on is MEASURED by the fit loop,
+and building the caption conditionally would put the ladder's own output inside
+the question it is answering. Collapsed seat widths are unchanged to the pixel —
+18px and 15px badges at 375px, 22px and 21px at 1280 — so the crowded-row
+collapse other packs rely on is untouched. The open PLATE popup shows no
+captions for the simplest possible reason: it has no head. `buildPlateFor` calls
+`buildSeatBody`, which is the fan and the seat's piles; the numbers stay on the
+face the plate hangs off, where they always were.
+
+**A scroll-edge fade, and only where there is something to scroll to.**
+`paintSeatRowEdges` toggles `.opponent-row--more-left` / `--more-right` from the
+row's own geometry, and the stylesheet turns them into one `mask-image` gradient
+whose two ends are switched independently. Three things drive it and each is a
+real hole without the others: a passive `scroll` listener follows the finger;
+`renderSeats` repaints after issuing its scroll, because a bot laying a meld
+lengthens the row without any scroll event being fired; and the row's
+`ResizeObserver` repaints before its width gate, since the same width can hold a
+different length.
+
+*A mask rather than two overlay pseudo-elements* — `::before`/`::after` inside a
+scrollport scroll WITH the content, so they would slide off the edge they were
+drawn for. A mask applies to the element's painted result against its border
+box, which stays still. Nothing that overflows on purpose is clipped: the mask
+is uniform in the block axis, so `.seat--active`'s 2px lift and its glow (inside
+the block padding, inside the border box) are untouched, the open plate is not
+in this row at all (`#seat-plate-layer`), and the view toggle is positioned
+against `#table`. No animation — the fade is a state, not a pulse (cardstock#24).
+
+### How it was verified
+
+Two servers, the worktree on 4833 and unmodified main on 4843, driven headless
+by playwright at 375×812 and 1280×860.
+
+- Team Spades and Pinochle, open plates: every badge's rendered text went from
+  `🐺Sable071404` to `🐻Otto0Score9Cards—Bid6Meld`, both viewports, both packs.
+- Minimized faces: identical badge widths and row heights before and after
+  (42px at 375, 44px at 1280), and the plate still opens on tap.
+- Stockpile at six seats and Milestones four-handed (lobby tile → new-game sheet
+  → seat count), both views: the ladder still lands on `faces` at 375 and
+  `tight` at 1280, and the acting seat's plate still opens.
+- The fade at scrollLeft 0 / middle / max on both packs: right only, both, left
+  only, with the mask's own computed value read back each time. Cribbage and
+  two-handed Thirteen carry no classes and `mask-image: none`.
+- Both themes at 375: the caption is `currentColor` at 0.7 opacity, so it is
+  ink-on-felt in dark and ink-on-paper in light with no second colour to keep in
+  step.
+- `npm test` 817/817, `node tools/pack-test.mjs --all` 137/137 across nine
+  packs, `node --check src/ui/table.js`, and all nine packs booted headlessly
+  with no page errors and a non-empty seat row.
+
+`tests/seatPlate.test.js` is new: a runtime sweep asserting every counter every
+shipped pack declares carries a short label (with a floor on the count, so a
+renamed hook cannot leave it green over nothing), plus source gates on the two
+call sites that draw it, the rule that hides it on a face, and the three drivers
+of the edge fade. Each of its eight assertions was proved to bite by breaking
+what it watches and restoring from a scratch copy.
+
+### Not done
+
+The felt at 1280×860 scrolls by 5px on a six-handed Stockpile table, where it
+scrolled by 3px before. That is #137's measurement, worsened by the 2px the
+captions add to the seat row; it is not a new class of problem and #137 owns the
+three candidate fixes. Cribbage's peg track carries no caption — it short
+circuits the badge branch entirely, and #136 is replacing it.
+## The hand takes a second row, and the rail gets out of its way (#134)
+
+### What was wrong
+
+The "not done, and why" paragraph of #122 above, answered. At 375×812 a
+thirteen-card hand gave every card a 14.5px strip — the round-5 playtest's
+"can't read my own hand" (#133 items 1–2). The arithmetic is short: `#hand-row`
+is 332px, the rail took 92px of it (5rem plus a 12px reserve), the hand's own
+padding another 20px, so `fanStep` was handed 220px for twelve gaps.
+
+Every alternative was measured live before anything was written (#133's research
+comment). Bigger cards make it **worse** — 60px cards give 13.3px, because the
+strip is set by the row's width and not the card's. Moving the rail out of the
+row buys 22.2px. Two rows with the rail still beside the fan buys 29px. Two rows
+with the rail above buys 43px, the fan fully open, and that is the one that
+answers the complaint rather than softening it.
+
+### What changed
+
+**The rail leaves the row on a portrait phone.** `(orientation: portrait) and
+(max-width: 480px)` only: `#hand-row` wraps and `.hand-rail` becomes a
+fixed-height band above the fan with the token, the lamp and the thumb slot in
+one line, right-aligned, mirrored for left handedness. The band is 1.9rem
+whatever is standing in it and the stack is still absolutely positioned inside
+it — the same promise the zero-height box was making, turned through ninety
+degrees, so the felt does not step under a reaching thumb when the turn changes
+(#13). The slot itself is pinned to the rail's own 5rem so the button and the
+sort toggle that share it cannot be different widths; measured with the toggle
+in the slot and again with `Play 1` in it, the band, the token, the lamp and the
+slot are at identical coordinates. Landscape and desktop keep today's rail, and
+were measured to prove it: all nine packs at 812×375 report the same `--fan-step`
+and the same `#table-screen.scrollHeight` as main.
+
+**`fanLayout` splits the fan when one row would close past reading.** A sibling
+of `fanStep` in `src/ui/handOrder.js`, pure and pinned in tests: one row while
+the step clears `READABLE`, else the fewest rows whose per-row step clears it,
+and only while the felt's measured slack covers the extra rows. `READABLE` is
+half a card, and the window it has to live in is narrow enough that the issue's
+own measurements close it: 13 cards on 312px is 22.2px a card, which has to be
+judged not good enough (so the floor is above 0.48), and the same hand split in
+two on 220px is 29px, which has to be judged good enough or splitting buys
+nothing (so it is below 0.63). The card art agrees — the corner index inks the
+left 0.24 of a card, so at 0.5 the visible strip is more than twice the ink it
+carries.
+
+**It re-joins later than it split**, which is not decoration. A hand shrinks a
+card at a time and is judged on the ONE-row step, which crosses the floor while
+the fan is still drawn in two — so without hysteresis, staging one card out of
+thirteen took the hand from 43px a card to 24px and jumped it 70px up the felt,
+as a reward for playing. Splitting asks for `READABLE`; re-joining asks for
+`NATURAL`, the spacing a fan sits at when it is not short of room at all. On a
+375px phone: split at thirteen, stay split down to ten, one row again at nine.
+
+**Each row is a real container.** `.hand` is a column of `.hand__row`, and that
+is what let the rest of the fan's machinery survive: the overlap is a negative
+margin on `:not(:first-child)` and a lift opens its gap with a general sibling
+combinator, and both mean "within my row" by construction once a row exists.
+Written as one flat wrapping list — which is what the fan would have been — a
+hover on row 1 shoves row 2 sideways; that was reproduced deliberately (see
+below). `handGestures` builds its peek strips per row and picks the row by
+`clientY` before the card by `clientX`; `reorderHandAt` takes (x, y) and picks
+the row by y, then the index by x, then converts to a position in the whole
+hand. `renderSelection` walks `.card-face-wrap` rather than `.hand`'s children,
+which are now containers with no card id.
+
+**The slack is measured, and it is not the middle's spare room alone.**
+`handSlack` asks `#felt-middle` how much height it has beyond its tallest child
+— asked of the children, never a list, because #136 is adding a board row to
+that same middle — and then subtracts what the felt is ALREADY over the screen
+by. Without that second term the middle simply grows to whatever it is asked
+for, its spare reads as zero however far the hand has pushed the table off the
+bottom, and the gate never closes: a probe that ate the felt's middle showed
+exactly that, and shows the gate closing now. The figure is normalised to what a
+ONE-row hand would see, because the slack measured with two rows is smaller by
+the second row, and feeding that back in would flip the fan on alternate
+renders. The answer is then cached against its inputs the way `seatFit` caches
+the seat row's rung, with the slack quantised to 16px so a chip growing a digit
+is not a new question.
+
+**`layoutHand` reads the card's width off its computed style.** `--hand-card-w`
+is `clamp(70px, 8.6vh, 104px)` on a tall window and `parseFloat` read that as
+70, so every desktop fan was spaced for a card 4px narrower than the one on the
+felt — #135's root cause, arriving here because the row arithmetic needs the
+real number. Off the computed style rather than a rect: `getBoundingClientRect`
+reports the visual box, and this runs during the deal, so a card measured
+mid-animation comes back 2.5% small and the whole fan is spaced for it (that was
+a live bug in the first cut, caught by a step of 42.18 where 43.24 was expected).
+
+### How it was verified
+
+Two dev servers, this branch and main, driven by the same probes. At 375×812
+with thirteen cards, Thirteen and Team Spades go from **one row at 14.5px a card
+to two rows at 43.3px**, `#table-screen.scrollHeight` 812 on both sides.
+Cribbage's crib discard goes 34.8 → 43.2 and Pinochle's meld declaration 15.8 →
+24.2, both still one row and both still `scrollHeight === innerHeight` — the
+meld phase is the case the slack gate exists for. All nine packs boot clean at
+375×812, 812×375 and 1280×860 with no page errors: Hearts 10.9 → 33.3 (two
+rows), Milestones 19.3 → 29.6, Wildfire 29.0 → 43.2.
+
+At 1280×860 `#hand-row`'s rect and every band on the felt are byte-identical
+before and after, and the cards keep their size and their y. What moves is the
+fan's step, 65.80 → 69.52, and that was proved to be the card-width read alone:
+reverting that one line and re-running the identical probe reproduces main's
+65.80px and main's exact card positions.
+
+Row isolation was measured rather than argued, by reading the computed transform
+of every card while one is lit: hovered, hinted and peeked on either row, a
+scrub along each row, and a card dragged from row 1 into row 2. In every case
+only cards in the lit card's own row move, a scrub along a row lights only that
+row's cards, and the drag lands the card in the other row with the hand the same
+size. **Proven to bite:** flattening the same two-row fan into one wrapping list
+— the shape it would have without `.hand__row` — makes a hover on a row-1 card
+shift six row-2 cards. **The slack gate was proven to bite too:** a filler
+taller than the felt's middle drops the fan back to one row on its own, and
+removing it brings the second row back.
+
+`npm test` 816 pass / 0 fail; `node tools/pack-test.mjs --all` all nine packs
+0 failed; `tests/handZOrder.test.js` still refuses a shared rung and a ranked
+lift with no gap rule. The new `fanLayout` tests were each broken on purpose and
+each went red: the floor lowered to `TIGHTEST` so nothing splits, the slack term
+dropped so rows are bought with height that is not there, the pairs cap removed
+so a row is left holding one card, `handRows` dealt round-robin instead of left
+to right, the loop spread as wide as it was allowed instead of stopping at the
+fewest rows, and the hysteresis removed.
+
+**Not done, and why.** The issue's optional last item — `--pile-w` 52 → 68px on
+a portrait phone, out of whatever slack is left — is **left out, measured**.
+Thirteen, Team Spades, Cribbage's discard and Pinochle's meld all still fit at
+68px, but **Stockpile overflows by 211px**: its deck-plus-four-builds row is
+5 × 52px plus gaps precisely so it fits one line at 375px (the note on the
+`max-width: 420px` block says so), and at 68px it folds onto three lines. The
+375px felt therefore keeps its empty green in the middle, which is #136's
+question rather than this one's. The left-handed peek order is also unchanged
+and still slightly wrong — `cardStripAt` assumes DOM order runs left to right,
+which `row-reverse` inverts, so a left-handed scrub reads each card's strip off
+the wrong edge. That is pre-existing, it is one row's worth of the same bug it
+always was, and fixing it is a change to which strip a finger is answered by
+rather than to where the rows are.
+## The card width the fan was actually given (#135)
+
+### What was wrong
+
+`layoutHand` measured the row and then read the card off the stylesheet:
+
+```js
+const cardWidth = parseFloat(styles.getPropertyValue('--hand-card-w')) || 70;
+```
+
+A custom property comes back from `getComputedStyle` as the token stream that
+was written — no viewport units resolved, no `clamp()` evaluated — and on a
+desktop window `--hand-card-w` is `clamp(70px, 8.6vh, 104px)` (`table.css`).
+`parseFloat` read that as `NaN`, the `|| 70` swallowed it, and every desktop
+fan was laid out for 70px cards whatever size the cards on screen were. At
+375px the property is a plain `46px` and parses, which is why the bug was
+invisible on a phone and invisible to `fanStep`'s tests.
+
+The consequence was the round-5 complaint that the hand "keeps a ~40% overlap
+between cards even down to three cards in a 1041px-wide row" (item 44c).
+`fanStep`'s ceiling is `0.94 × cardWidth`, so the widest any desktop fan could
+open was 65.8px — measured at 1041×1200, Cribbage: 103px cards at a 65.8px
+step, a 36% overlap with 300px of the row going spare, and the same 65.8px at
+six cards and at three. `fanStep` was never wrong; the number going into it
+was. #122's "the fan flexes both ways" fix therefore only worked on windows
+short enough for the clamp to sit near its floor. `liftGap` and `fanWidth`
+share the same `cardWidth`, so the reserve that keeps the rightmost card off
+the rail was computed for the wrong card too.
+
+### What changed
+
+A pure `resolveCardWidth({ rendered, declared, fallback })` in
+`src/ui/handOrder.js` — a finite positive measurement wins, else the parsed
+declaration, else the fallback — and `layoutHand` passes it the first hand
+card's width and the property string. The DOM half stays one measurement; the
+rule is pinned in `tests/interaction.test.js`.
+
+`offsetWidth` rather than `getBoundingClientRect().width`, which is the one
+non-obvious decision here. `layoutHand` runs at the end of `renderHand`, when
+freshly dealt cards still carry `card-deal`, whose `deal-in` keyframes open at
+`scale(0.85)` with `both` fill — and a client rect includes that transform.
+Measured in-page on a 103.19px card: `offsetWidth` 103, the rect 100.33 mid
+animation and 87.7 at the "from" keyframe. A layout width is the honest one; a
+0.19px rounding loss is not worth a fan that resizes as the deal settles.
+
+The declaration stays as the fallback rather than being dropped: on a phone it
+is a real length, and it is all there is before the hand has been laid out.
+Nothing else in `src/` parses a custom property — `getPropertyValue(` appears
+exactly once outside the CSS — so `--pile-w`, which is also a `clamp()` on
+desktop, has no equivalent bug. (The `pileW: null` the research probe saw was
+the probe's own `parseFloat`.)
+
+### How it was verified
+
+Playwright against two servers, this branch and unmodified main, same probe.
+Cribbage at 1041×1200: `--fan-step` 65.80px → 96.82px against a 103.19px card,
+0.638 → 0.938 of the card's width, at six cards and again at three (played
+through the crib discard into pegging). Team Spades at 1280×860, thirteen
+cards: step 65.80px → 69.56px on 73.95px cards, rightmost card's right edge
+1050.3 against the rail's left edge at 1066.3, `#table-screen.scrollWidth ===
+clientWidth`, one row — the wider real width opens the fan without pushing it
+under the rail. At 375×812 the numbers are byte-identical before and after, all
+nine packs: a 13-card hand still fans at 14.50px, Hearts' 17 at 10.88px.
+
+All nine packs boot clean at both viewports with no page errors, and none puts
+a card under the rail (Hearts closes to 64.69px at 1280px for its 17 cards).
+`npm test` 811/811, `node tools/pack-test.mjs --all` green for all nine packs,
+`node --check src/ui/table.js`. The new test was proved to bite three ways:
+preferring the declaration over the measurement, returning the measurement
+unconditionally, and dropping the positive guard each turned it red, and it
+went green again from a scratch copy.
 
 ## Next steps
 

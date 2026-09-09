@@ -85,7 +85,7 @@ export function createSession({ pack, state, seats, seating, cardArt, handPrefs,
     shownCardKeys: new Set(),
     enteringKeys: null,
     // The fan-peek gesture's live state (which card is raised, the cached
-    // strips, the hold timer).
+    // rows and their strips, the hold timer).
     peek: null,
 
     // Panel visibility is not a place to keep state. `dismissRoundSummary`
@@ -140,6 +140,12 @@ export function createSession({ pack, state, seats, seating, cardArt, handPrefs,
     // instead of probing the whole ladder from the top every time anybody
     // moves — see renderSeats' fit loop and seatFitKey.
     seatFit: null,
+    // How many rows the fan last split into, and what that answer depended on.
+    // Cached for the same reason seatFit is: the row count answers a
+    // measurement of the felt's spare height that the row count itself
+    // changes, so a raw re-measure could flip the hand between one row and two
+    // on alternate renders — see layoutHand in src/ui/table.js.
+    handFit: null,
     // The biggest the opponent row has been for the current configuration, so
     // it can hold that shape instead of resizing under the player every time
     // the turn passes. See reserveSeatRowSpace.

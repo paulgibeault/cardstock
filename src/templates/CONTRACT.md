@@ -142,8 +142,8 @@ platform file.
 | `pendingChoice` | `(ctx, move) -> Ask \| null` | `src/ui/table.js` | no question |
 | `activeMatch` | `(ctx) -> {address, attr, value, onCard} \| null` | `describe.js`, `table.js` | none |
 | `zoneFocus` | `(ctx, address) -> {cards, label, seat?} \| null` | `describe.js`, `zoneRenderer.js` | none |
-| `scoreChip` | `(ctx, seat) -> {short, long, aria} \| null` | `table.js` | the SIDE's total (the seat's own, where there are no sides) |
-| `seatCounters` | `(ctx, seat) -> {text, aria, kind?}[] \| null` | `table.js` | the hand count |
+| `scoreChip` | `(ctx, seat) -> {short, long, label?, aria} \| null` | `table.js` | the SIDE's total (the seat's own, where there are no sides), labelled `Score` |
+| `seatCounters` | `(ctx, seat) -> {text, aria, label, kind?}[] \| null` | `table.js` | the hand count, labelled `Cards` |
 | `tableCounters` | `(ctx) -> {text, label, aria?}[] \| null` | `table.js` | no strip at all |
 | `commitPrompt` | `(ctx, seat) -> {action, staging, waiting, count \| min+max, moveType?} \| null` | `interaction.js`, `table.js` | count and move type read off the enumeration; the button says "Commit" |
 | `poseMove` | `(ctx, move) -> boolean` | `src/ui/table.js` | no pose; the felt paints where the move ENDED |
@@ -437,16 +437,25 @@ had put away.
 ```js
 seatCounters(ctx, seat) {
   const stock = ctx.countIn(`stock.${seat}`);
-  return [{ text: String(stock), aria: `${stock} left in stock`, kind: 'stock' }];
+  return [{ text: String(stock), aria: `${stock} left in stock`, label: 'Stock', kind: 'stock' }];
 }
 ```
 
 Most important first: the first entry is worn as the primary badge and the rest
 as smaller marks beside it. `text` is what is printed — keep it to a couple of
 characters — and `aria` is the whole truth said in words, because the printed
-form is a glyph and a digit. `label` names it in the inspector. `kind` is an
-optional slug the stylesheet may use; it must be a value the TEMPLATE chose,
-never pack data (§7b).
+form is a glyph and a digit. `kind` is an optional slug the stylesheet may use;
+it must be a value the TEMPLATE chose, never pack data (§7b).
+
+**`label` is REQUIRED, and it is drawn** (#133). It is the word printed under
+the number on an open seat plate — one short noun, sentence case here and
+upper-cased by the stylesheet: `Cards`, `Bid`, `Tricks`, `Bags`, `Meld`,
+`Stock`, `Pegs`. Before it was drawn, a plate read `Bruno 0 12 150 —` and its
+only name was an `aria-label` nobody sighted ever hears; Pinochle's `—` for
+"passed" was a dash with no word at all. Minimized faces still show the bare
+number — there is no room, and the plate opens on tap — so the label costs
+width only where there is width to spend. `tests/seatPlate.test.js` fails a
+counter that ships without one.
 
 **These are asked of every seat, open or minimized**, so the badge in a given
 spot on the row always means the same quantity. Mark a counter

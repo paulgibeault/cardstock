@@ -116,6 +116,10 @@ export function defaultScoreChip(pack, seats, scores, seat) {
   return {
     short: text,
     long: text,
+    // The word a seat plate prints under the number (#133). Here it is the
+    // plain one, because here the number is a plain total; a template whose
+    // chip is racing something else says so for itself — see contract rummy.
+    label: 'Score',
     aria: hasSides(pack, seats) ? `${text} points for this side` : `${text} points`,
   };
 }
