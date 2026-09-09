@@ -1274,8 +1274,18 @@ change: last card at t=0, pone's count at +698ms, the dealer's at +2.2s, the
 crib turned and counted at +3.7s, the summary at +5.2s, and the next hand's six
 cards first visible at +6.4s, when Continue was pressed. Before the change, on
 the same probe: the next hand was on screen 144ms after the last card and the
-summary 369ms after that. Hearts, Milestones, Thirteen and Team Spades reach the
-same `afterMove` branch and were checked the same way.
+summary 369ms after that.
+
+Hearts and Milestones were the audit the issue asked for, and both HAD the gap
+rather than being already right — they reach the same `afterMove` branch, and
+nothing about them was different. On unmodified main, Hearts put the next
+round's passing phase on screen (seventeen new cards, every won pile back to
+zero) two seconds after the last trick and opened the summary over it;
+Milestones showed both opponents redealt to ten with every meld cleared and the
+turn advanced, in the same frame as the discard that ended the hand. Both are
+held now. Thirteen and Team Spades were checked the same way: Team Spades'
+status bar read "Rook is bidding…" behind the sheet before, and "Round over."
+after.
 
 ## Next steps
 
