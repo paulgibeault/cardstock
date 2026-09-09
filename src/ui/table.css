@@ -1394,12 +1394,18 @@ body {
  * felt's flex column is byte-identical to what it was at every other size —
  * 375x812 included, which is the size this pass must not touch.
  *
- * THE ONE CONDITION IS THE PILES. A hand-only pack that still gathers (Hearts
- * passing three) has no centre column to sit beside, and a lone tray placed in
- * a gutter would read as a tray shoved into a corner — so `:has` asks for
- * piles and the stack stands when there are none. A hidden tray needs no
- * condition of its own: the piles are in the centre column either way, so the
- * felt looks the same whether the phase gathers or not.
+ * THE ONE CONDITION IS THE PILES, AND IT ASKS WHETHER THEY DRAW ANYTHING. A
+ * pack with nothing above the hand has no centre column to sit beside, and a
+ * lone tray sent to a gutter reads as a tray shoved into a corner — measured
+ * on Milestones, whose tray moved 318px off the felt's centre line before this
+ * condition was tightened. `#player-piles:empty` is not the question: it is
+ * `:empty` only for the hand-only packs (Thirteen, Wildfire, Crazy Eights),
+ * while Milestones keeps a `.meld-strip` in it from the deal that is 0x0 until
+ * something is laid down. So `:has` asks for a child that is itself not empty,
+ * which is true of a pile, a my-seat strip and a meld strip with chips in it,
+ * and false of the placeholder. A hidden TRAY needs no condition of its own:
+ * the piles are in the centre column either way, so the felt looks the same
+ * whether the phase gathers or not.
  *
  * The height gate is where the overflow is, measured pack by pack: the felt
  * fits unaided at 800px and below (the `max-height: 800px` block already
@@ -1411,7 +1417,7 @@ body {
 #player-row { display: contents; }
 
 @media (min-width: 721px) and (max-height: 1060px) {
-  #player-row:has(> #player-piles:not(:empty)) {
+  #player-row:has(> #player-piles > :not(:empty)) {
     display: grid;
     /* Equal gutters, so the centre column is centred on the felt however wide
        the tray in the right one grows. */
@@ -1441,7 +1447,7 @@ body {
      are already on. Column 1 rather than 3 — and `order` puts it before the
      piles so grid's placement cursor, which only ever moves forward, still
      lands the pair on one line. */
-  [data-handedness="left"] #player-row:has(> #player-piles:not(:empty)) > #stage-row {
+  [data-handedness="left"] #player-row:has(> #player-piles > :not(:empty)) > #stage-row {
     grid-column: 1;
     order: -1;
   }
@@ -1458,7 +1464,7 @@ body {
      already makes for this exact element ("smaller cards here, not a
      collapsing row"). It is a continuous one: a five-card meld at 1041px is
      still 92% of a full card, and nothing on the felt moves at any count. */
-  #player-row:has(> #player-piles:not(:empty)) > #stage-row #stage-tray {
+  #player-row:has(> #player-piles > :not(:empty)) > #stage-row #stage-tray {
     flex-wrap: nowrap;
   }
   /* This is the whole mechanism: a flex item's automatic minimum is its
@@ -1466,12 +1472,12 @@ body {
      here) the row of them can be shrunk to the gutter. The tray keeps its own
      `min-width` rules, so an EMPTY tray is still the 8rem dashed outline that
      says "cards go here". */
-  #player-row:has(> #player-piles:not(:empty)) > #stage-row .stage-card {
+  #player-row:has(> #player-piles > :not(:empty)) > #stage-row .stage-card {
     min-width: 0;
   }
   /* The wrapper is what shrinks; the card follows it and keeps its aspect from
      its own viewBox. */
-  #player-row:has(> #player-piles:not(:empty)) > #stage-row .stage-card .card-face {
+  #player-row:has(> #player-piles > :not(:empty)) > #stage-row .stage-card .card-face {
     max-width: 100%;
   }
 }
