@@ -1175,6 +1175,108 @@ keyframe animation anywhere on the component: the pegs move on a one-shot
 transition and then sit still, so there is nothing for `--arcade-pulse-count`
 to cap.
 
+## The round ending, held on the felt (#120)
+
+### What was wrong
+
+`maybeFinishRound` (`src/engine/movePipeline.js`) scores the hand, advances
+`roundNumber`, clears every zone and deals the next round — all inside the move
+that ended the old one. That is right and it is not negotiable: the redeal
+consumes seeded RNG, so a replay has to cross the boundary at exactly the same
+move. What was wrong was the FELT taking that move as its cue to repaint.
+`afterMove` called `render` on the post-deal state immediately, so the round
+summary opened over a hand that had already been dealt and a turn indicator
+that had already advanced — Team Spades' status bar read "Bruno is bidding…"
+behind the sheet for the hand you had just finished.
+
+Cribbage was the sharp case, and it is worth writing the measurement down. On
+unmodified main, driven with playwright: the human plays the last pegging card
+at t=0; at t=+144ms the hand is six new cards, both played piles are empty, the
+starter is gone and the status bar says "Crib — pick 2". The show — pone's
+hand, the dealer's hand, the crib, three separate scores that decide close
+games — never reached the screen at all. The banner at that moment still said
+"You pegs 2 — the count is 28", because `celebrateAction` takes the FIRST
+describable event of a move and the last peg beat all three `showScored`s to it.
+
+### What changed
+
+The felt keeps its own copy of where the round ENDED and paints that; the live
+state — still saved, still published, still what the summary reads — waits
+behind the summary's Continue.
+
+- `src/ui/table.js` takes a `forkState` copy before every local move
+  (`notePreMove`, one per move; the bot makes hundreds per turn) and, only when
+  the move turns out to have ended a round, advances that copy with
+  `template.applyMove` alone — the pipeline's round boundary deliberately not
+  run (`takeRoundFinal`). It is a rendering decision, not a rules one: the fork
+  is never logged, saved or published, and the real state crossed the boundary
+  for real a moment earlier.
+- The deal becomes visible in `dismissRoundSummary`, which already owned
+  `playDeal`, the `Round N.` render and `scheduleNextTurn`. So the summary's
+  Continue is now the button that deals the next hand.
+- `src/ui/roundBeat.js` is the schedule as arithmetic — no DOM, no timers — so
+  the one thing that was impossible to check by reading is a function with a
+  test (`tests/roundBeat.test.js`): the summary opens after everything it
+  covers.
+- `session.roundBeat` says the felt is deliberately behind the engine. `render`
+  and `renderStatusBar` read it and offer nothing while it is true, because a
+  card offered from a position the engine has moved past would fail validation
+  if it were tapped. The status bar says "Round over." rather than whatever
+  `turn` the template happened to leave behind (cribbage's show leaves it on the
+  last player, so the bar read "Your turn" over an empty hand).
+
+### Decisions
+
+**A timed hold, and no second acknowledgement.** The issue asks for the
+`awaitFinalLook` pattern, and this deliberately is not a second copy of it. What
+that bar buys at match end is that the PLAYER decides when the ending leaves the
+screen; here the round summary already is that decision — its Continue is the
+deal. A Continue bar in front of it would be two clicks for one choice. So the
+hold is timed (700ms, or 900 after a trick, both measured against the flight the
+way `offerFinalLook` measures its own beat) and the summary is the
+acknowledgement. Nothing of the next hand exists on screen until it is answered.
+
+**Cribbage's three steps are a pose, not a caption.** The crib is turned by the
+move itself — the reveal IS `moveCards crib -> show` — so the ending position
+already has it face up. `posedForShow` moves those four back to `crib` (which is
+`visibility: 'none'` and therefore not drawn at all), and the crib's step
+re-renders the true ending. So the third step is an actual turn on the felt, not
+a sentence about cards that have been lying there through the other two counts.
+Each step gets 1.5s, the pack's own sentence (`describeEvent`, which already
+knows to say "Your hand" and not "You's hand"), a pulse on the seat, and a
+static ring on the pile being counted (`.pile-stack--counting`). Static, not a
+pulse: it is up for four and a half seconds across three steps, and a table
+throbbing through all of it reads worse, which is also why it needs no
+reduced-motion entry.
+
+**A show that ends the match is untouched.** `peg` returns false the moment
+somebody passes the target and every caller checks, so `ctx.endRound` is never
+reached and no `roundOver` is emitted — `roundBeatPlan` returns null and the
+`state.gameOver` branch and `offerFinalLook` take over exactly as before. There
+is no redeal under a finished match to hide, which is why that path never needed
+this.
+
+**The multiplayer path degrades rather than lying.** `afterRemoteMove` is
+called by the host module AFTER it has applied the move, so there is no pre-move
+copy to advance and none can be taken without a pre-apply hook in
+`src/match/host.js`. The plan is built with `narrate: false`: the hold still
+applies, the step-by-step reveal does not, and the felt repaints the way it
+always did. The wire form of `showScored` carries counts rather than card ids
+anyway (see the cribbage section above), so a remote client could not light the
+cards even with the timing. Nothing in `tests/protocol.test.js`, `twoSessions`,
+`twoTables` or `tableSession` changes.
+
+### Verified
+
+Driven live on both builds with the same playwright probe — the worktree on
+4820, unmodified main on 4830 — and compared frame by frame. Cribbage after the
+change: last card at t=0, pone's count at +698ms, the dealer's at +2.2s, the
+crib turned and counted at +3.7s, the summary at +5.2s, and the next hand's six
+cards first visible at +6.4s, when Continue was pressed. Before the change, on
+the same probe: the next hand was on screen 144ms after the last card and the
+summary 369ms after that. Hearts, Milestones, Thirteen and Team Spades reach the
+same `afterMove` branch and were checked the same way.
+
 ## Next steps
 
 Multiplayer (Phase 8), per-pack UI polish (per-pack `theme.css`, custom

@@ -95,6 +95,11 @@ export function createSession({ pack, state, seats, seating, cardArt, handPrefs,
     // player's finger belong to a position the engine has moved past — so
     // `render` reads this and offers nothing while it is true.
     roundBeat: false,
+    // The position the round ended in, held for as long as `roundBeat` is true
+    // so a repaint with a reason of its own — a resume, a settings change, a
+    // seat being claimed — paints the ending rather than the deal underneath.
+    // A throwaway `forkState` copy, never logged, saved or published.
+    roundFinalState: null,
 
     // Which collapsed seat the player has PICKED to open, or null to let the
     // plate follow whoever is playing. The opponent row is rebuilt wholesale on

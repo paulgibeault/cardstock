@@ -357,6 +357,20 @@ function livePack() {
 }
 
 /**
+ * WHAT THE FELT IS SHOWING, which is the live state except during a round beat.
+ *
+ * Between a round-ending move and the summary being dismissed, the table paints
+ * where the round ENDED while `session.state` already holds the next deal (see
+ * runRoundBeat). Anything that repaints in that window for a reason of its own —
+ * a resume, a settings change, a seat being claimed — has to repaint the same
+ * thing, or the new hand appears early and the hold is undone by a rotation of
+ * the phone.
+ */
+function feltState() {
+  return (session?.roundBeat && session.roundFinalState) || liveState();
+}
+
+/**
  * Which cards were on the felt at the end of the last render.
  *
  * `.card-face--fresh` is opt-in per card because the table rebuilds its DOM
@@ -2087,7 +2101,9 @@ function renderRail(state, ui, humanActs) {
 
 function renderStatusBar(state, acting) {
   el.statusText.textContent = statusTextFor(state, acting);
-  const humanActs = acting.some(isMySeat);
+  // `session.roundBeat` for the same reason `render` reads it: while the felt
+  // holds a finished hand, nobody is on turn and the bar must not say so.
+  const humanActs = acting.some(isMySeat) && !session?.roundBeat;
   el.status.classList.toggle('status-bar--your-turn', humanActs);
   el.status.classList.toggle('status-bar--thinking', !state.gameOver && !humanActs);
 
@@ -2109,6 +2125,12 @@ function renderStatusBar(state, acting) {
 
 function statusTextFor(state, acting) {
   if (state.gameOver) return `Game over — ${winnerSentence(state)}`;
+  // THE ROUND BEAT IS NOBODY'S TURN. The felt is holding the position the hand
+  // ended in (runRoundBeat) and this state's `turn` is whatever the template
+  // left it on — cribbage's show leaves it on the last player, so the bar read
+  // "Your turn" over a table where the player's hand was empty and nothing was
+  // tappable. It is not a turn; it is the end of the hand.
+  if (session?.roundBeat) return 'Round over.';
   if (state.turn.phase === 'bid') {
     // The bid goes round the table one seat at a time, so "whose turn" is
     // already the right sentence — what this adds is WHICH KIND of turn, which
@@ -2672,6 +2694,7 @@ async function endMatchFromSummary() {
   recordForfeit(state.pack.id, session.seating);
   session.roundSummaryOpen = false;
   session.roundBeat = false;
+  session.roundFinalState = null;
   hideRoundSummary();
   exitToLobby();
 }
@@ -2688,6 +2711,7 @@ function dismissRoundSummary() {
   // round ended (runRoundBeat), which is why the render below is the first
   // sight of the new cards and why it deals them with the full stagger.
   session.roundBeat = false;
+  session.roundFinalState = null;
   hideRoundSummary();
   session.dealAnimation = true;
   playDeal(liveState().seats);
@@ -2919,7 +2943,10 @@ function spotlightZone(address) {
 function playShowStep(finalState, step) {
   // The crib's step is the turn. Everything before it has been looking at the
   // pose (posedForShow); this render is the four cards coming face up.
-  if (step.isCrib) render(finalState);
+  if (step.isCrib) {
+    session.roundFinalState = finalState;
+    render(finalState);
+  }
   const said = finalState.pack.template.describeEvent?.(
     { type: 'showScored', seat: step.seat, isCrib: step.isCrib, points: step.points },
     { seatLabel, seatPossessive, viewerSeat: mySeat() },
@@ -2950,6 +2977,14 @@ function playShowStep(finalState, step) {
  */
 function runRoundBeat(state, plan, finalState) {
   const myEpoch = epoch;
+  // WHO WON THE HAND, on the table rather than only on the sheet. A shedding
+  // pack names the seat that went out (`ctx.endRound(winner)`, still on the
+  // fork because the round boundary was not run over it); a trick-taking round
+  // names nobody and its closing trick has already pulsed the seat that took
+  // it (celebrateTrick).
+  if (finalState.roundEnded && finalState.roundWinner != null) {
+    pulseSeat(finalState.roundWinner, 'good');
+  }
   for (const step of plan.steps) {
     Arcade.session.setTimeout(() => {
       if (myEpoch !== epoch || !session?.roundBeat) return;
@@ -3052,7 +3087,13 @@ function afterMove(state, move, from, message, { publish = true } = {}) {
   if (passed && !message) message = 'Cards passed. Play!';
   // SET BEFORE THE RENDER, because `render` reads it: while the felt is showing
   // a position the engine has already moved past, nothing on it is actable.
-  if (plan) session.roundBeat = true;
+  if (plan) {
+    session.roundBeat = true;
+    // Kept so anything that repaints for a reason of its own during the beat
+    // repaints the ending rather than the deal underneath it (feltState). Null
+    // on the path with no snapshot, where the felt is already the live state.
+    session.roundFinalState = finalState ? shown : null;
+  }
   render(shown, message);
   animateMove(shown, move, from);
   if (trick) celebrateTrick(shown, trick);
@@ -3341,7 +3382,10 @@ function performAnnouncement(state, move, myEpoch = epoch) {
     flightMs: flightDurationMs(settings?.botDelayMs),
     narrate: !!finalState,
   }) : null;
-  if (plan) session.roundBeat = true;
+  if (plan) {
+    session.roundBeat = true;
+    session.roundFinalState = plan && finalState ? finalState : null;
+  }
 
   render(plan && finalState ? finalState : state, message);
   // After the render, so the hand the cards are flying INTO is the one on
@@ -3628,7 +3672,7 @@ export function afterRemoteMove(move) {
 export function setSeating(seating) {
   if (!session || !Array.isArray(seating)) return;
   session.seating = seating;
-  if (liveState()) render(liveState());
+  if (liveState()) render(feltState());
 }
 
 /**
@@ -3764,7 +3808,7 @@ export function isTableOpen() {
 /** Re-render in place — onResume, and after a settings change. */
 export function rerenderTable() {
   settings = loadSettings();
-  if (liveState()) render(liveState());
+  if (liveState()) render(feltState());
 }
 
 export function initTable({ onExit }) {
