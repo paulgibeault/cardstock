@@ -548,7 +548,13 @@ const cribbage = {
       // is furniture: face-down backs with its count, exactly what a real table
       // shows. The visibility is untouched; `onFelt` says where it is drawn,
       // never what may be seen in it.
-      { id: 'crib', per: 'shared', visibility: 'none', layout: 'stack', order: 'stack', facing: 'down', label: 'Crib', onFelt: true },
+      // `hideWhenEmpty` as well, and the two flags together are the crib's whole
+      // life on the felt: nothing before the first card is thrown, a growing
+      // face-down pile through the discard and the play, and gone again at the
+      // moment its cards move to `show` and come up face up. Without it the
+      // reveal leaves an empty box captioned "Crib" sitting beside the four
+      // cards that just came out of it.
+      { id: 'crib', per: 'shared', visibility: 'none', layout: 'stack', order: 'stack', facing: 'down', label: 'Crib', onFelt: true, hideWhenEmpty: true },
       // WHERE THE CRIB IS TURNED OVER, and the reason it is a zone rather than
       // an event payload. The first cut of the show emitted the crib's card ids
       // in `showScored` and left them sitting in a `visibility: 'none'` pile —

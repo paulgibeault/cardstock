@@ -1364,6 +1364,100 @@ held now. Thirteen and Team Spades were checked the same way: Team Spades'
 status bar read "Rook is bidding…" behind the sheet before, and "Round over."
 after.
 
+## The board, the crib and the count, made visible (#124)
+
+Round 5 played cribbage and found that almost nothing the game is actually read
+off was on the screen. Eight items, all presentation, and one of them a
+straightforward rendering bug.
+
+**The peg walked off the board.** `left` in percent is a percentage of the
+containing block, and `renderCounterTrack` parented both pegs to the
+`.seat__track` WRAP — which is the rail *plus the printed score beside it*. At
+119 the rail spanned x=663–720 and the peg drew at x=750: past every hole, on
+top of its own number. At 0 the two origins coincide, which is why every
+screenshot of a fresh deal looked right and the bug survived a whole playtest.
+The pegs are children of the rail now; the geometry `counterTrack()` computes
+did not change. The pure model could never have caught this — the fraction was
+always correct — so `tests/counterTrack.test.js` gained the assertion the
+geometry cannot make: which element the percentage is *of*.
+
+**The crib was not drawn at all.** `sharedZoneInstances` leaves every
+`visibility: 'none'` shared zone off the felt unless it is `interactive`, so the
+crib — four cards both players watched go in, and the thing the entire discard
+decision is about — was invisible. What the felt showed instead was the `show`
+zone: empty, captioned "The crib", from the deal to the reveal. Two new zone-def
+flags, both about WHERE a pile is drawn and neither about what may be seen in it
+(`visibility` is still the only thing that decides that): `onFelt`, a hidden
+pile that is furniture, drawn as backs with its count; and `hideWhenEmpty`, a
+pile that is not a place on the table until it holds something. The crib carries
+both, so it appears with the first card thrown, grows to four, and disappears at
+the moment its cards move to `show` and come up face up.
+
+**The human had no board.** Every seat plate draws its primary counter as a
+track where the template says it is one — and the human's own seat is not a
+plate, so there was exactly one `.seat__track` in the document and it belonged
+to the bot. The status bar's score chip renders the same track through the same
+`renderCounterTrack`, narrower because that bar may never wrap. A pack whose
+primary counter is a quantity renders nothing there and keeps the plain pill.
+
+**The count was in the state and nowhere on the felt.** `count` has been in
+cribbage's `publicVars` since the template shipped. New `tableCounters` hook —
+`seatCounters` one rung out, for a number that belongs to the table rather than
+to a seat — rendered as a chip beside the piles, during the play only. A stale
+count sitting beside a hand being counted at the show is a different number's
+worth of confusion.
+
+**The narration said how much and never what.** Both scoring events carried
+their breakdown from the day they shipped; the felt printed the total, so a
+fifteen, a pair and a run all read "pegs 2". They are named now — including "his
+nobs", which is in this pack's own tagline and its manifest and had never once
+appeared on screen. The show's steps narrate through the beat #120 built:
+`showSteps` carries `parts` because the sentence is rebuilt from the step.
+"You pegs 3" is #107's possessive bug in a verb, fixed the same way — `agrees`
+sits beside `possessive` in `describe.js` and reaches templates as `seatVerb`.
+
+**Whose crib, before the decision.** The button said it and the button does not
+exist until both cards are staged, which is after the only real choice in the
+hand has been made. `dealer` is public from the deal, so the staging sentence
+says it: "Your crib — pick 2".
+
+**The zero column.** The round sheet's middle column is what the ROUND BOUNDARY
+scored, and a pack that pegs every hole the moment it is earned has no such
+number — cribbage's `scoreRound` returns nothing, so the sheet printed `?? 0`
+for both seats every round beside a column that moved. The test is whether the
+event carries any per-seat entries at all, not whether they are zero: a pack
+that genuinely scored nobody still has a delta column and "+0" in it is still
+true. The cell stays and is empty, because `.round-scores` is a three-column
+grid of `display: contents` rows and a skipped cell shifts every cell after it.
+
+**Two smaller ones.** A spread showed `state.seats` cards because the only
+spread that existed was a trick; cribbage's `play` pile is one seat's four laid
+down over a hand, so at a two-hander the first two vanished as the third went
+down. The floor is four now, which is exactly what the fixed slot width already
+holds and leaves every table of four or more untouched. And a pile's count
+replaced its label at one card — the one count that says nothing a player cannot
+already see — so the cut card's "Starter" became "1" the instant it was turned.
+The name wins at a count of one, *below* the active-match check, so a one-card
+Crazy Eights discard still prints the suit in force.
+
+**Verified on the felt, before and after**, by driving a whole match through the
+human seat against two servers — this branch and its unmodified base. 68 peg
+samples from 0 to 130, none off the rail, against 44 samples on main of which 17
+were off it. The rest is in the same two runs: `tracks=1` → `2`, no counter →
+`COUNT 15`, "The crib, 0 cards" → "Crib, 4 cards, face down", "Starter" instead
+of "1", `["You","0","8"]` → `["You","","7"]` on the round sheet, and log lines
+reading "You peg 2 — fifteen — the count is 15." and "Your crib is worth 3 —
+fifteen and his nobs."
+
+**Left alone, deliberately.** The opponent's played cards on their seat plate
+still show only the top one: a mini pile is 34px wide and spreading four of them
+is a seat-plate layout change, and with the count on screen the arithmetic the
+complaint was really about is done. And the 121-vs-122 question from item 44 is
+worse than an off-by-one — a match was observed finishing 130–95 against a
+target of 121, because `peg` adds the whole score and then asks whether the seat
+is out. Whether a seat should stop pegging at the target is a rules question in
+`peg`, which this pass was not allowed to touch; it wants its own issue.
+
 ## Next steps
 
 Multiplayer (Phase 8), per-pack UI polish (per-pack `theme.css`, custom
