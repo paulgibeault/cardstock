@@ -1919,6 +1919,144 @@ game, and changing the deck's identity is a bigger call than this issue. The
 only that to `goToTable`, and the seat count comes from the new-game sheet — no
 URL plumbing was added, per the issue.
 
+## The hand takes a second row, and the rail gets out of its way (#134)
+
+### What was wrong
+
+The "not done, and why" paragraph of #122 above, answered. At 375×812 a
+thirteen-card hand gave every card a 14.5px strip — the round-5 playtest's
+"can't read my own hand" (#133 items 1–2). The arithmetic is short: `#hand-row`
+is 332px, the rail took 92px of it (5rem plus a 12px reserve), the hand's own
+padding another 20px, so `fanStep` was handed 220px for twelve gaps.
+
+Every alternative was measured live before anything was written (#133's research
+comment). Bigger cards make it **worse** — 60px cards give 13.3px, because the
+strip is set by the row's width and not the card's. Moving the rail out of the
+row buys 22.2px. Two rows with the rail still beside the fan buys 29px. Two rows
+with the rail above buys 43px, the fan fully open, and that is the one that
+answers the complaint rather than softening it.
+
+### What changed
+
+**The rail leaves the row on a portrait phone.** `(orientation: portrait) and
+(max-width: 480px)` only: `#hand-row` wraps and `.hand-rail` becomes a
+fixed-height band above the fan with the token, the lamp and the thumb slot in
+one line, right-aligned, mirrored for left handedness. The band is 1.9rem
+whatever is standing in it and the stack is still absolutely positioned inside
+it — the same promise the zero-height box was making, turned through ninety
+degrees, so the felt does not step under a reaching thumb when the turn changes
+(#13). The slot itself is pinned to the rail's own 5rem so the button and the
+sort toggle that share it cannot be different widths; measured with the toggle
+in the slot and again with `Play 1` in it, the band, the token, the lamp and the
+slot are at identical coordinates. Landscape and desktop keep today's rail, and
+were measured to prove it: all nine packs at 812×375 report the same `--fan-step`
+and the same `#table-screen.scrollHeight` as main.
+
+**`fanLayout` splits the fan when one row would close past reading.** A sibling
+of `fanStep` in `src/ui/handOrder.js`, pure and pinned in tests: one row while
+the step clears `READABLE`, else the fewest rows whose per-row step clears it,
+and only while the felt's measured slack covers the extra rows. `READABLE` is
+half a card, and the window it has to live in is narrow enough that the issue's
+own measurements close it: 13 cards on 312px is 22.2px a card, which has to be
+judged not good enough (so the floor is above 0.48), and the same hand split in
+two on 220px is 29px, which has to be judged good enough or splitting buys
+nothing (so it is below 0.63). The card art agrees — the corner index inks the
+left 0.24 of a card, so at 0.5 the visible strip is more than twice the ink it
+carries.
+
+**It re-joins later than it split**, which is not decoration. A hand shrinks a
+card at a time and is judged on the ONE-row step, which crosses the floor while
+the fan is still drawn in two — so without hysteresis, staging one card out of
+thirteen took the hand from 43px a card to 24px and jumped it 70px up the felt,
+as a reward for playing. Splitting asks for `READABLE`; re-joining asks for
+`NATURAL`, the spacing a fan sits at when it is not short of room at all. On a
+375px phone: split at thirteen, stay split down to ten, one row again at nine.
+
+**Each row is a real container.** `.hand` is a column of `.hand__row`, and that
+is what let the rest of the fan's machinery survive: the overlap is a negative
+margin on `:not(:first-child)` and a lift opens its gap with a general sibling
+combinator, and both mean "within my row" by construction once a row exists.
+Written as one flat wrapping list — which is what the fan would have been — a
+hover on row 1 shoves row 2 sideways; that was reproduced deliberately (see
+below). `handGestures` builds its peek strips per row and picks the row by
+`clientY` before the card by `clientX`; `reorderHandAt` takes (x, y) and picks
+the row by y, then the index by x, then converts to a position in the whole
+hand. `renderSelection` walks `.card-face-wrap` rather than `.hand`'s children,
+which are now containers with no card id.
+
+**The slack is measured, and it is not the middle's spare room alone.**
+`handSlack` asks `#felt-middle` how much height it has beyond its tallest child
+— asked of the children, never a list, because #136 is adding a board row to
+that same middle — and then subtracts what the felt is ALREADY over the screen
+by. Without that second term the middle simply grows to whatever it is asked
+for, its spare reads as zero however far the hand has pushed the table off the
+bottom, and the gate never closes: a probe that ate the felt's middle showed
+exactly that, and shows the gate closing now. The figure is normalised to what a
+ONE-row hand would see, because the slack measured with two rows is smaller by
+the second row, and feeding that back in would flip the fan on alternate
+renders. The answer is then cached against its inputs the way `seatFit` caches
+the seat row's rung, with the slack quantised to 16px so a chip growing a digit
+is not a new question.
+
+**`layoutHand` reads the card's width off its computed style.** `--hand-card-w`
+is `clamp(70px, 8.6vh, 104px)` on a tall window and `parseFloat` read that as
+70, so every desktop fan was spaced for a card 4px narrower than the one on the
+felt — #135's root cause, arriving here because the row arithmetic needs the
+real number. Off the computed style rather than a rect: `getBoundingClientRect`
+reports the visual box, and this runs during the deal, so a card measured
+mid-animation comes back 2.5% small and the whole fan is spaced for it (that was
+a live bug in the first cut, caught by a step of 42.18 where 43.24 was expected).
+
+### How it was verified
+
+Two dev servers, this branch and main, driven by the same probes. At 375×812
+with thirteen cards, Thirteen and Team Spades go from **one row at 14.5px a card
+to two rows at 43.3px**, `#table-screen.scrollHeight` 812 on both sides.
+Cribbage's crib discard goes 34.8 → 43.2 and Pinochle's meld declaration 15.8 →
+24.2, both still one row and both still `scrollHeight === innerHeight` — the
+meld phase is the case the slack gate exists for. All nine packs boot clean at
+375×812, 812×375 and 1280×860 with no page errors: Hearts 10.9 → 33.3 (two
+rows), Milestones 19.3 → 29.6, Wildfire 29.0 → 43.2.
+
+At 1280×860 `#hand-row`'s rect and every band on the felt are byte-identical
+before and after, and the cards keep their size and their y. What moves is the
+fan's step, 65.80 → 69.52, and that was proved to be the card-width read alone:
+reverting that one line and re-running the identical probe reproduces main's
+65.80px and main's exact card positions.
+
+Row isolation was measured rather than argued, by reading the computed transform
+of every card while one is lit: hovered, hinted and peeked on either row, a
+scrub along each row, and a card dragged from row 1 into row 2. In every case
+only cards in the lit card's own row move, a scrub along a row lights only that
+row's cards, and the drag lands the card in the other row with the hand the same
+size. **Proven to bite:** flattening the same two-row fan into one wrapping list
+— the shape it would have without `.hand__row` — makes a hover on a row-1 card
+shift six row-2 cards. **The slack gate was proven to bite too:** a filler
+taller than the felt's middle drops the fan back to one row on its own, and
+removing it brings the second row back.
+
+`npm test` 816 pass / 0 fail; `node tools/pack-test.mjs --all` all nine packs
+0 failed; `tests/handZOrder.test.js` still refuses a shared rung and a ranked
+lift with no gap rule. The new `fanLayout` tests were each broken on purpose and
+each went red: the floor lowered to `TIGHTEST` so nothing splits, the slack term
+dropped so rows are bought with height that is not there, the pairs cap removed
+so a row is left holding one card, `handRows` dealt round-robin instead of left
+to right, the loop spread as wide as it was allowed instead of stopping at the
+fewest rows, and the hysteresis removed.
+
+**Not done, and why.** The issue's optional last item — `--pile-w` 52 → 68px on
+a portrait phone, out of whatever slack is left — is **left out, measured**.
+Thirteen, Team Spades, Cribbage's discard and Pinochle's meld all still fit at
+68px, but **Stockpile overflows by 211px**: its deck-plus-four-builds row is
+5 × 52px plus gaps precisely so it fits one line at 375px (the note on the
+`max-width: 420px` block says so), and at 68px it folds onto three lines. The
+375px felt therefore keeps its empty green in the middle, which is #136's
+question rather than this one's. The left-handed peek order is also unchanged
+and still slightly wrong — `cardStripAt` assumes DOM order runs left to right,
+which `row-reverse` inverts, so a left-handed scrub reads each card's strip off
+the wrong edge. That is pre-existing, it is one row's worth of the same bug it
+always was, and fixing it is a change to which strip a finger is answered by
+rather than to where the rows are.
 ## The card width the fan was actually given (#135)
 
 ### What was wrong

@@ -100,7 +100,8 @@ import {
 } from './interaction.js';
 import {
   orderHand, reorder, nextMode, isSortMode, fanStep, fanWidth, liftGap,
-  resolveCardWidth, classifyHandGesture, SORT_LABELS,
+  fanLayout, handRows, resolveCardWidth,
+  classifyHandGesture, SORT_LABELS,
 } from './handOrder.js';
 import {
   initPanels, showRoundSummary, hideRoundSummary,
@@ -159,6 +160,7 @@ const el = {
   scoreChipValue: document.getElementById('score-chip-value'),
   tableCounters: document.getElementById('table-counters'),
   opponentsTop: document.getElementById('opponents-top'),
+  feltMiddle: document.getElementById('felt-middle'),
   centerPiles: document.getElementById('center-piles'),
   playerPiles: document.getElementById('player-piles'),
   announceBar: document.getElementById('announce-bar'),
@@ -1906,7 +1908,13 @@ function renderStageTray(state, ui) {
 }
 
 function renderHand(state, ui, stagger, draggable) {
-  el.hand.replaceChildren();
+  // ONE ROW TO BUILD INTO, and layoutHand splits it if the fan needs splitting
+  // (#134). Deciding the row count here would mean measuring before the cards
+  // exist; deciding it there means one place owns the answer, and because both
+  // run in the same task nothing is painted in between.
+  const firstRow = document.createElement('div');
+  firstRow.className = 'hand__row';
+  el.hand.replaceChildren(firstRow);
   const handAddr = handAddress(mySeat());
   const engineHand = state.zones.cards(handAddr);
   // The engine's order is dealing order and stays that way; what the player
@@ -1973,7 +1981,7 @@ function renderHand(state, ui, stagger, draggable) {
     attachInspector(wrapper, () => describeCard(card, state.pack),
       { isBusy: () => (!!drag && drag.isDragging()) || !!gestures?.smartSelectArmed() });
 
-    el.hand.appendChild(wrapper);
+    firstRow.appendChild(wrapper);
   });
 
   el.handSort.textContent = SORT_LABELS[session.handPrefs.mode] || SORT_LABELS.auto;
@@ -2001,11 +2009,18 @@ function renderHand(state, ui, stagger, draggable) {
  * confetti. The floor stops it closing past the point where those corners
  * disappear.
  *
- * Cheap enough to run on every render and every resize: two measurements and
- * one custom property, no relayout of anything else.
+ * AND WHEN CLOSING IS NOT ENOUGH, THE FAN TAKES A SECOND ROW. A thirteen-card
+ * hand on a 375px phone closed to 14.5px a card, which is under anything anyone
+ * can choose from (#133 items 1–2). `fanLayout` says how many rows it takes to
+ * get back above that floor and what each row's step then is; this function
+ * supplies the three measurements it decides on and moves the cards.
+ *
+ * Cheap enough to run on every render and every resize: four measurements, two
+ * custom properties, and DOM work only when the row count actually changes.
  */
 function layoutHand() {
-  const count = el.hand.childElementCount;
+  const cards = [...el.hand.querySelectorAll('.card-face-wrap')];
+  const count = cards.length;
   if (count < 2) {
     el.hand.style.removeProperty('--fan-step');
     el.hand.style.removeProperty('--lift-gap');
@@ -2022,29 +2037,67 @@ function layoutHand() {
   if (!rowWidth) return;
 
   const styles = getComputedStyle(el.hand);
-  // MEASURED, NOT READ OFF THE DECLARATION. `--hand-card-w` is a `clamp()` on
-  // desktop, and a custom property comes back from getComputedStyle unresolved,
-  // so parsing it yielded NaN and the fan was laid out for the 70px fallback
-  // whatever size the cards were (#135) — which `liftGap` and `fanWidth` below
-  // inherit too. `offsetWidth` rather than a client rect because the freshly
-  // dealt cards are still inside `card-deal`, whose `scale(0.85)` a rect would
-  // include and a layout width does not.
+  // THE CARD AS DRAWN, not the property it was drawn from. `--hand-card-w` is
+  // `clamp(70px, 8.6vh, 104px)` on a tall window and `parseFloat` reads that as
+  // 70 — so every desktop fan was spaced for a card 34px narrower than the one
+  // on the felt (#135, whose one-line fix this is; the overseer unifies the
+  // two). A rendered card cannot be wrong about its own width.
+  //
+  // OFF THE COMPUTED STYLE, NOT OFF A RECT. `getBoundingClientRect` reports the
+  // VISUAL box, so a card measured during the deal — which is exactly when this
+  // runs, renderHand calls it — comes back scaled by whatever frame of
+  // `card-deal` is on screen, and the whole fan is then spaced for a card 2.5%
+  // too small. The used width is a layout fact and no transform touches it.
+  const cardStyles = getComputedStyle(cards[0]);
+  // The measurement goes through `resolveCardWidth` (#135) so the order —
+  // rendered, then declared, then 70 — is the one its test pins.
   const cardWidth = resolveCardWidth({
-    rendered: el.hand.firstElementChild?.offsetWidth,
+    rendered: parseFloat(cardStyles.width),
     declared: styles.getPropertyValue('--hand-card-w'),
     fallback: 70,
   });
+  // The wrapper, not the card art: the inline svg sits on a line box, so the
+  // few px under its baseline are part of what a row of these actually costs.
+  const cardHeight = parseFloat(cardStyles.height) || cardWidth * 1.4;
   const padding = (parseFloat(styles.paddingLeft) || 0) + (parseFloat(styles.paddingRight) || 0);
-  // The rail shares the row, so the fan may not have all of it. The RAIL is
-  // measured, not whichever control happens to be standing in it: its width is
-  // fixed in CSS precisely so this number does not move when the turn token
-  // lights, the Hint lamp appears, or the action button takes the thumb slot —
-  // a reserve that changed mid-turn would re-fan the hand under the player's
-  // finger (#13, in the inline axis).
-  const reserved = el.handRail.offsetWidth + 12;
+  // The rail shares the row, so the fan may not have all of it — UNLESS it has
+  // stood down into its own band above the fan, which is what it does on a
+  // portrait phone (#134, `.hand-rail` in table.css). Which shape it is in is
+  // measured rather than re-derived from the media query: a band is as wide as
+  // the row, and a rail beside the fan is not.
+  //
+  // Beside the fan, the RAIL is what is measured and not whichever control
+  // happens to be standing in it: its width is fixed in CSS precisely so this
+  // number does not move when the turn token lights, the Hint lamp appears, or
+  // the action button takes the thumb slot — a reserve that changed mid-turn
+  // would re-fan the hand under the player's finger (#13, in the inline axis).
+  const railBeside = el.handRail.offsetWidth < rowWidth;
+  const reserved = railBeside ? el.handRail.offsetWidth + 12 : 0;
   const available = Math.max(cardWidth, rowWidth - reserved - padding - 4);
 
-  const step = fanStep({ count, cardWidth, available });
+  const rowGap = parseFloat(styles.rowGap) || 0;
+  const slack = handSlack(cardHeight + rowGap);
+  // THE ROW COUNT IS CACHED THE WAY THE SEAT ROW'S RUNG IS (see renderSeats),
+  // and for the same reason: it is an answer to a MEASUREMENT that the answer
+  // itself changes. `handSlack` already hands back the one-row figure so the
+  // feedback loop cannot close, but the felt's middle still breathes by a
+  // fraction of a pixel as counters and badges change width — and a fan that
+  // flipped between one row and two on alternate turns because a chip grew by
+  // half a pixel is the worst version of this feature. Quantised, so only a
+  // real change of room is a change of key.
+  const key = `${count}:${Math.round(cardWidth)}:${Math.round(cardHeight)}`
+    + `:${Math.round(available)}:${Math.round(slack / SLACK_STEP)}`;
+  // The shape it is in NOW is an input, not just a cache: a fan re-joins later
+  // than it split, so that staging one card out of thirteen does not drop the
+  // hand back to one row and take 20px off every card's strip (fanLayout).
+  const current = session?.handFit?.rows || 1;
+  const rows = session?.handFit?.key === key
+    ? session.handFit.rows
+    : fanLayout({ count, cardWidth, cardHeight, available, rowGap, slack, current }).rows;
+  if (session) session.handFit = { key, rows };
+
+  const perRow = placeHandRows(cards, rows);
+  const step = fanStep({ count: perRow, cardWidth, available });
 
   // HOW FAR THE FAN OPENS UNDER A LIFTED CARD, out of the room it did not need.
   // The shift is a transform and moves no layout, so nothing else would stop
@@ -2053,10 +2106,97 @@ function layoutHand() {
   // uncovers the neighbour's rank corner; whatever of that the row cannot spare
   // is not taken, and a fan already closed to fit its row opens by nothing at
   // all rather than tightening further to buy the animation room.
-  const spare = available - fanWidth({ count, cardWidth, step });
+  //
+  // Measured off the LONGEST row, because one `--lift-gap` serves them all and
+  // the row with the least room to give is the one that decides.
+  const spare = available - fanWidth({ count: perRow, cardWidth, step });
   const gap = Math.max(0, Math.min(liftGap({ cardWidth, step }), spare));
   el.hand.style.setProperty('--fan-step', `${step.toFixed(2)}px`);
   el.hand.style.setProperty('--lift-gap', `${gap.toFixed(2)}px`);
+}
+
+/**
+ * How coarsely the felt's spare height is read when deciding the row count.
+ *
+ * Fine enough that gaining or losing a row of cards (70-odd px) is always a new
+ * answer, coarse enough that a score chip growing a digit is not.
+ */
+const SLACK_STEP = 16;
+
+/**
+ * How much height the felt's middle has going spare, in units of one hand row.
+ *
+ * A SECOND ROW OF CARDS IS PAID FOR OUT OF THE FELT, so the question is not
+ * "is this a phone" but "is there room". The middle (`#felt-middle`) is the
+ * band that absorbs the column's slack — it is the one `flex: 1` in the stack —
+ * so what it has beyond what its contents need is exactly what the hand may
+ * take. Everything else in the column is already sized to its own content.
+ *
+ * MEASURED, NEVER LISTED. The middle holds the contract ladder, the centre
+ * piles and the table counters today, and #136 is adding a shared cribbage
+ * board to it in parallel; #137 will trim what a staging phase reserves. Asking
+ * the children how tall they are stays right under both, where a hardcoded
+ * "minus the piles" would quietly go wrong the day the middle grew a row.
+ *
+ * NORMALISED TO ONE ROW, which is what keeps this from oscillating. The slack
+ * measured with a two-row hand on the felt is smaller BY the second row — so
+ * feeding it back in would say "no room", the hand would drop to one row, the
+ * slack would reappear, and the fan would flip on alternate renders. What is
+ * returned is the slack a one-row hand would see, whatever the hand is wearing
+ * right now.
+ *
+ * @param rowCost what one extra row of cards costs in height
+ */
+function handSlack(rowCost) {
+  const middle = el.feltMiddle;
+  if (!middle || !middle.clientHeight) return 0;
+  // `offsetHeight`, not a rect: a pile mid-deal is carrying a transform, and
+  // what is being asked here is how much room its layout needs.
+  let content = 0;
+  for (const child of middle.children) {
+    if (child.hidden) continue;
+    content = Math.max(content, child.offsetHeight);
+  }
+  // AND WHAT THE FELT IS ALREADY OVER BY. The middle's spare room is the answer
+  // only while the column fits the screen; a felt that has outgrown it has
+  // taken height it did not have, and a second row would take more. Without
+  // this term the middle simply grows to whatever it is asked for, the spare
+  // reads as zero however far the hand has pushed the table off the bottom, and
+  // the gate never closes — which is exactly what a probe that ate the felt's
+  // middle showed it doing.
+  const over = Math.max(0, el.screen.scrollHeight - el.screen.clientHeight);
+  const extraRows = Math.max(0, el.hand.querySelectorAll('.hand__row').length - 1);
+  return middle.clientHeight - content - over + extraRows * rowCost;
+}
+
+/**
+ * Deal the fan's cards into `rows` row containers, left to right, top to bottom.
+ *
+ * ONLY WHEN THE SHAPE CHANGES. Re-parenting a card restarts its animations and
+ * drops any pointer capture on it, and this runs on every render and every
+ * resize notification — so the common case, which is the same hand in the same
+ * shape, must touch nothing at all.
+ *
+ * @returns how many cards the longest row holds
+ */
+function placeHandRows(cards, rows) {
+  const plan = handRows({ count: cards.length, rows });
+  const existing = [...el.hand.querySelectorAll('.hand__row')];
+  const same = existing.length === plan.length
+    && plan.every((n, i) => existing[i].childElementCount === n);
+  if (same) return plan[0];
+
+  const built = plan.map(() => {
+    const row = document.createElement('div');
+    row.className = 'hand__row';
+    return row;
+  });
+  let at = 0;
+  built.forEach((row, i) => {
+    for (let n = 0; n < plan[i]; n++) row.appendChild(cards[at++]);
+  });
+  el.hand.replaceChildren(...built);
+  return plan[0];
 }
 
 /**
@@ -2468,7 +2608,9 @@ function renderSelection(state) {
 
   const handAddr = handAddress(mySeat());
   const committedPass = committedSelectionOf(state, mySeat()) || [];
-  for (const wrapper of el.hand.children) {
+  // The fan's cards, not the fan's ROWS: `.hand` holds a `.hand__row` per row
+  // of the fan now (#134), so its children are containers with no card id.
+  for (const wrapper of el.hand.querySelectorAll('.card-face-wrap')) {
     const cardId = wrapper.dataset.cardId;
     const selected = isSelected(session.selection, handAddr, cardId) || committedPass.includes(cardId);
     wrapper.classList.toggle('card-face-wrap--selected', selected);
@@ -2694,11 +2836,30 @@ function onDragLift(handle) {
   if (handle.kind === 'hand') {
     targets.push({
       node: el.hand,
-      onDrop: (event) => reorderHandAt(handle.cardId, event.clientX),
+      onDrop: (event) => reorderHandAt(handle.cardId, event.clientX, event.clientY),
     });
   }
 
   return { markup: art().face(card), targets };
+}
+
+/** Every row of the fan, in order, with its box and its cards. */
+function handRowNodes() {
+  return [...el.hand.querySelectorAll('.hand__row')]
+    .map((row) => ({ rect: row.getBoundingClientRect(), nodes: [...row.querySelectorAll('[data-card-id]')] }))
+    .filter((row) => row.nodes.length);
+}
+
+/** The row `clientY` is in, or — above or below the fan — the closest one. */
+function nearestRow(rows, clientY) {
+  let best = rows[0];
+  let gap = Infinity;
+  for (const row of rows) {
+    const distance = clientY < row.rect.top ? row.rect.top - clientY
+      : clientY > row.rect.bottom ? clientY - row.rect.bottom : 0;
+    if (distance < gap) { gap = distance; best = row; }
+  }
+  return best;
 }
 
 /**
@@ -2707,17 +2868,32 @@ function onDragLift(handle) {
  * Rearranging by hand IMPLIES "my order" — a player who has just moved a card
  * has said what they want more clearly than any toggle could, so the mode
  * follows the gesture rather than making them find a control first.
+ *
+ * THE ROW COMES FIRST, THEN THE PLACE IN IT. A two-row fan (#134) has two cards
+ * under any given x, so x alone would drop a card carried down to the second
+ * row into the first row's version of the same position — the one place it
+ * visibly was not. Picking the row by y and only then the index by x is the
+ * order the player's own gesture is in.
  */
-function reorderHandAt(cardId, clientX) {
-  const nodes = [...el.hand.querySelectorAll('[data-card-id]')];
-  let index = nodes.length;
-  for (let i = 0; i < nodes.length; i++) {
-    const rect = nodes[i].getBoundingClientRect();
+function reorderHandAt(cardId, clientX, clientY) {
+  const rows = handRowNodes();
+  if (!rows.length) return;
+  // The row the pointer is in, or the nearest one: a card released just above
+  // the fan or just below it belongs to the row it was closest to, not to
+  // nothing at all.
+  const picked = nearestRow(rows, clientY);
+  // Where that row starts in the fan as a whole — the index `reorder` works in
+  // is a position in the HAND, not a position in a row.
+  const before = rows.slice(0, rows.indexOf(picked)).reduce((n, row) => n + row.nodes.length, 0);
+  let within = picked.nodes.length;
+  for (let i = 0; i < picked.nodes.length; i++) {
+    const rect = picked.nodes[i].getBoundingClientRect();
     if (clientX < rect.left + rect.width / 2) {
-      index = i;
+      within = i;
       break;
     }
   }
+  const index = before + within;
   if (!livePack() || !liveState()) return;
   session.handPrefs = { mode: 'manual', order: reorder(session.displayedHand, cardId, index) };
   saveHandPrefs(livePack().id, session.handPrefs);
