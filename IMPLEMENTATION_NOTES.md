@@ -1437,6 +1437,10 @@ down. The floor is four now, which is exactly what the fixed slot width already
 holds and leaves every table of four or more untouched. And a pile's count
 replaced its label at one card — the one count that says nothing a player cannot
 already see — so the cut card's "Starter" became "1" the instant it was turned.
+(At merge this branch met #122's fix for the same seam from Thirteen's side —
+the name now rides beside the count on every pile, "Starter / 1" — so the
+count-of-one special case this branch first shipped was dropped in favour of
+the one rule; `tests/zoneBadge.test.js` pins the unified reading.)
 The name wins at a count of one, *below* the active-match check, so a one-card
 Crazy Eights discard still prints the suit in force.
 

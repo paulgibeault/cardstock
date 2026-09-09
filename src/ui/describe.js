@@ -279,18 +279,6 @@ export function zoneBadge(state, { def, n, address }) {
   const focus = zoneFocusOf(state, address);
   if (focus) return { text: focus.label, kind: 'focus', name };
   if (def.capacity != null) return { text: `${count}/${def.capacity}`, kind: 'count', name };
-  // ONE CARD IS NOT A COUNT WORTH PRINTING. The rule above is that a pile with
-  // cards in it introduces itself — you can see what it is — and that rule
-  // stops being true at the bottom of the range: a badge reading "1" under a
-  // single card says nothing the card has not already said, and it costs the
-  // pile its name. Cribbage's cut card is the case that made it visible (#124,
-  // item 44): "Starter" — the one word explaining why that card is face up
-  // beside the deck and counted in everybody's hand — became "1" the instant it
-  // was turned, and stayed "1" for the rest of the hand.
-  //
-  // BELOW the match check on purpose: a Crazy Eights discard holds exactly one
-  // card on the opening lead, and the suit in force is the loudest thing on the
-  // felt at that moment. The name only wins where there is no rule to print.
   const match = activeMatchOf(state);
   if (match && match.address === address) {
     // `kind: 'match'` is what lets the caller draw this one BIG. Everywhere else
@@ -305,7 +293,6 @@ export function zoneBadge(state, { def, n, address }) {
     const suit = Object.hasOwn(SUIT_GLYPH, match.value) ? match.value : null;
     return { text: suit ? SUIT_GLYPH[suit] : titleCase(match.value), kind: 'match', suit };
   }
-  if (count === 1) return named();
   return { text: String(count), kind: 'count', name };
 }
 
