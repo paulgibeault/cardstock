@@ -95,12 +95,20 @@ export function renderCounterTrack(counter, doc = globalThis.document) {
   rail.setAttribute('aria-hidden', 'true');
   wrap.appendChild(rail);
 
+  // THE PEGS GO INSIDE THE RAIL, and that is the whole of issue #124's first
+  // bug. `left` in percent is a percentage of the containing block, so a peg
+  // parented to the WRAP was measured against the rail PLUS the printed number
+  // beside it: 97.52% of an 88px wrap is x=86 when the rail ends at 57. At 0 the
+  // two origins coincide, so it looked right for the first sixty holes of every
+  // match and then the peg walked off the board and sat on top of its own score.
+  // The rail is `position: relative` in the stylesheet, so parenting is all it
+  // takes — the percentage now means what `counterTrack` computed it to mean.
   for (const [which, pct] of [['back', track.backPct], ['front', track.frontPct]]) {
     const peg = doc.createElement('span');
     peg.className = `seat__track-peg seat__track-peg--${which}`;
     peg.style.left = `${pct.toFixed(2)}%`;
     peg.setAttribute('aria-hidden', 'true');
-    wrap.appendChild(peg);
+    rail.appendChild(peg);
   }
   if (track.together) wrap.dataset.together = 'true';
 

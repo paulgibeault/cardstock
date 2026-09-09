@@ -136,6 +136,23 @@ export function nextMode(mode) {
 const NATURAL = 0.69;
 
 /**
+ * The WIDEST the fan opens, as a fraction of a card's width.
+ *
+ * NATURAL used to be a ceiling as well as a default, which meant a hand played
+ * down to five cards still wore the thirteen-card overlap with a thousand
+ * pixels of empty felt on either side of it (#122, round-5 item 23): every card
+ * still had a third of itself under its neighbour for no reason at all. A fan
+ * is closed because the table is short of room, so when it is not, it opens.
+ *
+ * Just under 1 rather than at it: a sliver of overlap is what makes a row of
+ * cards read as one hand rather than as a line of separate cards, and at this
+ * spacing the covered strip is the outer edge — every rank, suit and pip is
+ * fully visible. Above 1 the cards would part, and a hand with gaps in it is a
+ * hand somebody has already played out of.
+ */
+const OPEN = 0.94;
+
+/**
  * The tightest useful spacing. A card's rank corner lives in roughly its left
  * sixth, so closing past this hides the one thing an overlapped card still has
  * to say — and a fan you cannot read is not saving you anything.
@@ -155,6 +172,13 @@ const FLOOR_PX = 10;
  * have; closing the fan is what a real player does, and it costs nothing until
  * the corners start disappearing.
  *
+ * AND IT FLEXES BOTH WAYS. `natural` was the ceiling as well as the default, so
+ * a hand that had been played down to five cards kept the thirteen-card overlap
+ * on a table with a thousand pixels going spare (#122 item 23). The room the fan
+ * is given is now what decides: closed to `tightest` when there is not enough,
+ * open to `OPEN` when there is more than enough, and `natural` is what it sits
+ * at in between.
+ *
  * Pure so the rule can be pinned in tests — the DOM half is just two
  * measurements (layoutHand in src/ui/table.js).
  *
@@ -167,7 +191,32 @@ export function fanStep({ count, cardWidth, available }) {
   if (count < 2) return natural;
   const tightest = Math.max(FLOOR_PX, cardWidth * TIGHTEST);
   const needed = (available - cardWidth) / (count - 1);
-  return Math.min(natural, Math.max(tightest, needed));
+  if (needed <= natural) return Math.max(tightest, needed);
+  return Math.min(cardWidth * OPEN, needed);
+}
+
+/**
+ * How far the cards to the RIGHT of a lifted one step aside for it.
+ *
+ * A LIFTED CARD COMES TO THE FRONT, AND THE FRONT IS ON TOP OF ITS NEIGHBOUR'S
+ * ONLY VISIBLE STRIP. The fan overlaps leftward, so each card shows its own left
+ * edge and nothing else; raising one (hover, the hint ring, the finger's peek)
+ * puts it over exactly the strip its right-hand neighbour is being read by, and
+ * that neighbour goes down to a pip (#122 item 23). Ranking the lift lower does
+ * not help — then the lift itself is buried, which is the bug the z-order ladder
+ * exists to prevent (tests/handZOrder.test.js).
+ *
+ * So the fan opens instead: everything after the lifted card slides right by
+ * exactly the overlap, which is the smallest shift that uncovers the neighbour
+ * completely. Zero when the fan is not overlapping — then there is nothing to
+ * uncover, and nothing moves.
+ *
+ * The shift is a transform, so it costs no layout, and `layoutHand` reserves it
+ * out of the room the fan may use so the rightmost card can never be pushed off
+ * the felt.
+ */
+export function liftGap({ cardWidth, step }) {
+  return Math.max(0, Math.round((cardWidth - step) * 10) / 10);
 }
 
 /** Total width a fan of `count` cards occupies at `step`. */

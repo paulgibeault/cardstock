@@ -556,6 +556,30 @@ function bidOf(ctx, seat) {
   return Number.isInteger(value) ? value : null;
 }
 
+/**
+ * WHAT A SEAT SAID, in the two characters a badge has and the sentence a
+ * screen reader gets.
+ *
+ * A ZERO MEANS TWO OPPOSITE THINGS. At a trick auction it is a nil — the
+ * boldest promise on the table. At a points auction it is a pass: this seat
+ * said nothing at all. Printing "nil" for the second would tell the felt the
+ * exact reverse of what happened.
+ *
+ * One reading, three places: the seat plates, the human's own strip and the
+ * bid dialog's list of what everybody has promised so far (#123).
+ */
+function bidBadge(ctx, seat) {
+  const bid = bidOf(ctx, seat);
+  const blind = bidIsBlind(ctx, seat);
+  const points = bidUnitOf(ctx) === 'points';
+  return {
+    text: bid === null ? '—' : bid === 0 ? (points ? '—' : blind ? 'BN' : 'nil') : String(bid),
+    aria: bid === null ? 'has not bid yet'
+      : bid === 0 ? (points ? 'passed' : `bid ${blind ? 'blind ' : ''}nil`)
+        : points ? `bid ${bid} points` : `bid ${bid} ${bid === 1 ? 'trick' : 'tricks'}`,
+  };
+}
+
 /** Was it declared blind — without looking? (`bidSight`, a public per-seat var.) */
 function bidIsBlind(ctx, seat) {
   return ctx.playerVar(seat, 'bidSight') === 'blind';
@@ -665,6 +689,54 @@ function tricksTakenBy(ctx, seat) {
 
 function sideMembers(ctx, seat) {
   return sidesOf(ctx.pack, ctx.seats)[sideOfSeat(ctx.pack, ctx.seats, seat)];
+}
+
+/** What this side has promised between them: every positive bid, added up. */
+function sideContract(ctx, seat) {
+  let contract = 0;
+  let bid = false;
+  for (const s of sideMembers(ctx, seat)) {
+    const own = bidOf(ctx, s);
+    if (own === null) continue;
+    bid = true;
+    // A NIL ADDS NOTHING TO THE CONTRACT. It is its own promise, kept or broken
+    // by the seat that made it — the same reading src/engine/scoring.js takes.
+    if (own > 0) contract += own;
+  }
+  return bid ? contract : null;
+}
+
+/** How many tricks this side has taken so far, between them. */
+function sideTricks(ctx, seat) {
+  let tricks = 0;
+  for (const s of sideMembers(ctx, seat)) tricks += tricksTakenBy(ctx, s);
+  return tricks;
+}
+
+/**
+ * THE BAGS THIS SIDE IS CARRYING — banked, plus the ones it has already taken
+ * this hand.
+ *
+ * Null for a pack that does not bag at all (`scoring.bids.bags`), which is the
+ * only gate: bags are Spades' arithmetic, declared, and Hearts and Pinochle
+ * have none.
+ *
+ * THE LIVE ONES COUNT. `bags` in playerVars is what the round boundary banked
+ * (src/engine/scoring.js keeps it on the side's first seat and this template's
+ * `startRound` carries it across the wipe); a trick taken past the contract in
+ * THIS hand is already a bag by the time it is taken — the scorer adds
+ * `tricks - contract` whenever the contract is made, and a side past its
+ * contract has made it. So the number on the felt is the number that will be
+ * banked, and it does not sit still for a whole hand and then jump.
+ */
+function bagsOf(ctx, seat) {
+  if (!ctx.pack.scoring?.bids?.bags) return null;
+  const members = sideMembers(ctx, seat);
+  let banked = 0;
+  for (const s of members) banked += Number(ctx.playerVar(s, 'bags')) || 0;
+  const contract = sideContract(ctx, seat);
+  const live = contract === null ? 0 : Math.max(0, sideTricks(ctx, seat) - contract);
+  return banked + live;
 }
 
 /**
@@ -1472,7 +1544,18 @@ function resolveTrick(ctx) {
   ctx.setTurnSeat(winnerSeat);
 }
 
-function applyPlayCard(ctx, move) {
+/**
+ * THE CARD ON THE TABLE, and nothing that follows from it.
+ *
+ * Split out of applyPlayCard because the felt needs this half on its own: the
+ * fourth card of a trick is played and the trick is swept in the same move, so
+ * the only position in which four cards are on the table is the one BETWEEN
+ * these two statements, and before this split there was no way to ask for it
+ * (see `poseMove` below and issue #123). Everything here is the placement — the
+ * card, what it led, what it broke — and everything the placement CAUSES stays
+ * with the caller.
+ */
+function placeCard(ctx, move) {
   const seat = move.actor;
   const cardId = move.cards[0];
   const card = ctx.cardById(cardId);
@@ -1487,9 +1570,13 @@ function applyPlayCard(ctx, move) {
 
   const broken = breakingSelectorAndVar(ctx);
   if (broken && selectorMatches(card, broken.selector)) ctx.setVar(broken.varName, true);
+}
+
+function applyPlayCard(ctx, move) {
+  placeCard(ctx, move);
 
   if (ctx.countIn('trick') === ctx.seats) resolveTrick(ctx);
-  else ctx.setTurnSeat(ctx.nextSeat(seat));
+  else ctx.setTurnSeat(ctx.nextSeat(move.actor));
 }
 
 function passTarget(ctx, seat, direction) {
@@ -1767,6 +1854,37 @@ const trickTaking = {
     else if (move.type === 'declareMeld') applyDeclareMeld(ctx, move);
   },
 
+  /**
+   * THE POSITION THIS MOVE PASSES THROUGH: four cards on the table, before the
+   * hand that won them takes them away.
+   *
+   * A trick is completed and gathered inside one move — `applyPlayCard` plays
+   * the fourth card and `resolveTrick` sweeps all four into the winner's pile
+   * before `applyMove` returns — which is correct and is not negotiable: a
+   * replay has to reach the same position at the same move. What was wrong was
+   * that the FELT had nothing else to paint, so the deciding card, usually the
+   * one that settles who wins, was never once on screen as a rendered card
+   * (issue #123: the pile went 1, 2, 3, then 0).
+   *
+   * So the felt asks for the half-move. Called by src/ui/table.js on a
+   * THROWAWAY fork of the pre-move state — never on the live state, never
+   * logged, saved or published, exactly as `takeRoundFinal` uses
+   * `applyMove` — and answering true means "this fork is a position worth
+   * holding for a beat before the real one". Answering false leaves the fork to
+   * be discarded, so a partially-applied move can never be mistaken for a
+   * played one.
+   *
+   * ONLY A COMPLETED TRICK. A first, second or third card lands on a trick that
+   * stays on the table anyway; there is nothing to hold, and posing every play
+   * would put a beat between every card and the next.
+   */
+  poseMove(ctx, move) {
+    if (move?.type !== 'playCard' || ctx.turn.phase !== 'play') return false;
+    if (ctx.countIn('trick') + 1 !== ctx.seats) return false;
+    placeCard(ctx, move);
+    return true;
+  },
+
   enumerateLegalMoves(ctx, seat) {
     // THE BID SPACE IS SMALL AND IT IS ENUMERATED WHOLE — fourteen moves at a
     // thirteen-card table, against the 286 the pass shortlist exists to avoid.
@@ -1907,6 +2025,28 @@ const trickTaking = {
       // Completes "Choose a …", so it is a noun phrase and not a sentence.
       prompt: points ? 'number of points to bid' : 'number of tricks to bid',
       kind: 'value',
+      // WHAT THE TABLE HAS ALREADY SAID, brought into the dialog (#123, item
+      // 33). A bid is made against the bids before it, and on a 375px screen
+      // the seats carrying them are a carousel: the playtest found the
+      // partner's plate clipped mid-word and the third opponent entirely off
+      // the screen, so a Spades bid — where the contract is your number plus
+      // your partner's — was made without being able to check either. On the
+      // desktop the same information was two seat plates away behind the
+      // dialog. The compact form is the one the issue asks for.
+      //
+      // Seats are NUMBERS here. The template does not know what anybody is
+      // called or who is partnered with whom; the platform dresses these rows
+      // from its roster, exactly as it dresses a `kind: 'seat'` option.
+      context: [
+        ...Array.from({ length: ctx.seats }, (unused, s) => ({ seat: s, value: bidBadge(ctx, s).text })),
+        points
+          // One contract, competed for: what a bid has to beat.
+          ? { label: 'To beat', value: String(highestBidSoFar(ctx)) }
+          // Four promises that all stand, added up two by two — the number the
+          // hand is then played against, and the reason overtaking your own
+          // partner is pointless.
+          : { label: 'Your side', value: `${sideContract(ctx, seat) ?? 0} so far` },
+      ],
       options,
       apply: (m, value) => (value === 'blind'
         ? { ...m, choice: { ...(m.choice || {}), bid: 0, sight: 'blind' } }
@@ -1983,31 +2123,34 @@ const trickTaking = {
     // numbers apart rather than as "2/4" is what keeps each inside the couple
     // of characters a badge has (a made thirteen would be five).
     if (ctx.rules.bidding) {
-      const bid = bidOf(ctx, seat);
-      const blind = bidIsBlind(ctx, seat);
-      // A ZERO MEANS TWO OPPOSITE THINGS. At a trick auction it is a nil — the
-      // boldest promise on the table. At a points auction it is a pass: this
-      // seat said nothing at all. Printing "nil" for the second would tell the
-      // felt the exact reverse of what happened.
-      const points = bidUnitOf(ctx) === 'points';
-      counters.push({
-        text: bid === null ? '—' : bid === 0 ? (points ? '—' : blind ? 'BN' : 'nil') : String(bid),
-        aria: bid === null ? 'has not bid yet'
-          : bid === 0 ? (points ? 'passed' : `bid ${blind ? 'blind ' : ''}nil`)
-            : points ? `bid ${bid} points` : `bid ${bid} ${bid === 1 ? 'trick' : 'tricks'}`,
-        label: 'Bid',
-        kind: 'bid',
-      });
+      counters.push({ ...bidBadge(ctx, seat), label: 'Bid', kind: 'bid' });
       const tricks = tricksTakenBy(ctx, seat);
       counters.push({
         text: String(tricks),
         aria: `${tricks} ${tricks === 1 ? 'trick' : 'tricks'} taken`,
         label: 'Tricks',
         kind: 'tricks',
-        // The won pile is right there on an open seat, and it is a pile whose
-        // height IS this number.
+        // The won pile is right there on an open seat, and its badge is this
+        // number in as many words (`zoneReading`) — which it was NOT before
+        // #123: the pile counted cards, so it climbed in fours beside a bid
+        // counted in tricks and every comparison needed dividing by four.
         minimizedOnly: true,
       });
+
+      // WHAT THE OVERTRICKS HAVE TURNED INTO. Bags accumulated correctly and
+      // the word never appeared on the felt (#123, item 31): the only
+      // explanation of them was two clicks behind the score chip, in the
+      // how-to-play text. A SIDE's number, so it says the same thing on both
+      // its seats, and null for a pack that does not bag.
+      const bags = bagsOf(ctx, seat);
+      if (bags !== null) {
+        counters.push({
+          text: String(bags),
+          aria: `${bags} bag${bags === 1 ? '' : 's'}`,
+          label: 'Bags',
+          kind: 'bags',
+        });
+      }
     }
 
     // WHAT THIS SEAT DECLARED, ON EVERY SEAT'S FELT. A meld is called out at a
@@ -2044,6 +2187,31 @@ const trickTaking = {
       });
     }
     return counters;
+  },
+
+  /**
+   * WHAT A WON PILE'S NUMBER MEANS, which is not how many cards are in it.
+   *
+   * Tricks are taken four cards at a time and bid for one at a time, so the
+   * badge climbed 0, 4, 8, 12 beside a bid of 3 and every comparison a player
+   * wanted to make needed dividing by four first (#123, item 29). The pile is
+   * still a pile of cards — `describeZone` still says how many — but the number
+   * ON it is the number the game is played in, and it carries its unit, because
+   * a bare 3 under a stack of twelve cards is the same ambiguity the other way
+   * round.
+   *
+   * Every trick-taking pack counts its tricks this way, so this is not gated on
+   * bidding: Hearts' pile is three tricks deep for the same reason Spades' is.
+   */
+  zoneReading(ctx, { def, address }) {
+    if (def.id !== 'won') return null;
+    const cards = ctx.countIn(address);
+    // An empty pile keeps its NAME (describe.js): "0 tricks" on a dashed
+    // rectangle says less than "Won" does.
+    if (!cards) return null;
+    const tricks = Math.floor(cards / ctx.seats);
+    const text = `${tricks} ${tricks === 1 ? 'trick' : 'tricks'}`;
+    return { badge: text, line: { label: 'Tricks', value: String(tricks) } };
   },
 
   /**

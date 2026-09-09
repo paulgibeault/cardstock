@@ -20,6 +20,10 @@ import { safeCssColor } from './css.js';
 import { handAddress } from './interaction.js';
 import { playTrickTaken, playActionCard } from '../arcade/audio.js';
 import { trickNarration } from './scoreDirection.js';
+// Built here rather than threaded through createCelebrations' parameter list:
+// it is a pure function OF `seatLabel`, which this module already has, and the
+// two describeEvent call sites must hand templates the same bag (#124).
+import { agrees } from './describe.js';
 
 /**
  * @param me          the seat lens (src/players/seats.js); everything is worded
@@ -37,6 +41,8 @@ import { trickNarration } from './scoreDirection.js';
 export function createCelebrations({
   me, seatLabel, seatPossessive, currentEpoch, el, art, zoneRect, seatRect, pulseSeat, cardById,
 }) {
+  /** "You peg 3", "Nell pegs 3" — see `agrees` in src/ui/describe.js. */
+  const seatVerb = (seat, verb) => agrees(seatLabel(seat), verb);
   /**
    * How many penalty cards are worth watching arrive.
    *
@@ -234,21 +240,35 @@ export function createCelebrations({
    * The candidate set is "every event that yields a sentence" rather than a
    * hardcoded list of six names — an event nobody describes simply returns null
    * and the next one is tried, which is what every non-action event does.
+   *
+   * `priority` is optional on all three and defaults to 0: it is how a describer
+   * says "this one is the conclusion of the move, not a step in it" — see
+   * celebrateAction.
    */
   function eventText(state, ev) {
     if (ev.say && typeof ev.say.text === 'string') {
-      return { text: ev.say.text, tone: ev.say.tone || 'neutral' };
+      return { text: ev.say.text, tone: ev.say.tone || 'neutral', priority: ev.say.priority || 0 };
     }
-    return state.pack.template.describeEvent?.(ev, { seatLabel, seatPossessive, viewerSeat: me.seat() })
-      ?? defaultEventText(ev);
+    return state.pack.template.describeEvent?.(ev, {
+      seatLabel, seatPossessive, seatVerb, viewerSeat: me.seat(),
+    }) ?? defaultEventText(ev);
   }
 
   /**
    * Announce an action card: banner, cue, and a pulse on whoever it landed on.
    *
-   * One event per move at most — an action card does one thing — so this takes
-   * the first rather than queueing, which would stack banners on a variant where
-   * two effects can fire (a seven-zero swap that also reverses).
+   * One event per move at most — an action card does one thing — so this picks
+   * ONE rather than queueing, which would stack banners on a variant where two
+   * effects can fire (a seven-zero swap that also reverses).
+   *
+   * WHICH one is `priority`, and the default is still "the first that says
+   * anything". A move can end more than the turn: the pass that ends a Thirteen
+   * trick emits `passed` and then `trickCleared`, and taking the first meant the
+   * banner announced somebody's pass while the trick silently came back to you —
+   * "the trick is yours" never appeared on the felt at all (#122, round-5 item
+   * 22). A describer that knows its event is the CONCLUSION of the move says so
+   * with a number; ties fall to the first, which is the order events were
+   * emitted in and the behaviour every other pack keeps.
    */
   function celebrateAction(session, state, events) {
     let ev = null;
@@ -256,9 +276,9 @@ export function createCelebrations({
     for (const candidate of events) {
       const text = eventText(state, candidate);
       if (!text) continue;
+      if (said && (text.priority || 0) <= (said.priority || 0)) continue;
       ev = candidate;
       said = text;
-      break;
     }
     if (!said) return null;
 

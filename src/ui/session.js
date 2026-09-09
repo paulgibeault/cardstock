@@ -70,6 +70,11 @@ export function createSession({ pack, state, seats, seating, cardArt, handPrefs,
     // counted into the pack's record when the match concludes, which is the
     // one place the question "does anybody use this" can be answered from.
     hintsTaken,
+    // The refusal sentence #log is currently carrying for a staged selection the
+    // engine will not take (renderStageTray). Kept so a repaint for some other
+    // reason — a bot moving, a resize — does not re-announce the same sentence
+    // to a screen reader that has already read it.
+    lastRefusal: null,
 
     // A render that landed mid-drag would replace the node the pointer is
     // holding, so renders are deferred while one is live and replayed after.
@@ -100,6 +105,18 @@ export function createSession({ pack, state, seats, seating, cardArt, handPrefs,
     // seat being claimed — paints the ending rather than the deal underneath.
     // A throwaway `forkState` copy, never logged, saved or published.
     roundFinalState: null,
+
+    // THE SAME IDEA, ONE MOVE SMALLER (#123). A trick is completed and gathered
+    // inside a single move, so the position with all four cards on the table
+    // existed only inside `applyMove`. `{ seat }` — who is about to take
+    // it — while the felt holds that position; null the rest of the time.
+    // Nothing is actable while it is set, for the same reason `roundBeat`
+    // offers nothing: the engine has moved past what is on screen.
+    trickBeat: null,
+    // The posed position itself: a throwaway `forkState` copy with the move's
+    // placement applied and its consequences deliberately not run
+    // (`template.poseMove`). Never logged, saved or published.
+    trickPoseState: null,
 
     // Which collapsed seat the player has PICKED to open, or null to let the
     // plate follow whoever is playing. The opponent row is rebuilt wholesale on

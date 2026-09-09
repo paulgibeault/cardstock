@@ -13,8 +13,8 @@
 // markup anywhere in this file, which is the rule §17.8 exists for.
 
 import { statLinesFor } from '../stats/matchStats.js';
-import { sidesOf, foldToSides } from '../engine/sides.js';
-import { targetSentence as matchTargetSentence } from './scoreDirection.js';
+import { sideScoreOf, sidesOf, foldToSides } from '../engine/sides.js';
+import { targetSentence as matchTargetSentence, winDirection } from './scoreDirection.js';
 import { line } from './dom.js';
 
 const el = {
@@ -139,20 +139,45 @@ function sideNameCell(className, members, seating) {
  * Round summary
  * ------------------------------------------------------------------ */
 
-/** The score sheet between rounds. Bot turns stay parked until it is dismissed. */
-export function showRoundSummary(state, ev, seating) {
+/**
+ * The score sheet between rounds. Bot turns stay parked until it is dismissed.
+ *
+ * `contract` is an optional per-seat phrase — "Bid 3, took 4" — supplied by the
+ * table from the position the round ENDED in (#120's fork; the live state has
+ * already wiped the bids and dealt the next hand, so this cannot be re-derived
+ * here). It rides INSIDE the name cell rather than as a fourth column, because
+ * the sheet is a three-column grid and a row is `display: contents`.
+ *
+ * A delta of `-30` is the arithmetic; "Bid 4, took 3" is the reason, and the
+ * reason was nowhere on this sheet — least of all for the human, whose own bid
+ * was not shown anywhere at all (#123, item 28).
+ */
+export function showRoundSummary(state, ev, seating, contract = null) {
   el.roundTitle.textContent = `Round ${ev.round} over`;
   el.roundScores.replaceChildren();
-  // ONE ROW PER SIDE, and both numbers on it folded the same way — see
-  // sideRowsOf above for why the delta is no longer per seat.
+  // A COLUMN WITH NOTHING TO SAY SAYS NOTHING (#124, item 43): a pack that pegs
+  // its points live scores nothing at the round boundary, and `roundScores`
+  // comes back empty. Tested structurally, so a pack that genuinely scored
+  // nobody still prints "+0". The cell stays because the grid is `display:
+  // contents` and a skipped cell shifts every cell after it.
+  const hasDeltas = Object.keys(ev.scores || {}).length > 0;
+  // ONE ROW PER SIDE (#125): both partnership scorers bank a side's whole result
+  // on its first member, so a per-seat delta at a partnership pack is
+  // structurally "+0" beside a total the seat never earned alone. A teamless
+  // pack is unchanged — `sidesOf` gives it one side per seat and the fold is
+  // the identity. The contract note (#123, "Bid 3, took 2") is per seat, so a
+  // side's row carries one per member in member order.
   const sides = sidesOf(state.pack, state.seats);
   const deltas = foldToSides(ev.scores, sides);
   const totals = foldToSides(ev.totals, sides);
   sideRowsOf(state, seating).forEach(({ members, mine }, side) => {
     const row = document.createElement('div');
     row.className = `round-scores__row ${mine ? 'round-scores__row--you' : ''}`;
-    row.appendChild(sideNameCell('round-scores__name', members, seating));
-    row.appendChild(line('round-scores__delta', signed(deltas[side] ?? 0)));
+    const name = sideNameCell('round-scores__name', members, seating);
+    const notes = members.map((s) => contract?.[s]).filter(Boolean);
+    if (notes.length) name.appendChild(line('round-scores__note', notes.join(' · ')));
+    row.appendChild(name);
+    row.appendChild(line('round-scores__delta', hasDeltas ? signed(deltas[side] ?? 0) : ''));
     row.appendChild(line('round-scores__total', `${totals[side] ?? 0}`));
     el.roundScores.appendChild(row);
   });
@@ -306,12 +331,23 @@ export function hideFinalLook() {
  * Game over
  * ------------------------------------------------------------------ */
 
-function statsInto(node, template, stats, seating, seats, winner, { hints = 0, hintSeat = null } = {}) {
+/**
+ * @param scoreLine (seat) => {label, value} | null — the number that DECIDED
+ *                  the match, first on every card. It used to be absent: the
+ *                  panel that closes a match led with Moves and Cards played
+ *                  and put the scores a click away under "Round by round", so
+ *                  the default view of the result was trivia (#122, round-5
+ *                  item 26). Passed in rather than read here because which way
+ *                  the number counts is the pack's (src/ui/scoreDirection.js).
+ */
+function statsInto(node, template, stats, seating, seats, winner, { hints = 0, hintSeat = null, scoreLine = null } = {}) {
   node.replaceChildren();
   if (!stats) return;
 
   for (let s = 0; s < seats; s++) {
     const lines = statLinesFor(template, stats.perSeat[s]);
+    const score = scoreLine?.(s);
+    if (score) lines.unshift(score);
     // Hints are not in the log (src/ui/hint.js), so they are not in `stats`;
     // they are the one line added here, on the card of the seat that asked.
     if (s === hintSeat && hints > 0) lines.push({ label: 'Hints taken', value: String(hints) });
@@ -375,7 +411,21 @@ export function showGameOver(state, {
   }
 
   el.gameOverRecord.textContent = recordText || '';
-  statsInto(el.gameOverStats, state.pack.template, stats, seating, state.seats, winner, { hints, hintSeat });
+  // THE SCORES THAT DECIDED IT, FIRST. `sideScoreOf` is the same reading the
+  // scoreboard takes, so a partnership's card shows the side's number rather
+  // than half of it; the LABEL is the pack's direction, because at Thirteen and
+  // Hearts calling a penalty total a "Score" is the same misdirection #121 took
+  // out of the round panel's target line. Only a declared `lowestScore` earns
+  // the penalty word: a template-owned ending (Cribbage, Milestones) is a score
+  // its owner counts up, and `pointsArePrize` declines to answer for those.
+  const scoreWord = winDirection(state.pack) === 'lowestScore' ? 'Penalty points' : 'Score';
+  statsInto(el.gameOverStats, state.pack.template, stats, seating, state.seats, winner, {
+    hints,
+    hintSeat,
+    scoreLine: (seat) => (Array.isArray(state.scores)
+      ? { label: scoreWord, value: String(sideScoreOf(state.pack, state.seats, state.scores, seat)) }
+      : null),
+  });
 
   const rounds = stats ? stats.rounds : [];
   el.gameOverRoundsToggle.hidden = rounds.length === 0;

@@ -1515,6 +1515,409 @@ opponents that are not playing well either will win about half its matches, and
 four hands is four samples. A bot improvement wants its own issue and its own
 bar — the useful one would be a genuinely-worst policy added to the tournament,
 which does not exist today.
+## The trick you never saw, and the bid nobody showed you (#123)
+
+### What was wrong
+
+Five findings from the round-5 playtest, all of them numbers or cards that
+existed and were not on screen.
+
+**The fourth card of a trick never rendered.** `applyPlayCard` plays it and
+`resolveTrick` moves all four into the winner's pile inside the same
+`applyMove` (`src/templates/trick-taking.js`), and the felt paints where a move
+ENDED — so the position with four cards on the table existed only inside a
+function call. Driven frame by frame against unmodified main on 4833, across
+five consecutive Team Spades tricks, the pile went 1, 2, 3, 0 and the peak was
+three. Counting VISIBLE cards rather than DOM nodes made it worse: `landOn`
+(src/ui/flight.js) holds a card at `opacity: 0` while its flying copy is in the
+air, so the third card was usually two, and the deciding card — the one that
+settles who wins — was never once on the felt. Hearts on the same probe peaked
+at TWO of its three, and Pinochle at three of four.
+
+**Your own bid was displayed nowhere.** Not the status bar, not a seat plate,
+not the round summary — searching the whole rendered page text for `/bid/i`
+found nothing. The reason is structural: every seat but yours wears a plate,
+and yours is the hand, the rail and the piles. In a partnership the contract is
+your bid plus your partner's, so half of your own contract was unreadable.
+
+**The won pile counted cards.** "Won 4", "Won 8" — climbing in fours beside a
+bid counted in tricks, on the plate and on your own pile, so every comparison
+needed dividing by four first.
+
+**Bags never appeared at all.** They accumulate correctly (verified against
+score deltas across a twelve-round match) and the word "bag" was not in the
+rendered page text anywhere. The only explanation of them was two clicks behind
+the score chip.
+
+**The bid dialog knew nothing about the auction.** A bare Nil/1–13 grid. At
+375px the partner's plate is clipped mid-word by the seat carousel and the
+third opponent is off the screen entirely, so a bid was made without being able
+to check either.
+
+### What changed
+
+**The trick beat reuses #120's seam rather than inventing a second one.**
+`template.poseMove(ctx, move)` is the position a move passes THROUGH, applied
+to a throwaway fork of the pre-move state — the same copy `takeRoundFinal`
+advances for a round ending, which is why `takeTrickPose` forks the fork: the
+last trick of a hand needs both poses off it. Trick-taking's implementation is
+one statement (`placeCard`, split out of `applyPlayCard` with no behaviour
+change) and it answers false for every play but the one that completes a trick.
+`trickRevealPlan` is the schedule, `session.trickBeat` says the felt is
+deliberately behind the engine, and `feltState` paints the pose for anything
+that repaints for a reason of its own.
+
+**The hold is measured from when the fourth card LANDS.** The first cut used a
+flat 700ms floor and measured 283ms of four visible cards, because the flight
+is inside the hold: at the default 420ms pace, most of the beat was spent
+watching the card arrive. `READ_AFTER_LANDING_MS` is a separate term for that
+reason, and `tests/roundBeat.test.js` asserts the reading time survives every
+flight from 0 to 1200ms.
+
+**Nothing is actable during the beat**, for the same reason nothing is actable
+during a round beat, and it is not the same reason it looks like: the posed
+position still has the fourth player on turn, because the trick has not been
+resolved on that copy. If the human played the fourth card, the felt would
+otherwise say "Your turn" over four cards about to be swept. It says whose
+trick it is instead — "Your trick.", "Cass's trick." — which is the question
+the beat exists to answer.
+
+**Your own seat got the plate it never had.** `#player-piles` grows a labelled
+strip built from the counters the template already declares. Which counters
+belong there is `MY_SEAT_KINDS`, a closed platform vocabulary in the style of
+`COUNTER_TRACK_KINDS`: a kind this build has never heard of simply does not
+appear, which is the safe direction, since the seat plates still show it. What
+is deliberately NOT there is the hand count (the fan is right there) and
+anything `minimizedOnly` (redundant when a seat is open, and yours always is).
+
+**`template.zoneReading` is what a pile's number MEANS** when the count of
+cards is not it — asked of the genre the way `activeMatch` is, because only
+trick-taking knows that four cards are one trick. The badge carries its unit
+("3 tricks"), which is a departure from the label diet in `describe.js`, and
+deliberately: a bare 3 under a stack of twelve cards is the same ambiguity the
+other way round. The inspector keeps both numbers. The seat plate's own pile
+chip goes through `zoneBadge` now rather than printing a second opinion of the
+same pile.
+
+**Bags are a side's counter**, banked plus the ones being taken this hand — a
+trick past a made contract is already a bag, so the number does not sit still
+for a whole hand and then jump. Null for a pack that does not declare
+`scoring.bids.bags`, so Hearts and Pinochle grow nothing.
+
+**The bid dialog carries the auction.** The Ask gained an optional `context`:
+rows the template fills with SEAT NUMBERS and the platform dresses from its
+roster (`dressedContext`), exactly as it dresses a `kind: 'seat'` option. Team
+Spades sends every seat's bid and the side's running promise; Pinochle's points
+auction sends what a bid has to beat. That is the compact form the issue asks
+for — the partner and the third seat are checkable without the carousel.
+
+**And the round sheet says what the delta was the arithmetic of** — "Bid 3,
+took 2" — read off the ending fork, because the engine wipes every bid crossing
+the round boundary and by the time the summary opens the live state's bids are
+the next hand's nothing.
+
+### Decisions
+
+**A pose is a strict subset of the move, and the contract says so.** The
+temptation is to let `poseMove` do a little more (emit the event early, pulse
+the winner) and the answer is no: a pose that scored, gathered or emitted would
+be a second set of rules living in the renderer, and it would be the renderer's
+version that a player saw. `tests/trickPose.test.js` pins all four halves of
+that — no events, no score, no turn change, and the state it was forked from
+untouched and still able to apply the real move.
+
+**Every trick-taking pack gets it, and that is the point.** Hearts three-handed
+holds three cards, Pinochle four; `ctx.seats` is the only number involved.
+Hearts was audited on the felt because its gather is the one #120 measured, and
+it still gathers: six gathers seen before, five and six after, with the pile
+emptying every time.
+
+**A beat per trick is thirteen beats a hand.** ~920ms at the default flight,
+about half of it the flight itself. That is the cost of the issue's own
+acceptance criterion ("shows all four cards for a beat before it sweeps") and
+it is bounded by the player's pace setting like every other flight in the game.
+
+**Bags on every plate, not only your own.** Bags are a side's number and the
+race is between two sides, so a side carrying seven of them is a fact the whole
+table is playing to. That is a fourth chip on a seat head; it is one or two
+characters wide and it was checked at 375px against the carousel.
+
+### Verified
+
+Both builds driven with the same playwright probe — the worktree on 4823,
+`polish/121-score-direction` on 4833 — and compared frame by frame with a
+`requestAnimationFrame` loop counting cards in the trick zone that are actually
+VISIBLE (computed opacity, not DOM presence).
+
+| | before | after |
+|---|---|---|
+| Team Spades, peak cards visible on a trick | 3 | 4 |
+| frames with four visible / longest stretch | 0 / 0ms | 146 / 484ms |
+| Hearts (3-handed), peak visible | 2 | 3 |
+| Pinochle, peak visible | 3 | 4 |
+| `/bag/i` in the rendered page text during a hand | no match | `BAGS 0` |
+| `/bid/i` in the rendered page text during a hand | no match | `BID 3` |
+| the human's own won pile | `4` | `1 trick` |
+| an opponent's plate chip | `Won 4` | `Won 1 trick` |
+
+The bid dialog was photographed at 1280x860 and 375x812 on both builds: before,
+the dialog is a bare grid and behind it the partner's plate ends at x=424 on a
+375px screen with the third opponent at 434–574, entirely off it; after, all
+three opponents' bids and the side's running promise are inside the dialog and
+fit on one line at 375px.
+
+The round summary was photographed after a full thirteen-trick hand: four rows
+reading "Bid 3, took 2", "Bid 5, took 6", "Bid 1, took 2", "Bid 4, took 3"
+against deltas of +40, +90, 0, 0 — and #120's hold behind it intact, the felt
+still showing the ending position rather than the deal.
+
+### Not done
+
+**Item 34, the hand desaturating for three turns in four**, is untouched. It is
+correct as the only legal/illegal signal and the playtest says so; what makes
+it unreadable is the 14px sliver a thirteen-card hand becomes at 375px, which
+is the hand's own layout and not this issue's. Sized separately.
+
+**The `card-face--fresh` "blank first frame" is not a bug and was measured as
+one.** The newest card on a pile is held at `opacity: 0` by `landOn` for
+exactly as long as its flying copy is in the air, so a frame counter sees a
+card in the DOM that nobody can see, and a DOM counter sees the same card
+twice — the "double render" of the playtest's item 27 is the copy and the
+original, correctly ordered (`flyCard` removes the copy before `landOn`
+restores the card; the reveal cannot precede the removal because it chains off
+the same promise). The practical complaint underneath it — that the newest card
+is not legible while it matters — is what the beat fixes.
+## The board, the crib and the count, made visible (#124)
+
+Round 5 played cribbage and found that almost nothing the game is actually read
+off was on the screen. Eight items, all presentation, and one of them a
+straightforward rendering bug.
+
+**The peg walked off the board.** `left` in percent is a percentage of the
+containing block, and `renderCounterTrack` parented both pegs to the
+`.seat__track` WRAP — which is the rail *plus the printed score beside it*. At
+119 the rail spanned x=663–720 and the peg drew at x=750: past every hole, on
+top of its own number. At 0 the two origins coincide, which is why every
+screenshot of a fresh deal looked right and the bug survived a whole playtest.
+The pegs are children of the rail now; the geometry `counterTrack()` computes
+did not change. The pure model could never have caught this — the fraction was
+always correct — so `tests/counterTrack.test.js` gained the assertion the
+geometry cannot make: which element the percentage is *of*.
+
+**The crib was not drawn at all.** `sharedZoneInstances` leaves every
+`visibility: 'none'` shared zone off the felt unless it is `interactive`, so the
+crib — four cards both players watched go in, and the thing the entire discard
+decision is about — was invisible. What the felt showed instead was the `show`
+zone: empty, captioned "The crib", from the deal to the reveal. Two new zone-def
+flags, both about WHERE a pile is drawn and neither about what may be seen in it
+(`visibility` is still the only thing that decides that): `onFelt`, a hidden
+pile that is furniture, drawn as backs with its count; and `hideWhenEmpty`, a
+pile that is not a place on the table until it holds something. The crib carries
+both, so it appears with the first card thrown, grows to four, and disappears at
+the moment its cards move to `show` and come up face up.
+
+**The human had no board.** Every seat plate draws its primary counter as a
+track where the template says it is one — and the human's own seat is not a
+plate, so there was exactly one `.seat__track` in the document and it belonged
+to the bot. The status bar's score chip renders the same track through the same
+`renderCounterTrack`, narrower because that bar may never wrap. A pack whose
+primary counter is a quantity renders nothing there and keeps the plain pill.
+
+**The count was in the state and nowhere on the felt.** `count` has been in
+cribbage's `publicVars` since the template shipped. New `tableCounters` hook —
+`seatCounters` one rung out, for a number that belongs to the table rather than
+to a seat — rendered as a chip beside the piles, during the play only. A stale
+count sitting beside a hand being counted at the show is a different number's
+worth of confusion.
+
+**The narration said how much and never what.** Both scoring events carried
+their breakdown from the day they shipped; the felt printed the total, so a
+fifteen, a pair and a run all read "pegs 2". They are named now — including "his
+nobs", which is in this pack's own tagline and its manifest and had never once
+appeared on screen. The show's steps narrate through the beat #120 built:
+`showSteps` carries `parts` because the sentence is rebuilt from the step.
+"You pegs 3" is #107's possessive bug in a verb, fixed the same way — `agrees`
+sits beside `possessive` in `describe.js` and reaches templates as `seatVerb`.
+
+**Whose crib, before the decision.** The button said it and the button does not
+exist until both cards are staged, which is after the only real choice in the
+hand has been made. `dealer` is public from the deal, so the staging sentence
+says it: "Your crib — pick 2".
+
+**The zero column.** The round sheet's middle column is what the ROUND BOUNDARY
+scored, and a pack that pegs every hole the moment it is earned has no such
+number — cribbage's `scoreRound` returns nothing, so the sheet printed `?? 0`
+for both seats every round beside a column that moved. The test is whether the
+event carries any per-seat entries at all, not whether they are zero: a pack
+that genuinely scored nobody still has a delta column and "+0" in it is still
+true. The cell stays and is empty, because `.round-scores` is a three-column
+grid of `display: contents` rows and a skipped cell shifts every cell after it.
+
+**Two smaller ones.** A spread showed `state.seats` cards because the only
+spread that existed was a trick; cribbage's `play` pile is one seat's four laid
+down over a hand, so at a two-hander the first two vanished as the third went
+down. The floor is four now, which is exactly what the fixed slot width already
+holds and leaves every table of four or more untouched. And a pile's count
+replaced its label at one card — the one count that says nothing a player cannot
+already see — so the cut card's "Starter" became "1" the instant it was turned.
+(At merge this branch met #122's fix for the same seam from Thirteen's side —
+the name now rides beside the count on every pile, "Starter / 1" — so the
+count-of-one special case this branch first shipped was dropped in favour of
+the one rule; `tests/zoneBadge.test.js` pins the unified reading.)
+The name wins at a count of one, *below* the active-match check, so a one-card
+Crazy Eights discard still prints the suit in force.
+
+**Verified on the felt, before and after**, by driving a whole match through the
+human seat against two servers — this branch and its unmodified base. 68 peg
+samples from 0 to 130, none off the rail, against 44 samples on main of which 17
+were off it. The rest is in the same two runs: `tracks=1` → `2`, no counter →
+`COUNT 15`, "The crib, 0 cards" → "Crib, 4 cards, face down", "Starter" instead
+of "1", `["You","0","8"]` → `["You","","7"]` on the round sheet, and log lines
+reading "You peg 2 — fifteen — the count is 15." and "Your crib is worth 3 —
+fifteen and his nobs."
+
+**Left alone, deliberately.** The opponent's played cards on their seat plate
+still show only the top one: a mini pile is 34px wide and spreading four of them
+is a seat-plate layout change, and with the count on screen the arithmetic the
+complaint was really about is done. And the 121-vs-122 question from item 44 is
+worse than an off-by-one — a match was observed finishing 130–95 against a
+target of 121, because `peg` adds the whole score and then asks whether the seat
+is out. Whether a seat should stop pegging at the target is a rules question in
+`peg`, which this pass was not allowed to touch; it wants its own issue.
+## The pile you are answering, named (#122)
+
+### What was wrong
+
+Six findings from the round-5 playtest of Thirteen, and most of them are the
+same shape: the felt did not say what state you were reacting to.
+
+The centre of a Thirteen table is two spread piles. `pile` holds every card
+played in the current trick, in sequence, which is deliberate — it *is* the
+trick, and hiding the cards under the top one would delete public information —
+and `discard` holds the tricks already swept. Neither wore its own name once it
+held a card: `zoneBadge` replaced the label with a count the moment the pile
+stopped being empty. So the two stacks read as `6` and `28`, and the `6` was a
+count of the whole trick while the thing to be beaten was a pair. Measured on
+main at 1280px: badge `6`, accessible name "Pile, 6 cards.", against
+`combo = pair of 2s`.
+
+The rail was worse, because it moved. With nothing staged the thumb slot holds
+a blue **Pass** pill; `buildUiModel` set `action: null` for a selection the
+engine would refuse, so the instant a card that did not answer the standing
+combination was tapped, `#action-button` went `display: none` and `#hand-sort`
+appeared in the slot. Measured: Pass at x=890, "Deal order" at x=869 — a tap
+aimed at Pass reshuffles the hand. And the refused selection said nothing at
+all: no commit, no refusal, no Pass, the tray's own dashed outline unchanged
+and `#log` still carrying "Rook played a pair".
+
+Nothing ever announced a trick. `celebrateAction` takes the first describable
+event of a move; the pass that ends a trick emits `passed` and then
+`trickCleared`, so the banner said "Rook passed" while the lead quietly came
+back to you — and `describeEvent` returned null for a single, so a banner with
+nothing to replace it stayed put across several turns.
+
+The fan never opened. `fanStep` treated its natural 0.69 spacing as a ceiling,
+so five cards on a 1221px row sat in a 268px huddle with a third of every card
+buried, and a lifted card came to the front over the one strip its right-hand
+neighbour is read by (26px of 74px covered on the desktop; 32px of 46px at
+375px). The reverse badge was a permanent lie: it tested `state.direction < 0`,
+and Thirteen deals counter-clockwise by rule, so an emblem reading "play has
+reversed" sat in the top-right corner of every Thirteen table from the first
+card — overlapping the second seat plate at 375px, with an `aria-label` on a
+bare `<div>` that no role attaches to. Beside it, a seat's score pill and its
+cards-left pill were two identical grey lozenges ("Nell 12 1"), every card's
+accessible name said "worth 1", and the results panel led with Moves and Cards
+played while the scores that decided the match were a click away.
+
+### What changed
+
+**`zoneFocus`, a new presentation hook** (`src/templates/CONTRACT.md`). A pile
+can hold more than the thing you are answering, and only the rules know which
+part is still live. `climbing` answers it from `combo`, which already carries
+the standing combination's own card ids — the platform re-deriving that from
+the pile would be a second rules path. `src/ui/describe.js` asks it the way it
+already asks `activeMatch`; `src/ui/zoneRenderer.js` rings the live cards in the
+accent and fades the answered ones, which is what the **hint** was already
+doing and was the one moment the table explained itself (round-5 item 25 — that
+is now the default rather than something you have to ask for).
+
+**The pile's name is back on its badge, for every pack.** "A pile with cards in
+it introduces itself" went one step too far: it holds for a draw pile of
+eighty-six and not for a row of look-alike stacks. The badge is the name with
+the count under it (`Draw / 57`, `Played / 8`), a focused pile wears the
+combination instead (`Pile / Pair of As`), and the two badges whose count *is*
+their identity are untouched — a capacity pile still reads `3/4` and Wildfire's
+active suit is still the glyph drawn big with no name in front of it. Cribbage's
+"Starter"→"1" (#124) is the same seam and this is the generic half of it.
+
+**A refused commit keeps the thumb slot.** `buildUiModel` returns
+`{ label, disabled: true, refusal }` instead of null, so the button stays in
+place, switched off, with the engine's own sentence on its accessible name and
+its tooltip; the tray takes a warning edge and the sentence goes to `#log`, the
+live region this table already uses for the words that are not on the felt.
+`climbing`'s refusals are said with the combination's name now that they are
+shown — "Answer a pair of 2 with the same shape" was the kind and the SIZE and
+read as a pair of twos.
+
+**`describeEvent` may declare a `priority`.** The banner takes the highest
+rather than the first; ties fall to the first emitted, which is every other
+pack's behaviour unchanged. `trickCleared` is 2 and says "Everybody passed —
+the lead is yours" in the good tone when it comes back to you, and "Nell takes
+the trick and leads" when it does not. Singles say something now, which is what
+was leaving a three-turn-old pass standing over your own lead.
+
+**The fan opens, and steps aside.** `fanStep` clamps to `OPEN` (0.94 of a card)
+when the room is there rather than stopping at `natural`, and everything after
+a lifted card slides right by `--lift-gap` — the whole overlap, which is the
+only shift that actually uncovers a neighbour's rank corner. It is a transform,
+so no layout moves and the ladder in `tests/handZOrder.test.js` now holds two
+lists together: every state with a rung has a gap rule. `layoutHand` takes the
+gap out of the room the fan did NOT need rather than reserving it: a first cut
+reserved it up front and tightened the 375px hand from 14.5px per card to
+13.2px, which is a regression on the exact number the playtest complained
+about. A phone's 13-card fan is already closed to fit its row, so it opens by
+nothing and keeps its spacing; the desktop gets the whole gap.
+
+**The reverse badge compares against the pack's own `rules.direction`**, so it
+appears when play departs from what the pack deals and not merely when the
+number is negative. Thirteen has no badge at all now, which takes the false
+"restart" affordance and the seat-plate overlap with it, and Wildfire's still
+lands the instant a reverse card does. `role="img"` is what makes its name
+reach a screen reader. Cards-left is drawn as a card — square corners, a thin
+edge — beside the score's round pill, so the two numbers on a seat are told
+apart by shape at any size and in either theme. A card's accessible name says
+"1 penalty point if you are caught with it" where `winDirection` (#121) says
+points are the bill, and keeps "worth N" where they are the prize or where the
+template owns the ending. The game-over panel leads with the score that decided
+the match, labelled in the pack's direction.
+
+### How it was verified
+
+Two dev servers, this branch and its base, driven with the same playwright
+probe: every claim above is a measurement taken on both, and the probe throws
+rather than reporting an empty result. The pile, the rail, the banner, the fan
+at 13 and at 5 cards, and 375px are before/after screenshot pairs.
+
+No bomb arose in the playtest's ten rounds, so that path was planted rather
+than waited for: seat 1 leads a lone 2 into a four of a kind with an answered
+pair still behind it in the pile. `validateMove` is asked whether the chop is
+legal rather than told — the point is the presentation. The pile reads
+`Pile / Single 2` with the 2 ringed and the pair faded, staging the quad arms
+"Play 4", and after the chop it reads `Pile / Four 7s` with all four ringed.
+
+**Not done, and why.** The 375px felt still has ~377px of empty green between
+the seats and the pile and between the pile and the hand (was ~400px), and a
+13-card hand still gives each card a ~14px strip. Both are the same problem and
+the fix is the felt's shared vertical layout — moving room from the middle into
+the hand row, or wrapping the fan — which is a design decision about what that
+space is FOR, in a file two sibling issues are also editing. The `13` medallion
+on Thirteen's card backs still collides with a seat's card count; that is the
+pack's own card-back art (`ui.cardBack.emblem`), visible on every back in the
+game, and changing the deck's identity is a bigger call than this issue. The
+`seats=` URL parameter is **confirmed not wired to anything**: `packOverride`
+(`src/arcade/storage.js`) reads `pack` and nothing else, `src/main.js` passes
+only that to `goToTable`, and the seat count comes from the new-game sheet — no
+URL plumbing was added, per the issue.
 
 ## Next steps
 

@@ -275,12 +275,21 @@ test("the commit button arms exactly when the selection is a legal play", async 
   assert.match(armed.label, /^Play \d+$/);
   assert.ok(validateMove(state, armed.makeMove()).legal, "the armed button makes an illegal move");
 
-  // A selection that is not a play arms nothing — which is the live answer the
-  // player gets as cards go in, rather than a surprise at commit.
+  // A selection that is not a play KEEPS the slot and turns the button off, with
+  // the engine's own sentence for why. `action: null` was the bug: the thumb
+  // slot emptied, the sort toggle took it, and the player was left with two
+  // cards in a tray, no commit, no refusal and no Pass (#122, round-5 item 19).
   const bad = hand.filter((id) => !play.cards.includes(id)).slice(0, 1).concat(play.cards[0]);
-  if (bad.length > 1 && !selectionLegality(state, seat, bad).legal) {
-    assert.strictEqual(model(bad).action, null, "an illegal selection armed the commit button");
-  }
+  assert.ok(bad.length > 1, "could not build a two-card selection to refuse");
+  const verdict = selectionLegality(state, seat, bad);
+  assert.ok(!verdict.legal, "the selection meant to be refused is legal");
+  const refused = model(bad).action;
+  assert.ok(refused, "an illegal selection left the thumb slot empty");
+  assert.match(refused.label, /^Play \d+$/, "a refused commit must still say what it would commit");
+  assert.strictEqual(refused.disabled, true, "an illegal selection armed the commit button");
+  assert.strictEqual(refused.refusal, verdict.reason,
+    "the refusal must be the engine's own sentence, not a second wording of it");
+  assert.strictEqual(refused.makeMove, null, "a refused commit must carry no move");
 });
 
 test("passing is offered on an empty selection, and never while cards are staged", async () => {
