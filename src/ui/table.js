@@ -3092,6 +3092,35 @@ function playShowStep(finalState, step) {
 }
 
 /**
+ * WHAT EACH SEAT PROMISED AND WHAT IT TOOK, for the sheet that shows what that
+ * was worth.
+ *
+ * Read off the ENDING position rather than the live one, and that is the whole
+ * reason it is computed here: by the time the summary opens, the engine has
+ * crossed the round boundary and wiped every bid (src/engine/movePipeline.js),
+ * so `state.playerVars[seat].bid` is already the next hand's nothing. The fork
+ * #120 keeps for the felt still has them.
+ *
+ * The words are the template's own counters — a bid that reads "nil" reads
+ * "nil" here too — so nothing in this file knows what a bid is. Null for a pack
+ * that does not bid, and on the multiplayer path, where there is no fork.
+ */
+function roundContractLines(finalState) {
+  if (!finalState) return null;
+  const rows = [];
+  let any = false;
+  for (let seat = 0; seat < finalState.seats; seat++) {
+    const counters = seatCountersFor(finalState, seat, { minimized: true });
+    const bid = counters.find((c) => c.kind === 'bid');
+    const tricks = counters.find((c) => c.kind === 'tricks');
+    if (!bid) continue;
+    any = true;
+    rows[seat] = `Bid ${bid.text}${tricks ? `, took ${tricks.text}` : ''}`;
+  }
+  return any ? rows : null;
+}
+
+/**
  * Run a round ending: hold the felt on it, walk the show, then open the sheet.
  *
  * NO SECOND ACKNOWLEDGEMENT. `awaitFinalLook` is the pattern (issue #120 says
@@ -3126,7 +3155,7 @@ function runRoundBeat(state, plan, finalState) {
   Arcade.session.setTimeout(() => {
     if (myEpoch !== epoch) return;
     session.roundSummaryOpen = true;
-    showRoundSummary(state, plan.roundOver, session.seating);
+    showRoundSummary(state, plan.roundOver, session.seating, roundContractLines(finalState));
   }, plan.summaryAt);
 }
 

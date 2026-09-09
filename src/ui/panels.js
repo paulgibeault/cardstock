@@ -78,15 +78,29 @@ function signed(n) {
  * Round summary
  * ------------------------------------------------------------------ */
 
-/** The score sheet between rounds. Bot turns stay parked until it is dismissed. */
-export function showRoundSummary(state, ev, seating) {
+/**
+ * The score sheet between rounds. Bot turns stay parked until it is dismissed.
+ *
+ * `contract` is an optional per-seat phrase — "Bid 3, took 4" — supplied by the
+ * table from the position the round ENDED in (#120's fork; the live state has
+ * already wiped the bids and dealt the next hand, so this cannot be re-derived
+ * here). It rides INSIDE the name cell rather than as a fourth column, because
+ * the sheet is a three-column grid and a row is `display: contents`.
+ *
+ * A delta of `-30` is the arithmetic; "Bid 4, took 3" is the reason, and the
+ * reason was nowhere on this sheet — least of all for the human, whose own bid
+ * was not shown anywhere at all (#123, item 28).
+ */
+export function showRoundSummary(state, ev, seating, contract = null) {
   el.roundTitle.textContent = `Round ${ev.round} over`;
   el.roundScores.replaceChildren();
   for (let s = 0; s < state.seats; s++) {
     const delta = ev.scores[s] ?? 0;
     const row = document.createElement('div');
     row.className = `round-scores__row ${seating[s] && !seating[s].isBot ? 'round-scores__row--you' : ''}`;
-    row.appendChild(nameCell('round-scores__name', seating[s]));
+    const name = nameCell('round-scores__name', seating[s]);
+    if (contract?.[s]) name.appendChild(line('round-scores__note', contract[s]));
+    row.appendChild(name);
     row.appendChild(line('round-scores__delta', signed(delta)));
     // A DELTA IS PER SEAT AND A TOTAL IS PER SIDE. What a seat took this hand is
     // genuinely that seat's — "you took four, your partner took eight" is the

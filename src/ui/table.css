@@ -3078,6 +3078,18 @@ body.is-dragging .card-face { cursor: grabbing; }
 }
 .round-scores__total { text-align: right; font-variant-numeric: tabular-nums; }
 
+/* What the delta beside it is the arithmetic OF: "Bid 4, took 3" (#123). Inside
+   the name cell rather than a fourth column, because a row here is
+   `display: contents` over a three-column grid. Quiet, and allowed to
+   disappear: the name is what the row is for. */
+.round-scores__note {
+  font-size: 0.72rem;
+  opacity: 0.7;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* How far this match still has to run. Sits between the sheet and the buttons
    because it is the fact the two buttons are a choice between. */
 .round-target {
