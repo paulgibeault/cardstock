@@ -224,6 +224,105 @@ export function fanWidth({ count, cardWidth, step }) {
   return count < 1 ? 0 : cardWidth + Math.max(0, count - 1) * step;
 }
 
+/**
+ * The narrowest strip a card can show and still be a card you are CHOOSING
+ * from, as a fraction of its width.
+ *
+ * TIGHTEST (0.17) is a different promise: it is the point past which the rank
+ * corner itself starts disappearing, so it is the floor for "still legible at
+ * all" — what a fan closes to when there is genuinely nowhere else to go. This
+ * is the higher bar: the strip you CHOOSE off, not the strip you can just about
+ * decipher.
+ *
+ * HALF THE CARD, and the two numbers that bracket it are measured rather than
+ * felt. The corner index (`cornerIndex` in src/ui/cardStyles/classic.js) inks
+ * from x≈4 to x≈24 of a 100-wide card, so the rank and its suit occupy the left
+ * 0.24; at 0.5 the visible strip is more than twice that, which is what makes
+ * the index read as belonging to THIS card rather than as ink at the seam
+ * between two, and at the 375px breakpoint's 46px cards it is 23px — a strip a
+ * fingertip can be aimed at, against the 14.5px the playtest called unreadable.
+ *
+ * The window is narrow and it is the issue's own measurements that close it
+ * (#134). A 13-card hand on a 375px phone has 312px once the rail leaves the
+ * row: one row is 22.2px a card, which has to be judged NOT good enough, so the
+ * floor must sit above 0.48. Split in two the same hand gets 29px with the rail
+ * still beside it, which has to be judged good enough or the split buys
+ * nothing, so the floor must sit below 0.63. 0.5 is the round number in
+ * between, and it is the one that says what it means.
+ */
+const READABLE = 0.5;
+
+/**
+ * How many ROWS the fan needs, and the step each of them gets.
+ *
+ * A fan closes to fit its row, and `fanStep` above says how far. But closing
+ * has a bottom: a 13-card hand on a 375px phone was handed 220px, which is
+ * 14.5px a card — under READABLE, and a hand you cannot read is not a hand you
+ * can play. Below that floor the answer is no longer horizontal. Real players
+ * do not squeeze thirteen cards into one strip either; they fan them in two.
+ *
+ * SO HEIGHT IS SPENT, AND ONLY WHERE THERE IS HEIGHT TO SPEND. `slack` is the
+ * room the felt's middle actually has going spare, measured (layoutHand in
+ * src/ui/table.js), never assumed: a staging phase — Pinochle's meld
+ * declaration, Cribbage's crib discard — has already taken most of it, and a
+ * second row bought there would push the felt off the bottom of the screen.
+ * When the slack is not there the fan stays on one row and closes, which is the
+ * behaviour this replaces: worse, but not broken.
+ *
+ * FEWEST ROWS THAT CLEAR THE FLOOR. Rows cost a card's height each and buy
+ * nothing once the fan is readable, so this stops at the first count that
+ * works rather than spreading as wide as it is allowed to.
+ *
+ * Cards fill rows left to right, top to bottom — `Math.ceil(count / rows)` to a
+ * row — so reading order and `handOrder` are untouched: the second row is the
+ * end of the same hand, not a second hand.
+ *
+ * Pure, like everything else in here; the DOM half is three measurements.
+ *
+ * @param count      cards in the fan
+ * @param cardWidth  one card's width in px
+ * @param cardHeight one card's height in px — what a row costs
+ * @param available  px a single row may occupy
+ * @param slack      px of height the felt can give up, beyond the first row
+ * @param rowGap     px between rows (the stylesheet's, read back by layoutHand)
+ * @returns { rows, step, perRow }
+ */
+export function fanLayout({ count, cardWidth, cardHeight, available, slack, rowGap = 0 }) {
+  const one = { rows: 1, step: fanStep({ count, cardWidth, available }), perRow: count };
+  if (count < 2) return one;
+  const readable = Math.max(FLOOR_PX, cardWidth * READABLE);
+  if (one.step >= readable) return one;
+
+  // A row costs its own height plus the gap above it. What `slack` buys is
+  // rows BEYOND the first, which the hand is already paying for.
+  const rowCost = (cardHeight || 0) + (rowGap || 0);
+  // A row holding one card is not a fan, so a hand can never split further
+  // than into pairs however much height is going spare.
+  const affordable = rowCost > 0
+    ? Math.min(Math.floor(count / 2), 1 + Math.floor(Math.max(0, slack) / rowCost))
+    : 1;
+  if (affordable < 2) return one;
+
+  let best = one;
+  for (let rows = 2; rows <= affordable; rows++) {
+    const perRow = Math.ceil(count / rows);
+    const step = fanStep({ count: perRow, cardWidth, available });
+    best = { rows, step, perRow };
+    if (step >= readable) return best;
+  }
+  // Nothing inside the budget cleared the floor. The widest split it could
+  // afford is still the most readable one available, so that is what it gets.
+  return best;
+}
+
+/** Which row each card lands in, and how many rows there are. Pure. */
+export function handRows({ count, rows }) {
+  const perRow = Math.ceil(count / Math.max(1, rows));
+  const out = [];
+  for (let i = 0; i < count; i += perRow) out.push(Math.min(perRow, count - i));
+  return out;
+}
+
 /* ------------------------------------------------------------------ *
  * Reading the fan with a finger
  * ------------------------------------------------------------------ */

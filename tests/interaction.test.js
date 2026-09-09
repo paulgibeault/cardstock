@@ -28,6 +28,7 @@ import {
 } from "../src/ui/interaction.js";
 import {
   orderHand, applyManual, reorder, nextMode, fanStep, fanWidth, liftGap, SORT_MODES,
+  fanLayout, handRows,
   classifyHandGesture,
 } from "../src/ui/handOrder.js";
 
@@ -642,6 +643,92 @@ test("a single card has nothing to overlap", () => {
   assert.strictEqual(fanStep({ count: 1, cardWidth: 70, available: 10 }), 70 * 0.69);
   assert.strictEqual(fanWidth({ count: 1, cardWidth: 70, step: 20 }), 70);
   assert.strictEqual(fanWidth({ count: 0, cardWidth: 70, step: 20 }), 0);
+});
+
+/* ------------------------------------------------------------------ *
+ * The fan's second row
+ * ------------------------------------------------------------------ */
+
+// A 375px phone: 46px cards, 67px tall with the line box under the svg, a 5px
+// gap between rows. 220px is what the fan gets with the rail beside it and
+// 312px is what it gets once the rail stands above (#134). These are the
+// numbers the issue measured, so they are the numbers pinned here.
+const PHONE = { cardWidth: 46, cardHeight: 67, rowGap: 5 };
+const ROOMY = 400;   // more than three extra rows' worth of felt
+
+test("the fan takes a second row when one row would close past reading", () => {
+  // WITH THE RAIL STILL IN THE ROW: 13 cards over 220px is 14.5px a card, the
+  // strip the playtest could not read. Split in two it is 29px.
+  const beside = fanLayout({ ...PHONE, count: 13, available: 220, slack: ROOMY });
+  assert.strictEqual(beside.rows, 2);
+  assert.ok(Math.abs(beside.step - 29) < 0.05, `expected ~29px a card, got ${beside.step}`);
+
+  // WITH THE RAIL ABOVE: 312px. One row would be 22.2px, which is still under
+  // half a card and is the reason the floor sits where it does — two rows open
+  // the fan the whole way instead.
+  const above = fanLayout({ ...PHONE, count: 13, available: 312, slack: ROOMY });
+  assert.strictEqual(above.rows, 2);
+  assert.ok(Math.abs(above.step - 46 * 0.94) < 0.05,
+    `a two-row fan with room to spare must open to OPEN, got ${above.step}`);
+  assert.ok(above.step >= 40, "the issue's bar is a strip of 40px a card at 375x812");
+
+  // FEWEST ROWS THAT CLEAR IT. Height is not free, and a third row buys nothing
+  // once the fan is already open.
+  assert.strictEqual(fanLayout({ ...PHONE, count: 13, available: 312, slack: 4000 }).rows, 2);
+});
+
+test("a hand that already reads stays on one row", () => {
+  // Five cards on a phone are fanned wide open — nothing to fix.
+  const few = fanLayout({ ...PHONE, count: 5, available: 312, slack: ROOMY });
+  assert.strictEqual(few.rows, 1);
+  assert.strictEqual(few.step, fanStep({ count: 5, cardWidth: 46, available: 312 }));
+
+  // And a desktop hand: thirteen cards at 74px over 1109px is 69.5px a card,
+  // most of a whole card each. This issue must not touch the one-row case.
+  const desktop = fanLayout({ count: 13, cardWidth: 73.95, cardHeight: 106, rowGap: 5, available: 1109, slack: 160 });
+  assert.strictEqual(desktop.rows, 1);
+  assert.strictEqual(desktop.step, fanStep({ count: 13, cardWidth: 73.95, available: 1109 }));
+});
+
+test("a felt with no room to spare keeps the fan on one row", () => {
+  // THE GATE IS THE MEASURED SLACK, NOT THE VIEWPORT. Pinochle's meld
+  // declaration and Cribbage's crib discard have already spent the felt's
+  // middle; a second row bought there would push the hand off the screen.
+  const cramped = fanLayout({ ...PHONE, count: 13, available: 220, slack: 0 });
+  assert.strictEqual(cramped.rows, 1);
+  assert.strictEqual(cramped.step, fanStep({ count: 13, cardWidth: 46, available: 220 }));
+
+  // Not quite one row's worth is not one row's worth.
+  assert.strictEqual(fanLayout({ ...PHONE, count: 13, available: 220, slack: 71 }).rows, 1);
+  assert.strictEqual(fanLayout({ ...PHONE, count: 13, available: 220, slack: 72 }).rows, 2);
+
+  // Room for three rows, but a hand that only needs two takes two.
+  assert.strictEqual(fanLayout({ ...PHONE, count: 17, available: 312, slack: 300 }).rows, 2);
+});
+
+test("a row is never left holding one card, however much felt there is", () => {
+  // Rows are a way of fanning a hand, not a way of spending height: splitting
+  // past pairs would draw a "fan" of singletons.
+  const rows = fanLayout({ ...PHONE, count: 4, available: 50, slack: 100000 }).rows;
+  assert.ok(rows <= 2, `4 cards must not split past 2 rows, got ${rows}`);
+  const layout = fanLayout({ ...PHONE, count: 3, available: 50, slack: 100000 });
+  assert.strictEqual(layout.rows, 1, "3 cards cannot be split into rows of at least 2");
+});
+
+test("every card lands in a row, in reading order", () => {
+  // Left to right, top to bottom — so the fan reads as one hand and handOrder
+  // is untouched by the split.
+  assert.deepEqual(handRows({ count: 13, rows: 2 }), [7, 6]);
+  assert.deepEqual(handRows({ count: 12, rows: 2 }), [6, 6]);
+  assert.deepEqual(handRows({ count: 13, rows: 3 }), [5, 5, 3]);
+  assert.deepEqual(handRows({ count: 1, rows: 1 }), [1]);
+  for (const count of [2, 5, 7, 10, 13, 17, 26]) {
+    for (const rows of [1, 2, 3]) {
+      const plan = handRows({ count, rows });
+      assert.strictEqual(plan.reduce((a, b) => a + b, 0), count,
+        `${count} cards in ${rows} rows lost or gained a card`);
+    }
+  }
 });
 
 /* ------------------------------------------------------------------ *

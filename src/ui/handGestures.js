@@ -146,10 +146,31 @@ export function watchHandGestures({ hand, session, me, cardById, onSelect, onGat
     }, SMART_SELECT_MS);
   }
 
-  /** The fan card whose VISIBLE strip contains `clientX`. */
-  function cardStripAt(clientX) {
-    if (!peek() || !peek().strips.length) return null;
-    const strips = peek().strips;
+  /**
+   * The fan card whose VISIBLE strip is under the finger.
+   *
+   * THE ROW IS CHOSEN FIRST, BY Y. A fan that has split into two rows (#134)
+   * has a card at every x twice over, so a scrub along the second row read by x
+   * alone would light the first row's cards — the fan would answer a finger
+   * that was nowhere near it. Rows are far apart in y and their cards are not,
+   * so y picks the row and x picks the card in it, which is the order the
+   * gesture itself has.
+   *
+   * Above the top row or below the bottom one still answers: a finger that has
+   * drifted off the fan vertically is still reading the row it left.
+   */
+  function cardStripAt(clientX, clientY) {
+    const rows = peek()?.rows;
+    if (!rows || !rows.length) return null;
+    let row = rows[0];
+    let gap = Infinity;
+    for (const candidate of rows) {
+      const distance = clientY < candidate.top ? candidate.top - clientY
+        : clientY > candidate.bottom ? clientY - candidate.bottom : 0;
+      if (distance < gap) { gap = distance; row = candidate; }
+    }
+    const strips = row.strips;
+    if (!strips.length) return null;
     if (clientX < strips[0].left) return strips[0].node;
     for (let i = 0; i < strips.length; i++) {
       const right = i + 1 < strips.length ? strips[i + 1].left : strips[i].right;
@@ -167,18 +188,29 @@ export function watchHandGestures({ hand, session, me, cardById, onSelect, onGat
       clearPeek();
       const wrapper = event.target.closest?.('.card-face-wrap');
       if (!wrapper || !el.hand.contains(wrapper)) return;
-      const strips = [...el.hand.children].map((node) => {
-        const r = node.getBoundingClientRect();
-        return { node, left: r.left, right: r.right };
-      });
-      peek({ node: null, strips, pointerId: event.pointerId, scrubbed: false, hold: null });
+      // ROW BY ROW. `.hand` holds a `.hand__row` per row of the fan (#134), so
+      // its own children are containers; a hand that has not been laid out yet
+      // is read as the single row it is.
+      const rowNodes = el.hand.querySelectorAll('.hand__row');
+      const rows = [...(rowNodes.length ? rowNodes : [el.hand])].map((row) => {
+        const box = row.getBoundingClientRect();
+        return {
+          top: box.top,
+          bottom: box.bottom,
+          strips: [...row.children].map((node) => {
+            const r = node.getBoundingClientRect();
+            return { node, left: r.left, right: r.right };
+          }),
+        };
+      }).filter((row) => row.strips.length);
+      peek({ node: null, rows, pointerId: event.pointerId, scrubbed: false, hold: null });
       paintPeek(wrapper);
       armSmartSelect(wrapper);
     });
 
     el.hand.addEventListener('pointermove', (event) => {
       if (!peek() || event.pointerId !== peek().pointerId) return;
-      const under = cardStripAt(event.clientX);
+      const under = cardStripAt(event.clientX, event.clientY);
       if (under && under !== peek().node) {
         peek().scrubbed = true;
         // The press has become a slide, so it is no longer a hold.
