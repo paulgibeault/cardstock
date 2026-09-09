@@ -13,7 +13,8 @@
 // markup anywhere in this file, which is the rule §17.8 exists for.
 
 import { statLinesFor } from '../stats/matchStats.js';
-import { sideScoreOf, sideScores } from '../engine/sides.js';
+import { sideScoreOf } from '../engine/sides.js';
+import { targetSentence as matchTargetSentence } from './scoreDirection.js';
 import { line } from './dom.js';
 
 const el = {
@@ -105,23 +106,16 @@ export function showRoundSummary(state, ev, seating) {
 /**
  * How much further this match has to run.
  *
- * "The match continues indefinitely" was the complaint, and it was a complaint
- * about not being able to SEE the end rather than about there not being one:
- * Wildfire runs to 500 and nothing on the felt ever said so, so every round
- * summary looked like it could be the first of arbitrarily many. Read from the
- * pack's own declared threshold, so a pack that ends some other way (Milestones
- * on its tenth contract) simply says nothing here.
+ * The sentence itself is in src/ui/scoreDirection.js, with the reasoning for its
+ * two directions: this file resolves its element table on its first line, so
+ * nothing in it can be loaded by a Node test, and the text of a line that was
+ * false for Thirteen and Hearts for a whole playtest (#121) is precisely the
+ * thing that wants pinning by one. This wrapper stays because the panel's own
+ * subject is a state and a roundOver event, and the pure function's is a pack
+ * and a totals array.
  */
 function targetSentence(state, ev) {
-  const when = state.pack.scoring?.gameOver?.when;
-  const m = /^anyScore\s*>=\s*(\d+)$/.exec(when || '');
-  if (!m) return '';
-  const target = Number(m[1]);
-  // The threshold is a SIDE's, the same reading `evaluateGameOver` takes.
-  const leader = Math.max(...sideScores(state.pack, state.seats, ev.totals));
-  const togo = target - leader;
-  if (togo <= 0) return '';
-  return `First to ${target} wins — ${togo} to go.`;
+  return matchTargetSentence(state.pack, state.seats, ev.totals);
 }
 
 export function hideRoundSummary() {

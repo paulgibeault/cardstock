@@ -19,6 +19,7 @@ import { flyCard, motionAllowed, rectOf, cardSizedRect } from './flight.js';
 import { safeCssColor } from './css.js';
 import { handAddress } from './interaction.js';
 import { playTrickTaken, playActionCard } from '../arcade/audio.js';
+import { trickNarration } from './scoreDirection.js';
 
 /**
  * @param me          the seat lens (src/players/seats.js); everything is worded
@@ -134,7 +135,15 @@ export function createCelebrations({
    */
   function celebrateTrick(session, state, ev) {
     const mine = me.holds(ev.seat);
-    const bad = mine && ev.points > 0;
+    // WHICH WAY IS UP IS THE PACK'S (src/ui/scoreDirection.js). `bad` used to be
+    // `mine && ev.points > 0` for every pack alike, which is Hearts' reading
+    // wearing a platform's clothes: it put every trick a Pinochle player won in
+    // the alarm-red tone and told a Spades player the trick they bid for was
+    // worth nothing. One read, spent four ways below — banner text, tone, cue
+    // and pulse — because those four disagreeing is what made it read as a bug
+    // rather than as a wording nit.
+    const said = trickNarration({ state, ev, mine, seatLabel });
+    const bad = said.bad;
 
     const from = zoneRect('trick');
     // One measurement, several copies, the last of them 550ms behind the first
@@ -153,11 +162,8 @@ export function createCelebrations({
       });
     }
 
-    const text = mine
-      ? (ev.points > 0 ? `You take the trick — ${ev.points} point${ev.points === 1 ? '' : 's'} against you` : 'Trick is yours — no points')
-      : `${seatLabel(ev.seat)} takes the trick${ev.points > 0 ? ` (+${ev.points})` : ''}`;
-    showBanner(session, text, mine ? (bad ? 'bad' : 'good') : 'neutral');
-    el.log.textContent = text;
+    showBanner(session, said.text, said.tone);
+    el.log.textContent = said.text;
     playTrickTaken({ bad });
 
     pulseSeat(ev.seat, bad ? 'bad' : 'good');
