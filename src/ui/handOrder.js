@@ -163,6 +163,35 @@ const TIGHTEST = 0.17;
 const FLOOR_PX = 10;
 
 /**
+ * How wide one card actually is, given a measurement and the CSS declaration.
+ *
+ * A RENDERED CARD IS THE ONLY HONEST ANSWER, because the declaration often is
+ * not a number. `--hand-card-w` is `clamp(70px, 8.6vh, 104px)` on a desktop
+ * window (src/ui/table.css), and `getComputedStyle` hands a custom property
+ * back as the token stream that was written — no viewport units resolved, no
+ * clamp evaluated. `parseFloat` reads "clamp(70px..." as NaN, the `|| 70` that
+ * caught it substituted the phone's smallest card, and every desktop fan was
+ * laid out for 70px cards however big they really were: `fanStep`'s ceiling
+ * came out at 65.8px, so six 103px cards sat at 36% overlap on a window with
+ * 300px going spare (#135, round-5 item 44c). `fanStep` was never wrong; the
+ * number going into it was.
+ *
+ * The declaration is still the fallback rather than a discarded input: on a
+ * phone it is a plain `46px` and parses fine, and it is all there is if the
+ * hand has not been laid out yet.
+ *
+ * @param rendered  a measured card's width in px, or NaN/0 if none was measured
+ * @param declared  the `--hand-card-w` string as computed style reports it
+ * @param fallback  last resort when neither is a usable number
+ */
+export function resolveCardWidth({ rendered, declared, fallback = 70 }) {
+  if (Number.isFinite(rendered) && rendered > 0) return rendered;
+  const parsed = parseFloat(declared);
+  if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  return fallback;
+}
+
+/**
  * How far each card should sit from the one before it.
  *
  * SPACING FLEXES, CARD SIZE DOES NOT. A hand is the one thing on the table

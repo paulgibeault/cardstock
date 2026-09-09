@@ -100,7 +100,7 @@ import {
 } from './interaction.js';
 import {
   orderHand, reorder, nextMode, isSortMode, fanStep, fanWidth, liftGap,
-  classifyHandGesture, SORT_LABELS,
+  resolveCardWidth, classifyHandGesture, SORT_LABELS,
 } from './handOrder.js';
 import {
   initPanels, showRoundSummary, hideRoundSummary,
@@ -2022,7 +2022,18 @@ function layoutHand() {
   if (!rowWidth) return;
 
   const styles = getComputedStyle(el.hand);
-  const cardWidth = parseFloat(styles.getPropertyValue('--hand-card-w')) || 70;
+  // MEASURED, NOT READ OFF THE DECLARATION. `--hand-card-w` is a `clamp()` on
+  // desktop, and a custom property comes back from getComputedStyle unresolved,
+  // so parsing it yielded NaN and the fan was laid out for the 70px fallback
+  // whatever size the cards were (#135) — which `liftGap` and `fanWidth` below
+  // inherit too. `offsetWidth` rather than a client rect because the freshly
+  // dealt cards are still inside `card-deal`, whose `scale(0.85)` a rect would
+  // include and a layout width does not.
+  const cardWidth = resolveCardWidth({
+    rendered: el.hand.firstElementChild?.offsetWidth,
+    declared: styles.getPropertyValue('--hand-card-w'),
+    fallback: 70,
+  });
   const padding = (parseFloat(styles.paddingLeft) || 0) + (parseFloat(styles.paddingRight) || 0);
   // The rail shares the row, so the fan may not have all of it. The RAIL is
   // measured, not whichever control happens to be standing in it: its width is
