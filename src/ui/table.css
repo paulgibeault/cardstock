@@ -344,7 +344,12 @@ body {
    both flip together — a left-handed player's thumb covers the left edge, so
    the newest card and the button both belong there. */
 [data-handedness="left"] #status-bar { flex-direction: row-reverse; }
-[data-handedness="left"] .hand { flex-direction: row-reverse; }
+/* The ROW is what fans, not the hand: `.hand` is a column of rows now (#134),
+   so reversing it would stack the second row above the first rather than
+   mirroring either of them. Each row mirrors, and the reading order of the
+   hand — first row, then second — is not a thing handedness has an opinion
+   about. */
+[data-handedness="left"] .hand__row { flex-direction: row-reverse; }
 [data-handedness="left"] .opponent-row { flex-direction: row-reverse; }
 /* The sort toggle has a side too, and it is the same side as everything else
    the thumb reaches for. */
@@ -2023,9 +2028,102 @@ button.pile-stack:focus-visible { outline: 2px solid var(--accent); outline-offs
 .hand-sort[hidden] { display: none; }
 .hand-sort:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
+/* ON A PORTRAIT PHONE THE RAIL LEAVES THE ROW.
+ *
+ * Beside the fan the rail is cheap in the axis a desktop has to spare and
+ * ruinous in the one a phone does not: at 375px it took 92px of a 332px row,
+ * so a thirteen-card hand was fanned across 220px and every card showed a
+ * 14.5px strip (#133 items 1–2). Above the fan it costs about 33px of the
+ * felt's height — which the middle has going spare on a phone, measured — and
+ * hands the fan all 312px. That alone is 22px a card; it is what makes two
+ * readable rows affordable (#134).
+ *
+ * ONLY HERE. `(orientation: portrait) and (max-width: 480px)` is a phone held
+ * upright: a landscape phone and a desktop are short of the other axis, and
+ * there the rail beside the fan is still the right trade. Everything outside
+ * this block is untouched.
+ *
+ * THE HEIGHT IS FIXED, WHICH IS THE SAME PROMISE THE ZERO-HEIGHT BOX WAS
+ * MAKING. A band that sized itself to its contents would grow the instant the
+ * turn token lit or the action button replaced the sort toggle, and the whole
+ * felt would step down under a thumb already reaching for it (#13). So the band
+ * is one height whatever is standing in it, and the stack is still absolutely
+ * positioned inside it — the same two elements doing the same two jobs, turned
+ * through ninety degrees.
+ *
+ * AND ITS WIDTHS ARE PINNED FOR THE MIRROR-IMAGE REASON, now that the controls
+ * sit side by side: the thumb slot is held to the sort toggle's own 6.2em so
+ * the token and the lamp do not slide sideways when the button takes it. */
+@media (orientation: portrait) and (max-width: 480px) {
+  #hand-row {
+    flex-wrap: wrap;
+    row-gap: 0.15rem;
+  }
+  .hand-rail {
+    order: -1;
+    flex: 0 0 100%;
+    width: 100%;
+    height: 1.9rem;
+    align-self: auto;
+  }
+  .hand-rail__stack {
+    top: 0;
+    bottom: 0;
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.5rem;
+    padding: 0 0.15rem;
+  }
+  /* The thumb reaches the same side it always did. */
+  [data-handedness="left"] .hand-rail__stack { flex-direction: row-reverse; }
+  /* ONE SLOT, ONE WIDTH — the rail's own 5rem, which is the width the action
+     button is laid out to everywhere else and the width its label budget
+     (ACTION_LABEL_MAX_CHARS, src/ui/interaction.js) is written against. Left to
+     size themselves, the button and the toggle it shares the slot with come out
+     a few pixels apart, and the token and the lamp beside them would step
+     sideways every time the turn changed. */
+  .hand-rail__stack #action-button,
+  .hand-rail__stack .hand-sort {
+    flex: none;
+    width: 5rem;
+    min-width: 0;
+  }
+}
+
+/* THE HAND IS A COLUMN OF ROWS, AND USUALLY THERE IS ONE OF THEM.
+ *
+ * A fan closes to fit its row, and on a 375px phone a thirteen-card hand closed
+ * to 14.5px a card — the strip the playtest could not read (#133 items 1–2).
+ * Below that point the answer stops being horizontal: `fanLayout`
+ * (src/ui/handOrder.js) splits the fan into as few rows as it takes to get back
+ * above a readable step, and only while the felt has the height going spare to
+ * pay for them.
+ *
+ * THE ROWS ARE REAL CONTAINERS, and that is the whole reason the rest of the
+ * fan's machinery survives the change. The overlap is a negative margin on
+ * `:not(:first-child)` and the lift opens a gap with a general sibling
+ * combinator — both of which mean "within my row" by construction once a row
+ * exists, so a lifted card on row 1 cannot shove row 2 sideways and each row's
+ * leftmost card keeps its full width. Written as one flat wrapping list, every
+ * one of those rules would have had to learn about rows.
+ *
+ * `--fan-step` and `--lift-gap` stay on `.hand`: one fan, one spacing, however
+ * many rows it is drawn on. The rows inherit them.
+ */
 .hand {
   display: flex;
+  flex-direction: column;
+  align-items: center;
+  /* What a second row costs beyond a card's own height. layoutHand reads this
+     back off the computed style rather than being told it twice, so the height
+     budget it spends is the one the stylesheet is actually charging. */
+  row-gap: 0.3rem;
   padding: 0.5rem;
+  min-width: 0;
+}
+.hand__row {
+  display: flex;
   min-width: 0;
 }
 
