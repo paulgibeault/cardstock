@@ -2018,6 +2018,20 @@ body.is-dragging .card-face { cursor: grabbing; }
 .meld-chip--hinted { box-shadow: 0 0 0 2px var(--hint); }
 .seat--hinted { outline: 2px solid var(--hint); outline-offset: 2px; border-radius: 12px; }
 
+/* THE CARDS BEING COUNTED, at a show.
+ *
+ * Cribbage counts three hands in a row out of piles that are all already face
+ * up on the felt, so the only thing that says WHICH four cards "worth eight"
+ * refers to is this ring (src/ui/table.js, playShowStep). It is deliberately
+ * static rather than a pulse: it is up for a second and a half at a time, three
+ * times running, and a table that throbbed through all of it would be harder to
+ * read rather than easier — which is also why it needs no entry in the
+ * reduced-motion list below and costs nothing against --arcade-pulse-count. */
+.pile-stack--counting {
+  border-radius: 10px;
+  box-shadow: 0 0 0 3px var(--accent), 0 0 18px -2px var(--accent);
+}
+
 /* THE THUMB SLOT, AND WHY IT IS ONE LINE.
    The button is laid out to the rail's fixed width rather than to its own
    label, and `nowrap` is the load-bearing declaration. Left to wrap, "Pass 3
