@@ -1364,6 +1364,158 @@ held now. Thirteen and Team Spades were checked the same way: Team Spades'
 status bar read "Rook is bidding…" behind the sheet before, and "Round over."
 after.
 
+## Pinochle: saying what the engine already knew (#125)
+
+Nine findings from the round-5 playtest, and eight of them are one shape. The
+rules were right, the scoring was right, the bot was fine — and the felt did not
+say a word about any of it. The worst was **trump**: after the auction named
+spades there was no text, badge, aria attribute or data attribute anywhere on
+the table that reflected it, and when a bot won the auction the log read only
+`Pip bid. Bruno bid. Sable bid.` — so on any hand the player did not win, the
+trump suit was never learned at all, in a game whose every play is
+follow-and-beat with mandatory over-trump.
+
+**The contract strip** (`src/ui/contractStrip.js`, `#table-contract`) is the
+answer to three of them at once, driven by a new presentation hook,
+`contractChips(ctx, seat)`. During the auction it carries the standing high bid,
+the suit its holder fancied, and — the half a number cannot carry — WHOSE it is,
+in that seat's own roster mark: once two chairs have both bid, both their plate
+chips read the same gold and only a name says which one is ahead. After it, the
+trump suit drawn as the pack's own card, the contract, and **your own meld**.
+That last chip is there because there is nowhere else for it: every other seat's
+meld is on that seat's plate (`seatCounters`), and the seat doing the looking has
+no plate.
+
+*Not the contract ladder, and not a badge on the trick.* `#contract-ladder` is
+contract-rummy's race, driven by `rules.contracts`, which Pinochle has none of;
+overloading it would be one widget answering two unrelated questions from two
+unrelated declarations. A badge on the trick zone was the other candidate and
+fails on its own terms: `zoneBadge` only draws one while the pile has cards in
+it, and a trick is empty at the start of every trick — trump would blink out
+four times a hand.
+
+*And only where trump is a round's answer* (`rules.trump === 'chosen'`). Spades'
+trump is in the pack's name and never changes, and a strip repeating the same
+word on every hand of every match is the "play goes left" arrow that
+`directionBadge` refuses to draw. The gate is also what keeps this off Team
+Spades' felt, which is #123's.
+
+**What is said out loud** is `describeEvent` on the trick-taking template, which
+had none. `contractSet` announces the winner, the number and the suit —
+`Pip won the auction at 140 — Clubs are trump.` — with a separate sentence for
+the seat that was stuck with it, since `bidLevels` refuses the last speaker a
+pass into an empty auction and being stuck is not the same thing as winning.
+`meldDeclared` says the viewer's OWN declaration and returns null for the other
+three; that is not only about noise. Four declarations land in one event window
+and `celebrateAction` takes the first that yields a sentence, so making the
+other three silent is what makes it land on the right one whatever order they
+were emitted in. `Nothing to declare — no meld in your hand.` reads distinctly
+from a real one, and so does the strip's chip: `None`, not `0`. The playtest
+tested that case deliberately, with a hand holding K♥/K♣ and neither queen, and
+could not tell it from declaring a run in trump.
+
+**The trump chooser** read `Choose a suit to play it in` — which names no
+referent for "it" and describes choosing a suit to play something in rather than
+naming trump for the hand — over four plain word buttons, in the one pack whose
+whole vocabulary is pips. The buttons are the interesting half. Round 3 item 6
+built the chooser's card rendering for exactly this; it was not reaching here
+because **`attr` was doing two jobs**. It is the TEMPLATE's word for the question
+and it was also the key the platform's art vocabulary is looked up by
+(`src/ui/cardStyles/chooser.js` knows `suit`, `color` and `rank` and nothing
+else), so an Ask that called its question `trump` asked for a tile named "trump",
+got null, and fell back to words. The Ask shape now has `art` beside `attr`, and
+`question` beside `prompt` for a step that is not "choose a &lt;noun&gt;". A second
+copy of the same conflation was one line further on: `buildChoiceOption` looked
+the art up by an option's **label** rather than its **value**, which was
+invisible while every chooser let the label default to the value and deleted the
+picture the moment one gave its options a readable caption. And the Ask may now
+name what the status bar says while it is open, because the bar behind the
+dialog was still reading `Your bid` — the step before.
+
+**A simultaneous commit is not a turn.** Three opponents wore the platform's
+gold ▶ at once during the meld. `actingSeats` was right — every seat that has
+not committed yet may act, which is what un-stalls the phase — and the felt was
+spending the one marker that means "it is this player's go, and nobody else's"
+on all of them. The seats still choosing get their own quiet mark now
+(`committingToken`, `.turn-token--waiting`): same chip, same slot, no gold, no
+arrow and no pulse, since four seats thinking at once is a state and not an
+event. Asked of the interaction MODE and not the phase name, the way
+`statusTextFor` already asks — so Hearts' pass, which had the same bug, is fixed
+by the same line.
+
+**One row per side.** The round sheet and the scoreboard listed four players, and
+for every partnership pack we ship two of those rows were structurally dead:
+both scorers in `src/engine/scoring.js` bank a side's whole result on
+`members[0]`, so a partner's delta read `+0` every round beside a total of 682 —
+the same 682 as the banker's, because the total was already folded to the side.
+One sheet saying both that this player scored nothing and that they have 682.
+The previous rule here ("a delta is per seat and a total is per side") was
+soundly reasoned and its premise was not true of this platform; the note in
+`src/ui/panels.js` says what to check before taking the split back. A teamless
+pack is unchanged and not by a branch — `sidesOf` gives it one side per seat, so
+every fold is the identity.
+
+**The trick** carries an owner mark per card: the roster's own mark in the seat's
+own colour, rimmed in the partner colour for your side. The mark and not the
+name, which was the first cut: the fan overlaps by half a card, so a tag may
+occupy half a card's width without reaching under its neighbour — 45px on a
+desktop and 26 at 375px, which is two letters and an ellipsis. The names are on
+the pile's accessible name in play order instead
+(`Played: You: Ace of Diamonds, Bruno: 9 of Diamonds.`). Who played which card is
+a RULE — which way round a trick goes, and from whom — so it is a template hook
+(`zoneCardOwners`) rather than something the platform derives; it is derived from
+the public `leader` var rather than stored, the same judgement `contractSeatOf`
+makes about who holds the contract.
+
+**The gather covered the banner.** `#fly-layer` was at z-index 9 and
+`#event-banner` at 8, so the four copies a trick gather flies through the middle
+of the felt drew over the message and cut it in half mid-word — measured before
+and after in a browser: `Pip tak▌` against `Juniper takes the trick (+15)`. They
+swap. The banner is the sentence and the gather is the decoration that
+illustrates it; a decoration does not redact its own caption. Still below the
+modals at 10. One more thing showed up while looking: `.pile-stack--deep` was
+drawing its grey depth slabs behind a SPREAD trick, and the spread box is 2.11
+card widths against three cards' 2.02 — so the third trick of every hand had a
+grey card-shaped slab in the gap at the right-hand end that reads as a
+face-down fourth card nobody played. A trick has no history under it; the cue is
+off there.
+
+**375px, measured rather than judged.** The finding was that the seat carousel
+"drops the third opponent off-screen entirely". It does not, and the numbers are
+worth writing down because the first probe got them wrong: computing
+reachability from `offsetLeft` is computing it against the nearest POSITIONED
+ancestor, which is not the scroll container. Scrolling the row to each seat the
+way `scrollActingSeatIntoView` does and measuring the rects, all three seats are
+wholly visible in bid, meld and play, at 375x812, on both the base build and
+this one (client 332px, content 688–758px, max scroll 356–426px, 0px clipped).
+The seat-view toggle in the felt's corner ("Minimize player cards") puts all
+three on screen at once with no scrolling at all (max scroll 0). So no change
+was made here; what the playtest could not see is that the row scrolls, and if
+that is the real complaint it wants an affordance, filed on its own.
+
+**Item 54 — measured, no change.** The flag was a deliberately-worst-play side
+winning 682–153 across four hands. `tools/simulate.mjs` has no "worst"
+difficulty, so the closest bar it can offer is the shipped bot against the cheap
+heuristic:
+
+```
+pinochle: medium vs easy, --match, 600 matches
+  medium  304 wins  50.7%   (mean final total 414.96)
+  easy    296 wins  49.3%   (mean final total 417.55)
+  ties: 0   unfinished: 0   rounds per match: 8.9
+```
+
+Two standard errors is ±4.1 points at n=600, so 50.7% is indistinguishable from
+a coin. That is not new: #106 recorded Pinochle's bot at parity with `easy`
+rather than ahead of it, and this run confirms it at four times the sample.
+**No weights were touched**, which is what this issue is out of scope for. What
+the number does say is that item 54's anecdote is consistent with a bot at
+parity and is not evidence of anything beyond it: a side playing badly against
+opponents that are not playing well either will win about half its matches, and
+four hands is four samples. A bot improvement wants its own issue and its own
+bar — the useful one would be a genuinely-worst policy added to the tournament,
+which does not exist today.
+
 ## Next steps
 
 Multiplayer (Phase 8), per-pack UI polish (per-pack `theme.css`, custom

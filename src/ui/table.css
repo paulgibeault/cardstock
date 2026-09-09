@@ -1438,6 +1438,15 @@ button.pile-stack:focus-visible { outline: 2px solid var(--accent); outline-offs
   margin-left: calc(var(--pile-w, 90px) / -2);
   transform: translateX(calc(var(--stack-index, 0) * var(--pile-w, 90px) * 0.51)) rotate(var(--stack-tilt, 0deg));
 }
+/* AND NO DEPTH CUE UNDER IT. `--deep` draws two grey slabs across the pile's
+   whole box to say "there are more cards under this one", which is the right
+   thing for a discard and meaningless for a trick — every card in a trick is
+   already showing. Worse, it was VISIBLE: the spread box is 2.11 card widths
+   and three cards cover about 2.02 of them, so the third trick of every hand
+   drew a grey card-shaped slab in the gap at the right-hand end, which reads as
+   a face-down fourth card that nobody played. */
+.pile-stack--spread.pile-stack--deep::before,
+.pile-stack--spread.pile-stack--deep::after { content: none; }
 
 /* WHOSE CARD THAT IS. A tag on the bottom-left corner of each card in the
    trick, carrying the same mark and the same name that seat wears on its plate
@@ -3204,12 +3213,18 @@ body.is-dragging .card-face { cursor: grabbing; }
    decided (src/players/roster.js). */
 .round-scores__name,
 .round-history__head,
-.stat-card__name {
+.stat-card__name,
+/* One partner's name inside a side's row — same icon-then-name pair, nested
+   (src/ui/panels.js, sideNameCell). */
+.name-cell {
   display: flex;
   align-items: center;
   gap: 0.35rem;
   min-width: 0;
 }
+/* A pair's row is two of those with an ampersand between them, so it wraps
+   where a single name never had to. */
+.round-scores__name, .round-history__head { flex-wrap: wrap; }
 .seat-icon { flex: none; }
 
 /* ------------------------------------------------------------------ *

@@ -127,7 +127,10 @@ function sideNameCell(className, members, seating) {
   wrap.className = className;
   members.forEach((seat, i) => {
     if (i > 0) wrap.appendChild(document.createTextNode(' & '));
-    wrap.appendChild(nameCell('', seating[seat]));
+    // `.name-cell` and not the bare row class: the row class is a flex box with
+    // a gap, and a nested cell with no class of its own put the icon hard
+    // against the name — "★You & 🦔Fig".
+    wrap.appendChild(nameCell('name-cell', seating[seat]));
   });
   return wrap;
 }
