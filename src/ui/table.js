@@ -702,12 +702,54 @@ function scoreChipFor(state, seat) {
   return defaultScoreChip(state.pack, state.seats, state.scores, seat);
 }
 
+/**
+ * THE WORD UNDER A PLATE'S NUMBER (#133, round-5 item 49).
+ *
+ * A seat plate used to be a row of bare digits — "Bruno 0 12 150 —" — legible
+ * only to somebody who already knew which slot meant what, and its ONLY name
+ * was an `aria-label` nobody sighted ever hears. The vocabulary is the human's
+ * own chips' (`buildMySeatStrip`: SCORE, CARDS, BID, BAGS, MELD), so the two
+ * halves of the table say a bid the same way.
+ *
+ * UNDER, NOT BESIDE, and that was measured rather than chosen: captions beside
+ * the numbers cost +50% seat width at 375px (Team Spades' carousel scroll ran
+ * 683 -> 912-993px), captions underneath cost +29% (683 -> 776) and one pixel
+ * of height. The row already scrolls; making it half again as long to say the
+ * same words is paying twice.
+ *
+ * ARIA-WISE THIS IS ONE THING, NOT TWO. The badge carries the counter's own
+ * sentence ("bid 4 tricks") and `role="img"`, which stops the caption and the
+ * digits being read out beside it — the same trick `.my-seat__chip` uses, and
+ * the same reason directionBadge grew a role: an aria-label on a roleless
+ * <span> is dropped by most screen readers, so the badge was previously
+ * announcing nothing at all.
+ */
+function counterCaption(label) {
+  const cap = line('seat__count-label', label);
+  // Belt and braces beside role="img": the caption is decoration for the
+  // accessible name the badge already carries in full.
+  cap.setAttribute('aria-hidden', 'true');
+  return cap;
+}
+
+/** A badge's contents: the number, and the word for it. */
+function fillCounterBadge(badge, text, label, aria) {
+  badge.replaceChildren();
+  badge.appendChild(line('seat__count-value', text));
+  if (label) badge.appendChild(counterCaption(label));
+  badge.setAttribute('role', 'img');
+  badge.setAttribute('aria-label', aria);
+}
+
 function seatScoreChip(state, seat) {
   const chip = document.createElement('span');
   chip.className = 'seat__score';
-  const { short, aria } = scoreChipFor(state, seat);
-  chip.textContent = short;
-  chip.setAttribute('aria-label', aria);
+  const { short, label, aria } = scoreChipFor(state, seat);
+  // The chip's OWN word, defaulted rather than assumed: `scoreChipFor` answers
+  // "what is this seat racing", and contract rummy's answer is a contract
+  // reached, not a score — "Ph 1" under the word SCORE says the wrong thing in
+  // the one pack that overrides the hook.
+  fillCounterBadge(chip, short, label || 'Score', aria);
   return chip;
 }
 
@@ -841,9 +883,13 @@ function seatHasReadyTarget(state, seat, ui) {
 function seatCountersFor(state, seat, { minimized }) {
   const declared = state.pack.template.seatCounters?.(makeCtx(state), seat);
   const count = state.zones.count(`hand.${seat}`);
+  // `label` on the DEFAULT too, and not only on the templates' own counters:
+  // the caption under a plate's number (see counterCaption) is drawn from it,
+  // and a pack that declares no counters is exactly the pack whose bare digit
+  // has least else around it to explain itself.
   const list = Array.isArray(declared) && declared.length
     ? declared
-    : [{ text: String(count), aria: cardsPhrase(count) }];
+    : [{ text: String(count), aria: cardsPhrase(count), label: 'Cards' }];
   // THE PRIMARY NUMBER IS THE SAME WHETHER OR NOT THE SEAT IS MINIMIZED.
   //
   // Counters were once read only off minimized seats, which meant the badge in
@@ -1357,12 +1403,16 @@ function buildSeatRow(state, stagger, acting, ui, { tier, carousel, mustOpen, sh
       // the stylesheet matches on (§7b) — hence the whitelist-ish shape.
       badge.className = i === 0 ? 'seat__count' : 'seat__count--aux';
       if (counter.kind) badge.dataset.counter = String(counter.kind).replace(/[^a-z0-9-]/gi, '');
-      badge.textContent = counter.text;
-      // The visible badge is a bare number, which reads as nothing on its own.
       // "Their turn" is false in a simultaneous phase, and it was being said on
       // every seat that had not committed yet — see committingToken.
       const says = !active || i !== 0 ? '' : (committing ? '. Still choosing.' : '. Their turn.');
-      badge.setAttribute('aria-label', `${counter.aria}${says}`);
+      // The word under the number — the template's own, never invented here, so
+      // a pack that calls its trick count something else is quoted rather than
+      // translated. It is drawn on every rung and hidden by the stylesheet on
+      // the ones with no room for it (.seat--collapsed): the caption is a
+      // presentation decision about width, and rebuilding the row's DOM to make
+      // it would put the fit ladder's own output inside the fit question.
+      fillCounterBadge(badge, counter.text, counter.label, `${counter.aria}${says}`);
       head.appendChild(badge);
     });
 
@@ -1525,9 +1575,56 @@ function renderSeats(state, stagger, acting, ui) {
 
   reserveSeatRowSpace(state, view);
   scrollActingSeatIntoView(state, acting);
+  // After the scroll is ISSUED and not before: the row is where this render
+  // left it until the glide starts, and the listener repaints all the way
+  // along. Repainted every render because the row's LENGTH changes without
+  // anybody scrolling — a bot laying a meld can turn a row that fitted into one
+  // that does not, and no scroll event is fired for that.
+  paintSeatRowEdges();
 
   // Every seat is in the DOM now, so the open plate has a rect to hang off.
   placeOpenPlate();
+}
+
+/**
+ * WHICH WAY THE ROW STILL HAS SEATS IN (#133, round-5 item 53).
+ *
+ * #125 measured item 53 and found no clipping bug: every seat is reachable at
+ * 375px, and the "Minimize player cards" toggle shows all three at once. What
+ * the playtest could not see is that the row scrolls at all — at 375 the
+ * carousel is 683-741px of seats in a 332px port, so the second plate is cut at
+ * the edge and the third is not on screen. A cut edge is ambiguous: it reads as
+ * a felt that ends there just as easily as one that continues.
+ *
+ * So the edge that still has content is FADED rather than cut. Two classes, and
+ * the stylesheet owns what they look like — see .opponent-row--more-right.
+ *
+ * NOTHING ON A ROW THAT DOES NOT SCROLL, which is the whole discipline of it: a
+ * two-handed Cribbage or Thirteen table gets no mask, no extra paint layer, and
+ * no soft edge suggesting a fourth player somewhere off to the right. Same at
+ * either extreme — at scrollLeft 0 there is nothing to the left, so the left
+ * edge is hard again and the fade is a live answer rather than decoration.
+ *
+ * The 1px slack is the same rounding tolerance seatRowOverflows keeps: integer
+ * scrollWidth off fractional layout would otherwise leave a permanent fade on a
+ * row with nowhere to go.
+ */
+function paintSeatRowEdges() {
+  const row = el.opponentsTop;
+  const max = row.scrollWidth - row.clientWidth;
+  const scrolls = row.classList.contains('opponent-row--carousel') && max > 1;
+  row.classList.toggle('opponent-row--more-left', scrolls && row.scrollLeft > 1);
+  row.classList.toggle('opponent-row--more-right', scrolls && row.scrollLeft < max - 1);
+}
+
+/**
+ * The fade follows the finger. Passive because it never calls preventDefault
+ * and a non-passive listener on a scroller is a scroll the compositor has to
+ * wait for — this one only writes two class names.
+ */
+function watchSeatRowEdges() {
+  el.opponentsTop.addEventListener('scroll', paintSeatRowEdges, { passive: true });
+  paintSeatRowEdges();
 }
 
 /**
@@ -2097,6 +2194,11 @@ function watchSeatRowWidth() {
     // to — and the drag holds measured rects for nodes this would throw away.
     if (!state || !session || (drag && drag.isDragging())) return;
     const width = el.opponentsTop.clientWidth;
+    // BEFORE the width gate, and outside it. A row can be re-measured at the
+    // same width and a different LENGTH — the launcher's font scale, a meld
+    // laid down — and the edge fade is a question about the length. Two class
+    // writes off geometry the line below is reading anyway.
+    paintSeatRowEdges();
     if (width === lastWidth) return;
     lastWidth = width;
     renderSeats(state, false, actingSeatsOf(state), session.ui || buildUiModel(state, {
@@ -4431,6 +4533,7 @@ export function initTable({ onExit }) {
   // a width change costs two measurements, not a repaint of the table.
   watchHandWidth();
   watchSeatRowWidth();
+  watchSeatRowEdges();
   ladder.watch(liveState);
   gestures = watchHandGestures({
     hand: el.hand,

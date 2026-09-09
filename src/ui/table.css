@@ -565,6 +565,49 @@ body {
 .opponent-row--carousel::-webkit-scrollbar-thumb { background: var(--chip-border); }
 .opponent-row--carousel::-webkit-scrollbar-thumb:hover { background: var(--accent); }
 
+/* THE EDGE THAT STILL HAS SEATS BEHIND IT (#133, round-5 item 53).
+ *
+ * Not a clipping bug — #125 proved every seat is reachable — but a row whose
+ * content is cut dead at the felt's edge looks like a row that ENDS there. A
+ * soft edge is the oldest answer in the book and it costs no layout: the seats
+ * are where they were, the row is as long as it was, and the last 24px of the
+ * side you can still scroll towards is faded into the felt.
+ *
+ * ONE GRADIENT, TWO SWITCHED ENDS. Both stops are opaque by default, so the
+ * mask is a no-op until table.js says otherwise (paintSeatRowEdges) — which is
+ * why the mask is only declared on the rows wearing one of those classes and a
+ * two-handed table never gets a mask layer at all.
+ *
+ * `mask-image` and not two overlay pseudo-elements: ::before/::after inside a
+ * scrollport scroll WITH the content, so they would slide off the edge they
+ * were drawn for. A mask is applied to the element's painted result against its
+ * own border box, which stays put while the content moves under it.
+ *
+ * Nothing here clips the things that overflow this row on purpose. The mask is
+ * uniform in the block axis, so .seat--active's 2px lift and its glow — which
+ * live inside the block padding, inside the border box — are untouched; the
+ * open plate is not in this row at all (#seat-plate-layer); and the view toggle
+ * is positioned against #table, not against the row. No animation, nothing that
+ * repaints at rest: the fade changes only when the row is actually scrolled. */
+.opponent-row--more-left,
+.opponent-row--more-right {
+  --seat-fade: 24px;
+  --seat-fade-start: #000;
+  --seat-fade-end: #000;
+  -webkit-mask-image: linear-gradient(to right,
+    var(--seat-fade-start) 0,
+    #000 var(--seat-fade),
+    #000 calc(100% - var(--seat-fade)),
+    var(--seat-fade-end) 100%);
+  mask-image: linear-gradient(to right,
+    var(--seat-fade-start) 0,
+    #000 var(--seat-fade),
+    #000 calc(100% - var(--seat-fade)),
+    var(--seat-fade-end) 100%);
+}
+.opponent-row--more-left { --seat-fade-start: transparent; }
+.opponent-row--more-right { --seat-fade-end: transparent; }
+
 .opponent-row--carousel .seat {
   scroll-snap-align: center;
   /* A seat may not shrink to fit a row it is now allowed to overflow — that is
@@ -780,6 +823,57 @@ body {
   background: var(--chip-border);
   font-variant-numeric: tabular-nums;
 }
+
+/* ------------------------------------------------------------------ *
+ * ...AND THE WORD UNDER IT (#133, round-5 item 49)
+ * ------------------------------------------------------------------ *
+ *
+ * The shape above says a COUNT of cards apart from a SCORE, and that is as far
+ * as shape goes: a plate carrying a score, a hand, a bid, a trick count, bags
+ * and a meld is six lozenges, and "Bruno 0 12 150 —" was learned from position
+ * or not at all. The dash is the case that settles it — Pinochle draws one for
+ * "passed" and another for "has not declared a meld yet", and a dash with no
+ * word next to it is not a number that is missing, it is a plate with nothing
+ * on it.
+ *
+ * MEASURED BOTH WAYS BEFORE PICKING (see counterCaption in src/ui/table.js):
+ * under the number costs 29% of a seat's width and 1px of its height at 375px;
+ * beside it costs 50%, which at four seats is 200px more carousel to scroll
+ * through. Under, then.
+ *
+ * The badge becomes a column and keeps everything else it was — .seat__count's
+ * card shape, .seat__score's pill, .seat__count--aux's accent ink. The caption
+ * sits INSIDE that box rather than under it, so nothing is added to the head's
+ * flex row and the numbers stay in line with each other. */
+.seat__score,
+.seat__count,
+.seat__count--aux {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  /* Tight, because the pair has to read as one chip: at the plate's 0.7rem the
+     default 1.5 leading put a visible gap between a number and its own word. */
+  line-height: 1.15;
+}
+
+.seat__count-label {
+  font-size: 0.48rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  /* The same recessive treatment .my-seat__name wears, for the same reason:
+     the number is the thing being read and the word is what stops it being
+     ambiguous — it is not competing for the glance. */
+  opacity: 0.7;
+  white-space: nowrap;
+}
+
+/* NOT ON A FACE. A minimized seat has already given up its name and its fan;
+   the whole rung exists because there is no room, and a caption on a 35px
+   avatar's corner badge would be the first thing to make it not fit. The word
+   is one tap away — the head button's accessible name still says every number
+   in a sentence, and the plate opens the seat in full. */
+.seat--collapsed .seat__count-label { display: none; }
 
 /* ------------------------------------------------------------------ *
  * A counter that is a POSITION, not a quantity
