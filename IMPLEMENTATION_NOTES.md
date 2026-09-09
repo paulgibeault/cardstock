@@ -1364,6 +1364,141 @@ held now. Thirteen and Team Spades were checked the same way: Team Spades'
 status bar read "Rook is bidding…" behind the sheet before, and "Round over."
 after.
 
+## The pile you are answering, named (#122)
+
+### What was wrong
+
+Six findings from the round-5 playtest of Thirteen, and most of them are the
+same shape: the felt did not say what state you were reacting to.
+
+The centre of a Thirteen table is two spread piles. `pile` holds every card
+played in the current trick, in sequence, which is deliberate — it *is* the
+trick, and hiding the cards under the top one would delete public information —
+and `discard` holds the tricks already swept. Neither wore its own name once it
+held a card: `zoneBadge` replaced the label with a count the moment the pile
+stopped being empty. So the two stacks read as `6` and `28`, and the `6` was a
+count of the whole trick while the thing to be beaten was a pair. Measured on
+main at 1280px: badge `6`, accessible name "Pile, 6 cards.", against
+`combo = pair of 2s`.
+
+The rail was worse, because it moved. With nothing staged the thumb slot holds
+a blue **Pass** pill; `buildUiModel` set `action: null` for a selection the
+engine would refuse, so the instant a card that did not answer the standing
+combination was tapped, `#action-button` went `display: none` and `#hand-sort`
+appeared in the slot. Measured: Pass at x=890, "Deal order" at x=869 — a tap
+aimed at Pass reshuffles the hand. And the refused selection said nothing at
+all: no commit, no refusal, no Pass, the tray's own dashed outline unchanged
+and `#log` still carrying "Rook played a pair".
+
+Nothing ever announced a trick. `celebrateAction` takes the first describable
+event of a move; the pass that ends a trick emits `passed` and then
+`trickCleared`, so the banner said "Rook passed" while the lead quietly came
+back to you — and `describeEvent` returned null for a single, so a banner with
+nothing to replace it stayed put across several turns.
+
+The fan never opened. `fanStep` treated its natural 0.69 spacing as a ceiling,
+so five cards on a 1221px row sat in a 268px huddle with a third of every card
+buried, and a lifted card came to the front over the one strip its right-hand
+neighbour is read by (26px of 74px covered on the desktop; 32px of 46px at
+375px). The reverse badge was a permanent lie: it tested `state.direction < 0`,
+and Thirteen deals counter-clockwise by rule, so an emblem reading "play has
+reversed" sat in the top-right corner of every Thirteen table from the first
+card — overlapping the second seat plate at 375px, with an `aria-label` on a
+bare `<div>` that no role attaches to. Beside it, a seat's score pill and its
+cards-left pill were two identical grey lozenges ("Nell 12 1"), every card's
+accessible name said "worth 1", and the results panel led with Moves and Cards
+played while the scores that decided the match were a click away.
+
+### What changed
+
+**`zoneFocus`, a new presentation hook** (`src/templates/CONTRACT.md`). A pile
+can hold more than the thing you are answering, and only the rules know which
+part is still live. `climbing` answers it from `combo`, which already carries
+the standing combination's own card ids — the platform re-deriving that from
+the pile would be a second rules path. `src/ui/describe.js` asks it the way it
+already asks `activeMatch`; `src/ui/zoneRenderer.js` rings the live cards in the
+accent and fades the answered ones, which is what the **hint** was already
+doing and was the one moment the table explained itself (round-5 item 25 — that
+is now the default rather than something you have to ask for).
+
+**The pile's name is back on its badge, for every pack.** "A pile with cards in
+it introduces itself" went one step too far: it holds for a draw pile of
+eighty-six and not for a row of look-alike stacks. The badge is the name with
+the count under it (`Draw / 57`, `Played / 8`), a focused pile wears the
+combination instead (`Pile / Pair of As`), and the two badges whose count *is*
+their identity are untouched — a capacity pile still reads `3/4` and Wildfire's
+active suit is still the glyph drawn big with no name in front of it. Cribbage's
+"Starter"→"1" (#124) is the same seam and this is the generic half of it.
+
+**A refused commit keeps the thumb slot.** `buildUiModel` returns
+`{ label, disabled: true, refusal }` instead of null, so the button stays in
+place, switched off, with the engine's own sentence on its accessible name and
+its tooltip; the tray takes a warning edge and the sentence goes to `#log`, the
+live region this table already uses for the words that are not on the felt.
+`climbing`'s refusals are said with the combination's name now that they are
+shown — "Answer a pair of 2 with the same shape" was the kind and the SIZE and
+read as a pair of twos.
+
+**`describeEvent` may declare a `priority`.** The banner takes the highest
+rather than the first; ties fall to the first emitted, which is every other
+pack's behaviour unchanged. `trickCleared` is 2 and says "Everybody passed —
+the lead is yours" in the good tone when it comes back to you, and "Nell takes
+the trick and leads" when it does not. Singles say something now, which is what
+was leaving a three-turn-old pass standing over your own lead.
+
+**The fan opens, and steps aside.** `fanStep` clamps to `OPEN` (0.94 of a card)
+when the room is there rather than stopping at `natural`, and everything after
+a lifted card slides right by `--lift-gap` — the whole overlap, which is the
+only shift that actually uncovers a neighbour's rank corner. It is a transform,
+so no layout moves and the ladder in `tests/handZOrder.test.js` now holds two
+lists together: every state with a rung has a gap rule. `layoutHand` takes the
+gap out of the room the fan did NOT need rather than reserving it: a first cut
+reserved it up front and tightened the 375px hand from 14.5px per card to
+13.2px, which is a regression on the exact number the playtest complained
+about. A phone's 13-card fan is already closed to fit its row, so it opens by
+nothing and keeps its spacing; the desktop gets the whole gap.
+
+**The reverse badge compares against the pack's own `rules.direction`**, so it
+appears when play departs from what the pack deals and not merely when the
+number is negative. Thirteen has no badge at all now, which takes the false
+"restart" affordance and the seat-plate overlap with it, and Wildfire's still
+lands the instant a reverse card does. `role="img"` is what makes its name
+reach a screen reader. Cards-left is drawn as a card — square corners, a thin
+edge — beside the score's round pill, so the two numbers on a seat are told
+apart by shape at any size and in either theme. A card's accessible name says
+"1 penalty point if you are caught with it" where `winDirection` (#121) says
+points are the bill, and keeps "worth N" where they are the prize or where the
+template owns the ending. The game-over panel leads with the score that decided
+the match, labelled in the pack's direction.
+
+### How it was verified
+
+Two dev servers, this branch and its base, driven with the same playwright
+probe: every claim above is a measurement taken on both, and the probe throws
+rather than reporting an empty result. The pile, the rail, the banner, the fan
+at 13 and at 5 cards, and 375px are before/after screenshot pairs.
+
+No bomb arose in the playtest's ten rounds, so that path was planted rather
+than waited for: seat 1 leads a lone 2 into a four of a kind with an answered
+pair still behind it in the pile. `validateMove` is asked whether the chop is
+legal rather than told — the point is the presentation. The pile reads
+`Pile / Single 2` with the 2 ringed and the pair faded, staging the quad arms
+"Play 4", and after the chop it reads `Pile / Four 7s` with all four ringed.
+
+**Not done, and why.** The 375px felt still has ~377px of empty green between
+the seats and the pile and between the pile and the hand (was ~400px), and a
+13-card hand still gives each card a ~14px strip. Both are the same problem and
+the fix is the felt's shared vertical layout — moving room from the middle into
+the hand row, or wrapping the fan — which is a design decision about what that
+space is FOR, in a file two sibling issues are also editing. The `13` medallion
+on Thirteen's card backs still collides with a seat's card count; that is the
+pack's own card-back art (`ui.cardBack.emblem`), visible on every back in the
+game, and changing the deck's identity is a bigger call than this issue. The
+`seats=` URL parameter is **confirmed not wired to anything**: `packOverride`
+(`src/arcade/storage.js`) reads `pack` and nothing else, `src/main.js` passes
+only that to `goToTable`, and the seat count comes from the new-game sheet — no
+URL plumbing was added, per the issue.
+
 ## Next steps
 
 Multiplayer (Phase 8), per-pack UI polish (per-pack `theme.css`, custom
