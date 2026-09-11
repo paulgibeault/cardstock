@@ -153,6 +153,16 @@
            short things that stack perfectly well — so it reads as a column
            down the left and gives the piles the vertical space back. -->
       <div id="felt-middle">
+        <!-- THE SHOW, DRAWN (src/ui/showCard.js). One scoring step of cribbage's
+             show — the name, the five faces, the combinations and the total —
+             over the middle of the felt, where the banner band would be and
+             where the piles already are. Decorative, like #event-banner it
+             replaces: #log carries the same sentence. In here rather than in
+             #table so it can never reach the hand: the fan is the one thing a
+             player may still be looking at, and an overlay sized to the felt's
+             middle is one that cannot cover it at any viewport. -->
+        <div id="show-card" hidden></div>
+
         <!-- The contract ladder: every rung of a contract-rummy race, with each
              player's face on the one they are standing on. Rendered only for
              packs that declare `rules.contracts`; hidden for everything else. -->
