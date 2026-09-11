@@ -3685,8 +3685,9 @@ total, and reading it is one saccade per row; the number was left at 2.5s
 because the sheet is also a countdown you can watch and cancel with a tap, so
 being a little short of a full read costs a tap and not the information.
 
-Written at the one gesture that deals (`rememberDifficulty` in
-src/ui/lobby.js, which now carries both preferences), so backing out of the
+Written at the one gesture that deals (`rememberPreferences` in
+src/ui/lobby.js, which carries all three of them now — renamed from
+`rememberDifficulty` in #175, when the third arrived), so backing out of the
 new-game sheet changes nothing — the rule difficulty already had.
 
 ### The pace is a term in the schedule, not a branch in the renderer

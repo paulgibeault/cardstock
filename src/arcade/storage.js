@@ -152,6 +152,20 @@ export const SETTINGS_DEFAULTS = {
   // Cardstock's own preferences. Launcher-owned settings (theme, fontScale,
   // reducedMotion, handedness) are NOT mirrored here — they live in
   // Arcade.settings and copying them would immediately go stale.
+  // HOW FAST A CARD CROSSES THE FELT, in milliseconds: the pause before a bot
+  // commits (`thinkTimeMs`, src/players/roster.js) and the flight that follows
+  // it (`flightDurationMs`, src/ui/flight.js) are both scaled off this one
+  // number, because "slower bots" already means "longer to watch this".
+  //
+  // A NUMBER ON DISK, NAMED RUNGS IN THE UI (src/ui/speed.js). Milliseconds
+  // are not a question a player has an answer to, so nothing asks one: the
+  // new-game sheet's "Card speed" row and the status bar's own chip offer four
+  // rungs and write the number behind whichever is picked, and `speedForDelay`
+  // reads a stored value back to the rung it is nearest. Storing the number
+  // rather than the rung id is what keeps a hand-edited save — or one written
+  // before the rungs existed — playing at exactly the speed it says. `600` is
+  // one of the four treads, so the default changes nothing for anyone who
+  // never touches it.
   botDelayMs: 600,
   // How far ahead the house thinks: 'easy' | 'medium' | 'hard'
   // (src/engine/bot.js). A PREFERENCE, beside the bot speed, rather than

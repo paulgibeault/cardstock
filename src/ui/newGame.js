@@ -25,6 +25,7 @@
 
 import { SKILL_LEVELS, skillLevel } from './difficulty.js';
 import { PACE_LEVELS, paceLevel } from './pace.js';
+import { SPEED_LEVELS, speedLevel, speedForDelay } from './speed.js';
 import { loadSettings } from '../arcade/storage.js';
 
 const el = {
@@ -110,7 +111,9 @@ function offeredVariants(manifest) {
  *
  * @param manifest the pack's manifest (the lobby holds these; no deck needed).
  * @returns { variants: string[], seats: number, difficulty: string,
- *            pace: string } or null if the player backed out.
+ *            pace: string, speed: string } or null if the player backed out.
+ *            `speed` is a rung id (src/ui/speed.js), not the millisecond
+ *            value it stands for — the lobby does that translation.
  */
 export function askNewGame(manifest) {
   const players = manifest.players || {};
@@ -240,6 +243,45 @@ export function askNewGame(manifest) {
   el.body.appendChild(paceDesc);
   paintPace();
 
+  // THE FIFTH ROW, and the other half of pacing (#175). "Between hands" above
+  // is how long the table waits once a hand is over; this is how fast a card
+  // moves while one is being played, and the pace rungs deliberately cannot
+  // touch it — src/ui/roundBeat.js measures its hold AGAINST the flight, so no
+  // pace a player picks has ever slowed a card down.
+  //
+  // THE ANSWER IS A RUNG ID AND THE SETTING IS A NUMBER. This row hands back
+  // the id; src/ui/lobby.js maps it to `botDelayMs` on the gesture that deals,
+  // the same as everything else here. A preference, not an input to the deal:
+  // the chooser is never re-run by a replay, so the status bar may change it
+  // mid-match for free.
+  el.body.appendChild(heading('Card speed'));
+  let speed = speedForDelay(loadSettings().botDelayMs).id;
+  const speeds = document.createElement('div');
+  speeds.className = 'new-game__skills';
+  const speedDesc = document.createElement('span');
+  speedDesc.className = 'new-game__seat-count';
+  const paintSpeed = () => {
+    speedDesc.textContent = speedLevel(speed).description;
+    for (const btn of speeds.querySelectorAll('.new-game__speed')) {
+      btn.setAttribute('aria-pressed', String(btn.dataset.speed === speed));
+    }
+  };
+  for (const level of SPEED_LEVELS) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'new-game__skill new-game__speed';
+    btn.dataset.speed = level.id;
+    btn.textContent = level.label;
+    btn.addEventListener('click', () => {
+      speed = level.id;
+      paintSpeed();
+    });
+    speeds.appendChild(btn);
+  }
+  el.body.appendChild(speeds);
+  el.body.appendChild(speedDesc);
+  paintSpeed();
+
   el.overlay.hidden = false;
   el.deal.focus({ preventScroll: true });
 
@@ -250,6 +292,7 @@ export function askNewGame(manifest) {
       variants: [...boxes.entries()].filter(([, box]) => box.checked).map(([id]) => id),
       difficulty,
       pace,
+      speed,
     });
     el.cancel.onclick = () => close(null);
   });
