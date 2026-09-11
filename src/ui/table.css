@@ -3477,8 +3477,18 @@ body.is-dragging .card-face { cursor: grabbing; }
              banner-shake 0.5s ease-in-out 0.15s;
 }
 
+/* THE ENTRANCE MUST STAY INSIDE THE BAND THE PLACEMENT RESERVED (#149). The
+   first frame used to be `translate(-50%, -30%)`: a rise off the table, which
+   put the pill 0.125 of its own height BELOW where it comes to rest — 6px for
+   a two-line sentence and 8.5px for cribbage's longest, straight back over the
+   rank corner the measurement had just cleared. (The felt probe caught it on
+   three cribbage samples, grazing by 1.4-3.4px, after the placement itself was
+   clean on all five packs.) It grows in place instead: every frame of the
+   entrance is inside the resting rect, and the only travel left is the exit's
+   drift upward, into the gap under the seat row, which is chrome rather than a
+   card. `bannerBand`'s clearance covers the 1.05 overshoot and that drift. */
 @keyframes banner-in {
-  0% { opacity: 0; transform: translate(-50%, -30%) scale(0.85); }
+  0% { opacity: 0; transform: translate(-50%, -50%) scale(0.85); }
   12% { opacity: 1; transform: translate(-50%, -50%) scale(1.05); }
   18% { transform: translate(-50%, -50%) scale(1); }
   82% { opacity: 1; transform: translate(-50%, -50%) scale(1); }

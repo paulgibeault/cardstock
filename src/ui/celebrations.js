@@ -80,8 +80,12 @@ export function bannerBand(rects, height) {
     return { top: (ceiling + floor) / 2, fits: true };
   }
   const anchor = (middle ? middle.top : ceiling) + pad + half;
-  // Never off the top of the window: half a pill is not a sentence.
-  return { top: Math.max(half + 2, Math.min(anchor, floor - pad - half)), fits: false };
+  // Never off the top of the window: half a pill is not a sentence. The floor
+  // is half the pill plus the clearance rather than half plus a token 2px,
+  // because the exit frame of banner-in lifts the pill 0.115 of its own height
+  // as it fades, and a tight pill placed at 2px would take its first line off
+  // the top of the screen on the way out.
+  return { top: Math.max(half + pad, Math.min(anchor, floor - pad - half)), fits: false };
 }
 
 /**

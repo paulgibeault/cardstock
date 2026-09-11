@@ -140,6 +140,54 @@ test("a felt with no opponent row or no piles still gets a placement", () => {
  * Source gates: the placement is wired, and the hold is one number
  * ------------------------------------------------------------------ */
 
+test("the entrance animation stays inside the band the placement reserved", () => {
+  // A measured band is only worth having if the pill stays in it for every
+  // frame it is on screen, and for a while it did not: `banner-in` opened on
+  // `translate(-50%, -30%)`, a rise off the table that put the pill 0.125 of
+  // its own height BELOW its resting bottom — 6px for a two-line sentence, 8.5
+  // for cribbage's longest — and the felt probe caught three cribbage samples
+  // grazing a rank corner by 1.4-3.4px after the placement itself came back
+  // clean on all five packs.
+  //
+  // Read in units of the pill's own height, with --banner-top as the origin:
+  // `translate(-50%, ty)` puts the box at [ty, ty + 1] and `scale(s)` then
+  // works about that box's centre. Resting is ty = -0.5, s = 1 — the rect
+  // [-0.5, +0.5] that bannerBand actually placed.
+  //
+  // A little overshoot below that is fine and a translation downward is not.
+  // The 12% frame pops to scale(1.05), which reaches 0.025h under the resting
+  // bottom: 1.5px on the tallest pill the felt draws (68px, cribbage's hand
+  // score at 1280) against BANNER_CLEARANCE's 6px. The old 0% frame was a
+  // different animal — 0.125h, and it grew with the sentence.
+  const MAX_OVERSHOOT = 0.03;
+  const css = read("src/ui/table.css");
+  const frames = /@keyframes banner-in \{([\s\S]*?)\n\}/.exec(css);
+  assert.ok(frames, "no banner-in keyframes in src/ui/table.css");
+  const seen = [];
+  const re = /(\d+)% \{[^}]*?transform: translate\(-50%,\s*(-?[\d.]+)%\)\s*scale\(([\d.]+)\)/g;
+  for (let m; (m = re.exec(frames[1])); ) {
+    const [, at, yPct, scale] = m;
+    const ty = Number(yPct) / 100;
+    const s = Number(scale);
+    const centre = ty + 0.5;
+    seen.push({ at: Number(at), ty, top: centre - 0.5 * s, bottom: centre + 0.5 * s });
+  }
+  assert.ok(seen.length >= 4, `only ${seen.length} transform frames parsed out of banner-in`);
+  for (const f of seen) {
+    assert.ok(f.ty <= -0.5 + 1e-9,
+      `banner-in at ${f.at}% translates the pill to ${(f.ty * 100).toFixed(0)}%, below where it `
+      + "was placed — that is the rise-off-the-table entrance that put it back on the cards");
+    assert.ok(f.bottom <= 0.5 + MAX_OVERSHOOT + 1e-9,
+      `banner-in at ${f.at}% reaches ${f.bottom.toFixed(4)}h, past the resting 0.5h by more `
+      + `than the ${MAX_OVERSHOOT}h of pop the clearance can absorb`);
+  }
+  // Upward is allowed — the gap under the seat row is chrome, not a card — but
+  // only as far as bannerBand's clearance keeps free above a tight pill.
+  const highest = Math.min(...seen.map((f) => f.top));
+  assert.ok(highest >= -0.65,
+    `banner-in reaches ${highest.toFixed(4)}h above its resting top, more than the band keeps free`);
+});
+
 test("the stylesheet takes its position from the measurement, not from 34%", () => {
   const css = read("src/ui/table.css");
   const block = /\n#event-banner \{([^}]*)\}/.exec(css);
