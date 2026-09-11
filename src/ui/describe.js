@@ -321,6 +321,41 @@ export function zoneBadge(state, inst) {
   return { text: String(count), kind: 'count', name };
 }
 
+/**
+ * WHAT A HIDDEN PILE IS WORTH SAYING ON A SEAT PLATE — or nothing at all.
+ *
+ * A pile you cannot see through has no picture on a plate, only a chip of
+ * words, and that is the difference between this and `zoneBadge`. On the FELT
+ * an empty pile is a dashed rectangle with the word in it, and the word is the
+ * missing half of a thing you can plainly see is empty (#122). On a plate there
+ * is no rectangle: the chip IS the pile, so the word arrives on its own with
+ * nothing under it, and a Spades seat that had taken no tricks wore the bare
+ * word **Won** — which reads as a claim that they had won something (#148,
+ * round-6). Four of them, every hand, before a card was played.
+ *
+ * So: an empty hidden pile says nothing here, unless the TEMPLATE has an empty
+ * reading of its own to offer. `zoneReading` is asked first and asked
+ * unconditionally, which is the one behaviour change — `zoneBadge` shortcuts
+ * out at zero before it ever gets there — so a template that wants "no tricks
+ * yet" on the plate has somewhere to put it. None does today; every one of them
+ * returns null on an empty pile, so today the answer is the chip's absence.
+ *
+ * Returns `{ text }`, or null for "draw no chip". `held` is the pile's own
+ * points where it publishes them (`showsHeldValue`), passed in because working
+ * it out needs the scoring table and this module stays free of it.
+ */
+export function hiddenPileChip(state, inst, held = null) {
+  const reading = zoneReadingOf(state, inst);
+  const label = inst.def.label || inst.def.id;
+  const suffix = held ? ` · ${held}` : '';
+  if (reading?.badge) return { text: `${label} ${reading.badge}${suffix}` };
+  const badge = zoneBadge(state, inst);
+  // The bare name, and nothing to set beside it. Everything else about this
+  // pile is invisible by definition, so there is no chip to draw.
+  if (badge.kind === 'name') return held ? { text: `${label}${suffix}` } : null;
+  return { text: `${label} ${badge.text}${suffix}` };
+}
+
 /** The accessible name for a pile — the words the badge no longer shows. */
 export function zoneAriaLabel(state, inst) {
   const { title, lines, notes } = describeZone(state, inst);
