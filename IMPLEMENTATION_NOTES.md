@@ -2723,9 +2723,22 @@ round summary and the human's own strip. Fill is the signal and colour the
 reinforcement, so the row still says a number read without hue, and `aria` still
 says both numbers in one sentence with every circle `aria-hidden`. Past seven
 circles the row halves its circles and gaps rather than wrapping (a second line
-would lie to the seat row's fit ladder, which is measured): thirteen dense
-circles are 79px, inside the 88px a cribbage track already takes. `MAX_PIPS` is
-thirteen and is a real clamp, not an expectation.
+would lie to the seat row's fit ladder, which is measured): seven circles are
+69px at full size and thirteen are 86px dense, inside the 88px a cribbage track
+already takes. `MAX_PIPS` is thirteen and is a real clamp, not an expectation.
+
+**The faces rung keeps them full size, and that was the one real trade.** A
+375px Spades table reaches `faces` — three collapsed seats, each an avatar with
+a corner badge — and the first cut shrank the circles to 0.26rem there so the
+row would still fit. That fitted three seats into 127px and made the pips 4.2px
+dots nobody could count, which is the whole feature spent on a constraint the
+row does not have: the row SCROLLS when a rung runs out, by design and by its
+own note. So the circles keep their 7.4px and the seat pays for them — 65px for
+a bid of three against a bare 35px — and a real Spades row (three opponents
+sharing the thirteen tricks) is about 225px of a 332px row. Only a table where
+all three opponents overbid heavily runs past it, and then it scrolls. The card
+count, which hangs off the seat's corner, now rides the corner of the
+avatar-plus-pips plate rather than the avatar's own edge.
 
 **`openOnly`, the other half of `minimizedOnly`.** A drawn counter REPLACES the
 digits it says, so Spades' `Bid` and `Tricks` are `openOnly`: drawn on an open

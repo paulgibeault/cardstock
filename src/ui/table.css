@@ -1013,10 +1013,10 @@ body {
  * against a row where the shape has already said the number.
  *
  * DENSE PAST SEVEN. A bid of nine or ten is rare and legal, and thirteen
- * circles at the ordinary size is 95px of seat — wider than the name. Past
- * seven the row halves its circles and its gaps rather than wrapping (the seat
- * row's width is measured, and a second line would lie to the fit ladder) and
- * thirteen fit in 79px, inside the 88px a track already takes.
+ * circles at the ordinary size measures 130px of seat — wider than the name.
+ * Past seven the row halves its circles and its gaps rather than wrapping (the
+ * seat row's width is measured, and a second line would lie to the fit ladder)
+ * and thirteen fit in 86px, inside the 88px a track already takes.
  *
  * BATTERY (GAME_INTEGRATION §6d, cardstock#24): a pip fills with a one-shot
  * transition and then sits still. There is deliberately no @keyframes here, so
@@ -1082,13 +1082,28 @@ body {
   border-color: var(--danger-bg);
 }
 
-/* Faces-only rung: the seat IS the avatar, so the row it sits beside has no
-   width to spare. No shipped pack reaches this rung with a bid — Spades and
-   Pinochle both seat exactly four — but the tier classes are cumulative and a
-   row that got here must not be the one that discovers it. */
+/* Faces-only rung: the seat IS the avatar, and the pips sit beside it rather
+   than being pushed to the far end of a head that no longer has one.
+
+   LEGIBLE RATHER THAN GUARANTEED TO FIT, and the first cut had it the other way
+   round — 0.26rem circles, which fitted three seats into 127px and were 4.2px
+   dots nobody could count. That trades the only thing this rung has left to say
+   a bid with (the name, the score and the trick digits are all gone by here)
+   for a fit the row does not actually need: a bid of three is a 65px seat
+   against a bare 35px, so the three opponents of a four-handed Spades table
+   bidding a whole 13 tricks between them come to 235px of a 332px row. The
+   arithmetic only runs out where all three overbid hugely — three seats each
+   bidding thirteen is 406px — and then the row SCROLLS, which is exactly what
+   this rung's own note above says happens when the tiers run out. A scrollable
+   row of countable circles beats a fitted row of dots.
+
+   The knock-on, and it is wanted: `.seat__count` hangs off the SEAT's corner,
+   and the seat is no longer just the avatar — so the card count rides the
+   bottom-right of the avatar-plus-pips plate instead of the avatar's own edge.
+   That is the honest reading of a face that is now two things, and it stops the
+   count sitting on top of the last circle. */
 .opponent-row--faces .seat--collapsed .seat__pips {
-  gap: 0.07rem;
-  --pip-size: 0.26rem;
+  margin-left: 0.15rem;
 }
 
 /* ------------------------------------------------------------------ *
