@@ -28,7 +28,12 @@ import { loadPackFromDisk } from "../tools/pack-test.mjs";
 // speaks at a pack whose RULES reach the code that reads it. Hearts takes no
 // bid, so its ranking cannot possibly move when a contract weight is perturbed;
 // Team Spades is where those live (#105).
-const TABLES = [["milestones", 3], ["hearts", 4], ["wildfire", 3], ["team-spades", 4], ["thirteen", 4], ["pinochle", 4]];
+const TABLES = [["milestones", 3], ["hearts", 4], ["wildfire", 3], ["team-spades", 4], ["thirteen", 4], ["pinochle", 4],
+  // Stockpile joined the list when sequencing grew an evaluator and a weights
+  // bag of its own (#160). Its table is the one where the rival term is a fact
+  // rather than an inference — every seat's stock top is face up — so a weight
+  // that reads the opposition has somewhere to be exercised.
+  ["stockpile", 4]];
 
 async function dealt(packId, seats, seed) {
   const pack = await loadPackFromDisk(packId);

@@ -31,6 +31,55 @@ function cardPlayableOn(ctx, card, buildAddr) {
   return isWildCard(ctx, card) || Number(card.rank) === requiredRank(ctx, buildAddr);
 }
 
+/* ------------------------------------------------------------------ *
+ * What a bot can read off this table
+ * ------------------------------------------------------------------ *
+ *
+ * All of it is face up. A build pile's next rank is its height; a stock's top
+ * card is dealt face up (`visibility: 'top'`) and is the single most useful
+ * fact at the table, because it says the rank every other seat is waiting for;
+ * and the personal discard piles are `visibility: 'all'` — everybody may read
+ * every card in them, and only the top one is playable.
+ *
+ * Nothing below reads a hand but the asking seat's own, and nothing below reads
+ * a stock past its face-up top. See the note on `evaluateState`.
+ */
+
+/** The rank a build pile will be waiting for AFTER one more card lands on it. */
+function rankAfterPlay(ctx, buildAddr) {
+  const next = requiredRank(ctx, buildAddr) + 1;
+  // The twelfth card fills the pile and `zoneFull:build.*` sweeps it away on
+  // the spot, so what it wants next is the start of the count again.
+  return next > ctx.rules.buildRule.to ? ctx.rules.buildRule.from : next;
+}
+
+/**
+ * The rank on top of a seat's stock — the one card of it anybody may see.
+ *
+ * `null` when the pile is empty (the round is over) or when its top is a wild,
+ * which is not waiting for a rank at all: it plays on any pile, so there is no
+ * rank to set up and none to deny.
+ */
+function stockTopRank(ctx, seat) {
+  const top = ctx.topOf(ctx.zoneAddr('stock', seat));
+  if (top === undefined) return null;
+  const card = ctx.cardById(top);
+  if (isWildCard(ctx, card)) return null;
+  const rank = Number(card.rank);
+  return Number.isFinite(rank) ? rank : null;
+}
+
+/** Every rank somebody ELSE's stock is waiting for. */
+function rivalStockRanks(ctx, seat) {
+  const ranks = new Set();
+  for (let s = 0; s < ctx.seats; s++) {
+    if (s === seat) continue;
+    const rank = stockTopRank(ctx, s);
+    if (rank !== null) ranks.add(rank);
+  }
+  return ranks;
+}
+
 function topUpHand(ctx, seat) {
   const to = ctx.rules.handRefill?.to ?? 5;
   const handAddr = ctx.zoneAddr('hand', seat);
@@ -63,6 +112,143 @@ function applyDiscard(ctx, move) {
   ctx.setPhase('play');
   if (ctx.rules.handRefill?.atTurnStart) topUpHand(ctx, ctx.turn.seat);
 }
+
+/* ------------------------------------------------------------------ *
+ * Ranking one move (see `botHeuristic` at the foot of this file)
+ * ------------------------------------------------------------------ *
+ *
+ * THESE ARE AN ORDER, NOT A TUNING. They are not in `weights` because what
+ * they encode is a structure the bot must not be allowed to break: every play
+ * above every discard, a stock play above every other play, and adjustments
+ * small enough that they only ever settle ties inside a tier. A tuner handed
+ * these would eventually find a set where the bot declines to play, and a
+ * table of four seats that would all rather discard is a table that never
+ * finishes. The opinions that ARE opinions live in `WEIGHTS` below, where
+ * tools/tune.mjs can reach them.
+ *
+ * The arithmetic that has to hold: the worst play is 2 − 0.8 − 0.5 = 0.7 and
+ * the best discard is −1 + 1 = 0.
+ */
+const PASS_SCORE = -10;
+const PLAY_FROM = { stock: 6, discard: 3, hand: 2 };
+/** Leaving a pile on the rank an opponent's stock is waiting for. */
+const FEEDS_RIVAL_PLAY = 0.8;
+/** Leaving a pile on the rank MY stock is waiting for. */
+const SETS_UP_OWN_PLAY = 0.6;
+/** Spending a wild on a pile that was not going to be my stock's way out. */
+const SPENDS_WILD_PLAY = 0.5;
+const DISCARD_BASE = -1;
+/** Laid one rank below the card it covers: two plays stacked in playing order. */
+const DISCARD_SEQUENCE = 1;
+/** Laid on top of a card it has nothing to do with. */
+const DISCARD_BURIES = 1;
+/** Laid on its own rank, which kills the card underneath: a pile wants each rank once. */
+const DISCARD_DUPLICATE = 1.5;
+/** Enough that it loses to every natural discard, and is only ever forced. */
+const DISCARD_WILD = 5;
+
+function scorePlayMove(ctx, move) {
+  const { kind } = zoneKindAndSeat(move.from);
+  const wants = rankAfterPlay(ctx, move.to);
+  const mine = stockTopRank(ctx, move.actor);
+  let score = PLAY_FROM[kind] ?? PLAY_FROM.hand;
+  if (mine !== null && wants === mine) return score + SETS_UP_OWN_PLAY;
+  if (rivalStockRanks(ctx, move.actor).has(wants)) score -= FEEDS_RIVAL_PLAY;
+  // A wild is the one card that can play onto ANY pile, so it is how a stock
+  // top gets its pile when nothing natural will do it. Burning one to advance
+  // a pile toward nothing in particular is spending the key to open a door
+  // that was not locked.
+  if (kind !== 'stock' && isWildCard(ctx, ctx.cardById(move.cards[0]))) score -= SPENDS_WILD_PLAY;
+  return score;
+}
+
+function scoreDiscardMove(ctx, move) {
+  const card = ctx.cardById(move.cards[0]);
+  // NEVER THE WILD while anything natural is in hand. A discard pile is the
+  // one place a wild cannot be spent from until it comes back to the top, and
+  // it is the card that plays your stock onto any pile at all. When the hand
+  // is nothing but wilds every discard takes this and the penalty cancels,
+  // which is the only case where one of them is right.
+  if (isWildCard(ctx, card)) return DISCARD_BASE - DISCARD_WILD;
+
+  const topId = ctx.topOf(move.to);
+  // An empty pile costs nothing and buries nothing; it is only ever beaten by
+  // a pile this card continues.
+  if (topId === undefined) return DISCARD_BASE;
+
+  const under = Number(ctx.cardById(topId).rank);
+  const rank = Number(card.rank);
+  if (Number.isFinite(under) && Number.isFinite(rank)) {
+    if (rank === under - 1) return DISCARD_BASE + DISCARD_SEQUENCE;
+    if (rank === under) return DISCARD_BASE - DISCARD_DUPLICATE;
+  }
+  return DISCARD_BASE - DISCARD_BURIES;
+}
+
+/* ------------------------------------------------------------------ *
+ * What a position is worth (see `evaluateState` at the foot of this file)
+ * ------------------------------------------------------------------ *
+ *
+ * The scale is arbitrary and per-template — the lookahead only ever compares
+ * it against itself — but the RATIOS are the opinion. A card already off the
+ * stock beats a way to get one off it, which beats anything to do with the
+ * shape of a discard pile, because the stock is the only thing the game is
+ * won by.
+ */
+/** Every card still in the stock is a turn between here and winning. */
+const STOCK_CARD = 30;
+/**
+ * Every card of mine that is NOT yet on a build pile — hand and discard piles
+ * together — and the term that keeps this evaluator from talking a bot out of
+ * playing at all.
+ *
+ * A discard moves a card from the hand onto a pile of my own; a build play
+ * takes it off the table. This is the only term that tells those two apart,
+ * and the story of the number is the story of the two ways it goes wrong.
+ * WITHOUT IT every candidate a turn offers leaves the same position bar the
+ * pile shape, so the rival and stock-out terms make a play look positively
+ * expensive and the seat ends its turn rather than spending it: at four seats,
+ * thirty of fifty games stalled at the move cap against `easy`'s one in a
+ * hundred, 2547 moves a game against 446. AT THREE it was still 8 in 60,
+ * because the other terms can reach 9.5 between them and a play that loses a
+ * held wild, gives up a pile that was going to take my stock and hands a rank
+ * to somebody else is still, in this game, a play worth making — there is
+ * nothing else to do with a hand card, and a hand that empties is a hand of
+ * five fresh ones.
+ *
+ * SO IT DOMINATES THE REST, deliberately and by arithmetic: 12 against the
+ * 9.5 the worst case of STOCK_OUT + FEEDS_RIVAL + WILD_IN_HAND can cost, so
+ * every play outranks every discard and the other terms decide WHICH play and
+ * WHICH discard — which is the whole of what this evaluator is for, and the
+ * same structure `botHeuristic` above is built on. Below STOCK_CARD by a wide
+ * margin, because a card off the stock is the game and a card off the hand is
+ * only tidying.
+ */
+const HELD_CARD = 12;
+/** A build pile that would take my stock's top card this moment. */
+const STOCK_OUT = 4;
+/** A held card one rank below my stock top: it builds the pile I need. */
+const BRIDGE_WORTH = 2;
+/** A held wild: a stock play on whichever pile I like, whenever I like. */
+const WILD_IN_HAND = 3;
+/** An empty discard pile is somewhere to put anything. */
+const OPEN_PILE = 1;
+/** A discard pile whose top card is one rank below the card under it. */
+const SEQUENCE_WORTH = 1.5;
+/** A build pile left on a rank an opponent's stock is waiting for. */
+const FEEDS_RIVAL = 2.5;
+/** How much the nearest opponent's stock discounts your own position. */
+const RIVAL_SHARE = 9;
+
+/**
+ * The eight numbers above, gathered, so a caller can hand `evaluateState` a
+ * different set (src/templates/CONTRACT.md, `weights`). The constants keep
+ * their comments; this is the shipped value of each, frozen.
+ */
+export const WEIGHTS = Object.freeze({
+  STOCK_CARD, HELD_CARD, STOCK_OUT, BRIDGE_WORTH, WILD_IN_HAND,
+  OPEN_PILE, SEQUENCE_WORTH, FEEDS_RIVAL, RIVAL_SHARE,
+});
 
 const sequencing = {
   id: 'sequencing',
@@ -280,16 +466,114 @@ const sequencing = {
     ];
   },
 
+  /**
+   * WHICH MOVE, AND — the half this never used to answer — ONTO WHICH PILE.
+   *
+   * The whole bot was five flat numbers: pass −2, discard −1, stock 3, discard
+   * pile 2, hand 1. Every discard scored the same, so the first card in hand
+   * order went onto pile 1 whatever it was, wilds included; every build play
+   * scored the same, so the pile was whichever the enumerator offered first.
+   * That is how a seat ends up laying the eleven that brings a pile to exactly
+   * the twelve sitting face up on the human's stock.
+   *
+   * THE ORDER IS STILL AN ORDER, and deliberately: every play outranks every
+   * discard, so a turn still spends itself before it ends. What is new is the
+   * tie-breaking WITHIN each tier, and the tiers are spaced (6 / 3 / 2 against
+   * adjustments that never total 2) so a tie-break can never promote a hand
+   * play over a stock play — the stock is the race, and no amount of reading
+   * the table is worth not running it.
+   */
   botHeuristic(ctx, move) {
-    if (move.type === 'pass') return -2;
-    if (move.type === 'discard') return -1;
-    // Emptying the stock pile is the win condition — prioritize stock plays, then
-    // clearing discard piles (frees them up), then hand plays.
-    const { kind } = zoneKindAndSeat(move.from);
-    if (kind === 'stock') return 3;
-    if (kind === 'discard') return 2;
-    return 1;
+    if (move.type === 'pass') return PASS_SCORE;
+    if (move.type === 'discard') return scoreDiscardMove(ctx, move);
+    return scorePlayMove(ctx, move);
   },
+
+  /**
+   * HOW GOOD THIS POSITION IS FOR `seat` — the lookahead's scorer
+   * (src/engine/bot.js), higher is better. There was none at all before, which
+   * is why `medium` played exactly as `easy` did.
+   *
+   * THE RACE IS THE STOCK and everything else is how fast you can run it: how
+   * many build piles will take your stock's top card right now, what you are
+   * holding that could bring one to it, and what your four discard piles look
+   * like — an empty pile is somewhere to put anything, and a pile whose top
+   * card is one rank BELOW the card under it is two plays stacked in the order
+   * you will want them.
+   *
+   * IT DELIBERATELY DOES NOT READ anybody's hand but this seat's, nor any stock
+   * below its face-up top card, nor the draw pile. Everything it does read is
+   * on the table face up for all four seats, which is what makes the rival term
+   * honest: the ranks the opponents are waiting for are printed on their stocks.
+   *
+   * The one-ply search will not use this on a turn where a stock play is legal
+   * — playing off the stock turns the next stock card face up, which is a card
+   * this seat could not see beforehand, and `src/engine/bot.js` refuses to
+   * judge a move whose fork reveals one. That is the right answer twice over:
+   * the stock play is the move anyway, and the turns this hook is left to
+   * decide are exactly the ones that were being decided by hand order.
+   */
+  evaluateState(ctx, seat, w = WEIGHTS) {
+    let score = -ctx.countIn(ctx.zoneAddr('stock', seat)) * w.STOCK_CARD;
+
+    const mine = stockTopRank(ctx, seat);
+    const rivals = rivalStockRanks(ctx, seat);
+    for (let n = 1; n <= ctx.rules.buildPiles; n++) {
+      const need = requiredRank(ctx, `build.${n}`);
+      if (mine !== null && need === mine) score += w.STOCK_OUT;
+      // A pile left sitting on the rank somebody's stock is waiting for is a
+      // turn handed to them, and it is the same fact from either side of the
+      // table — which is what makes this seat-symmetric.
+      if (rivals.has(need)) score -= w.FEEDS_RIVAL;
+    }
+
+    const hand = ctx.cardIdsIn(ctx.zoneAddr('hand', seat));
+    score -= hand.length * w.HELD_CARD;
+    for (const id of hand) {
+      const card = ctx.cardById(id);
+      if (isWildCard(ctx, card)) score += w.WILD_IN_HAND;
+      else if (mine !== null && Number(card.rank) === mine - 1) score += w.BRIDGE_WORTH;
+    }
+
+    for (let n = 1; n <= ctx.rules.discardPiles; n++) {
+      const ids = ctx.cardIdsIn(`discard.${n}.${seat}`);
+      score -= ids.length * w.HELD_CARD;
+      if (ids.length === 0) { score += w.OPEN_PILE; continue; }
+      if (ids.length < 2) continue;
+      const top = Number(ctx.cardById(ids[ids.length - 1]).rank);
+      const under = Number(ctx.cardById(ids[ids.length - 2]).rank);
+      if (Number.isFinite(top) && Number.isFinite(under) && top === under - 1) score += w.SEQUENCE_WORTH;
+    }
+
+    let rivalStock = Infinity;
+    for (let s = 0; s < ctx.seats; s++) {
+      if (s === seat) continue;
+      rivalStock = Math.min(rivalStock, ctx.countIn(ctx.zoneAddr('stock', s)));
+    }
+    return Number.isFinite(rivalStock) ? score + rivalStock * w.RIVAL_SHARE : score;
+  },
+
+  /**
+   * HOW FAR ALONG THE MATCH A SEAT IS — and here the match is one race, so it
+   * is the stock and nothing else.
+   *
+   * Without this hook `src/engine/bot.js` falls back to the accumulated score,
+   * and Stockpile's manifest names no scoring at all: every rollout of every
+   * candidate came back worth exactly zero, the chooser saw no spread, and
+   * `hard` dropped to one ply — which, with no `evaluateState` either, was
+   * enumeration order. A whole difficulty tier that did nothing.
+   *
+   * Differenced across the round by `terminalValue`, so what a rollout is
+   * graded on is how many cards came off this seat's stock against how many
+   * came off everyone else's, and a rollout that ENDS is a seat at zero. Public
+   * to the last digit: a stock's height is a thing you can see across a table.
+   */
+  matchStanding(ctx, seat) {
+    return -ctx.countIn(ctx.zoneAddr('stock', seat));
+  },
+
+  /** The evaluator's numbers, for a caller that wants to play with different ones. */
+  weights: WEIGHTS,
 };
 
 export default sequencing;
