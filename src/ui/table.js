@@ -47,6 +47,7 @@ import { forkState } from '../engine/fork.js';
 import { rehydrateMatch, packVersionChanged } from '../engine/replay.js';
 import { baseId } from '../engine/selectors.js';
 import { handValue } from '../engine/scoring.js';
+import { rankLadderOf } from '../engine/cards.js';
 import { buildSeating } from '../players/roster.js';
 import { sidesOf, sideScores, sideScoreOf, hasSides } from '../engine/sides.js';
 import {
@@ -136,17 +137,29 @@ const isMySeat = (seat) => me.holds(seat);
 // of spelling it as a bare literal in the two places that still need one.
 const SOLO_HUMAN_SEAT = 0;
 
-// The table's own default when nothing asks for anything else — a deep link,
-// a resumed match with its own seat count, a pack whose minimum is higher.
-// The new-game sheet (src/ui/newGame.js) is what usually decides this now.
+// The last resort when nothing asks for anything else AND the pack declines to
+// say — a manifest with no `players.best`. The new-game sheet
+// (src/ui/newGame.js) is what usually decides this, and the pack's own
+// recommendation is what decides it when nothing else does.
 const SEAT_COUNT = 3;
 
-/** Clamp a requested seat count to what the pack says it can seat. */
+/**
+ * Clamp a requested seat count to what the pack says it can seat.
+ *
+ * NO REQUEST MEANS THE PACK'S OWN RECOMMENDATION (#156). This used to fall
+ * through to a flat 3, which is the seat count a deep link (`?pack=thirteen`)
+ * and a resume-with-no-saved-setup got — so the table the playtester opened
+ * from a link was a three-handed Thirteen while the manifest's `players.best`
+ * said four, and the new-game sheet preselected four (newGame.js reads `best`
+ * for exactly this). Two surfaces answering the same question differently is
+ * how "the deal is wrong" reports arrive against a pack that is right at the
+ * table it was designed for.
+ */
 function seatsFor(pack, requested) {
   const players = pack.manifest.players || {};
   const min = players.min ?? 2;
   const max = players.max ?? 8;
-  const want = Number.isFinite(requested) ? requested : SEAT_COUNT;
+  const want = Number.isFinite(requested) ? requested : (players.best ?? SEAT_COUNT);
   return Math.max(min, Math.min(max, want));
 }
 
@@ -2177,7 +2190,7 @@ function renderHand(state, ui, stagger, draggable) {
   const engineHand = state.zones.cards(handAddr);
   // The engine's order is dealing order and stays that way; what the player
   // sees is their own arrangement (src/ui/handOrder.js).
-  session.displayedHand = orderHand(engineHand, (id) => cardById(state, id), session.handPrefs.mode, session.handPrefs.order);
+  session.displayedHand = orderHand(engineHand, (id) => cardById(state, id), session.handPrefs.mode, session.handPrefs.order, rankLadderOf(state.pack));
   const committedPass = committedSelectionOf(state, mySeat());
 
   // Gathered cards are drawn in the tray instead, so the fan holds only what

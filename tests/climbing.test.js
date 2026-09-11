@@ -159,7 +159,11 @@ test("the enumeration is bounded by the hand's SHAPE, not by its subsets", async
  * ------------------------------------------------------------------ */
 
 test("a seat that has passed is offered nothing for the rest of the trick", async () => {
-  const state = await dealt(4, "passed");
+  // `[]` rather than nothing: Thirteen ships `pass-stays-in` on by default
+  // (#158), so a load with no variant list is the WEAK rule now and this test
+  // would have asserted it while claiming to assert the strong one. The empty
+  // list is the plain rule set, and the weak rule gets its own test below.
+  const state = await dealt(4, "passed", []);
   const leader = state.turn.seat;
   applyMove(state, chooseBotMove(state, leader));
   const answerer = state.turn.seat;
@@ -191,6 +195,49 @@ test("a seat that has passed is offered nothing for the rest of the trick", asyn
   } finally {
     state.turn.seat = wasTurn;
   }
+});
+
+test("pass-stays-in: a passed seat is asked again when the play comes back round", async () => {
+  // The mirror of the test above, and the reason the exclusion had to be a
+  // rule rather than a constant: `passIsFinal: false` was implemented and
+  // unreachable, because no pack offered it (#158).
+  const state = await dealt(4, "weak-pass", ["pass-stays-in"]);
+  const leader = state.turn.seat;
+  applyMove(state, chooseBotMove(state, leader));
+  const answerer = state.turn.seat;
+  assert.notStrictEqual(answerer, leader, "the turn did not move off the leader");
+  applyMove(state, { actor: answerer, type: "pass" });
+  assert.ok(state.vars.passed.includes(answerer), "the pass was not recorded");
+
+  // Forced back onto them for the same reason the strong-rule test gives: an
+  // off-turn seat is refused with `turn` whatever the pass rule says.
+  const hand = state.zones.cards(handAddress(answerer));
+  const wasTurn = state.turn.seat;
+  state.turn.seat = answerer;
+  try {
+    assert.ok(enumerateLegalMoves(state, answerer).length,
+      "a seat that passed under the weak rule is still being offered nothing");
+    assert.deepStrictEqual(acting(state), [answerer],
+      "a seat that passed under the weak rule is not being scheduled");
+    assert.notStrictEqual(
+      validateMove(state, { actor: answerer, type: "playCard", cards: [hand[0]] }).rule, "passed",
+      "the weak rule still refuses a passed seat's play as passed");
+    assert.ok(validateMove(state, { actor: answerer, type: "pass" }).legal,
+      "a seat that passed may not pass again under the weak rule");
+  } finally {
+    state.turn.seat = wasTurn;
+  }
+
+  // AND THE TRICK STILL ENDS. A rule that lets seats re-enter for ever is a
+  // stall, not a house rule: `advance` stops at the seat holding the standing
+  // combination, so one lap of the table is all a trick can take.
+  let steps = 0;
+  while (!state.gameOver && steps++ < 20000) {
+    const seats = acting(state);
+    assert.ok(seats.length, `the table stopped on round ${state.roundNumber} with nobody able to act`);
+    applyMove(state, chooseBotMove(state, seats[0]));
+  }
+  assert.ok(state.gameOver, `the match never ended (${steps} moves, round ${state.roundNumber})`);
 });
 
 test("the felt's turn token and the bot scheduler never disagree", async () => {
@@ -533,9 +580,175 @@ test("no-ending-on-two: the bot is never offered the move the rule takes away", 
  * Deal to game over, which is what earned the registry entry
  * ------------------------------------------------------------------ */
 
+/** The one card at the bottom of the pack's total order among those DEALT. */
+function lowestInPlay(state) {
+  const ladder = rankLadderOf(state.pack);
+  let lowest = null;
+  let at = Infinity;
+  for (let seat = 0; seat < state.seats; seat++) {
+    for (const id of state.zones.cards(handAddress(seat))) {
+      const order = cardOrder(state.pack.cardsById.get(id), ladder);
+      if (order < at) {
+        at = order;
+        lowest = id;
+      }
+    }
+  }
+  return lowest;
+}
+
+test("the lowest card IN PLAY leads hand one at every seat count the pack offers", async () => {
+  // THE BUG THIS PINS (#156). `firstLead.card` was the literal `spades-3`, and
+  // Thirteen deals a flat thirteen with the remainder out of play (D-11), so
+  // short-handed the 3♠ is frequently not dealt at all — 52% of two-seat deals
+  // and 26% of three-seat ones, measured on this sweep. Every one of those fell
+  // through to `ctx.openingSeat()`, which on hand one is seat 0, which is the
+  // human: the player was handed the opening lead of a game whose first rule is
+  // that the lowest card leads.
+  //
+  // A hundred deals per seat count at four counts is 400, and the bar is 100%:
+  // this is not a statistical claim, it is the rule.
+  const missing = { 2: 0, 3: 0, 4: 0 };
+  for (const seats of [2, 3, 4]) {
+    for (let game = 0; game < 100; game++) {
+      const state = await dealt(seats, `lowest:${seats}:${game}`);
+      const lowest = lowestInPlay(state);
+      const holder = [...Array(seats).keys()]
+        .find((s) => state.zones.cards(handAddress(s)).includes(lowest));
+      assert.strictEqual(state.turn.seat, holder,
+        `${seats} seats, deal ${game}: the lead went to ${state.turn.seat}, `
+        + `not to ${holder} who holds ${lowest}`);
+      assert.strictEqual(state.playerVars[holder].__mustInclude, lowest,
+        `${seats} seats, deal ${game}: the opening lead does not owe ${lowest}`);
+      const spare = state.zones.cards(handAddress(holder)).filter((id) => id !== lowest);
+      assert.strictEqual(
+        validateMove(state, { actor: holder, type: "playCard", cards: [spare[0]] }).rule,
+        "first-lead",
+        `${seats} seats, deal ${game}: the opening lead was allowed without ${lowest}`);
+      if (![...Array(seats).keys()]
+        .some((s) => state.zones.cards(handAddress(s)).includes("spades-3"))) missing[seats] += 1;
+    }
+  }
+  // AN EMPTY PROBE IS NOT A PASS. If the deal stopped leaving the 3♠ out of
+  // play the sweep above would be checking nothing that the old code got wrong,
+  // so the condition the bug needed is asserted to have occurred.
+  assert.ok(missing[2] > 0 && missing[3] > 0,
+    `the 3 of spades was in play in every short-handed deal (2: ${missing[2]}, 3: ${missing[3]}), `
+    + "so this sweep never reached the case the rule exists for");
+  assert.strictEqual(missing[4], 0, "a four-seat deal left the 3 of spades out of play");
+});
+
+/**
+ * Deal, then throw the deal away and stack `hands` — the idiom the budget test
+ * above uses, lifted so the exclusion tests can share it. Everything the
+ * template reads about the trick is cleared, so the stacked seat is on lead.
+ */
+function stackHands(state, hands) {
+  for (let seat = 0; seat < state.seats; seat++) {
+    const addr = handAddress(seat);
+    state.zones.get(addr).cards.length = 0;
+    for (const id of hands[seat] || []) {
+      state.zones.get(addr).cards.push(id);
+      state.cardLocation.set(id, addr);
+    }
+    state.playerVars[seat].__mustInclude = null;
+  }
+  state.turn.seat = 0;
+  state.vars.combo = null;
+  state.vars.passed = [];
+  state.vars.lastPlayer = null;
+  state.vars.leader = 0;
+  return state;
+}
+
+async function stacked(hands, variants) {
+  const pack = await loadPackFromDisk(PACK, variants);
+  const state = createState({ pack, seats: 4, seed: "stacked" });
+  pack.template.setup(makeCtx(state));
+  return stackHands(state, hands);
+}
+
+test("two-tops-runs: a 2 ends a run, and still has no part in a strip", async () => {
+  // THE SPLIT THE VARIANT NEEDED (#158). One `runExcludes` governed runs AND
+  // consecutive pairs, so buying `Q-K-A-2` by dropping the exclusion would have
+  // silently sold `2-2 A-A K-K` — the highest pair in the game inside a
+  // bomb-eligible strip, which nobody at any table plays.
+  const hands = [
+    ["spades-Q", "spades-K", "spades-A", "spades-2", "clubs-2", "clubs-A", "clubs-K", "clubs-Q"],
+    ["diamonds-4"], ["diamonds-5"], ["diamonds-6"],
+  ];
+  const run = ["spades-K", "spades-A", "spades-2"];
+  const strip = ["spades-2", "clubs-2", "spades-A", "clubs-A", "spades-K", "clubs-K"];
+  const asStrip = ["spades-A", "clubs-A", "spades-K", "clubs-K", "spades-Q", "clubs-Q"];
+
+  const plain = await stacked(hands, []);
+  assert.strictEqual(validateMove(plain, { actor: 0, type: "playCard", cards: run }).rule,
+    "not-a-combination", "K-A-2 is a run with the house rule OFF");
+
+  const state = await stacked(hands, ["two-tops-runs"]);
+  assert.ok(validateMove(state, { actor: 0, type: "playCard", cards: run }).legal,
+    "K-A-2 is still refused with the house rule on");
+  assert.strictEqual(validateMove(state, { actor: 0, type: "playCard", cards: strip }).rule,
+    "not-a-combination", "2-2 A-A K-K became a strip — the exclusion did not split by shape");
+  assert.ok(validateMove(state, { actor: 0, type: "playCard", cards: asStrip }).legal,
+    "the house rule broke ordinary consecutive pairs");
+
+  // AND THE BOT SEES IT. The enumerator is what a bot picks from, so a run the
+  // rule allows and `candidateSets` does not offer is a rule only a human has.
+  const offered = enumerateLegalMoves(state, 0)
+    .filter((m) => m.cards?.includes("spades-2") && m.cards.length >= 3);
+  assert.ok(offered.length,
+    "the enumerator offered no run ending on the 2, so the bot cannot play the house rule");
+  assert.ok(!enumerateLegalMoves(state, 0).some((m) => m.cards?.length === 6
+    && m.cards.includes("clubs-2") && m.cards.includes("spades-2")),
+    "the enumerator offered 2-2 A-A K-K as a strip");
+});
+
+test("two-tops-runs: the dragon is still 3-to-A, not the whole hand", async () => {
+  // THE SIDE EFFECT THAT WOULD HAVE GONE UNNOTICED. Tới trắng's dragon is "one
+  // card of every rank a sequence may contain". Read off `runExcludes` alone it
+  // becomes 3-to-2 the moment the 2 is let into a run — thirteen ranks, which
+  // is the whole hand, which is a shape rare enough that the instant win would
+  // simply have stopped happening while the rules page went on offering it.
+  // Seeded: `dragon:119` deals seat 2 one card of every rank 3 through A.
+  const plain = await dealt(4, "dragon:119", ["instant-wins"]);
+  assert.deepStrictEqual(plain.vars.instantWin, { seat: 2, shape: "a dragon" },
+    "the seeded deal is no longer a dragon — find another seed rather than dropping the test");
+  const both = await dealt(4, "dragon:119", ["instant-wins", "two-tops-runs"]);
+  assert.deepStrictEqual(both.vars.instantWin, plain.vars.instantWin,
+    "letting a 2 end a run moved the dragon");
+});
+
+test("the deal walks the table in the direction of play", async () => {
+  // `nextSeat(seat, dir)` was being handed a STEP COUNT as its direction
+  // (`nextSeat(openingSeat(), n)`), which visits every seat exactly once and so
+  // dealt a perfectly valid hand — clockwise, at a counter-clockwise table
+  // (#156). Nothing downstream noticed, because every seat still got thirteen
+  // cards. The mirror is what makes it visible: the same shuffle dealt the
+  // other way round must land seat s's hand on seat −s.
+  const ccw = await dealt(4, "deal-direction");
+  const pack = await loadPackFromDisk(PACK);
+  pack.rules = { ...pack.rules, direction: "clockwise" };
+  const cw = createState({ pack, seats: 4, seed: "deal-direction" });
+  pack.template.setup(makeCtx(cw));
+
+  assert.strictEqual(ccw.direction, -1, "the counter-clockwise table is not counter-clockwise");
+  assert.strictEqual(cw.direction, 1, "the clockwise table is not clockwise");
+  for (let seat = 0; seat < 4; seat++) {
+    assert.deepStrictEqual(
+      ccw.zones.cards(handAddress(seat)), cw.zones.cards(handAddress((4 - seat) % 4)),
+      `seat ${seat}'s counter-clockwise hand is not seat ${(4 - seat) % 4}'s clockwise one, `
+      + "so the deal is ignoring state.direction");
+  }
+});
+
 test("the 3 of spades leads hand one, and the seat that goes out leads hand two", async () => {
   const state = await dealt(4, "leads");
   const holder = [0, 1, 2, 3].find((s) => state.zones.cards(handAddress(s)).includes("spades-3"));
+  // At a FULL table the lowest card in play is the 3♠, so the general rule and
+  // the sentence everybody describes the game with are the same sentence.
+  assert.strictEqual(lowestInPlay(state), "spades-3",
+    "a four-seat deal's lowest card in play is not the 3 of spades");
   assert.strictEqual(state.turn.seat, holder, "hand one did not open on the 3 of spades");
   assert.strictEqual(state.playerVars[holder].__mustInclude, "spades-3",
     "the requirement is not on the seat holding the card");
