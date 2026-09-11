@@ -331,19 +331,27 @@ function perilOf(ctx) {
   // per-call sweep would recompute once per candidate bid.
   const suits = new Set();
   let topRank = 0;
-  // And the priciest card in the deck, on the same sweep. `botHeuristic` needs
-  // it to know how wide its own ranking is — see `trickBand`.
+  // And the priciest and the cheapest card in the deck, on the same sweep.
+  // `botHeuristic` needs both to know how wide its own ranking is — see
+  // `trickBand`. `lowValue` floors at zero because a deck with no values at all
+  // must give the same answer as one whose values are all zero, and because
+  // what the band has to clear is the SPREAD: a pack with a card worth −10
+  // (Hearts' `jack-of-diamonds` variant patches exactly that) makes that card
+  // the most attractive in the deck by `-rank - value`, ten clear of the top,
+  // and a band that did not count the ten would not outweigh it.
   let topValue = 0;
+  let lowValue = 0;
   for (const card of ctx.pack.cardsById.values()) {
     const rank = rankOrder(card, ladder);
     if (rank > topRank) topRank = rank;
     const value = cardValue(card, scoring);
     if (value > topValue) topValue = value;
+    if (value < lowValue) lowValue = value;
     if (card.suit !== undefined && card.suit !== null) suits.add(card.suit);
     if (!card.suit || value <= 0) continue;
     if (rank > (peril.get(card.suit) ?? -Infinity)) peril.set(card.suit, rank);
   }
-  cached = { peril, topRank, topValue, suits };
+  cached = { peril, topRank, topValue, lowValue, suits };
   packPeril.set(ctx.pack, cached);
   return cached;
 }
@@ -1575,10 +1583,18 @@ function evaluateContract(ctx, seat, w = WEIGHTS) {
  * card that wins" fall out rather than being written as a second rule.
  */
 
-/** One clear of the widest the `-rank - value` ranking below can be. */
+/**
+ * One clear of the widest the `-rank - value` ranking below can be.
+ *
+ * The SPREAD, not the top: the cheapest card the deck can offer is
+ * `-topRank - topValue` and the dearest is `-0 - lowValue`, so a negative card
+ * value widens the ranking at the attractive end and the band has to cover it
+ * (see `perilOf`). The lowest rank is taken as zero rather than swept for,
+ * because `rankOrder` is an index into the pack's own ladder and starts there.
+ */
 function trickBand(ctx) {
-  const { topRank, topValue } = perilOf(ctx);
-  return topRank + topValue + 1;
+  const { topRank, topValue, lowValue } = perilOf(ctx);
+  return topRank + topValue - lowValue + 1;
 }
 
 /**

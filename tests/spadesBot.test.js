@@ -173,6 +173,52 @@ test("never overtake your partner, even when the overtake is the cheap card", as
     "the bot took the trick off its own partner to save a card");
 });
 
+/**
+ * A CARD THE DECK PAYS YOU TO PLAY, which is what makes the class step a SPREAD
+ * and not a ceiling.
+ *
+ * `trickBand` has to outweigh the widest two cards can be apart by `-rank -
+ * value`, and a NEGATIVE card value widens that at the attractive end: a card
+ * worth −20 scores twenty above where its rank puts it. Hearts patches exactly
+ * this in a shipped variant (`jack-of-diamonds`, `scoring.cardValues.diamonds-J
+ * = -10`), and Hearts is safe only because it has no partner to duck under —
+ * the first partnership pack to price a card as a bonus would have had the
+ * charge quietly fail to outweigh it, and the sort would have inverted without
+ * anything going red.
+ *
+ * Twenty for the ace and thirteen for the jack are chosen so the OLD band
+ * (`topRank + topValue + 1` = 26) is not enough and the spread (46) is: the ace
+ * charged 26 scores −18, above the jack's −22, and charged 46 scores −38, below
+ * it.
+ */
+const BONUS_ACE_MANIFEST = {
+  ...PARTNERS_MANIFEST,
+  id: "fixture-bonus-ace",
+  name: "Partners, with an ace the deck pays you to play",
+  scoring: {
+    ...PARTNERS_MANIFEST.scoring,
+    cardValues: { "hearts-A": -20, "hearts-J": 13 },
+    defaultValue: 0,
+  },
+};
+
+test("the class step outweighs a card whose value is a bonus, not a cost", async () => {
+  const pack = loadPack(structuredClone(BONUS_ACE_MANIFEST));
+  const state = createState({ pack, seats: SEATS, seed: "spades-bot-161-bonus-ace" });
+  pack.template.setup(makeCtx(state));
+  for (let s = 0; s < SEATS; s++) state.zones.get(`hand.${s}`).cards.length = 0;
+  state.zones.get("trick").cards.length = 0;
+  state.vars.trickNumber = 3;
+  state.turn.phase = "play";
+  // The partner leads the queen and is winning it. The jack ducks under; the
+  // ace takes the trick off the partner and is paid twenty for being played.
+  hand(state, 0, ["hearts-A", "hearts-J"]);
+  trick(state, 2, ["hearts-Q", "hearts-3"]);
+  assert.strictEqual(state.turn.seat, 0);
+  assert.deepStrictEqual(cheapOrder(state, 0), ["hearts-J", "hearts-A"],
+    "a bonus card outbid the charge for overtaking the partner");
+});
+
 /* ------------------------------------------------------------------ *
  * The trick an opponent is winning
  * ------------------------------------------------------------------ */
