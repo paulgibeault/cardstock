@@ -2821,11 +2821,31 @@ deals), milestones/wildfire/crazy-eights/stockpile 3 → 4, cribbage 2 → 2,
 pinochle and team-spades 4 → 4. Every pack now opens at the seat count its own
 manifest recommends.
 
-The fan, "By rank", before → after: Thirteen `2♣ 2♦ 2♥ 3♣ 3♦ 4♣ 6♦ 8♥ 9♦ Q♦ Q♥
-K♣ A♣` → `3♥ 4♠ 4♦ 5♠ 6♦ 6♥ 7♥ 8♦ 9♠ 10♠ Q♠ K♠ 2♥`; Pinochle `… 9♠ 10♣ 10♠ J♦
-Q♣ …` → `… K♠ K♠ 10♣ 10♦ 10♥ A♥`; Cribbage `5♥ 7♦ 9♣ 10♥ K♣ A♥` → `A♦ 4♣ 4♥ 4♠
-7♥ Q♠`; Hearts unchanged, 2 through ace. "By suit" in Thirteen: `2♣ 3♣ 4♣ K♣
-A♣ …` → `… 3♥ 6♥ 7♥ 2♥ …` — same groups, the 2 at the top of each.
+The fan, "By rank", read off the felt, before → after. Thirteen: `2♣ 2♦ 2♥ 3♣
+3♦ 4♣ 6♦ 8♥ 9♦ Q♦ Q♥ K♣ A♣` → `3♥ 4♠ 4♦ 5♠ 6♦ 6♥ 7♥ 8♦ 9♠ 10♠ Q♠ K♠ 2♥` — the
+2 moves from the head of the fan to its tail, and 4♠ before 4♦ and 6♦ before 6♥
+is the suit ladder in the tiebreak. Pinochle (a doubled deck, so `9#2♥` is the
+second copy of the 9 of hearts): `9#2♥ 9#2♠ 9♠ 10♣ 10#2♠ J♦ Q♣ Q#2♣ Q#2♦ Q#2♥
+Q#2♠ K#2♠` → `9#2♦ 9♠ J♣ Q#2♣ Q♣ K♦ K♠ K#2♠ 10#2♣ 10♦ 10♥ A#2♥` — the ten
+moves from just above the 9 to between the king and the ace. Cribbage, on a hand dealt until it held an ace: `5♥ 7♦ 9♣
+10♥ K♣ A♥` → `A♦ 4♣ 4♥ 4♠ 7♥ Q♠`. Hearts unchanged, 2 through ace in both.
+"By suit" in Thirteen: `2♣ 3♣ 4♣ K♣ A♣ …` → `… 3♥ 6♥ 7♥ 2♥ …` — same groups in
+the same order, the 2 at the top of each instead of the bottom.
+
+The new-game sheet for Thirteen, before → after: three house rules, none on →
+five, with "Passing keeps you in the trick" checked and "A 2 can end a run"
+not. Seat buttons 2/3/4 with 4 preselected, unchanged. The sheet's body is
+`overflow-y: auto` and the two extra rows scroll rather than clip — at 375x812
+its content goes 472 → 686 against a 471 viewport, and the last row is fully
+visible once scrolled, same at 1280x860. A match dealt with *both* toggles
+flipped away from their defaults reads back the flipped rules on a fresh load
+of `?pack=thirteen`, so a resume keeps its own variants.
+
+The four-seat table itself: 3 opponents instead of 2, no felt overflow and no
+page errors in either theme at 1280x860 or 375x812 (`table-screen` 860/860 and
+812/812, page width equal to the viewport in all four). The mobile seat row
+already scrolled at two opponents, so the extra seat lands in a treatment the
+other four-seat packs were already using.
 
 0 stalls everywhere: 200 games at 2, 3 and 4 seats (avg 15.0 / 26.8 / 39.0
 moves), and 300 games at 4 seats under plain rules (35.8), the shipped defaults
