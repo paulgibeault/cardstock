@@ -2666,6 +2666,203 @@ against the felt's edge for the whole game. If it wants a floor later, the
 place to put one is a `--stage-card-w` that this rule and the 660px block both
 read.
 
+## The narration pill gets a band of its own (#149)
+
+`#event-banner` was `position: fixed; top: 34%; white-space: nowrap`. 34% is a
+number about the window rather than about the table, and on Thirteen at 375x812
+it resolves to 276px while the combination pile begins at 277px — so the
+sentence describing four consecutive pairs was drawn across the four
+consecutive pairs, and a long one grew sideways across the felt to stay on one
+line. A probe of unmodified main caught 17 banners on Thirteen at both
+viewports and all 17 intersected a centre-pile card; every one of them covered
+a rank corner.
+
+`showBanner` now measures. It takes the rects of `#opponents-top`,
+`#felt-middle`, `#hand-row` and the cards in the middle, and hands them to
+`bannerBand`, which returns where the pill's centre goes; the result lands on
+the element as `--banner-top` and `top: var(--banner-top, 34%)` spends it. The
+band is the strip between the bottom of the opponent row and the top of the
+cards, and the function only ever looks UP from them: everything below is the
+player's own half and the hand is sacred. `bannerBand` is exported and pure —
+it takes four boxes and a height and returns `{ top, fits }` — because the
+arithmetic is the whole change and `src/ui/table.js` cannot be loaded by a Node
+test. `tests/eventBanner.test.js` argues with it using felts measured off the
+real table.
+
+THE FLOOR IS THE HIGHEST CARD, not `#center-piles`' own rect, and that took a
+second pass to get right. Measuring the box left six banners on five packs
+grazing a rank corner: a trick is a fan of rotated copies whose boxes stand
+above the pile that holds them, and cribbage's sequence is not in
+`#center-piles` at all — it moved to `#table-zones` with #138. `placeBanner`
+takes the minimum `top` over every `.card-face` in `#felt-middle` and falls
+back to the pile box only when the middle is still empty.
+
+Measured bands: Thirteen 91px at 375x812 and 102px at 1280x860, Hearts 69px at
+1280 and 37px at 375. Two lines of pill are 58px and one is 38, so Hearts on a
+phone has no band that fits: `showBanner` re-measures with
+`.event-banner--tight` (one line, 0.82rem, ellipsised) and places the 27px
+result hanging from the top of the piles. A truncated sentence is recoverable —
+`#log` is the live region and carries it whole — and a covered rank is not.
+
+The pill wraps at ~28ch now. `width: max-content` goes with that and is not
+decoration: an absolutely positioned box at `left: 50%` with no `right`
+shrink-to-fits into the room between 50% and the right edge, which is half the
+window, so the first build wrapped "Nell played a pair" onto three lines at 375
+before `max-width` ever came into it.
+
+The 2200ms hold is one number again. `BANNER_HOLD_MS` is exported from
+celebrations.js, spent by the hide timer, and handed to the stylesheet as
+`--banner-hold`; `.event-banner--in` reads `var(--banner-hold, 2200ms)` and the
+test pins that fallback to the constant, so the pair cannot drift the way the
+old `2.2s` literal did.
+
+And `celebrateAction` now calls `hideBanner` when no event in the move says
+anything, instead of leaving the previous sentence up for the rest of its hold.
+That is FEEDBACK_INBOX item 22's second half — "on turns where I was leading a
+brand-new trick it still read 'Fig passed' from three plays ago". The first
+half (Thirteen's singles and `trickCleared` saying something at all) shipped
+with #122; this is the platform rule underneath it.
+
+AND THE ENTRANCE HAD TO BE FIXED TOO, which the placement on its own did not
+catch. `banner-in` opened on `translate(-50%, -30%) scale(0.85)` — a rise off
+the table — and that first frame sits 0.125 of the pill's own height BELOW
+where it comes to rest: 6px for a two-line sentence and 8.5px for cribbage's
+longest hand score, against 6px of clearance. So the felt probe still caught
+three cribbage samples grazing a rank corner by 1.4-3.4px after the band
+arithmetic itself came back clean on all five packs. A band reserved for a
+resting rect is worth nothing if the animation leaves it, so the pill grows in
+place instead (`scale(0.85)` at `-50%`); the only travel left is the exit's
+drift upward, into the gap under the seat row, which is chrome rather than a
+card. `tests/eventBanner.test.js` parses the keyframes and holds them to it:
+no frame may translate below `-50%`, and the 12% pop to `scale(1.05)` is the
+only overshoot allowed (0.025h — 1.5px on the tallest pill the felt draws).
+
+Verified on the felt with a headless probe that watches `#event-banner` through
+bot play and then forces three sentences of known length through the same
+placement, measuring the pill against every `.card-face` in `#felt-middle`,
+every rank/suit corner of one, and every `#hand .card-face-wrap`, at both
+viewports on Thirteen, Team Spades, Hearts, Cribbage and Pinochle. Main: 126
+samples, 99 intersecting a card and 99 of those covering a rank corner — every
+Thirteen sample at both viewports. After: 132 samples, 0 intersecting. The
+tight one-line fallback fired on 17 of those samples; nothing reached the hand
+in either run.
+
+## Unplayable cards, two steps darker (#153)
+
+The muted card was `#fdfdfa -> #daddd9`, a 1.35:1 move on the paper with the
+ink shaded -0.22. It said the right thing far too quietly: on the felt a
+thirteen-card fan with half of it unplayable read as one fan, and the 4px lift
+on the playable cards was doing all the work. A cue you only notice by holding
+two cards side by side is not a cue.
+
+`dullPaper` now pulls 0.55 of the way to `STOCK` instead of 0.3 (`#fdfdfa ->
+#bec2bd`, a 1.77:1 move — the old step applied twice) and `dullInk` shades
+-0.34 instead of -0.22 to pay for it. Both are at the edge of what the contrast
+sweep allows, and the sweep is what chose them: the grid was run over pulls
+0.3-0.7 against shades -0.22/-0.28/-0.34, and Milestones' yellow is the case
+that decides it. At 0.55/-0.34 it comes out at 4.91:1 on the grey stock (it is
+4.85:1 live on white, so muting still improves it); at 0.6/-0.34 it is 4.64:1
+and at 0.65/-0.34 it breaks 4.5 outright. Wildfire's four bodies stay four
+hues — 85 points of channel spread at the narrowest, against the sweep's floor
+of 30 — because `dullInk` darkens rather than desaturating, which is the choice
+that was already load-bearing and is more so now.
+
+Per-style headline contrast on the grey stock, before -> after:
+Milestones 12 yellow 5.22 -> 4.91, Milestones 7 green 6.20 -> 5.64, Stockpile 6
+9.79 -> 8.29, Stockpile 11 10.16 -> 8.47, Wildfire 9 yellow 6.01 -> 5.57,
+classic A♥ 6.63 -> 6.05, classic 10♠ 13.89 -> 10.77. Everything stays well over
+4.5 and the paper is the thing that moved.
+
+And the number the whole issue is about — the step between a live face and a
+muted one, per style, measured the honest way (the same card drawn both ways,
+so nothing is averaged across a fan of different colours), before -> after:
+
+| style                      | card       | paper live -> muted | step          |
+| -------------------------- | ---------- | ------------------- | ------------- |
+| classic (13, Hearts, ♠, ♣) | any        | `#fdfdfa -> #bec2bd`| 1.345 -> 1.770 |
+| rankrun (Stockpile)        | any        | `#fdfdfa -> #bec2bd`| 1.345 -> 1.770 |
+| sequencing (Milestones)    | 12 yellow  | `#d9a520 -> #8f6d15`| 1.601 -> 2.142 |
+| sequencing (Milestones)    | 7 green    | `#27ae60 -> #1a733f`| 1.562 -> 2.049 |
+| shedding (Wildfire)        | 9 yellow   | `#9e7c1f -> #685214`| 1.502 -> 1.909 |
+| shedding (Wildfire)        | 3 blue     | `#214e7b -> #163351`| 1.298 -> 1.500 |
+
+Wildfire's blue is the smallest step and always will be — a dark blue has less
+room to fall than a bright yellow — but it moved by the same proportion as the
+rest, and the new floor in the sweep is set at 1.6 with the drawn styles
+measured off their white blank, where every style lands at 1.77.
+
+Vanilla's muted palette lives in `table.css` rather than in its markup, so its
+eleven values are copies of what these two functions return; they were
+recomputed. The one failure mode of a copied colour is the day the function
+moves and the copy does not, and that had already happened — the muted neutral
+index was still `dullInk` of a `#3f3f46` the live rule had stopped using. So
+`tests/cardStyles.test.js` now pins every muted declaration to `dullPaper` /
+`dullInk` of the live declaration beside it, reading both out of the stylesheet.
+
+The second new test is the one the existing sweep could not make. Every other
+muting assertion asks "is the muted card still legible", which a muted card
+identical to a live one passes perfectly; this one puts a floor of 1.6:1 under
+the difference between a live blank and a muted one, per style, and checks that
+the ink moves the other way while the paper does.
+
+The floor is PER STYLE and swept over every sample card, which took a second
+pass to get right: a single 1.6 over seven hand-picked cards was green, and the
+sweep found that the hand-picked cards were not the ones that decide it.
+Sequencing's slate action cards move 1.564 where its red 12 moves 1.758, and
+shedding's dark red body moves 1.468 where its yellow moves 1.909 — a contrast
+ratio is not a percentage, and the same pull toward the stock moves white paper
+1.77 and a dark red 1.47. So each style's floor sits above what that style's
+WORST card did before this change and at or below what it does now: classic and
+rankrun 1.70 (from 1.345), sequencing 1.50 (from 1.343), shedding 1.40 (from
+1.291). Walking any of them back turns that style red.
+
+The wild is out of that sweep and has its own test instead. It belongs to no
+colour, so shedding paints it a near-black `#26262b`, and a near-black has
+nowhere to go under a multiplicative darkening — 1.10:1 before, 1.17:1 after —
+so no honest floor covers it and a white card at once. What greys on a muted
+wild is its PAPER, the white rosette panel behind the four hues, and that takes
+the full `dullPaper` step like every other paper; the test asserts exactly that,
+which is both true and the reason a muted wild reads as muted on the felt.
+
+ONE THING THE ISSUE ASKED FOR CANNOT BE PHOTOGRAPHED, and it is worth writing
+down so nobody spends an afternoon on it again. The acceptance list asks for
+"Thirteen (13-card fan, half unplayable)", and Thirteen never draws one: it is
+a `combination` felt, and `src/ui/interaction.js` puts every card in hand into
+`handSelectable` there on purpose — "legality is a property of the SET, so no
+per-card answer exists to grey a card out with. Half a run is not an illegal
+card, it is an unfinished selection." So a Thirteen fan is all live on your
+turn and all muted off it, and the comparison a split fan makes is one the pack
+does not offer. Where the split does live is Hearts (follow suit), Wildfire
+(match colour or rank) and Milestones after the draw — a rummy turn opens in
+`rummy-draw`, where `handSelectable` is deliberately empty and the whole fan is
+muted, and the split appears once you have drawn and are gathering toward the
+contract. Those are the felts the screenshots were taken on.
+
+No inset border was added, and the issue did ask us to consider one. The
+blank's edge is `shade(fill, -0.13)` of its own paper in the drawn styles, so
+it follows the stock down with no help; vanilla's copy of it was recomputed the
+same way and went `#c5c7c3 -> #b0b4af` (`dullPaper('#dededa')`). What that buys
+is not the edge against the paper — that actually softens slightly, 1.24:1 to
+1.17:1, because both ends moved together — but the edge against the FELT, which
+is what bounds a card in a fan: 1.20:1 to 1.48:1 on the light felt. The light
+theme is where this matters and where the old muting was weakest, since
+`#daddd9` sat at 1.04:1 against `--felt: #c9ddd0` — a muted card was very
+nearly the same value as the table it lay on. `#bec2bd` is 1.27:1. A third
+treatment on top of a step this size is a third thing saying what two already
+say, so the border stays as it is.
+
+Verified on the felt with a headless probe that plays until a fan is SPLIT —
+some cards live, some muted, side by side — and reads the rendered paper off
+both halves at both viewports in both themes. Hearts is the clean case and the
+whole change in one line: the muted paper went `#daddd9 -> #bec2bd`, 1.345:1
+off its live paper to 1.770:1, on all four runs. Wildfire's average moves
+around because a fan holds four hues, so its numbers are the per-card table
+above rather than the probe's. Milestones was measured card by card on the
+felt instead, in the draw step where the whole fan is muted: green
+`#185f4d -> #145141`, blue `#255789 -> #1f4974`, slate `#374252 -> #2f3845`,
+red `#962c22 -> #7f261c`, yellow `#a98119 -> #8f6d15` — the same values the
+renderer gives, arriving on the real card.
+
 ## Next steps
 
 Multiplayer (Phase 8), per-pack UI polish (per-pack `theme.css`, custom
