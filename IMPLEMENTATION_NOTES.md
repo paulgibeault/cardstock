@@ -2850,6 +2850,1533 @@ changed assertions was verified by breaking what it watches — the fill reverse
 `DENSE_ABOVE` raised past the clamp, the `aria-hidden` dropped, the trick auction
 check removed so Pinochle reached for circles, the chip's `null` turned back into
 a bare label, and so on — each one going red and green again from a scratch copy.
+## The narration pill gets a band of its own (#149)
+
+`#event-banner` was `position: fixed; top: 34%; white-space: nowrap`. 34% is a
+number about the window rather than about the table, and on Thirteen at 375x812
+it resolves to 276px while the combination pile begins at 277px — so the
+sentence describing four consecutive pairs was drawn across the four
+consecutive pairs, and a long one grew sideways across the felt to stay on one
+line. A probe of unmodified main caught 17 banners on Thirteen at both
+viewports and all 17 intersected a centre-pile card; every one of them covered
+a rank corner.
+
+`showBanner` now measures. It takes the rects of `#opponents-top`,
+`#felt-middle`, `#hand-row` and the cards in the middle, and hands them to
+`bannerBand`, which returns where the pill's centre goes; the result lands on
+the element as `--banner-top` and `top: var(--banner-top, 34%)` spends it. The
+band is the strip between the bottom of the opponent row and the top of the
+cards, and the function only ever looks UP from them: everything below is the
+player's own half and the hand is sacred. `bannerBand` is exported and pure —
+it takes four boxes and a height and returns `{ top, fits }` — because the
+arithmetic is the whole change and `src/ui/table.js` cannot be loaded by a Node
+test. `tests/eventBanner.test.js` argues with it using felts measured off the
+real table.
+
+THE FLOOR IS THE HIGHEST CARD, not `#center-piles`' own rect, and that took a
+second pass to get right. Measuring the box left six banners on five packs
+grazing a rank corner: a trick is a fan of rotated copies whose boxes stand
+above the pile that holds them, and cribbage's sequence is not in
+`#center-piles` at all — it moved to `#table-zones` with #138. `placeBanner`
+takes the minimum `top` over every `.card-face` in `#felt-middle` and falls
+back to the pile box only when the middle is still empty.
+
+Measured bands: Thirteen 91px at 375x812 and 102px at 1280x860, Hearts 69px at
+1280 and 37px at 375. Two lines of pill are 58px and one is 38, so Hearts on a
+phone has no band that fits: `showBanner` re-measures with
+`.event-banner--tight` (one line, 0.82rem, ellipsised) and places the 27px
+result hanging from the top of the piles. A truncated sentence is recoverable —
+`#log` is the live region and carries it whole — and a covered rank is not.
+
+The pill wraps at ~28ch now. `width: max-content` goes with that and is not
+decoration: an absolutely positioned box at `left: 50%` with no `right`
+shrink-to-fits into the room between 50% and the right edge, which is half the
+window, so the first build wrapped "Nell played a pair" onto three lines at 375
+before `max-width` ever came into it.
+
+The 2200ms hold is one number again. `BANNER_HOLD_MS` is exported from
+celebrations.js, spent by the hide timer, and handed to the stylesheet as
+`--banner-hold`; `.event-banner--in` reads `var(--banner-hold, 2200ms)` and the
+test pins that fallback to the constant, so the pair cannot drift the way the
+old `2.2s` literal did.
+
+And `celebrateAction` now calls `hideBanner` when no event in the move says
+anything, instead of leaving the previous sentence up for the rest of its hold.
+That is FEEDBACK_INBOX item 22's second half — "on turns where I was leading a
+brand-new trick it still read 'Fig passed' from three plays ago". The first
+half (Thirteen's singles and `trickCleared` saying something at all) shipped
+with #122; this is the platform rule underneath it.
+
+AND THE ENTRANCE HAD TO BE FIXED TOO, which the placement on its own did not
+catch. `banner-in` opened on `translate(-50%, -30%) scale(0.85)` — a rise off
+the table — and that first frame sits 0.125 of the pill's own height BELOW
+where it comes to rest: 6px for a two-line sentence and 8.5px for cribbage's
+longest hand score, against 6px of clearance. So the felt probe still caught
+three cribbage samples grazing a rank corner by 1.4-3.4px after the band
+arithmetic itself came back clean on all five packs. A band reserved for a
+resting rect is worth nothing if the animation leaves it, so the pill grows in
+place instead (`scale(0.85)` at `-50%`); the only travel left is the exit's
+drift upward, into the gap under the seat row, which is chrome rather than a
+card. `tests/eventBanner.test.js` parses the keyframes and holds them to it:
+no frame may translate below `-50%`, and the 12% pop to `scale(1.05)` is the
+only overshoot allowed (0.025h — 1.5px on the tallest pill the felt draws).
+
+Verified on the felt with a headless probe that watches `#event-banner` through
+bot play and then forces three sentences of known length through the same
+placement, measuring the pill against every `.card-face` in `#felt-middle`,
+every rank/suit corner of one, and every `#hand .card-face-wrap`, at both
+viewports on Thirteen, Team Spades, Hearts, Cribbage and Pinochle. Main: 126
+samples, 99 intersecting a card and 99 of those covering a rank corner — every
+Thirteen sample at both viewports. After: 132 samples, 0 intersecting. The
+tight one-line fallback fired on 17 of those samples; nothing reached the hand
+in either run.
+
+## Unplayable cards, two steps darker (#153)
+
+The muted card was `#fdfdfa -> #daddd9`, a 1.35:1 move on the paper with the
+ink shaded -0.22. It said the right thing far too quietly: on the felt a
+thirteen-card fan with half of it unplayable read as one fan, and the 4px lift
+on the playable cards was doing all the work. A cue you only notice by holding
+two cards side by side is not a cue.
+
+`dullPaper` now pulls 0.55 of the way to `STOCK` instead of 0.3 (`#fdfdfa ->
+#bec2bd`, a 1.77:1 move — the old step applied twice) and `dullInk` shades
+-0.34 instead of -0.22 to pay for it. Both are at the edge of what the contrast
+sweep allows, and the sweep is what chose them: the grid was run over pulls
+0.3-0.7 against shades -0.22/-0.28/-0.34, and Milestones' yellow is the case
+that decides it. At 0.55/-0.34 it comes out at 4.91:1 on the grey stock (it is
+4.85:1 live on white, so muting still improves it); at 0.6/-0.34 it is 4.64:1
+and at 0.65/-0.34 it breaks 4.5 outright. Wildfire's four bodies stay four
+hues — 85 points of channel spread at the narrowest, against the sweep's floor
+of 30 — because `dullInk` darkens rather than desaturating, which is the choice
+that was already load-bearing and is more so now.
+
+Per-style headline contrast on the grey stock, before -> after:
+Milestones 12 yellow 5.22 -> 4.91, Milestones 7 green 6.20 -> 5.64, Stockpile 6
+9.79 -> 8.29, Stockpile 11 10.16 -> 8.47, Wildfire 9 yellow 6.01 -> 5.57,
+classic A♥ 6.63 -> 6.05, classic 10♠ 13.89 -> 10.77. Everything stays well over
+4.5 and the paper is the thing that moved.
+
+And the number the whole issue is about — the step between a live face and a
+muted one, per style, measured the honest way (the same card drawn both ways,
+so nothing is averaged across a fan of different colours), before -> after:
+
+| style                      | card       | paper live -> muted | step          |
+| -------------------------- | ---------- | ------------------- | ------------- |
+| classic (13, Hearts, ♠, ♣) | any        | `#fdfdfa -> #bec2bd`| 1.345 -> 1.770 |
+| rankrun (Stockpile)        | any        | `#fdfdfa -> #bec2bd`| 1.345 -> 1.770 |
+| sequencing (Milestones)    | 12 yellow  | `#d9a520 -> #8f6d15`| 1.601 -> 2.142 |
+| sequencing (Milestones)    | 7 green    | `#27ae60 -> #1a733f`| 1.562 -> 2.049 |
+| shedding (Wildfire)        | 9 yellow   | `#9e7c1f -> #685214`| 1.502 -> 1.909 |
+| shedding (Wildfire)        | 3 blue     | `#214e7b -> #163351`| 1.298 -> 1.500 |
+
+Wildfire's blue is the smallest step and always will be — a dark blue has less
+room to fall than a bright yellow — but it moved by the same proportion as the
+rest, and the new floor in the sweep is set at 1.6 with the drawn styles
+measured off their white blank, where every style lands at 1.77.
+
+Vanilla's muted palette lives in `table.css` rather than in its markup, so its
+eleven values are copies of what these two functions return; they were
+recomputed. The one failure mode of a copied colour is the day the function
+moves and the copy does not, and that had already happened — the muted neutral
+index was still `dullInk` of a `#3f3f46` the live rule had stopped using. So
+`tests/cardStyles.test.js` now pins every muted declaration to `dullPaper` /
+`dullInk` of the live declaration beside it, reading both out of the stylesheet.
+
+The second new test is the one the existing sweep could not make. Every other
+muting assertion asks "is the muted card still legible", which a muted card
+identical to a live one passes perfectly; this one puts a floor of 1.6:1 under
+the difference between a live blank and a muted one, per style, and checks that
+the ink moves the other way while the paper does.
+
+The floor is PER STYLE and swept over every sample card, which took a second
+pass to get right: a single 1.6 over seven hand-picked cards was green, and the
+sweep found that the hand-picked cards were not the ones that decide it.
+Sequencing's slate action cards move 1.564 where its red 12 moves 1.758, and
+shedding's dark red body moves 1.468 where its yellow moves 1.909 — a contrast
+ratio is not a percentage, and the same pull toward the stock moves white paper
+1.77 and a dark red 1.47. So each style's floor sits above what that style's
+WORST card did before this change and at or below what it does now: classic and
+rankrun 1.70 (from 1.345), sequencing 1.50 (from 1.343), shedding 1.40 (from
+1.291). Walking any of them back turns that style red.
+
+The wild is out of that sweep and has its own test instead. It belongs to no
+colour, so shedding paints it a near-black `#26262b`, and a near-black has
+nowhere to go under a multiplicative darkening — 1.10:1 before, 1.17:1 after —
+so no honest floor covers it and a white card at once. What greys on a muted
+wild is its PAPER, the white rosette panel behind the four hues, and that takes
+the full `dullPaper` step like every other paper; the test asserts exactly that,
+which is both true and the reason a muted wild reads as muted on the felt.
+
+ONE THING THE ISSUE ASKED FOR CANNOT BE PHOTOGRAPHED, and it is worth writing
+down so nobody spends an afternoon on it again. The acceptance list asks for
+"Thirteen (13-card fan, half unplayable)", and Thirteen never draws one: it is
+a `combination` felt, and `src/ui/interaction.js` puts every card in hand into
+`handSelectable` there on purpose — "legality is a property of the SET, so no
+per-card answer exists to grey a card out with. Half a run is not an illegal
+card, it is an unfinished selection." So a Thirteen fan is all live on your
+turn and all muted off it, and the comparison a split fan makes is one the pack
+does not offer. Where the split does live is Hearts (follow suit), Wildfire
+(match colour or rank) and Milestones after the draw — a rummy turn opens in
+`rummy-draw`, where `handSelectable` is deliberately empty and the whole fan is
+muted, and the split appears once you have drawn and are gathering toward the
+contract. Those are the felts the screenshots were taken on.
+
+No inset border was added, and the issue did ask us to consider one. The
+blank's edge is `shade(fill, -0.13)` of its own paper in the drawn styles, so
+it follows the stock down with no help; vanilla's copy of it was recomputed the
+same way and went `#c5c7c3 -> #b0b4af` (`dullPaper('#dededa')`). What that buys
+is not the edge against the paper — that actually softens slightly, 1.24:1 to
+1.17:1, because both ends moved together — but the edge against the FELT, which
+is what bounds a card in a fan: 1.20:1 to 1.48:1 on the light felt. The light
+theme is where this matters and where the old muting was weakest, since
+`#daddd9` sat at 1.04:1 against `--felt: #c9ddd0` — a muted card was very
+nearly the same value as the table it lay on. `#bec2bd` is 1.27:1. A third
+treatment on top of a step this size is a third thing saying what two already
+say, so the border stays as it is.
+
+Verified on the felt with a headless probe that plays until a fan is SPLIT —
+some cards live, some muted, side by side — and reads the rendered paper off
+both halves at both viewports in both themes. Hearts is the clean case and the
+whole change in one line: the muted paper went `#daddd9 -> #bec2bd`, 1.345:1
+off its live paper to 1.770:1, on all four runs. Wildfire's average moves
+around because a fan holds four hues, so its numbers are the per-card table
+above rather than the probe's. Milestones was measured card by card on the
+felt instead, in the draw step where the whole fan is muted: green
+`#185f4d -> #145141`, blue `#255789 -> #1f4974`, slate `#374252 -> #2f3845`,
+red `#962c22 -> #7f261c`, yellow `#a98119 -> #8f6d15` — the same values the
+renderer gives, arriving on the real card.
+## The bot that beat its own partner (#161)
+
+**What was wrong.** Team Spades ruffed the trick its own partner had already
+won. The engine's side plumbing was never the problem — `src/engine/sides.js`
+has known which chairs share a score since #104 and the rollout grading has been
+side-aware since #105 — but the function that actually CHOSE the card had none
+of it. `botHeuristic` was two lines: `-rankOrder - cardValue`, with no reading
+of the trick, the trump, or who was winning. At `followSuit: 'must'` a void hand
+is offered every card it holds, and the lowest card in a Spades hand is very
+often a low spade, so "play low" was "trump your partner". The evaluator had the
+same bug in its own currency: `evaluateContract` credited the side with the
+whole of `holdsUp`, and a higher winning card raises it, so taking the trick off
+your partner's king with your ace scored BETTER than ducking under it.
+
+Measured over 300 hands, counting only the cards a seat could have declined to
+play — a hand whose every legal card ruffs or overtakes is the rules choosing,
+not the bot:
+
+| | ruffed the partner | overtook in suit |
+|---|---|---|
+| before, `easy` | 7.9% of 2090 | 0.0% |
+| before, `medium` | 4.2% of 3156 | 11.6% |
+| after, `easy` | 0.1% of 1397 | 0.3% |
+| after, `medium` | 2.6% of 2977 | 0.1% |
+
+The zero in the first row is the shape of the old bug rather than an absence of
+it: within one suit the card that overtakes is always the dearer card by
+`-rank - value`, so the old ranking ducked in suit by accident and had no
+opinion at all about the trump it was throwing.
+
+**Three classes, and the old ranking inside each.** `scorePlayCard` reads the
+trick. Partner winning: duck — never overtake, never ruff. Opponent winning: the
+cheapest card that wins, else the lowest. Leading: unchanged, because what to
+open with is a judgement about the whole hand and this function does not have
+one. The class step is derived from the DECK (`trickBand`, one clear of the
+widest `-rank - value` can be) rather than being a weight, because "any card
+that wins beats every card that does not" is a sort and not a quantity: a
+fraction of it would not be a different opinion, it would be a broken sort. What
+is left inside a class is exactly the old ranking, which is what makes "the
+cheapest card that wins" fall out instead of being written as a second rule.
+
+**The band is a SPREAD, not a ceiling.** `trickBand` started as `topRank +
+topValue + 1` — the priciest card in the deck, one clear — which is right only
+while every card value is a cost. A NEGATIVE value is a card the deck pays you
+to play, and it widens the ranking at the attractive end rather than the cheap
+one: an ace worth −20 scores twenty ABOVE where its rank puts it, and a charge
+sized to the top of the deck no longer outweighs it. Hearts patches exactly that
+in a shipped variant (`jack-of-diamonds`, `scoring.cardValues.diamonds-J =
+−10`), and Hearts is safe from it only by accident — it has no partner to duck
+under and no nil to protect, so no band is ever applied there. The first
+partnership pack to price a card as a bonus would have had the charge quietly
+fail and the sort invert, with nothing going red. So `perilOf` now sweeps
+`lowValue` alongside `topValue`, floored at zero, and the band is
+`topRank + topValue − lowValue + 1`. At all three shipped packs `lowValue` is
+zero and the number is the one it always was: every simulation in this section
+is character-for-character identical either way, which is how it was checked.
+
+Two clauses are about the promise. A live nil never takes a trick it could duck
+— playing low was most of a nil's game already, and what it missed is the void
+hand, where the lowest card left is a trump and wins. And a nil PARTNER who is
+winning is a nil dying, so the duck rule is suspended and the trick is taken
+back off them — in suit, never by ruffing, which spends a trump and a bag on a
+trick nobody wanted and which the seats still to play may take off them for
+nothing anyway.
+
+**The one line that keeps this out of Hearts.** Preferring to win is gated on
+`prizeSign`: a pack whose points are the PENALTY wants the exact opposite, and
+"lowest card, cheapest card" is already the right answer there. The partner
+clauses are NOT gated — ducking under your partner is right in either direction
+— and at Hearts they are dead code rather than a branch to reason about, because
+the pack declares no sides. Hearts is byte-identical before and after:
+`simulate.mjs hearts --games=300` and `--vs=medium,easy --games=200` both print
+the same lines they printed on main, character for character.
+
+**The evaluator's half.** A side that already held the trick is now credited
+with the hold it HAD (`beforeSide === side ? beforeHolds : holds`), not with the
+better one its own partner's overtake bought it. Taking a trick off an opponent
+is untouched — their hold was never this side's, so the whole of it is new. And
+`evaluateContract` grew the held-card term `evaluatePointsContract` grew first
+(#125), in the only currency a trick contract has: what a card left in hand is
+worth is its RANK, because an ace is a trick you have not taken yet and a two is
+not. That is what makes "win with the cheapest card that wins" fall out of the
+arithmetic as well as out of the sort.
+
+`CONTRACT_HELD_WORTH` is 0.025 and the tuner says both that it matters and that
+its exact value does not. `tune.mjs team-spades --match --games=200` over every
+weight accepted nothing at ±50%; asked specifically, `--only=CONTRACT_HELD_WORTH
+--step=1` puts the doubled value at 48.5% (identical play — 48.5% is this
+tournament's seat-order baseline, what a candidate that changes no decision
+scores) and the term REMOVED at 25.0% ± 3.1% of 200 matches. A seat without it
+cashes its high cards on tricks it was going to win anyway and has nothing left
+for the end of the hand, which is the failure #125's comment describes at
+Pinochle, in a pack where the cards carry no points at all.
+
+**What it is worth, and why `--vs=medium,easy` is the wrong bar for it.** The
+fix is in `botHeuristic`, which IS the `easy` bot, so both sides of that pairing
+moved and the gap between them is not a measure of anything. Seating the new
+template against the old one at the same difficulty, sides alternating so the
+deal cannot favour either, 200 matches:
+
+| pairing | new | old |
+|---|---|---|
+| team-spades, `medium` | 164 (82.0% ± 2.7) | 36 |
+| team-spades, `easy` | 199 (99.5% ± 0.5) | 1 |
+| pinochle, `medium` | 112 (56.0% ± 3.5) | 88 |
+
+`medium` vs `easy` at Team Spades goes from 93.0% to 57.0% of 200 matches
+because the floor came up: the old `easy` side finished a match on a mean total
+of 70 and the new one on 199. That is the fix working. The felt's easy Spades
+partner used to trump your ace; it does not now, and the ladder between the
+difficulties at this pack is correspondingly shorter.
+
+Pinochle moves a little and only where its rules leave room: `followSuit:
+'must-beat'` already forces the beat when a seat can make it, so the ordering
+below it rarely decides anything. `--vs=medium,easy` there goes 46.5% to 47.7%
+of 200 rounds — inside the noise, and reported as such.
+
+**#114 is not closed. It is wider, and that is the measurement.** `hard` at Team
+Spades plays its rollouts with the cheap heuristic (`src/engine/bot.js` plays
+every chair at `easy`), so a better heuristic is a better rollout policy, and
+the honest guess before measuring was that this would narrow #114's gap. It did
+the opposite. `simulate.mjs team-spades --vs=hard,easy --games=200 --match
+--budget-moves=600`, same seeds either side:
+
+| | hard | easy | unfinished | rounds/match |
+|---|---|---|---|---|
+| before | 30 (15.7%) | 161 (84.3%) | 9 | 30.9 |
+| after | 13 (6.5%) | 187 (93.5%) | 0 | 14.9 |
+
+That is what #114 predicts, taken seriously. `easy` IS the heuristic, so it
+takes the whole of this fix — the A/B table above measures how much, and at this
+pack it is nearly all of it. `hard` decides by the rollouts' terminal score
+delta and takes only as much as a better-played rollout world is worth; a
+rollout world where every chair now keeps its side's tricks is still graded by a
+signal that cannot tell a made contract from a lucky one, so the seat it
+strengthened is the one it was already losing to. The mean final totals say the
+same thing from the other side: the `easy` side goes 237.67 → 260.34 while the
+`hard` side goes 44.09 → 39.75.
+
+The one unambiguous improvement is in how the matches END: nine matches in two
+hundred used to run past a hundred rounds without either side reaching 500, and
+none do now (30.9 rounds a match down to 14.9). A table where both sides bag out
+forever was the old heuristic's signature, and it is gone.
+
+So the felt's default stays `medium`, `hard` at Spades is still the wrong bot,
+and the fix for that is a policy layer in `src/engine/bot.js` — out of scope
+here, and #114 is where it belongs.
+
+**Verified.** `npm test` 856 pass / 0 fail (842 on main, 14 new in
+`tests/spadesBot.test.js`); `node tools/pack-test.mjs --all` all nine packs 0
+failed; `simulate.mjs team-spades|hearts|pinochle --games=300` 0 stalled, 0
+errored each. Every clause was proven to bite: eleven separate breaks — the
+whole trick reading, the overtake charge, the ruff charge, the live-nil duck,
+the nil-partner rescue, the no-ruff-over-a-nil clause, the prize-direction gate,
+the cheapest-winner preference, the band's negative-value spread, the
+evaluator's already-held hold and its held-card term — each put back on its own,
+and each turned the tests that watch it red. The five that do not appear in that
+list are the controls: they assert what this change must NOT have moved (Hearts'
+ordering, a broken nil playing normally, a losing hand still preferring its
+lowest, still paying to take a trick off an opponent), so no break of a new
+clause can turn them red, and every break above leaving them green is the
+result.
+
+Two clauses needed a pack to exist, and both tables are
+`tests/fixtures/partnersPack.js` (#104's fixture) with one scoring block
+changed, because inventing a partnership pack to prove one clause would be
+inventing a game. "Never overtake your partner" is unexercisable at all three
+shipped packs, because their card values rise with their ranks and the duck is
+already the cheap card; give a partnership pack Hearts' queen of spades —
+thirteen points at the tenth rung with a free king and ace above it — and the
+accident reverses. The band's spread needs the same deck to pay for a card
+rather than charge for it: an ace worth −20 against a jack worth 13 is the
+narrowest pair where the old ceiling is not enough and the spread is.
+## The break said out loud, and the show drawn as a card (#151, #152)
+
+### What was wrong
+
+**Breaking was the one rule in the trick genre the felt never mentioned.**
+`placeCard` in `src/templates/trick-taking.js` flipped `spadesBroken` and
+emitted nothing, so a player discovered that spades were leadable by trying it.
+Measured rather than assumed: the same probe driven against main printed the
+word "broken" nowhere on `#table` across 63 moves of Team Spades and 60 of
+Hearts, and replaying those two saved logs shows the suit really did break —
+Team Spades at move 19 (twice across the run, once per hand), Hearts at move 10
+on the queen of spades. The felt's contract strip was not even on screen for
+Team Spades: `contractChips` returned null for any pack whose trump is not
+`chosen`.
+
+Two things fell out of the same reading. `publicVars` asked for
+`rules.broken?.varName` and no manifest has ever had a `rules.broken` — the
+schema's key is `rules.breaking.var` — so the optional chaining silently
+published nothing, and a joiner's view said the suit had never been broken for
+the whole hand while the host's legal-move list said otherwise. And the rules
+page, which explains everything else about a pack, had no sentence about
+breaking at all.
+
+**Cribbage's show is the scoring moment of the game and it was one sentence.**
+"Cass's hand is worth 12 — fifteen, fifteen, a pair and a run of 4", in the
+banner, over four cards the player then had to re-count to see where any of it
+came from. Everything needed to draw it was already on `showScored`: the
+combinations, their points, the cards. Except that `cards` was arriving EMPTY
+on every table including a local one — `ctx.cardIdsIn` hands back the zone's
+live array and the round boundary runs inside the same move — which nothing had
+noticed, because the only consumer was a spotlight that works off zone
+addresses.
+
+### What changed
+
+`placeCard` emits `broken` on the false→true transition only, with the id in
+`cards` (the one field `src/engine/view.js` filters) plus the rank and suit of
+the card that did it, so `describeEvent` needs no card lookup. The suit on the
+event is the one that may now be LED, which is not always the suit of the card:
+in Hearts the queen of spades breaks hearts, so it is read off the lead
+constraint (`brokenLeadSuit`) rather than off the card. `breakingRule(rules)`
+now answers for both `publicVars` and `breakingSelectorAndVar`.
+
+The banner sentence is "Spades are broken — Fig played the 7♠" at a priority
+above the trick's own celebration. That rung is now a number rather than a
+special case: `TRICK_BANNER_PRIORITY` in `src/ui/celebrations.js`, passed to
+`celebrateAction` as a `floor` by `afterMove`. The card that breaks a suit is
+very often the fourth card of a trick, which was precisely the case the old
+"a trick suppresses everything" rule threw away.
+
+The mark that outlives the banner is a "Spades / Broken" chip on the contract
+strip, **read off the var rather than off the event** — which is what makes it
+free: `setup` clears the var at the next deal, `publicVars` sends it to
+joiners, and the chip survives a reload with nothing remembering that a banner
+once fired. `contractChips` now returns that chip for a fixed-trump pack too.
+One sentence went on the rules page.
+
+For the show, `src/ui/showCard.js` is a pure model plus its renderer, in the
+split `src/ui/counterTrack.js` uses — `table.js` touches `document` at import
+and can never be loaded by a test, so a card that is arithmetic on a screen
+would otherwise be the kind nobody checks. `playShowStep` draws it instead of
+the banner and still puts the sentence in `#log`, which is the live region, so
+the card is `aria-hidden` exactly as `#event-banner` is; the two share one slot
+and `hideBanner`/`showBanner` clear each other, which is also the card's whole
+teardown story. It lives inside `#felt-middle` rather than fixed to the
+viewport: an overlay inset to the felt's middle cannot reach the fan at any
+viewport, and a fixed panel sized to its contents lands on it at 375×812. A
+hand worth nothing says `nineteen` — the traditional word, and the lowest score
+five cards cannot make.
+
+Two things the felt found that a screenshot forgives at a glance. The
+highlight's ring was never painted: `drop-shadow(0 0 0 2px var(--accent))` has
+four lengths and `drop-shadow()` takes three, so the whole `filter` declaration
+was invalid and the cascade dropped both shadows — a lit face computed
+`filter: none` and the combination under the finger was a 3px lift. It is an
+`outline` now, which cannot fail that way. And the last card of the beat was
+still on the felt UNDER the round summary panel: the banner it replaced
+dismissed itself after 2200ms, a card sits until something takes it away, so
+`runRoundBeat` now takes it down as the sheet goes up.
+
+`partsOf` now also carries `at`: WHERE in the scored five each part's cards
+are, as positions rather than ids. Positions are what the highlight needs, they
+survive the redeal, and they are meaningless to anybody who cannot already see
+the cards — so they may go where an id may not. The pegging half has no card to
+draw, so its sentence carries the split instead: "fifteen for 2 and a pair for
+2". One part keeps the plain phrase, because the total beside it has already
+said the number.
+
+### How it was verified
+
+Identical probe, main (`127.0.0.1:4880`) then the branch, Team Spades at
+1280×860 dark: banner `null` / chip `null` / strip hidden, against "Spades are
+broken — Rook played the 2♠" and a 133×31 chip at (574, 225). Hearts says
+"Hearts are broken — Rook played the Q♠" — the suit that is freed, the card
+that freed it. Both themes and both viewports carry the chip
+(375×812: 133×31 at (121, 215)), `scrollHeight` equal to the viewport in every
+run. Driven past the end of the hand, the chip appears at trick 4 and is gone
+at trick 1 of the next deal; seeded from a saved log and reloaded, it comes
+back at `opacity: 1` with `aria-label` "Spades are broken — they may be led".
+
+Cribbage, driven through the show: three cards in the order the rules score
+them — "Cass's hand" 12 (fifteen 2, fifteen 2, a pair 2, a run of 4 6), "Your
+hand" 6, "Your crib" 16 (three fifteens, a pair, a run of 5 8) — each row
+listing exactly the parts of its `showScored` event and adding to the event's
+total. Hovering a row lights exactly that row's cards and no others, in all
+three steps, at both viewports and both themes. When the round summary opens,
+`#show-card` is hidden with no children — and with that one line removed it is
+visible with the crib's card still in it, under the panel. A 375×812 run dealt
+a zero hand and drew the nineteen card with no rows.
+The card is 274×248 at most at 1280×860 with the hand at y 795, and 188×183 at
+375×812 with the hand at y 720, so it clears the fan by 177px and 164px; no run
+scrolled. Main, the same probe: no card at all, and "Cass pegs 2 — a pair — the
+count is 4."
+
+Gates: `npm test` 862 pass / 0 fail (842 on main, +20 new), `node
+tools/pack-test.mjs --all` 137 passed / 0 failed across the nine packs,
+nine-pack headless boot 18/18 at both viewports. Every new test was proven to
+bite: 22 deliberate breaks, each one restored from a copy and re-run green —
+among them dropping the false→true guard, pointing `publicVars` back at
+`rules.broken`, dropping `BROKEN_PRIORITY` to the trick's rung, letting the
+chip ignore the var, re-deriving the card's total from its own rows, putting
+card ids back in `at`, and removing the `.slice()` that stopped
+`showScored.cards` emptying out from under the event.
+
+**Not done.** The show card's dwell is whatever `roundBeat.js` gives the step
+(#150 owns that timing); a card is more to read than a sentence and it may want
+a longer beat than the banner did.
+## The card a bot may not throw away, and the pile it may not build (#160)
+
+Round six of the playtest reported three bot behaviours and they were one
+thing: the move scorers. `easy` ranks by `botHeuristic` alone, a `hard` rollout
+plays every chair with it, `medium` ranks by `evaluateState`, and the Hint
+button ranks with the same code as all three — so a wrong opinion in a scorer
+is a wrong opinion everywhere, the felt's own advice to a human included.
+
+**Shedding: the eight was always the first card played.** `botHeuristic` read
+`1 + value × 0.01 + (effect ? 0.5 : 0)`, which rates an eight at 2.00 against a
+natural's 1.10 at best — an eight has both the biggest value in the deck and an
+effect. `evaluateState` agreed by another route: 50 points of deadwood at
+`DEADWOOD_WORTH` = 0.05 is 2.5 against a `WILD_WORTH` of 1.5, so the position
+that had just thrown its eight away graded above the one still holding it. A
+wild now scores 0 in the move scorer — above the holding moves, below every
+natural, which all score at least 1 — and is out of the deadwood sum
+altogether. That term prices what you are caught holding when somebody else
+goes out, and a wild is the one card you are never caught holding: it plays on
+anything, so it goes down on the turn you need it. What it costs is the round
+you lose with nothing to play, which is what `EXIT_WORTH` and `WILD_WORTH`
+already say.
+
+**Contract rummy: the cheap scorer and the position scorer disagreed.**
+`scoreDiscard` has always said `WILD_KEEP` = 100, never the discard.
+`evaluateState` contradicted it in both branches. Before the lay-down a wild's
+keep value came through `min(keep, PROGRESS_CAP) × PROGRESS_WORTH` = 6, against
+3 for the card slot and 3.75 of deadwood shed — so throwing one graded +0.75,
+better than holding a well-connected natural. After the lay-down a held wild
+counted `OUT_WORTH` = 1 against the same 6.75. One term instead: `WILD_HOLD` =
+10, outside the cap, with the wild left out of the deadwood sum. The floor it
+has to clear is the best discard any natural can offer (3 + 3.75), and the
+ceiling it must not swamp is `LAID_DOWN_WORTH` = 40, so a seat still lays down
+rather than sitting on a fistful of wilds. Going out is untouched in either
+direction: a hit that empties the hand ends the round inside `applyMove`, and
+`src/engine/bot.js` bands every round-ending move above anything the evaluator
+scored, so the last wild still goes down to go out.
+
+**Stockpile had no bot to speak of.** `botHeuristic` was five flat numbers —
+pass −2, discard −1, stock 3, discard pile 2, hand 1. Every discard scored the
+same, so the first card in hand order went onto pile 1 whatever it was, wilds
+included; every build play scored the same, so the pile was whichever the
+enumerator offered first. That is how a seat comes to lay the eleven that
+brings a pile to exactly the twelve sitting face up on the human's stock. There
+was no `evaluateState`, so `medium` was `easy`; and the manifest names no
+scoring, so a finished `hard` rollout came back worth zero for every candidate
+and `hard` fell back to enumeration order. Three difficulties, one bot.
+
+The pile is part of the answer now. Every stock top at this table is dealt face
+up, so "this play leaves a pile wanting the rank somebody else is waiting for"
+is a fact rather than a guess; discards stack into descending runs; a wild is
+never the discard. `evaluateState` grades the race — the stock, then the build
+piles that would take its top card, then what is in hand that could bring one
+to it, then the shape of the four discard piles — and reads nothing that is not
+face up for all four seats, which is what makes the rival term honest.
+`matchStanding` answers with the height of the stock, which *is* the race, so a
+finished rollout has a spread again.
+
+**The Stockpile stalls were the bot as well.** Completion there has been
+floored rather than gated since the `1000-sims-zero-stalls` note above,
+diagnosed as the rules-level dead end tracked at #20: `draw` and `recycled`
+both exhausted, every hand empty, no stock or discard top matching any build
+pile. Replaying `tools/simulate.mjs`'s own 300 seeds and dumping the position
+at the move cap says that diagnosis was right about 20 of main's 24 stalls —
+and that the seats were walking into it. Every stalled hand had its four stocks
+barely touched — the emptiest of the ninety-six still held 14 of the 30 it was
+dealt and 88 of them held 23 or more — with the whole circulating pool, about
+forty cards, sitting on the build piles: four seats each playing every card
+they legally could, and nothing left to complete a pile with.
+
+So a hand card is spent only when it is going somewhere — onto a pile still
+below my own stock top, or onto the last slot of a pile, which sweeps twelve
+cards back into the draw — and otherwise ranks with burying, and the turn ends
+with the card kept. Stock and discard-pile plays are never withheld: one is the
+race and the other frees a card that was already out of circulation. `BURY_COST`
+is the same fact told to the evaluator, since without it burying rated zero
+against −`OPEN_PILE` for opening a fresh pile and it buried by preference;
+`SEQUENCE_WORTH` went to 2.5 to stay above it, because a card laid one below
+the card it covers is not buried at all.
+
+**The numbers**, same seeds either side, `tools/simulate.mjs` verbatim:
+
+| bar | before | after |
+|---|---|---|
+| crazy-eights, 300 games, 4 seats | 300/300, 33.5 moves | 300/300, 28.6 moves |
+| crazy-eights, medium vs easy, 200 rounds | 58.0% | 60.5% |
+| crazy-eights, hard vs easy, 200 rounds | 59.0% | 57.5% |
+| crazy-eights, hard vs easy, 600 rounds | 59.0% | 60.0% |
+| wildfire, 300 games, 4 seats | 300/300, 56.4 moves | 300/300, 48.0 moves |
+| wildfire, medium vs easy, 200 rounds | 54.3% | 54.5% |
+| wildfire, hard vs easy, 200 rounds | 50.0% | 55.6% |
+| milestones, 2-seat match completion, 100 | 100/100 | 100/100 |
+| milestones, medium vs easy, 300 matches | 48.0% | 48.3% |
+| milestones, hard vs easy, 100 matches | 47.0% | 49.0% |
+| stockpile, 300 games, 4 seats | 276/300, 24 stalls | 290/300, 10 stalls |
+| stockpile, medium vs easy, 200 matches | 43.0% | 66.0% |
+| stockpile, hard vs easy, 200 matches | 43.0% | 64.5% |
+
+Read plainly: Stockpile gained a difficulty ladder where it had none — both
+`medium` and `hard` were losing to `easy` and now beat it by twenty points and
+more — and its stall rate halved, with every one of the ten survivors the #20
+dead end and none of them a live-lock (main had four of those). The shedding
+packs move a little, in the direction the change predicts and mostly inside the
+noise of 200 rounds; the one number that clearly moves is Wildfire's `hard`,
+which gains five and a half points, because a wild-draw-four held is a turn
+bought later rather than four cards given away now. Crazy Eights' `hard` is
+the reminder of how wide that noise is: it reads 1.5 points DOWN over 200
+rounds and 1.0 up over 600 of the same seed family, which is what a standard
+error of 3.5 points looks like. Two hundred rounds cannot see a change this
+size; the 600-round row is the one to quote. Milestones is flat, which
+is the #92 reading unchanged: with a heuristic that converges, neither search
+layer beats `easy` at matches. What did change there is the round score — the
+`medium` seat now finishes a match holding more points (242 against 228) while
+`easy` holds fewer — and that is the expected cost of holding a 25-point wild
+for the turn it is worth. The match is the bar this pack is decided by, and on
+it nothing moved.
+
+`tools/tune.mjs` swept both new weight sets at `medium` on whole matches, the
+`tune:` seed family the `sim:` runs above never touch: Stockpile's nine weights
+perturbed ±50% one at a time over 40 matches each, and Milestones' `WILD_HOLD`
+over 80. Nothing was accepted at two standard errors, and nothing came close —
+every one of Stockpile's eighteen candidates *lost* to the shipped set, the
+best of them at 45.0% ± 7.9, and halving `WILD_IN_HAND` costs fifteen points;
+`WILD_HOLD` at 15 loses at 36.3% ± 5.4 and at 5 is a coin flip at 51.2% ± 5.6.
+So the shipped set is what the table above measures, and the table — a seed
+family the search never saw — is itself the held-out run.
+
+**On the felt**, where this is a ring on a card. Twenty Crazy Eights deals a
+side, phone viewport, stopping on the turns where the hand holds both a
+playable eight and a playable natural and clicking Hint: five such turns before
+the change and the ring was on the eight in five of them ("Steady would play
+the 8 of Hearts and call Clubs", with the 9 of Spades sitting playable beside
+it); five after, and the ring was on the eight in none.
+
+**The gates.** `tests/botWilds.test.js` makes each claim twice — against a
+position built to have exactly one wrong answer in it, and as a property of
+seeded play at the difficulties that rank deterministically. Two existing gates
+had to move with it: `tests/lookahead.test.js` kept Stockpile as "the template
+with no `evaluateState`" and there is no longer one in the repo, so it makes
+that template by taking the hook away and states the claim against the fallback
+itself; and `tests/rollouts.test.js` asked whether `hard` differed from
+`medium` by reading only the top move, which made it a coin toss on how often a
+sample overturns the favourite — six positions in 113 at Wildfire. It compares
+whole rankings now, scores included, and the exception it used to carve out for
+Stockpile is gone, because a `matchStanding` is exactly what that exception
+said was missing.
+
+**Not done, and why.** Stockpile does not meet the issue's "300 games, 0
+stalls". Ten of three hundred remain and all ten are the same rules-level dead
+end #20 is open for: the pool is genuinely gone and the manifest has no way to
+say "recycle the personal discard piles". No bot can play its way out of a
+position with no legal move in it, and the vocabulary change that would fix it
+is a manifest-and-engine decision, not a scorer's. The bot's share of the
+problem — the four live-locked seeds, and the walk into the dead end — is what
+this pass took.
+## A ladder nobody wrote: the Milestones daily run (#162)
+
+### What was wrong
+
+Milestones had one ladder. `packs/milestones/manifest.json` `rules.contracts` is
+ten contracts a human chose, and every game of Milestones anybody has ever
+played has been those ten in that order. Nothing daily existed anywhere, though
+the pieces did and had done for a while: `src/engine/arcade-rng.js` shipped
+`dailyDateStr`, `dailySeed` and `hashU32` and *nothing imported them*,
+`createRng` already took a string seed, the ladder is data checked by the same
+`itemsMatchContract` door a human's lay-down goes through, and the contract
+strip is data-driven. The day was there to be built; it just was not.
+
+### The shape of it
+
+**One string is the whole day.** `milestones|2026-09-11` seeds the ladder AND
+the deal, so two devices on the same date get the same ten rungs and the same
+cards. The date is device-local, which is the platform's rule (`dailyDateStr`
+says why): a daily rolls at the player's midnight, not UTC's.
+
+**The ladder is derived, never stored.** `serializeMatch` is untouched and
+`MATCH_FORMAT_VERSION` did not move — a daily save is an ordinary `{seed, log,
+variants…}`, and the only thing marking it a daily is the key it sits under and
+the `<packId>|<date>` shape of its own seed. A resume re-derives the ten
+contracts from that seed before a single move is replayed, which is what makes
+"the same ladder came back" true rather than hoped for, and it means every save
+written before the daily existed still loads.
+
+**Two solo slots per pack.** `daily.<packId>` beside `match.<packId>`, for the
+reason `mpMatch.` is kept apart: a casual Milestones game and today's run are
+two different games, and one slot would mean opening the daily silently threw
+the other away. `listMatchSummaries` reads the casual prefix only, so the daily
+never shows up as an "In progress" ribbon — it has its own control that says
+what it is.
+
+**Its own record.** `dailyStats.<packId>`, and `recordResult` is not called for
+a daily at all. "Won 4 of 9 in Milestones" is a sentence about the ladder the
+pack ships; folding in ten contracts nobody authored would make it a sentence
+about two different games, and would let a daily loss break the casual streak
+the tile shows. `streak` here is consecutive CALENDAR DAYS, which is the only
+reading that means anything for a daily. One result per day is enforced in
+`recordDailyResult` rather than trusted from the callers, because the table
+concludes a finished match and the "End match" door records a loss and a player
+who does both must not play the streak twice.
+
+**The tile is the whole entry.** A `daily: true` flag on the manifest, and the
+lobby knows there is such a thing as a daily run and nothing whatever about
+ladders or seeds. A finished day is rendered as TEXT, not a disabled button:
+there is no second attempt, so offering something to press would be offering a
+door that does not open. The share line is plain prose — `shareEncode` exists
+for a payload somebody has to decode, and the date is the whole of the state.
+
+### The two doors a generated rung goes through
+
+Feasibility was the obvious one and the easy one: `findDeckLayDown` finds a
+concrete lay-down for every rung in the pack's actual deck, ordered run-first
+and backtracking over the choice each item has, and the test pushes that
+lay-down through `resolveMeld` — the same door a human's cards go through.
+
+It was also not the one that mattered. The deck holding a lay-down says nothing
+about whether eleven cards ever BECOME one, and the first generated ladders
+stalled: twenty consecutive days at `--match --games=100` gave **6 bad days and
+55 stalled matches**, every one of them a round where four seats drew and
+discarded to the 4000-move cap with no lay-down and nobody going out. The
+shipped ladder does not do this (100/100).
+
+So every rung shape the generator can emit over a year — 79 of them — was played
+as a hand EVERY SEAT IS ON, four seats, the same cap, 50 hands each, and the
+23 that looked marginal again at 300. Two families failed and nothing else did:
+
+    run(6) set(3)        25/50      run(5) set(3)        46/50
+    run(5) set(4)        42/50      run(4) set(3)        48/50
+    run(5) set(2) set(2) 48/50      set(5)              297/300
+                                    set(6)              299/300
+
+**A long run and a real set pull opposite ways.** A run wants a different rank
+at every slot, a set wants the same rank over and over, and a seat owing
+`run(6) set(3)` has to hold nine of its eleven cards in two shapes that
+disagree about what a good card is. `isPlayableRung` refuses a run of four or
+more beside three or more cards owed as sets. `run(7) set(2)`, `run(5) run(4)`
+and `run(3) set(6)` all survive — a colour group asks about colour and says
+nothing about ranks, so it conflicts with neither.
+
+**A rung that is one set and nothing else** is the least absorbent felt in the
+game. Laying down is only half a hand; somebody has to GO OUT, and that means
+shedding the rest onto what is on the table. A run takes cards at both ends, a
+colour group takes anything of its colour, but a set of sixes only ever takes
+another six and five of the eight are already in the meld. A lone `set(5)` also
+leaves the most cards to get rid of, which is why it is the only single-meld
+rung that ever stalls — `run(9)` and `colorGroup(8)` finished 300 of 300. Two
+sets are fine: `set(6) set(3)` puts two targets down and leaves two cards.
+
+With both doors in place: **20 days x 100 matches, 0 stalled, 0 errored**, and
+60 further days x 50 matches at 0 as well.
+
+The first of those is really a statement about the bot, and it is worth saying
+plainly rather than hiding behind the generator. `keepValue` in
+`src/templates/contract-rummy-bot.js` grades a card by a contract's appetites
+BLENDED in proportion to the cards each owes, so on a mixed run/set rung it
+half-collects two things and finishes neither. Teaching it to commit belongs in
+that file (#160 is in there); until then the generator does not write a rung the
+table cannot play. The pack's own ladder still ships `set(3) run(4)` and
+`set(4) run(4)` and is untouched — a fixed ladder is ten rungs a human read, and
+seats spread across it long before they reach those.
+
+### Two smaller decisions
+
+**At most four rungs may cost the same.** The size jitter would happily put six
+of the ten rungs on one total, and the smallest total is the one with least to
+say: at five cards the whole grammar offers four rungs, so a day that spends six
+there cannot avoid printing the same contract twice in a row. 2026-01-20 was
+that day. The cap fits what the narrowest size can supply; `hi` is always at
+least two above `lo`, so three sizes at four apiece is more room than ten rungs
+need.
+
+**The difficulty measure is written down so a test can hold the generator to
+it**: `[total cards, longest run, longest set]`, compared lexicographically.
+Total cards first because that is what a rung costs out of a ten-card hand and
+it is the number a player feels; run length as the tiebreak because a run is the
+shape the deck makes scarce, so `run(7)` sits above `colorGroup(7)` at equal
+cost. It is a ranking, not a win probability — what it has to be is total, cheap
+and defensible.
+
+### How it was verified
+
+`tests/dailyLadder.test.js` (19) and `tests/dailyRun.test.js` (16) sweep 365
+consecutive dates: 365 distinct ladders, never fewer than 9 distinct shapes
+inside one, no rung costing the whole deal, no rung easier than the one below
+it, every rung's lay-down resolved through `resolveMeld`, and both playability
+doors. Every one of the 35 was proved to bite by breaking what it watches —
+28 mutations across the three modules, each restored from a scratch copy.
+`npm test` 876 pass 0 fail (842 on main), `node tools/pack-test.mjs --all` all
+nine packs 0 failed, schema check silent, all nine packs boot clean headless at
+1280x860 and 375x812.
+
+On the felt (Chrome, 1280x860, against a dev server on the worktree): the tile
+offers "Daily run · Sep 11", opening it titles the bar "Milestones — daily
+2026-09-11", deals four seats from `players.best` and draws a ladder that is not
+the shipped one; the casual save is byte-for-byte untouched through all of it; a
+reload brings back the same ten rungs and the same ten cards; playing the hand
+out and using "End match" writes `{played:1, won:0, streak:0, lastDate}` to the
+daily record, leaves `stats.milestones` at zero, and the tile changes to
+"Today's run · Sep 11 · lost" with a Copy result button whose clipboard text is
+`Milestones daily 2026-09-11 — won in 7 hands · 3-day streak`. No page errors.
+
+**Not done, and why.** `closeTable()` calls `flushTable()`, which writes the
+match back to storage AFTER `endMatchFromSummary` has cleared it — so ending a
+match from the round summary leaves its save behind. This is not the daily's
+doing: main does exactly the same to `match.<packId>` (reproduced against an
+unmodified checkout — the tile still reads "In progress · 62 moves" after "End
+match" records the forfeit). The daily inherits it and is not harmed by it,
+because `dailyStatus` reads FINISHED from the record and the record wins over a
+leftover save, so the tile is right either way and there is no button left to
+walk back in through. It wants fixing in `closeTable`, which is nobody's scope
+this round.
+## The next hand comes by itself, at a pace you pick (#150)
+
+### What was wrong
+
+`dismissRoundSummary` is the single door between hands — it clears the beat,
+paints the deal and re-arms the bots — and exactly one thing turned it: a tap
+on **Deal round N**. Round-6 playtest: some players want that pause and many
+do not, and there was no way at all to say which. The only speed preference in
+`SETTINGS_DEFAULTS` was `botDelayMs`, a millisecond count with no UI anywhere,
+which is the shape this deliberately does not copy — "how many milliseconds
+should a hand take" is not a question anybody has an answer to.
+
+### The four rungs, and why the default is Quick
+
+`src/ui/pace.js` is the list, a data module for the reason `difficulty.js` is
+one: the two things that render it reach for `document` at import time, so the
+list is the only part a Node test can hold. Manual is today's behaviour.
+Relaxed waits 6s and stretches a show step to 2100ms. Quick waits 2.5s at the
+shipped 1500ms step. Instant has no transition at all.
+
+**Quick is the default** because the complaint was one-directional: nobody
+asked for a longer wait between hands and several people asked for none. It
+still SHOWS the sheet — the score sheet is the only place a round's damage is
+ever spelled out, and Instant is the rung that trades that away, so it must be
+chosen rather than arrived at. 2.5s was measured against the widest sheet we
+ship rather than guessed: a four-seat summary is four rows of name, delta and
+total, and reading it is one saccade per row; the number was left at 2.5s
+because the sheet is also a countdown you can watch and cancel with a tap, so
+being a little short of a full read costs a tap and not the information.
+
+Written at the one gesture that deals (`rememberDifficulty` in
+src/ui/lobby.js, which now carries both preferences), so backing out of the
+new-game sheet changes nothing — the rule difficulty already had.
+
+### The pace is a term in the schedule, not a branch in the renderer
+
+`roundBeatPlan` already owned the arithmetic of a round ending and now takes
+the rung: it scales the show step, it reports `autoAdvanceMs` (null for
+Manual), and at Instant it collapses to `holdMs: 0`, no steps, `summaryAt: 0`.
+**The hold is not scaled**, and that is the one number a pace rung deliberately
+cannot touch: it is measured against the card flight so the last card has
+LANDED before anything asks to be read (#120), and the flight is already the
+player's own speed setting. A rung that shortened it would be a preference for
+reading a card that is still in the air.
+
+The timer goes through `dismissRoundSummary` and nothing else. A timer that
+reached for `scheduleNextTurn` would let a bot play its first card into a felt
+still showing the last hand, and `tests/pace.test.js` reads `armAutoAdvance`
+and fails if `scheduleNextTurn` appears in it.
+
+All three of a round ending's timers are now held on the session
+(`beatTimers`, `revealTimer`, `advanceTimer`) and cancelled by `stopSession`.
+They were previously anonymous `Arcade.session.setTimeout` calls guarded only
+by an epoch check inside the callback, which stops a timer doing damage and
+does not stop it running — not good enough once one of them deals a hand.
+`endMatchFromSummary` cancels the countdown BEFORE it asks "are you sure?" and
+re-arms it if the answer is no: a confirm dialog is a pause of the player's own
+length, and the next hand was otherwise dealt out from under the question.
+
+### The indicator
+
+A thin outline filling in around the Deal button, no digits: what is worth
+showing is "this is about to happen", and a number counting down from 2 is a
+number nobody finishes reading. One shot, `forwards`, class removed when the
+sheet closes — there is no state in which it is ticking with nothing to count
+down to (cardstock#24). Under reduced motion or the power saver the outline is
+simply drawn whole and still, and **the timer fires at exactly the same
+moment**: a player who asked for less movement did not ask the table to stop
+dealing.
+
+Two things about drawing it are worth writing down, because both cost real time
+and neither is visible in the code that looks wrong.
+
+**`hidden` does not exist on an `<svg>`.** It is an IDL property of
+HTMLElement; SVGElement has none, so `ring.hidden = false` defines a JavaScript
+expando and leaves the ATTRIBUTE — and `.deal-ring[hidden] { display: none }` —
+exactly where it was. The ring never appeared while every value the code could
+read said it should: `ring.hidden` false, dash array right, animation running,
+computed `display: none`. Shown by attribute now, and pinned by a test.
+
+**`inset` does not size a replaced element.** An `<svg>` has a default
+intrinsic size of 300x150, and an absolutely-positioned replaced box with
+`width: auto` takes that rather than the size its insets describe:
+`inset: 1px` measured 288x144 over a 138x39 button. Sized explicitly instead —
+`top/left: 2px` with `calc(100% - 4px)`, two pixels in so a 2px stroke centred
+on that edge lies wholly on the button rather than half on the panel behind it,
+which in the light theme was white on cream and read as a smudge.
+
+**A client rect is measured through the transform; the path is not.** The dash
+array is computed in JS rather than written in CSS because it is a measurement,
+not a constant — the button is as wide as "Deal round 11" happens to be, and a
+perimeter that is not the real one runs short or spills. But `paintRoundPace`
+runs on the frame the overlay is unhidden, and the panel's entrance animation
+(`settle-in`) starts at `scale(0.96)`: `getBoundingClientRect()` read then came
+back 96% of the button, while the svg's own layout box — the box the path is
+drawn in, which a transform does not touch — was full size. The dash array was
+327.5 against a real perimeter of 342.3, so the ring reached the end of its
+countdown with a ~15px gap still open at the top left. `offsetWidth` /
+`offsetHeight` are the border box in layout pixels, and are what it reads now.
+Measured after the fix: 341.7 with the entrance animating, 342.3 with it
+suppressed by reduced motion — 0.2%, which is `offsetWidth` rounding to whole
+pixels.
+
+### Tap anywhere, and change it where you feel it
+
+The whole panel deals. Three things opt out and the third is the dull one:
+**End match** leaves the game and swallowing that tap into a deal is the worst
+possible misread of it; the **pace control** is a tap you make BECAUSE you do
+not want to deal yet; and the **Deal button** has a listener of its own, so
+letting the panel's handler see the same click would call the door twice. (It
+is idempotent — `dismissRoundSummary` checks `roundSummaryOpen` — but a second
+call that only survives on a guard is not a design.)
+
+`Pace · Quick >` on the sheet cycles the rungs, persists immediately, and
+restarts the countdown at the new rung rather than resuming it: a player who
+reaches for this at 2.4s of a 2.5s countdown is asking for more time, and
+handing them a tenth of a second of Relaxed is the opposite.
+
+### Measured
+
+Chrome headless at 1280x860, `botDelayMs` 600 (420ms flight), from the
+round-ending move to the next hand's first card on the felt. The move's moment
+is taken from the felt's own timers rather than assumed: the beat arms its
+whole schedule synchronously inside the move, so the `at` of the timer that
+ends the beat IS the move.
+
+Cribbage, whose round ending is a three-step show:
+
+| Rung | beat (hold + show) | sheet held | move -> next hand |
+|---|---|---|---|
+| Manual | 5201ms | never (15s, then a tap) | 20712ms with the tap |
+| Relaxed | 7004ms (700 + 3x2100) | 6009ms | 13013ms |
+| Quick | 5205ms (700 + 3x1500) | 2510ms | 7715ms |
+| Instant | 12ms | no sheet | 12ms |
+
+Thirteen, whose round ending is the plain hold and nothing to count:
+
+| Rung | beat | sheet held | move -> next hand |
+|---|---|---|---|
+| Manual | 701ms | never (15s, then a tap) | 16049ms with the tap |
+| Relaxed | 705ms | 6009ms | 6713ms |
+| Quick | 705ms | 2512ms | 3216ms |
+| Instant | 16ms | no sheet | 16ms |
+
+Every rung lands within 12ms of `hold + rung`, which is what it should be: the
+pace is a term in `roundBeatPlan` and the packs differ only in what the hold
+has to cover. A tap on the panel during Relaxed dealt 7ms later on Cribbage and
+11ms on Thirteen. **The bots wait for the deal either way**: the first bot line
+after the deal render landed 419–1540ms after it across every run above, never
+before it.
+
+The ring, measured rather than eyeballed (computed `stroke-dashoffset` against
+the dash length it was given, Relaxed, both themes): 341.7 of 341.7 at 0%, 169
+at the 3s mark — 51% filled — and `animation-iteration-count: 1`. Under
+`prefers-reduced-motion` the treatment is `deal-ring--static`, the offset is 0
+throughout (the outline drawn whole and still), and the sheet still dealt
+itself inside the 6s. The preference walk: seeded Relaxed, the sheet's control
+cycled to Quick, and the ring's own `--deal-ring-ms` went 6000ms → 2500ms in
+the same frame; storage said `quick` immediately, still said it after a reload,
+and the next new-game sheet came up with Quick pressed.
+
+**Not done.** Shared tables are unchanged at the protocol level: the pace is a
+local presentation preference, and the table's actual progress is already
+host-driven because bots only run host-side (`scheduleNextTurn`). A joiner
+dismissing their own sheet early sees the deal sooner and nothing else moves,
+which is what "joiners just see the deal" amounts to without a new frame.
+
+## The lowest card leads, the house rules are offered, and a sort knows its ladder (#156, #158, #159)
+
+### What was wrong
+
+Three reports off one table, and the first two are the same mistake written
+twice: a rule expressed as the thing it *usually* produces rather than as the
+thing it *means*.
+
+**The lead (#156).** Thirteen's `rules.firstLead.card` was the literal
+`spades-3`, and `beginHand` handed the lead to whoever held that card. Thirteen
+deals a flat thirteen and leaves the remainder out of play (THIRTEEN_RULES.md
+D-11), so short-handed the 3♠ is frequently not dealt at all — half the deck is
+never dealt at two seats and a quarter of it at three. Measured over 400 seeded
+deals per seat count: out of play in 50.7% of two-seat deals and 25.8% of
+three-seat ones, which is the population rate and not bad luck. `seatHolding` then named no seat and the lead fell through
+to `ctx.openingSeat()`, which on hand one is seat 0, which is the human — so
+the opening lead was handed to the player by a bug, in the game whose first
+rule is that the lowest card leads. Before: the opening seat held the lowest
+card in play in 77.3% of two-seat deals and 83.0% of three-seat ones, and the
+lead landed on seat 0 in 77.8% and 49.3% of them. At four seats it was already
+right in every deal, because there the 3♠ always *is* the lowest card in play.
+
+Two smaller things sat beside it. `dealHands` passed a step count into
+`nextSeat`'s *direction* parameter (`nextSeat(openingSeat(), n)`), which visits
+every seat exactly once and so dealt a valid hand — clockwise, at a
+counter-clockwise table. Nothing downstream noticed, because every seat still
+got thirteen cards. And `seatsFor` in `src/ui/table.js` fell back to a flat
+`SEAT_COUNT = 3` when nothing asked for a seat count, which is what a deep
+link and a resume-with-no-saved-setup got: `?pack=thirteen` opened a
+three-handed table while the manifest's `players.best` said four and the
+new-game sheet preselected four. Two surfaces answering one question
+differently is how "the deal is wrong" arrives against a pack that is right at
+the table it was designed for.
+
+**The house rules (#158).** Two rules players asked for, both nearly supported
+already. `rules.passIsFinal: false` — a pass skips your turn instead of putting
+you out of the trick — was implemented in `stillIn` and unreachable, because no
+pack offered it. And `Q-K-A-2` as a run was one key away, except that the one
+key was doing three jobs: `rules.runExcludes: ["rank:2"]` barred the 2 from
+runs, from consecutive-pair strips, *and* from the ranks the `instantWins`
+dragon is counted over. Dropping it to buy the run would silently have sold
+`2-2 A-A K-K` as a bomb-eligible strip, and moved the dragon from 3-to-A
+(twelve ranks) to 3-to-2 (thirteen ranks — the whole hand), a shape rare enough
+that the instant win would have stopped happening while the rules page went on
+offering it.
+
+**The sort (#159).** `rankIndex` in `src/ui/handOrder.js` read `Number(rank)`
+and then `RANKS`, both of which start at the 2, and `orderHand` never saw the
+pack. So "By rank" in Thirteen fanned `2♣ 2♦ 2♥ 3♣ … A♣` — the exact inverse of
+the ladder the whole game is played on. Pinochle's ten sorted between the 9 and
+the jack instead of between the king and the ace, and Cribbage's ace sorted
+last. The suit sort's within-suit tiebreak had the same bug.
+
+### What changed
+
+**`firstLead.card` gains the selector `"lowest"`** (`src/templates/climbing.js`
+`firstLeadCard`, schema `rules-climbing`): the minimum `cardOrder` — suit
+included, so exactly one card qualifies — among the cards actually dealt. A
+literal card id keeps working for a pack that really does nominate one card.
+Thirteen's manifest switches to `"lowest"`, and `ruleLines` says so, because
+the felt refuses moves over this rule and a refusal is a bad way to learn it.
+`dealHands` steps one seat at a time, the same walk `advance` does, so the deal
+and the turn order cannot disagree. `seatsFor` falls back to `players.best`.
+
+**The sequence exclusion splits by shape.** `rules.runExcludes` governs runs,
+the new `rules.stripExcludes` governs consecutive pairs, and a pack playing the
+ordinary rule declares the same list in both — which Thirteen does.
+`outOfSequence` takes a `kind`, and `null` means "excluded from *any* shape",
+which is what `instantWinShape` asks: the dragon is the intersection, so it
+stays 3-to-A under either reading, and that is now stated in the code rather
+than being a consequence. `rankCounts` carries `run`, `strip` and `seq`
+counters instead of one `seq`, so `handShape` and `candidateSets` — the bot's
+view — see the longer runs the variant allows without seeing a strip it does
+not. Variants `pass-stays-in` (default **on**) and `two-tops-runs` (default
+off) ship on the new-game sheet.
+
+**`orderHand` takes the pack's ladder** (`rankLadderOf(state.pack)`, #101's
+primitive) from its one call site in `renderHand`, and orders by it. Today's
+tiers survive as the fallback for ranks a ladder does not name (wilds,
+Milestones' `skip`) and for a pack that declares no ladder; off-ladder ranks
+sort after every ranked card rather than interleaving with them. The rank
+sort's tiebreak and the suit sort's within-suit order use the same ladder,
+including a declared `suitLadder` — Thirteen's four 9s now fan
+spades-clubs-diamonds-hearts, which is how the table ranks them. The suit
+sort's *groups* stay in suit-name order on purpose: a player learns where
+their spades live, and rearranging the four blocks would be a worse bug than
+the one being fixed.
+
+### What was decided, and why
+
+**`"lowest"` as an enum member of `firstLead.card`, not a new `firstLead.lowest`
+flag.** The issue offered both. One key with two forms keeps "who opens hand
+one" as a single question with a single answer; a second key invites a manifest
+that sets both and a template that has to decide which wins.
+
+**`stripExcludes` defaults to nothing rather than to `runExcludes`.** A pack
+that means the ordinary rule writes the list twice. The alternative — infer the
+strip's exclusion from the run's — is exactly the coupling #158 exists to
+break, and it would have made `two-tops-runs` a patch that silently moved two
+rules again.
+
+**The dragon is the intersection, spelled out.** `instantWinShape` asks
+`outOfSequence(ctx, card)` with no `kind`, and the comment says why. The
+alternative, a `dragonExcludes` key, is a third list nobody would keep in sync.
+
+**`pass-stays-in` ships on.** It is the rule the report asked for and, per D-12,
+the one more tables play. The strict rule is still the pack's own
+`rules.passIsFinal: true` and one toggle away; a resumed match keeps whichever
+it was dealt under, which is pre-existing machinery (`src/engine/replay.js`
+records `activeVariants`) and was verified rather than assumed.
+
+**`tools/simulate.mjs --vs` was measuring the wrong pack.** `tournamentPack`
+has taken a `variants` option since it was written; `main` never passed one, so
+`--vs=hard,easy --variants=two-tops-runs` quietly played the pack's defaults.
+It went unnoticed because the tournament heading printed only the pack id, so
+two runs under different rules were indistinguishable on paper. Found the way
+these things are found: three runs at three rule sets came back byte-identical,
+down to the mean round score. The option is threaded through and the heading
+names the rule set like the other two printers' `label` does. Untested, because
+`tournamentPack` is not exported and a tournament is minutes rather than
+milliseconds — it is a dev tool, and this is written down rather than pinned.
+
+**`tools/pack-test.mjs` had to learn the difference between "no variants named"
+and "no variants".** Its per-variant pack memo keyed both on `''`, so
+`"variants": []` — the only way a rule test can pin the strict side of a
+variant that ships `default: true` — silently got whichever pack the first
+lookup had cached. Fixed, and the existing "a seat that passed is out of the
+trick" test now names `[]`, because with `pass-stays-in` on by default a test
+that named nothing would have asserted the weak rule while claiming the strong
+one.
+
+### How it was verified
+
+`npm test` 851 pass, 0 fail (main's baseline is 842; nine new cases).
+`node tools/pack-test.mjs --all` green, thirteen 23 passed 0 failed.
+`node smoke.mjs http://127.0.0.1:4866` — all nine packs at 1280x860 and
+375x812 — SMOKE OK: 18/18.
+
+400 seeded deals per seat count, plain rules, before (main @ b0a39ae) and after:
+
+| seats | opening seat holds the lowest card | before | 3♠ out of play |
+|---|---|---|---|
+| 2 | 400/400 100.0% | 309/400 77.3% | 203/400 50.7% |
+| 3 | 400/400 100.0% | 332/400 83.0% | 103/400 25.8% |
+| 4 | 400/400 100.0% | 400/400 100.0% | 0/400 0.0% |
+
+The opening lead is refused without that card in 100.0% of deals at all three
+counts, against 49.3% and 74.3% at two and three seats before.
+
+The deep link `?pack=<id>` with no saved setup, before → after: thirteen 3 → 4,
+hearts 3 → 4 (and a 13-card hand rather than the 17 a three-handed Hearts
+deals), milestones/wildfire/crazy-eights/stockpile 3 → 4, cribbage 2 → 2,
+pinochle and team-spades 4 → 4. Every pack now opens at the seat count its own
+manifest recommends.
+
+The fan, "By rank", read off the felt, before → after. Thirteen: `2♣ 2♦ 2♥ 3♣
+3♦ 4♣ 6♦ 8♥ 9♦ Q♦ Q♥ K♣ A♣` → `3♥ 4♠ 4♦ 5♠ 6♦ 6♥ 7♥ 8♦ 9♠ 10♠ Q♠ K♠ 2♥` — the
+2 moves from the head of the fan to its tail, and 4♠ before 4♦ and 6♦ before 6♥
+is the suit ladder in the tiebreak. Pinochle (a doubled deck, so `9#2♥` is the
+second copy of the 9 of hearts): `9#2♥ 9#2♠ 9♠ 10♣ 10#2♠ J♦ Q♣ Q#2♣ Q#2♦ Q#2♥
+Q#2♠ K#2♠` → `9#2♦ 9♠ J♣ Q#2♣ Q♣ K♦ K♠ K#2♠ 10#2♣ 10♦ 10♥ A#2♥` — the ten
+moves from just above the 9 to between the king and the ace. Cribbage, on a hand dealt until it held an ace: `5♥ 7♦ 9♣
+10♥ K♣ A♥` → `A♦ 4♣ 4♥ 4♠ 7♥ Q♠`. Hearts unchanged, 2 through ace in both.
+"By suit" in Thirteen: `2♣ 3♣ 4♣ K♣ A♣ …` → `… 3♥ 6♥ 7♥ 2♥ …` — same groups in
+the same order, the 2 at the top of each instead of the bottom.
+
+The new-game sheet for Thirteen, before → after: three house rules, none on →
+five, with "Passing keeps you in the trick" checked and "A 2 can end a run"
+not. Seat buttons 2/3/4 with 4 preselected, unchanged. The sheet's body is
+`overflow-y: auto` and the two extra rows scroll rather than clip — at 375x812
+its content goes 472 → 686 against a 471 viewport, and the last row is fully
+visible once scrolled, same at 1280x860. A match dealt with *both* toggles
+flipped away from their defaults reads back the flipped rules on a fresh load
+of `?pack=thirteen`, so a resume keeps its own variants.
+
+The four-seat table itself: 3 opponents instead of 2, no felt overflow and no
+page errors in either theme at 1280x860 or 375x812 (`table-screen` 860/860 and
+812/812, page width equal to the viewport in all four). The mobile seat row
+already scrolled at two opponents, so the extra seat lands in a treatment the
+other four-seat packs were already using.
+
+0 stalls everywhere: 200 games at 2, 3 and 4 seats (avg 15.0 / 26.8 / 39.0
+moves), and 300 games at 4 seats under plain rules (35.8), the shipped defaults
+(39.4), `two-tops-runs` alone (34.8) and both together (38.0). `--vs=hard,easy
+--games=100` with the shipped defaults keeps `hard` ahead: 90 rounds to 10, and
+100 matches to 0 with `--match`.
+
+Every new test was proven to bite by breaking what it watches: the `"lowest"`
+selector reverted to the literal card, `dealHands` reverted to the step-count
+misuse, `outOfSequence` collapsed back to one list, the dragon read off
+`runExcludes` alone, `stillIn`'s weak-rule branch removed, the first-lead
+refusal removed, `rankIndex`'s ladder ignored, the suit-ladder tiebreak
+removed, the no-ladder fallback flattened, and `pack-test`'s memo key reverted
+— each turned its own test red and nothing else.
+
+## Both controls at once, and a `?` on the felt (#154, #155)
+
+### What was wrong
+
+The hand rail's stack was the turn token, the Hint lamp, and ONE slot that the
+action button and the sort toggle took turns in: `renderRail` set
+`el.handSort.hidden = acting || hand < 2`. So for the whole of a Team Spades
+bid, a Hearts pass, a cribbage crib discard or a Thirteen combination with
+cards staged, the sort control was off the felt — which is precisely the phase
+a player spends arranging their hand to decide with. Measured on main at
+1280×860, all four: `#action-button` 80×23 in the slot, `#hand-sort` 0×0.
+
+The sharing was not decoration. Two written invariants stand behind it: the
+rail's WIDTH is what `layoutHand` subtracts from the fan's room, so a rail that
+grew would re-fan the hand under the player's finger (#13 in the inline axis),
+and the stack's HEIGHT has to be constant because these are controls under a
+thumb that is already reaching for them. One slot was how both were paid for.
+
+Two taps away, the same felt had nothing on it that said "how is this played?"
+— `packRules` lived behind the scoreboard's own panel — while "what should I
+do here?" sat in the rail as a lamp among the buttons that commit (#155).
+
+### What changed
+
+**The lamp bought the third rung.** The two questions the lamp and the rules
+answer are questions about the GAME rather than controls of it, so they left
+the rail together for a `?` mark in the felt's top-left corner and a two-line
+sheet under it. That frees the slot the lamp was standing in, and the stack was
+already three rungs tall with it there — so the sort toggle and the action
+button get a rung each at no cost at all. The rail is the same 5rem, the
+stack came out SHORTER (73px with the lamp, 69px with the sort pill in its
+place), and `#hand-row` and `#hand` are pixel-identical to main at both
+viewports. On a portrait phone the band stands the same three rungs in a row,
+with the action button still at the thumb's end of it.
+
+**Every rung keeps its slot now, including the action button.** It was the one
+thing in the stack toggled by `hidden`, which was right while one of the two
+was always standing in the slot and wrong the moment they each had one: the
+sort toggle would have stepped down into the empty rung every time a commit
+phase ended. It goes quiet by `visibility` like the token — off the screen and
+out of the tab order, still occupying its box. An empty button is nine pixels
+of padding, though, which measured as the stack standing 13px taller the
+instant a phase began, so `#action-button` carries a `min-height` derived from
+its own `line-height` and padding rather than from its label, and `renderRail`
+empties the label instead of leaving "Your crib" in the DOM for a reader that
+cannot see it is invisible.
+
+**The sort pill's floor goes 6.2em → 6.8em.** "Deal order" measures 75px
+against a floor of 69, so the pill was re-centring itself by 3px whenever the
+cycle came round to the long label. Nothing depended on that while the toggle
+only appeared between phases; it is 3px of movement beside a button that is
+now always there.
+
+**The help mark, and the band it has to live in.** Absolutely positioned at
+`top: .25rem; left: .5rem` with `z-index: 3` — the `.opponent-row__toggle`
+treatment exactly, in the corner that toggle does not have. It does NOT mirror
+with handedness: the toggle is pinned right under both, and this is not a
+control anyone reaches for mid-trick, so a mark that swapped sides would land
+on top of it. The sheet hangs off the mark at `z-index: 8` — above the felt,
+below the dialogs at 10, including the rules panel it opens.
+
+The size is the part the felt decided. A 2rem disc, which is what a thumb is
+owed, sat on the first seat plate: measured at 375×812 the seat row begins 14px
+under the felt's top edge and a plate's own ink (`.seat__head`, the avatar)
+26px under that, so a 32px disc in the corner covered the first player's
+avatar and turn chip — the one thing a mark in this corner may not do. The ink
+is therefore 1.4rem, the register the seat-view toggle already set opposite it,
+and the TARGET is grown past the ink by a pseudo-element that reaches UPWARDS
+and SIDEWAYS into the felt's own edge and not one pixel downwards: 36×28 of
+target (against the toggle's own 22×18) with `bottom: 0`, so the nearest
+plate's corner still answers its own taps — checked with `elementFromPoint`
+rather than argued from rects, because the pseudo-element is exactly the thing
+a `getBoundingClientRect()` does not describe.
+
+**Two lines, and neither of them a menu.** A `role="menu"` promises arrow-key
+navigation and a roving tabstop; two buttons in a popover that Tab already
+walks promise nothing they do not keep, so the mark is a plain disclosure
+(`aria-expanded`, `aria-controls`) over a `role="group"`. Focus goes to the
+first line on open and comes back to the mark on close — but only when it is
+still inside the sheet, so a close that fires because the player tapped a card
+does not steal the focus off that card. Escape closes it first, ahead of the
+seat plate the same handler dismisses.
+
+**The hint line is offered or explained, never simply missing.** `hintOffer`
+holds the five conditions the lamp was shown under — a view holds no position
+to rank, the game is over, it is not your turn, the answer is already on the
+felt, there is only one play — and each one now has a sentence instead of an
+invisible button. Somebody who has just opened a help sheet is looking for
+help; a control that has disappeared teaches them nothing. `showHint` itself is
+untouched, so the ranking, `session.hintsTaken` and the stats path are what
+they were, and the sheet closes BEFORE the hint runs, because what a hint
+produces is a ring round cards the sheet would otherwise be standing over.
+
+### How it was verified
+
+Two dev servers, main and this branch, driven by the same probe.
+
+**The bug, and its end.** Spades' bid, Thirteen with three staged, Hearts'
+pass with three staged and cribbage's crib, at 1280×860 and 375×812. On main
+`#hand-sort` is 0×0 in all eight; on the branch it is shown and clickable
+beside a shown `#action-button` in all eight. Cycling it through Deal order →
+By suit → By rank reorders the fan in every one of them with the staged cards
+still in the tray and `#hand-row` unmoved. (One click is not proof: `auto` is
+`sortOrder`, which on a standard deck already agrees with `suit` — it is the
+second click that reorders.)
+
+**Nothing moved.** At 1280×860 `#hand-row` is `30,689 1221×123` and the fan's
+step 69.52px on main and on the branch, in every scenario and at rest;
+`#hand` matches to the pixel (crazy-eights at rest, `412,689 368×123` both
+sides). At 375×812, `#hand-row` `22,580 332×188`, `#hand` `27,613 322×156`,
+step 43.24px, both sides. The rail is 80×0 beside the fan and 332×30 as a band,
+both sides. The stack is 69px at 1280 and 30px at 375 in EVERY state now —
+acting, refused and idle — where main was 73px acting against 72px idle.
+
+**Left handedness and the light theme.** Thirteen at both viewports under
+`data-handedness=left` × `data-theme=light|dark`: the rail flips to the fan's
+left with the stack's rungs in the same order, the band mirrors to the left
+edge, and the sheet stays on the felt. The mark holds the top-left corner in
+all four, which is the deliberate part.
+
+**The mark, over all nine packs, at 1280×860 and 375×812.** It is `22,68
+22×22` in all eighteen, present and hittable (`elementFromPoint` at its centre
+returns `#help-button`, not a seat) and overlapping neither a seat plate nor
+the hand anywhere; the nearest plate's own top-left corner still answers with
+the seat, which is the check the grown target has to pass. The sheet opens with
+focus on "How to play"; Escape closes it and returns focus to the mark; a tap
+on the felt closes it. "How to play" opens the rules panel with the pack's own
+title and 5–8 sections and closes the sheet behind it. "Hint" rings cards on
+the felt and writes the sentence to `#log` ("Steady would play the 8 of
+Diamonds and call Spades"), and asking again immediately finds the line
+disabled with "The hint is on the felt". Two kinds of exception, both of them
+the offer working: Team Spades and Pinochle during the auction ring nothing,
+because a bid has no card in it for a ring to go round and `#log` carries the
+whole answer — which is what the lamp did too — and Thirteen's opening lead
+finds the line already disabled with "There is only one play", which is a
+condition the lamp answered by vanishing.
+
+**From the keyboard alone.** Three Tabs from the top of the table reach the
+mark (Lobby → the score chip → the mark); Enter opens the sheet onto "How to
+play", Tab walks to "Hint", Escape closes it and hands focus back to the mark.
+A rung with nothing to say is `visibility: hidden`, so the empty action button
+is out of the tab order as well as off the screen — which is what `hidden` was
+doing for it before.
+
+**Still counted.** A hint taken from the sheet moves the persisted match's
+`hints` from 0 to 1 (`arcade.v1.cardstock.match.crazy-eights` and
+`…match.hearts`), so `session.hintsTaken` and the record path are untouched by
+the move out of the rail.
+
+**Gates.** `npm test` 852 pass / 0 fail (842 on main, +10 from the new gate);
+`node tools/pack-test.mjs --all` all nine packs 0 failed; `node --check` on
+`src/ui/table.js` and `src/ui/panels.js`; all nine packs boot clean at both
+viewports with no page or console errors (18/18).
+
+`tests/handRail.test.js` is a markup, stylesheet and source gate — there is no
+DOM in `npm test` — and it was verified by breaking: twelve deliberate breaks
+across the three files, each one expected to bite a named test, and all twelve
+did. `hidden` put back on a rung in the markup; `el.actionButton.hidden`
+written from `renderRail` again; the sort toggle's condition given `acting ||`
+back; a rung's `visibility: hidden` turned into `display: none`; the rail
+widened to 6.5rem; `#hint-button` re-mentioned in the sheet; the mark's
+`aria-controls` dropped; the mark moved to the toggle's corner; the mark grown
+back to the 2rem disc that sat on the first plate; its target given a `bottom`
+that reached down into the seat row; `showHint()` moved ahead of the close; and
+`movesFor` dropped from `hintOffer`. Every file restored from a scratch copy
+(never `git checkout`) and md5-checked against its original, and the gate went
+green again after each.
+
+### Not done
+
+The sort toggle is still a text pill rather than an icon, which is what the
+issue's preferred shape called for. An icon-only toggle beside the button in
+one slot needs the rail at 6.5rem to hold both at
+`ACTION_LABEL_MAX_CHARS = 11` — and the rail's width is the fan's room, so
+that is 24px off the hand at every desktop width and a 12px sideways shift of
+the fan, against an acceptance line that asks for those rects to be identical.
+The rung was free; the widening was not. If the icon is wanted later for its
+own sake, the sheet change is `.hand-rail__stack` back to a row and the same
+`min-width` argument on the pill.
+
+The regression gate is a new `tests/handRail.test.js` rather than extra cases
+inside `tests/interaction.test.js` and `tests/commitPrompt.test.js`, which is
+where #154 asked for it. Those two are about the UI MODEL — what `ui.action`
+says a phase offers — and the regression was never in the model: it was in
+`renderRail`'s one expression answering two questions, and in the markup and
+stylesheet that let a rung leave the stack. A gate that watches those three
+files is the gate that can fail when this comes back, and it keeps a
+merge-heavy branch out of two files other polish branches are also editing.
+
+## Two-handed Thirteen: three hands on offer, and you pick one (#157)
+
+### What was wrong
+
+`rules.deal` is thirteen at every seat count, on purpose: the hand size is the
+name of the game, and short-handed the remainder is simply out of play
+(THIRTEEN_RULES.md D-11). At three seats that costs thirteen cards. At TWO it
+costs twenty-six — half the deck, half the pigs, half the bombs, dealt to
+nobody and never seen. What is left is not a short-handed game of Thirteen; it
+is a shuffle you play out. The 2♥ turns up in about a third of hands, a four of
+a kind almost never does, and the endgame the whole ladder exists for — one
+unanswerable pig, and whether anybody can still assemble a chop — is decided by
+which half of the deck was dealt rather than by anything either player did.
+
+Two people actually play it a different way, and it is the way the pack should
+have shipped: the whole deck goes into **three face-down hands of seventeen**,
+one odd card set aside, each player takes one, and the third hand sits out.
+Thirty-four cards in play instead of twenty-six, and the deal stops being
+something that happens to you.
+
+### What changed
+
+**`rules.offer: { atSeats, piles }`** (`src/templates/climbing.js`, schema
+`rules-climbing`). "At `atSeats` seats, split the whole deck into `piles`
+face-down piles and let each seat take one." The pile size is DERIVED — deck ÷
+piles, remainder aside — so it cannot disagree with the deck, and the odd card
+is the rule's own consequence rather than a second number to keep in sync.
+`atSeats` is a single count rather than a `byPlayers` map because this is not a
+hand SIZE that varies with the table; it is a different deal with a phase of
+its own.
+
+**Two zones, both hidden.** `offer.1..3` is `visibility: 'none'` —
+`interactive`, so a hidden pile keeps its place on the felt as the phase's only
+control (the draw pile's precedent), and `hideWhenEmpty`, so each one leaves as
+it is taken and all three are gone once the last is set aside. `aside` is
+hidden and drawn nowhere: the pile nobody took, plus the odd card. It is **not**
+the discard, and that is the load-bearing choice — `discard` is
+`visibility: 'all'` and `unseenBy` counts it as SEEN, so gathering seventeen
+unlooked-at cards there would tell both players exactly which seventeen are out
+of the game, which is information no table has.
+
+**A `choose` phase.** One `takeHand` move per open pile, carrying a `from`
+address and no cards. `interactionMode` is phase-driven now (`'choose'` →
+`'take-pile'`, else `'combination'`), `actingSeats` names the picker (`stillIn`
+reads "has cards", and in this phase nobody does — unguarded it answers with an
+empty list, which the simulator reports as a stalled table), and `validateMove`
+refuses everything but a pick with a sentence of its own rather than letting a
+`playCard` fall through to `not-in-hand`. `'take-pile'` is a new entry in
+`INTERACTION_MODES`; `buildUiModel` arms one `readyTargets` entry per move keyed
+by the zone address, which is the rummy-draw shape at a different scale, and
+`zoneRenderer`'s verb makes the pile say "Take Hand 2" rather than "Play your
+selected card onto Hand 2".
+
+**Pick order.** The seat that LOST the last hand picks first and the seat that
+won leads, which is the other half of D-3's bargain. `startRound` now reads the
+winner once and uses it twice — the lead is `rules.laterLead`'s to give away
+and a pack may decline it, the pick order is not — and parks the lead in a
+public `opening` var across the two moves the phase lasts, because the round
+boundary that decided it does not run again.
+
+### What was decided, and why
+
+**Hand one is a coin toss, off the match's own seeded stream.** The issue
+offered "the player who does not hold the lowest card picks first", and it
+cannot be built: at hand one the pick happens BEFORE anybody holds a card, so a
+rule phrased over the dealt hands is a rule about a fact that does not exist
+yet. The rotating opening seat was the other candidate and is the exact shape of
+the bug #156 removed — `openingSeat()` is seat 0 on round one, which is the
+human. What survives of the issue's intent is the compensation, and it is
+already the table's rule: whichever pile you end up with, the lowest card in
+play leads (#156), so the pick and the lead tend to fall on opposite sides.
+Measured over 1000 deals, hand one's first pick went 475/525.
+
+**The unchosen pile is gathered rather than left.** Leaving it would have been
+one fewer move and a felt that goes on showing a phase that is over; the
+`hideWhenEmpty` flag only takes a pile away once it is empty.
+
+**"Hand", not "Pile", on the badge.** The play pile is already called Pile, and
+three more piles beside it wearing the same word would name two different things
+the same. "Hand 1 / 17" is what the player is choosing.
+
+**Every offered pile is worth the same to a bot, and that is the honest
+answer.** The zone is `visibility: 'none'`, so a bot cannot see into a pile any
+more than a player can; the one-ply lookahead refuses to judge the move at all
+(taking a pile turns up seventeen cards the seat could not see beforehand, which
+is `revealsHiddenCards`); and nothing public distinguishes one face-down
+seventeen from another. `botHeuristic` returns the same number for all three, so
+the deterministic chooser takes the first still on offer and a persona's
+`mistakeRate` sometimes takes another. A heuristic that preferred one would be
+reading the deck.
+
+**`instantWinShape`'s "six pairs" is measured against the HAND, not against
+`rules.deal`.** The two are the same number at every table that deals flat and
+part company under the offer deal — half of seventeen is eight, and a
+seventeen-card hand asked for six pairs would be a much commoner instant win
+than the rule it is named after. (The variant is off by default either way.)
+
+**The new-game sheet reads `players.notes`, not `rules.offer`.** A new manifest
+key, one sentence per seat count, shown under that button — prose for the SHEET
+rather than the rules page. The alternative was the sheet reading a climbing
+rule by name, which is a platform file knowing one template's business.
+
+### How it was verified
+
+`npm test` 867 pass, 0 fail (this branch's baseline is 861: main's 842 plus
+nine from #156/#158/#159 and ten from #154/#155). `node tools/pack-test.mjs
+--all` green, thirteen 26 passed 0 failed (23 before). `node smoke.mjs
+http://127.0.0.1:4867` — all nine packs at 1280x860 and 375x812 — SMOKE OK:
+18/18, no page errors.
+
+0 stalls: 300 two-seat MATCHES to game over (`--seats=2 --match`, 21.2 rounds
+per match), and 200 hands at each of two, three and four seats. Three and four
+seats are byte-for-byte the deal they were — 26.8 and 39.0 moves a hand, the
+same numbers #156 measured — and two seats moves from 15.0 to 19.1, which is a
+seventeen-card hand plus the two picks. `--vs=hard,easy --games=100 --seats=2`
+keeps `hard` ahead by more than it was: 89 rounds to 11, and 100 matches to 0.
+The protocol run (host + one client, the per-move privacy audit) completed
+100/100 with no faults, which is the offer piles going over the wire.
+
+The felt, two seats through the lobby tile and the new-game sheet, at 1280x860
+and 375x812 in both themes:
+
+| | before (main @ 4880) | after |
+|---|---|---|
+| the sheet's 2-seat line | "2 players — you and 1 bot" | "…and 1 bot. Three face-down hands of 17 — you pick one each, and the third is set aside." |
+| the deal | 13 cards, straight into play | three piles badged `Hand 1 / 17`, `Hand 2 / 17`, `Hand 3 / 17`, all lit |
+| the pile's accessible name | — | "Take Hand 2, 17 cards. Face down." |
+| the fan at 375 | 13 cards, 2 rows, step 43.24px | 17 cards, 2 rows, step 33.25px |
+| the fan at 1280 | 13 cards, 1 row, step 69.52px | 17 cards, 1 row, step 64.69px |
+| `#hand-row` | 188px at 375, 123px at 1280 | 188px at 375, 123px at 1280 |
+
+**#134's two-row fan absorbs seventeen cards with no change in the row's
+height at either viewport** — `scrollHeight` is 812/812 and 860/860 and the
+page width equals the viewport in all four combinations, so nothing overflows.
+At 375 the centre row wraps and `Hand 3` sits below `Hand 1`/`Hand 2`; all
+three are visible, lit and badged, and the felt still does not scroll.
+
+Then the play: tapping a pile fills the hand with seventeen and hands the turn
+over ("You took a hand of 17"), the bot picks ("Bruno took a hand of 17"), the
+third pile leaves the table, and the first lead is refused on every card but
+one — "The first lead of the hand has to include the 3 of spades." The hint,
+through the help sheet, reads "Steady would take hand 1" and rings that pile.
+
+The loser picking first and the winner leading were asserted at **1213 round
+boundaries** across sixty two-seat matches, with no exceptions, plus a
+twelve-match sweep in `tests/climbing.test.js`. A match saved and rehydrated
+(`serializeMatch` → `rehydrateMatch`) mid-choose, after one pick, after both,
+and three rounds in comes back with identical zones, turn, vars and playerVars
+— the coin toss is on the match stream, so a replay tosses it the same way.
+
+Every new test was proven to bite by breaking what it watches and restoring
+from a scratch copy: the `actingSeats` choose branch removed (two tests red),
+the unchosen pile sent to `discard`, the winner made to pick first, hand one
+pinned to seat 0, `offerFor` made to ignore `atSeats` (seventeen tests red,
+including the three-and-four-seat one), the `buildUiModel` branch deleted, the
+offer zone made `visibility: 'all'` (the view leak test), the choose-phase
+guard removed, `finishChoose` made to leave the third pile, and the `opening`
+var never parked. Each turned its own test red and, with the one deliberate
+exception above, nothing else. The `"choose"` entry added to
+`tests/interaction.test.js`'s phase sweep is **coverage, not a gate** — an
+unknown mode falls back to `'tap'`, which that set already contains — and the
+assertion that actually bites is `interactionMode(state) === "take-pile"` in
+`tests/climbing.test.js`.
+
+### Left undone
+
+A `takeHand` reuses the draw's one-card flight (a card back from the pile to
+the seat, dissolving on arrival) rather than animating seventeen cards; the
+count says how many and the fan is the arrival. And during the choose phase both
+seat plates read `0 CARDS`, which is true and reads oddly — `seatCounters` is
+#148's, so it was left alone rather than edited from two branches at once.
 
 ## Next steps
 

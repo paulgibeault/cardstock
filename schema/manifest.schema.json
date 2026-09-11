@@ -50,6 +50,16 @@
           "minimum": 1,
           "maximum": 8
         },
+        "notes": {
+          "type": "object",
+          "propertyNames": {
+            "pattern": "^[1-8]$"
+          },
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "One sentence per seat count, shown under that button on the new-game sheet — for a table that plays a materially different game from the pack's usual one. Thirteen's two-handed deal is the case: three face-down hands of 17 that the players pick from, rather than thirteen each (`rules.offer`). Prose for the SHEET, so it says what the player is choosing between rather than restating the rule the rules page carries."
+        },
         "teams": {
           "type": "integer",
           "minimum": 2,
@@ -114,6 +124,10 @@
       "type": "string",
       "pattern": "^#[0-9a-fA-F]{6}$",
       "description": "The pack's colour on its lobby tile. A 6-digit hex literal and nothing else: this value reaches an inline style, and the UI re-validates it against the same pattern before use (\u00a77b)."
+    },
+    "daily": {
+      "type": "boolean",
+      "description": "Does this pack offer a DAILY RUN \u2014 one seeded game per calendar day, the same for everybody, with its own save slot and its own record. The lobby reads this flag and nothing else, which is what keeps it pack-agnostic: the day itself is derived by src/engine/dailyLadder.js from the seed `<packId>|<YYYY-MM-DD>`. Only contract-rummy packs can answer true today, because the ladder is what the generator varies."
     },
     "heroCards": {
       "type": "array",
@@ -1286,6 +1300,29 @@
           "minimum": 1,
           "description": "Cards per player, the same number at every seat count — the hand size is the name of the game and short-handed tables simply leave the remainder out of play (THIRTEEN_RULES.md D-11). A flat integer rather than `countOrByPlayers` for that reason."
         },
+        "offer": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "atSeats",
+            "piles"
+          ],
+          "description": "A DIFFERENT DEAL AT ONE SEAT COUNT: split the whole deck into `piles` face-down piles, let each seat take one, and set the rest aside face down. This replaces the flat `deal` at exactly `atSeats` seats and nowhere else, because it is an answer to a specific problem — `deal` is the same number at every table by design (the hand size is the name of the game, THIRTEEN_RULES.md D-11), and two-handed that leaves 26 of the 52 cards unseen by anybody. Three piles of 17 puts 34 in play and makes the deal a decision. The pile size is DERIVED (deck / piles, remainder set aside), so it can never disagree with the deck. The seat that lost the previous hand picks first; hand one is a coin toss (src/templates/climbing.js).",
+          "properties": {
+            "atSeats": {
+              "type": "integer",
+              "minimum": 2,
+              "maximum": 8,
+              "description": "The one seat count this deal replaces `deal` at."
+            },
+            "piles": {
+              "type": "integer",
+              "minimum": 2,
+              "maximum": 8,
+              "description": "How many face-down piles the deck splits into. More than `atSeats`, or nobody is choosing anything."
+            }
+          }
+        },
         "combinations": {
           "type": "array",
           "minItems": 1,
@@ -1300,7 +1337,14 @@
           "items": {
             "$ref": "#/$defs/selector"
           },
-          "description": "Cards no sequence may contain — Thirteen's 2, which sits at the TOP of the ladder and so has no neighbour above it ('K-A-2' is not a run and '2-2 A-A K-K' is not a bomb). Applies to runs and to consecutive pairs alike."
+          "description": "Cards no RUN may contain — Thirteen's 2, which sits at the TOP of the ladder and so has no neighbour above it ('K-A-2' is not a run). Runs only: `stripExcludes` below says the same thing for consecutive pairs, and a pack that plays the ordinary rule declares the same list in both. They are two keys because the commonest house rule in the genre moves exactly one of them (\"a 2 can end a run\", which is emphatically not \"2-2 A-A K-K is a bomb\")."
+        },
+        "stripExcludes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/selector"
+          },
+          "description": "Cards no strip of CONSECUTIVE PAIRS may contain ('2-2 A-A K-K' is not a bomb). Split from `runExcludes` above so the two shapes can disagree; a rank excluded by EITHER key is also barred from the `instantWins` dragon, which is what keeps that shape at the traditional 3-to-A rather than silently becoming a whole-hand 3-to-2 when a run's exclusion is lifted."
         },
         "matchShape": {
           "enum": [
@@ -1348,8 +1392,11 @@
           "description": "Who opens hand one, and with what. Unlike trick-taking's `firstLead` this is an object, because the card names the LEADER and may also be required to be IN the combination they lead.",
           "properties": {
             "card": {
-              "type": "string",
-              "description": "Card id ('spades-3'). Its holder leads the first hand of a match."
+              "anyOf": [
+                { "const": "lowest" },
+                { "type": "string", "pattern": "-" }
+              ],
+              "description": "Whose card opens hand one. Either the literal id of one nominated card ('spades-3'), or \"lowest\" — the lowest card IN PLAY on the pack's own total order (`cardOrder`, suit included, so exactly one card qualifies). Prefer \"lowest\" for any pack whose deal leaves cards out of play: a nominated card that was not dealt names no seat, and the lead then falls to the rotating opening seat rather than to the player the rule meant. Thirteen deals a flat thirteen, so at two seats half the deck is never dealt and the 3♠ is out of play in 50.7% of deals, measured over 400 (THIRTEEN_RULES.md D-11, D-2)."
             },
             "mustInclude": {
               "type": "boolean",

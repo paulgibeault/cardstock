@@ -167,6 +167,7 @@
     },
     {
       "name": "a seat that passed is out of the trick, whatever it is holding",
+      "variants": [],
       "setup": {
         "seats": 4,
         "turn": { "seat": 3, "phase": "play" },
@@ -187,6 +188,100 @@
         { "move": { "actor": 3, "type": "playCard", "cards": ["hearts-2"] },
           "legal": false, "rule": "passed" },
         { "move": { "actor": 3, "type": "pass" }, "legal": false, "rule": "passed" }
+      ]
+    },
+    {
+      "name": "pass-stays-in: the same passed seat is asked again, and may play or pass",
+      "variants": ["pass-stays-in"],
+      "setup": {
+        "seats": 4,
+        "turn": { "seat": 3, "phase": "play" },
+        "direction": "counterclockwise",
+        "zones": {
+          "hand.0": ["diamonds-4"],
+          "hand.1": ["diamonds-5"],
+          "hand.2": ["diamonds-6"],
+          "hand.3": ["hearts-2"],
+          "pile": ["spades-4"]
+        },
+        "vars": {
+          "combo": { "kind": "single", "size": 1, "top": 4, "cards": ["spades-4"], "seat": 0 },
+          "passed": [3], "lastPlayer": 0, "leader": 0, "trickNumber": 1
+        }
+      },
+      "assert": [
+        { "move": { "actor": 3, "type": "playCard", "cards": ["hearts-2"] }, "legal": true },
+        { "move": { "actor": 3, "type": "pass" }, "legal": true }
+      ]
+    },
+    {
+      "name": "two-tops-runs: K-A-2 is a run, and it still does not wrap to A-2-3",
+      "variants": ["two-tops-runs"],
+      "setup": {
+        "seats": 4,
+        "turn": { "seat": 0, "phase": "play" },
+        "direction": "counterclockwise",
+        "zones": {
+          "hand.0": ["spades-K", "spades-A", "spades-2", "spades-3", "clubs-4"],
+          "hand.1": ["diamonds-4"],
+          "hand.2": ["diamonds-5"],
+          "hand.3": ["diamonds-6"]
+        },
+        "vars": { "combo": null, "passed": [], "lastPlayer": null, "leader": 0, "trickNumber": 1 }
+      },
+      "assert": [
+        { "move": { "actor": 0, "type": "playCard", "cards": ["spades-K", "spades-A", "spades-2"] },
+          "legal": true },
+        { "move": { "actor": 0, "type": "playCard", "cards": ["spades-A", "spades-2", "spades-3"] },
+          "legal": false, "rule": "not-a-combination" }
+      ]
+    },
+    {
+      "name": "two-tops-runs: a 2 is still no part of consecutive pairs",
+      "variants": ["two-tops-runs"],
+      "setup": {
+        "seats": 4,
+        "turn": { "seat": 0, "phase": "play" },
+        "direction": "counterclockwise",
+        "zones": {
+          "hand.0": ["spades-2", "clubs-2", "spades-A", "clubs-A", "spades-K", "clubs-K",
+                     "spades-Q", "clubs-Q"],
+          "hand.1": ["diamonds-4"],
+          "hand.2": ["diamonds-5"],
+          "hand.3": ["diamonds-6"]
+        },
+        "vars": { "combo": null, "passed": [], "lastPlayer": null, "leader": 0, "trickNumber": 1 }
+      },
+      "assert": [
+        { "move": { "actor": 0, "type": "playCard",
+                    "cards": ["spades-2", "clubs-2", "spades-A", "clubs-A", "spades-K", "clubs-K"] },
+          "legal": false, "rule": "not-a-combination" },
+        { "move": { "actor": 0, "type": "playCard",
+                    "cards": ["spades-A", "clubs-A", "spades-K", "clubs-K", "spades-Q", "clubs-Q"] },
+          "legal": true }
+      ]
+    },
+    {
+      "name": "the opening lead is refused unless it contains the lowest card in play, 3 of spades or not",
+      "setup": {
+        "seats": 3,
+        "turn": { "seat": 2, "phase": "play" },
+        "direction": "counterclockwise",
+        "zones": {
+          "hand.0": ["diamonds-4"],
+          "hand.1": ["diamonds-5"],
+          "hand.2": ["clubs-3", "hearts-3", "spades-7"]
+        },
+        "vars": { "combo": null, "passed": [], "lastPlayer": null, "leader": 2, "trickNumber": 1 },
+        "playerVars": { "2": { "__mustInclude": "clubs-3" } }
+      },
+      "assert": [
+        { "move": { "actor": 2, "type": "playCard", "cards": ["spades-7"] },
+          "legal": false, "rule": "first-lead" },
+        { "move": { "actor": 2, "type": "playCard", "cards": ["hearts-3"] },
+          "legal": false, "rule": "first-lead" },
+        { "move": { "actor": 2, "type": "playCard", "cards": ["clubs-3"] }, "legal": true },
+        { "move": { "actor": 2, "type": "playCard", "cards": ["clubs-3", "hearts-3"] }, "legal": true }
       ]
     },
     {
@@ -435,6 +530,87 @@
       },
       "assert": [
         { "score": { "0": 0, "1": 2, "2": 1, "3": 3 } }
+      ]
+    },
+    {
+      "name": "two-handed: nothing but taking a hand is a move while the hands are on offer",
+      "setup": {
+        "seats": 2,
+        "turn": { "seat": 1, "phase": "choose" },
+        "direction": "counterclockwise",
+        "zones": {
+          "hand.0": [],
+          "hand.1": [],
+          "offer.1": ["spades-5", "hearts-9"],
+          "offer.2": ["clubs-4", "diamonds-K"],
+          "offer.3": ["spades-7", "hearts-2"]
+        },
+        "vars": { "combo": null, "passed": [], "lastPlayer": null, "leader": 0, "trickNumber": 1, "opening": null }
+      },
+      "assert": [
+        { "move": { "actor": 0, "type": "takeHand", "from": "offer.1" },
+          "legal": false, "rule": "turn" },
+        { "move": { "actor": 1, "type": "playCard", "cards": ["clubs-4"] },
+          "legal": false, "rule": "choosing" },
+        { "move": { "actor": 1, "type": "pass" },
+          "legal": false, "rule": "choosing" },
+        { "move": { "actor": 1, "type": "takeHand", "from": "pile" },
+          "legal": false, "rule": "not-on-offer" },
+        { "apply": { "actor": 1, "type": "takeHand", "from": "offer.2" } },
+        { "expect": { "turn": { "seat": 0, "phase": "choose" },
+          "zones": { "hand.1": ["clubs-4", "diamonds-K"], "offer.2": 0 } } },
+        { "move": { "actor": 0, "type": "takeHand", "from": "offer.2" },
+          "legal": false, "rule": "not-on-offer" }
+      ]
+    },
+    {
+      "name": "two-handed: the hand nobody took leaves the table, and the lowest card in play leads",
+      "setup": {
+        "seats": 2,
+        "turn": { "seat": 1, "phase": "choose" },
+        "direction": "counterclockwise",
+        "zones": {
+          "hand.0": [],
+          "hand.1": [],
+          "offer.1": ["spades-5", "hearts-9"],
+          "offer.2": ["clubs-4", "diamonds-K"],
+          "offer.3": ["spades-7", "hearts-2"]
+        },
+        "vars": { "combo": null, "passed": [], "lastPlayer": null, "leader": 0, "trickNumber": 1, "opening": null }
+      },
+      "assert": [
+        { "apply": { "actor": 1, "type": "takeHand", "from": "offer.2" } },
+        { "apply": { "actor": 0, "type": "takeHand", "from": "offer.1" } },
+        { "expect": {
+          "turn": { "seat": 1, "phase": "play" },
+          "zones": { "hand.0": ["spades-5", "hearts-9"], "hand.1": ["clubs-4", "diamonds-K"],
+                     "offer.1": 0, "offer.2": 0, "offer.3": 0, "aside": ["spades-7", "hearts-2"] },
+          "playerVars": { "1": { "__mustInclude": "clubs-4" } } } },
+        { "move": { "actor": 1, "type": "playCard", "cards": ["diamonds-K"] },
+          "legal": false, "rule": "first-lead" },
+        { "move": { "actor": 1, "type": "playCard", "cards": ["clubs-4"] }, "legal": true }
+      ]
+    },
+    {
+      "name": "two-handed: the loser of the hand picks first and the winner leads the next one",
+      "setup": {
+        "seats": 2,
+        "turn": { "seat": 0, "phase": "play" },
+        "direction": "counterclockwise",
+        "zones": {
+          "hand.0": ["spades-5"],
+          "hand.1": ["hearts-9", "clubs-4"]
+        },
+        "vars": { "combo": null, "passed": [], "lastPlayer": null, "leader": 0, "trickNumber": 1 }
+      },
+      "assert": [
+        { "apply": { "actor": 0, "type": "playCard", "cards": ["spades-5"] } },
+        { "expect": {
+          "turn": { "seat": 1, "phase": "choose" },
+          "vars": { "opening": 0 },
+          "zones": { "offer.1": 17, "offer.2": 17, "offer.3": 17, "aside": 1,
+                     "hand.0": 0, "hand.1": 0 },
+          "scores": { "0": 0, "1": 2 } } }
       ]
     }
   ]

@@ -18,7 +18,7 @@
 // every pass so a stale id can no more reach the screen than a stale selection
 // can reach a move.
 
-import { RANKS } from '../engine/cards.js';
+import { RANKS, rankIndexOf } from '../engine/cards.js';
 
 export const SORT_MODES = Object.freeze(['auto', 'suit', 'rank', 'manual']);
 
@@ -35,18 +35,68 @@ export function isSortMode(mode) {
   return SORT_MODES.includes(mode);
 }
 
-function rankIndex(card) {
+/**
+ * Cards the pack's ladder does not name sort after every card it does, and
+ * among themselves by the tiers below. The offset is what keeps those two
+ * populations from interleaving: a ladder position is a small integer and so is
+ * a numeric rank, so without it a Milestones `skip` and a 10 would fight.
+ */
+const OFF_LADDER = 1000;
+
+/**
+ * Where a card sits for sorting purposes, on the PACK'S ladder when there is
+ * one (`rankLadderOf`, #101's primitive).
+ *
+ * THE PACK IS THE ONLY AUTHORITY ON WHICH CARD IS HIGH. This read `Number(rank)`
+ * and then `RANKS`, both of which start at the 2 — so "sort by rank" put
+ * Thirteen's 2 first and its ace last, which is the exact inverse of the ladder
+ * the whole game is played on (#159). Pinochle's 10-above-king and Cribbage's
+ * low ace were wrong the same way. The felt cannot know any of that; the
+ * manifest already declares all three.
+ *
+ * The old tiers survive as the fallback, for ranks a ladder does not name —
+ * wilds, Milestones' `skip` — and as the whole answer for a pack that declares
+ * no ladder at all.
+ */
+function rankIndex(card, ladder = null) {
+  if (ladder) {
+    const at = rankIndexOf(ladder, card?.rank);
+    if (at >= 0) return at;
+  }
   const asNumber = Number(card?.rank);
   // Numeric ranks sort numerically (a Skip-Bo 12 is above a 2); everything
   // else falls back to the standard rank ladder, and an unrecognised rank
   // sorts last rather than colliding with the aces.
-  if (Number.isFinite(asNumber)) return asNumber;
-  const i = RANKS.indexOf(card?.rank);
-  return i === -1 ? 999 : 100 + i;
+  const tier = Number.isFinite(asNumber) ? asNumber
+    : RANKS.indexOf(card?.rank) === -1 ? 999 : 100 + RANKS.indexOf(card?.rank);
+  return ladder ? OFF_LADDER + tier : tier;
 }
 
 function groupKey(card) {
   return card?.suit || card?.color || '';
+}
+
+/**
+ * Which of two cards of the SAME rank comes first.
+ *
+ * The pack's `suitLadder` when it declares one — Thirteen's spades-clubs-
+ * diamonds-hearts is a real fact about the game, and a rank sort that ignored
+ * it would order the four 9s differently from the way the table ranks them.
+ * Alphabetical suit name otherwise, which is what this always did and is a
+ * stable answer rather than a meaningful one.
+ */
+function suitIndex(card, ladder) {
+  const at = ladder?.suitIndex?.get(card?.suit);
+  return at === undefined ? null : at;
+}
+
+function bySuitThenName(ca, cb, ladder) {
+  const sa = suitIndex(ca, ladder);
+  const sb = suitIndex(cb, ladder);
+  if (sa !== null && sb !== null) return sa - sb;
+  const ga = groupKey(ca);
+  const gb = groupKey(cb);
+  return ga === gb ? 0 : (ga < gb ? -1 : 1);
 }
 
 /**
@@ -56,33 +106,36 @@ function groupKey(card) {
  * @param cardOf   id -> card definition
  * @param mode     one of SORT_MODES
  * @param manual   the stored permutation, only consulted for 'manual'
+ * @param ladder   the pack's rank/suit ladder (`rankLadderOf(state.pack)`), or
+ *                 null for a caller with no pack to hand — see `rankIndex`.
  * @returns a NEW array — never the caller's, and never the zone's.
  */
-export function orderHand(cardIds, cardOf, mode = DEFAULT_MODE, manual = []) {
+export function orderHand(cardIds, cardOf, mode = DEFAULT_MODE, manual = [], ladder = null) {
   const ids = cardIds.slice();
   if (mode === 'manual') return applyManual(ids, manual);
   if (mode === 'auto') {
     return ids.sort((a, b) => (cardOf(a)?.sortOrder ?? 0) - (cardOf(b)?.sortOrder ?? 0));
   }
   if (mode === 'suit') {
+    // SUIT GROUPS STAY AS THEY WERE — by suit NAME, so the fan's four blocks do
+    // not rearrange themselves under a player who has learned where their
+    // spades live. What the ladder fixes here is the order INSIDE a group.
     return ids.sort((a, b) => {
       const ca = cardOf(a);
       const cb = cardOf(b);
       const ga = groupKey(ca);
       const gb = groupKey(cb);
       if (ga !== gb) return ga < gb ? -1 : 1;
-      return rankIndex(ca) - rankIndex(cb);
+      return rankIndex(ca, ladder) - rankIndex(cb, ladder);
     });
   }
   // 'rank'
   return ids.sort((a, b) => {
     const ca = cardOf(a);
     const cb = cardOf(b);
-    const byRank = rankIndex(ca) - rankIndex(cb);
+    const byRank = rankIndex(ca, ladder) - rankIndex(cb, ladder);
     if (byRank !== 0) return byRank;
-    const ga = groupKey(ca);
-    const gb = groupKey(cb);
-    return ga === gb ? 0 : (ga < gb ? -1 : 1);
+    return bySuitThenName(ca, cb, ladder);
   });
 }
 

@@ -1515,6 +1515,9 @@ body {
 #felt-middle {
   flex: 1;
   min-height: 0;
+  /* The anchor for #show-card, which is inset to this box so it can never
+     reach the fan (see THE SHOW CARD below). Changes nothing about the row. */
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2407,6 +2410,29 @@ button.pile-stack:focus-visible { outline: 2px solid var(--accent); outline-offs
   border-color: var(--accent);
   box-shadow: 0 0 0 1px var(--accent);
 }
+/* THE SUIT IS FREE NOW, and it stays said (#151). The break used to be silent
+   in every sense: no sentence, no mark, and a player found out by discovering
+   that leading a spade was suddenly allowed. The banner says it once; this says
+   it for the rest of the hand, and it is drawn in the accent for the same
+   reason trump is — it governs every lead from here on.
+
+   The word is the value rather than the label so it takes the bold slot: the
+   chip reads "SPADES **Broken**" and the half worth reading at a glance is the
+   half in ink. Filled rather than ringed, because there is no second state to
+   tell it apart from — the chip either exists or it does not.
+
+   One shot on arrival, and the resting state is the whole chip: the mark
+   APPEARING is what the eye is meant to catch, and it never pulses again
+   (cardstock#24). */
+.contract-chip[data-chip="broken"] {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 18%, var(--chip-bg));
+  animation: contract-chip-in 260ms ease-out both;
+}
+@keyframes contract-chip-in {
+  from { opacity: 0; transform: translateY(-0.25rem); }
+  to { opacity: 1; transform: none; }
+}
 /* The pack's own card, at strip size (src/ui/cardStyles/chooser.js). */
 .contract-chip__art {
   width: 1.05rem;
@@ -2617,8 +2643,19 @@ button.pile-stack:focus-visible { outline: 2px solid var(--accent); outline-offs
    may use, so a rail that changed width would slide the hand sideways and
    re-fan it — which is what a cycling "Deal order" → "By suit" → "By rank"
    label did before its own width was pinned. Every control in here is laid out
-   to that fixed box, and the two that come and go share one slot rather than
-   stacking, so the width is a constant and not a maximum.
+   to that fixed box rather than to its own label, so the width is a constant
+   and not a maximum.
+
+   THREE RUNGS, AND ALL THREE ALWAYS THERE (#154, #155). The sort toggle and
+   the action button used to take turns in one slot, which meant a bid, a
+   Hearts pass, a cribbage crib discard or a staged Thirteen combination hid
+   the sort control for the whole phase — the phase a player spends arranging
+   their hand to decide with. They have a rung each now, paid for by the Hint
+   lamp leaving for the help mark in the felt's corner: the stack was already
+   three rungs tall with the lamp in it, so it came out SHORTER — 73px with the
+   lamp, 69px with the sort toggle in its place, measured at 1280x860 — and the
+   rail is the same 5rem, so #hand-row and #hand are pixel-identical to what
+   they were and the fan's room is untouched.
 
    It flips sides with handedness along with everything else that has a side. */
 .hand-rail {
@@ -2639,22 +2676,35 @@ button.pile-stack:focus-visible { outline: 2px solid var(--accent); outline-offs
   gap: 0.3rem;
 }
 
-/* THE STACK IS ONE HEIGHT, ALWAYS. The token and the lamp keep their slots and
-   only lose `visibility` — `display: none` would shuffle the column upward
-   every time the turn changed hands or an answer was given, moving the two
-   controls under the thumb while the thumb was reaching for them. (The rail's
-   own box is zero-height either way, so this is about the stack being still,
-   not about the felt moving.) `visibility` also takes both out of the tab
-   order and off the screen reader, which is what `hidden` was doing before. */
+/* THE STACK IS ONE HEIGHT, ALWAYS. Every rung keeps its slot and only loses
+   `visibility` — `display: none` would shuffle the column upward every time
+   the turn changed hands or a phase ended, moving the controls under the thumb
+   while the thumb was reaching for them. (The rail's own box is zero-height
+   either way, so this is about the stack being still, not about the felt
+   moving.) `visibility` also takes a rung out of the tab order and off the
+   screen reader, which is what `hidden` was doing before.
+
+   THE ACTION BUTTON IS ONE OF THEM NOW (#154). It was `hidden`, because it
+   shared the bottom slot with the sort toggle and one of the two was always
+   standing in it; with a rung each, an empty thumb slot has to be an empty
+   slot rather than a missing row, or the sort toggle would step down into it
+   the moment a commit phase ended. */
 .hand-rail:not(.hand-rail--acting) .turn-token { visibility: hidden; }
-.hand-rail:not(.hand-rail--hintable) #hint-button { visibility: hidden; }
+.hand-rail:not(.hand-rail--committing) #action-button { visibility: hidden; }
+.hand-rail:not(.hand-rail--sortable) .hand-sort { visibility: hidden; }
 
 /* The sort toggle's width is FIXED to the longest label it can wear, and now
-   also to the rail that holds it. */
+   also to the rail that holds it.
+   6.8em AND NOT 6.2: "Deal order" measured 75px against a floor of 69, so the
+   pill was re-centring itself by 3px every time the mode came round to the
+   long label — which nothing else in the rail depended on while the toggle
+   only appeared between phases, and which is 3px of movement under the eye now
+   that it stands beside the action button all match (#154). The floor is above
+   the longest of the four labels, so the box is a constant again. */
 .hand-sort {
   font: inherit;
   font-size: 0.7rem;
-  min-width: 6.2em;
+  min-width: 6.8em;
   text-align: center;
   padding: 0.2rem 0.55rem;
   border-radius: 999px;
@@ -2666,7 +2716,6 @@ button.pile-stack:focus-visible { outline: 2px solid var(--accent); outline-offs
   opacity: 0.75;
 }
 .hand-sort:hover { opacity: 1; border-color: var(--accent); }
-.hand-sort[hidden] { display: none; }
 .hand-sort:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* ON A PORTRAIT PHONE THE RAIL LEAVES THE ROW.
@@ -2686,15 +2735,17 @@ button.pile-stack:focus-visible { outline: 2px solid var(--accent); outline-offs
  *
  * THE HEIGHT IS FIXED, WHICH IS THE SAME PROMISE THE ZERO-HEIGHT BOX WAS
  * MAKING. A band that sized itself to its contents would grow the instant the
- * turn token lit or the action button replaced the sort toggle, and the whole
- * felt would step down under a thumb already reaching for it (#13). So the band
- * is one height whatever is standing in it, and the stack is still absolutely
- * positioned inside it — the same two elements doing the same two jobs, turned
- * through ninety degrees.
+ * turn token lit or the action button appeared, and the whole felt would step
+ * down under a thumb already reaching for it (#13). So the band is one height
+ * whatever is standing in it, and the stack is still absolutely positioned
+ * inside it — the same two elements doing the same two jobs, turned through
+ * ninety degrees.
  *
- * AND ITS WIDTHS ARE PINNED FOR THE MIRROR-IMAGE REASON, now that the controls
- * sit side by side: the thumb slot is held to the sort toggle's own 6.2em so
- * the token and the lamp do not slide sideways when the button takes it. */
+ * AND ITS WIDTHS ARE PINNED FOR THE MIRROR-IMAGE REASON: every control here
+ * has the width it is laid out to everywhere else, so nothing in the band
+ * slides sideways when a phase begins or ends. The rail beside the fan stacked
+ * its three rungs; the band stands them in a row, and the action button keeps
+ * the thumb's end of it whether or not there is an action in it (#154). */
 @media (orientation: portrait) and (max-width: 480px) {
   #hand-row {
     flex-wrap: wrap;
@@ -2718,12 +2769,11 @@ button.pile-stack:focus-visible { outline: 2px solid var(--accent); outline-offs
   }
   /* The thumb reaches the same side it always did. */
   [data-handedness="left"] .hand-rail__stack { flex-direction: row-reverse; }
-  /* ONE SLOT, ONE WIDTH — the rail's own 5rem, which is the width the action
+  /* ONE WIDTH FOR BOTH — the rail's own 5rem, which is the width the action
      button is laid out to everywhere else and the width its label budget
      (ACTION_LABEL_MAX_CHARS, src/ui/interaction.js) is written against. Left to
-     size themselves, the button and the toggle it shares the slot with come out
-     a few pixels apart, and the token and the lamp beside them would step
-     sideways every time the turn changed. */
+     size themselves the two come out a few pixels apart, and the token beside
+     them would step sideways every time the turn changed. */
   .hand-rail__stack #action-button,
   .hand-rail__stack .hand-sort {
     flex: none;
@@ -3163,38 +3213,16 @@ body.is-dragging .card-face { cursor: grabbing; }
  * The rail's controls
  * ------------------------------------------------------------------ */
 
-/* THE HINT LAMP, and what it lights.
-   A quiet disc at the fan's edge, in the sort toggle's register: it is there
-   every turn and it is not the thing to look at. Icon only — the word "Hint"
-   bought nothing that a lamp beside your own hand does not already say, and
-   the words are what cost the felt its room.
-   ITS ANSWER IS THE FELT, NOT A SENTENCE. What the suggestion touches gets a
-   ring in a colour of its own: the accent already means "legal here", and a
-   hint has to be tellable from that at a glance — the ring says "this one",
-   not "you may". Static, no pulse: it is answering a question the player just
-   asked, so it has their attention. The sentence still exists and still goes
-   to #log, the live region below the felt, because a player who cannot see a
-   ring is exactly the player a hint is for (src/ui/table.js showHint). */
-#hint-button {
-  font: inherit;
-  font-size: 0.85rem;
-  line-height: 1;
-  width: 1.6rem;
-  height: 1.6rem;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  border-radius: 50%;
-  border: 1px solid var(--chip-border);
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-  opacity: 0.75;
-}
-#hint-button:hover { opacity: 1; border-color: var(--hint); color: var(--hint); }
-#hint-button:focus-visible { outline: 2px solid var(--hint); outline-offset: 2px; }
-
+/* WHAT A HINT LIGHTS — the lamp that used to sit in this rail is a line in the
+   help sheet now (#155, .help-sheet below), but what it produces is unchanged
+   and it is the felt rather than a sentence.
+   What the suggestion touches gets a ring in a colour of its own: the accent
+   already means "legal here", and a hint has to be tellable from that at a
+   glance — the ring says "this one", not "you may". Static, no pulse: it is
+   answering a question the player just asked, so it has their attention. The
+   sentence still exists and still goes to #log, the live region below the felt,
+   because a player who cannot see a ring is exactly the player a hint is for
+   (src/ui/table.js showHint). */
 .card-face-wrap--hinted .card-face,
 .stage-card.card-face-wrap--hinted .card-face {
   box-shadow: 0 0 0 3px var(--hint), 0 3px 4px var(--card-shadow);
@@ -3240,6 +3268,14 @@ body.is-dragging .card-face { cursor: grabbing; }
   line-height: 1.15;
   font-weight: 600;
   width: 100%;
+  /* ITS BOX IS THE SAME BOX WITH NO LABEL IN IT. The button keeps its rung
+     when there is no action (see .hand-rail above), and an empty button is
+     nine pixels of padding — which measured as the stack standing 13px taller
+     the moment a commit phase began, with the sort toggle and the turn token
+     sliding up under a thumb already on them. One line of type plus this
+     rule's own padding, derived from the two declarations above rather than
+     typed as a number, so a change to either carries. */
+  min-height: calc(1.15em + 0.6rem);
   padding: 0.3rem 0.25rem;
   border-radius: 999px;
   border: none;
@@ -3250,7 +3286,6 @@ body.is-dragging .card-face { cursor: grabbing; }
   text-align: center;
 }
 #action-button:hover { background: var(--action-bg-hover); }
-#action-button[hidden] { display: none; }
 
 /* THE COMMIT, REFUSED. Same box, same slot, same height — only the button is
    off, because the alternative measured on the felt was the Pass pill
@@ -3268,6 +3303,126 @@ body.is-dragging .card-face { cursor: grabbing; }
   padding: calc(0.3rem - 1px) calc(0.25rem - 1px);
 }
 #action-button:disabled:hover { background: var(--chip-bg); }
+
+/* ------------------------------------------------------------------ *
+ * The help mark, and its sheet
+ * ------------------------------------------------------------------ */
+
+/* A `?` IN THE CORNER THE SEATS DO NOT USE (#155).
+   The rules were two taps inside the scoreboard and the hint was a lamp among
+   the buttons that commit, so a player meeting a game for the first time had
+   nothing on the felt to reach for. This is that thing, and it is deliberately
+   the quietest mark on the table: a hairline disc in the register the
+   seat-view toggle set (.opponent-row__toggle, which is the same idea in the
+   other corner) — out of the seat row's flow so it leans on nothing, above the
+   felt at z-index 3 and far below the dialogs at 10.
+
+   ITS INK IS THE BAND ABOVE THE SEATS, AND ITS TARGET IS BIGGER THAN ITS INK.
+   That band is all the room this corner has: measured at 375x812 the seat row
+   starts 14px below the felt's top edge and a plate's own content 26px below
+   it, so a 32px disc in the corner sat on the first player's avatar and turn
+   chip — the one thing a mark in the corner may not do. The disc is therefore
+   1.4rem, the register the seat-view toggle already set opposite it, and the
+   tap target is grown by a pseudo-element UPWARDS and SIDEWAYS into the felt's
+   own edge rather than downwards into the row: 36x28 of target against the
+   toggle's own 22x18, and a plate's corner still answers its own taps.
+
+   It does not mirror with handedness: the toggle has the right corner under
+   both, and this is not a control anyone reaches for mid-trick — a mark that
+   swapped sides would land on top of it. */
+.table-help {
+  position: absolute;
+  top: 0.25rem;
+  left: 0.5rem;
+  z-index: 3;
+  width: 1.4rem;
+  height: 1.4rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font: inherit;
+  font-size: 0.8rem;
+  line-height: 1;
+  border-radius: 50%;
+  border: 1px solid var(--chip-border);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  opacity: 0.7;
+}
+/* The target, and NOT a hair of it below the disc: the seat row's first plate
+   begins half a pixel under this box on a phone, and a target that reached
+   into it would take the taps that belong to a player. */
+.table-help::after {
+  content: "";
+  position: absolute;
+  top: -6px;
+  left: -7px;
+  right: -7px;
+  bottom: 0;
+}
+.table-help:hover { opacity: 1; border-color: var(--accent); color: var(--accent); }
+.table-help:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.table-help[aria-expanded="true"] { opacity: 1; border-color: var(--accent); color: var(--accent); }
+
+/* THE SHEET HANGS OFF THE MARK, not off the middle of the screen. It is two
+   lines of furniture answering a tap in a corner, and a modal that took the
+   whole felt to say them would be the thing the rules panel already is. Above
+   the seats and the piles, below every dialog — including the rules panel it
+   opens, which is why it closes on the way there. */
+.help-sheet {
+  position: absolute;
+  top: 2rem;
+  left: 0.5rem;
+  z-index: 8;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 12rem;
+  max-width: min(16rem, calc(100% - 1.2rem));
+  padding: 0.3rem;
+  border-radius: 12px;
+  border: 1px solid var(--panel-border);
+  background: var(--panel-bg);
+  color: var(--panel-text);
+  box-shadow: 0 8px 24px var(--panel-shadow);
+}
+.help-sheet[hidden] { display: none; }
+
+.help-sheet__item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.1rem;
+  width: 100%;
+  padding: 0.4rem 0.55rem;
+  border: none;
+  border-radius: 9px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.help-sheet__item:hover { background: var(--chip-bg); }
+.help-sheet__item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.help-sheet__label { font-size: 0.85rem; font-weight: 600; }
+/* The second line is the reason as often as it is the promise — see
+   `hintOffer` in src/ui/table.js — so it is styled as a note either way and
+   never as an error. */
+.help-sheet__note { font-size: 0.7rem; opacity: 0.72; }
+
+/* OFF, AND SAYING WHY. A hint that cannot be given is a line that stays on the
+   sheet with its reason on it rather than one that disappears: somebody who
+   has just opened this is looking for help, and a control that is missing
+   teaches them nothing. Same box, dimmer ink — the treatment the refused
+   commit in the rail already uses. */
+.help-sheet__item:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+.help-sheet__item:disabled:hover { background: transparent; }
 
 /* ------------------------------------------------------------------ *
  * Compact piles on the seats, and melds
@@ -3547,7 +3702,14 @@ body.is-dragging .card-face { cursor: grabbing; }
 #event-banner {
   position: fixed;
   left: 50%;
-  top: 34%;
+  /* A RESERVED BAND, MEASURED — not a percentage of the window. `top: 34%` is
+     a number about the phone rather than about the table: on Thirteen at
+     375x812 it put the pill at 276px and the combination pile begins at 277px,
+     so the sentence covered the cards it was describing (#149). showBanner
+     measures the opponent row, the centre piles and the felt's middle and sets
+     `--banner-top` to the one strip that holds no rank corner; the percentage
+     survives only as the value before the first measurement. */
+  top: var(--banner-top, 34%);
   transform: translate(-50%, -50%);
   /* ABOVE THE CARDS IN FLIGHT (#fly-layer, one below), and it used to be under
      them. The gather that follows a trick flies four copies scaled up through
@@ -3562,7 +3724,22 @@ body.is-dragging .card-face { cursor: grabbing; }
   border-radius: 999px;
   font-weight: 700;
   font-size: 1rem;
-  white-space: nowrap;
+  /* IT WRAPS NOW. `white-space: nowrap` meant a long sentence ("… played four
+     consecutive pairs") grew sideways across the whole felt to stay on one
+     line, which is the other half of the same bug. ~28ch of text plus the
+     pill's own padding, never wider than the window.
+
+     `width: max-content` is not decoration. An absolutely positioned box with
+     `left: 50%` and no `right` shrink-to-fits into the room between 50% and the
+     right edge — HALF the window — so as soon as the text was allowed to wrap
+     it wrapped at 187px on a phone and "Nell played a pair" became three lines.
+     max-content asks for the sentence's own width and lets max-width be the
+     only thing that shortens it. */
+  width: max-content;
+  max-width: min(28ch + 2.6rem, calc(100vw - 2rem));
+  line-height: 1.25;
+  text-align: center;
+  overflow-wrap: break-word;
   pointer-events: none;
   background: var(--panel-bg);
   color: var(--panel-text);
@@ -3570,6 +3747,20 @@ body.is-dragging .card-face { cursor: grabbing; }
   box-shadow: 0 8px 24px var(--panel-shadow);
 }
 #event-banner[hidden] { display: none; }
+
+/* NO BAND WIDE ENOUGH FOR THE SENTENCE AS IT WRAPPED — Hearts at 375x812
+   leaves 37px between the opponent row and the trick. One line, a step
+   smaller, ellipsised: a truncated sentence is recoverable (#log carries it
+   whole, and it is the live region), and a covered rank is not. Applied by
+   showBanner, which then re-measures; see bannerBand in celebrations.js. */
+#event-banner.event-banner--tight {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 0.82rem;
+  padding: 0.3rem 0.95rem;
+  max-width: min(34ch, calc(100vw - 1.5rem));
+}
 
 /* The id selector above sets the neutral coat; the tones must out-rank it. */
 #event-banner.event-banner--good {
@@ -3580,14 +3771,28 @@ body.is-dragging .card-face { cursor: grabbing; }
 #event-banner.event-banner--bad { background: #8c2740; color: #fff; }
 #event-banner.event-banner--neutral { opacity: 0.92; }
 
-.event-banner--in { animation: banner-in 2.2s cubic-bezier(0.2, 0.9, 0.3, 1) both; }
+/* ONE SOURCE FOR THE HOLD. `--banner-hold` is set by showBanner from
+   BANNER_HOLD_MS (src/ui/celebrations.js) — the entrance and the timer that
+   hides the pill are the same number, and the fallback below is pinned to that
+   constant by tests/eventBanner.test.js so the pair cannot drift. */
+.event-banner--in { animation: banner-in var(--banner-hold, 2200ms) cubic-bezier(0.2, 0.9, 0.3, 1) both; }
 .event-banner--bad.event-banner--in {
-  animation: banner-in 2.2s cubic-bezier(0.2, 0.9, 0.3, 1) both,
+  animation: banner-in var(--banner-hold, 2200ms) cubic-bezier(0.2, 0.9, 0.3, 1) both,
              banner-shake 0.5s ease-in-out 0.15s;
 }
 
+/* THE ENTRANCE MUST STAY INSIDE THE BAND THE PLACEMENT RESERVED (#149). The
+   first frame used to be `translate(-50%, -30%)`: a rise off the table, which
+   put the pill 0.125 of its own height BELOW where it comes to rest — 6px for
+   a two-line sentence and 8.5px for cribbage's longest, straight back over the
+   rank corner the measurement had just cleared. (The felt probe caught it on
+   three cribbage samples, grazing by 1.4-3.4px, after the placement itself was
+   clean on all five packs.) It grows in place instead: every frame of the
+   entrance is inside the resting rect, and the only travel left is the exit's
+   drift upward, into the gap under the seat row, which is chrome rather than a
+   card. `bannerBand`'s clearance covers the 1.05 overshoot and that drift. */
 @keyframes banner-in {
-  0% { opacity: 0; transform: translate(-50%, -30%) scale(0.85); }
+  0% { opacity: 0; transform: translate(-50%, -50%) scale(0.85); }
   12% { opacity: 1; transform: translate(-50%, -50%) scale(1.05); }
   18% { transform: translate(-50%, -50%) scale(1); }
   82% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
@@ -3599,6 +3804,173 @@ body.is-dragging .card-face { cursor: grabbing; }
   25% { margin-left: -8px; }
   55% { margin-left: 6px; }
   80% { margin-left: -3px; }
+}
+
+/* ------------------------------------------------------------------ *
+ * THE SHOW CARD (#152) — src/ui/showCard.js
+ * ------------------------------------------------------------------ *
+ *
+ * What the banner used to say in one sentence, drawn: the name, the five cards
+ * and one row per combination with its points.
+ *
+ * IN #felt-middle RATHER THAN FIXED TO THE VIEWPORT, which is the one thing
+ * worth reading this block for. #event-banner is `position: fixed; top: 34%`
+ * and fine as a pill, but this is a panel — at 375x812 a fixed one sized to its
+ * contents lands wherever the contents put it, and what is directly below 34%
+ * on a phone is the fan. Parented to the felt's middle and inset to it, the
+ * card is bounded by the row it sits in: it cannot reach the hand at any
+ * viewport, because the hand is not in this box.
+ *
+ * The middle is 191px of slack at 375x812 during the play (measured for the
+ * board, see #136 above) and the piles under it are what the card covers — the
+ * played cards it is COUNTING, which the player has just watched go down. The
+ * `max-height: 100%` plus the scroll on the combination list is what holds the
+ * promise that it fits without the page scrolling: on the narrowest felt the
+ * rows give up the room, never the cards or the total.
+ *
+ * BATTERY RULE (cardstock#24): one 220ms fade-and-rise on arrival, and then it
+ * is still. The highlight is a transition on a class, not a keyframe.
+ */
+#show-card {
+  position: absolute;
+  inset: 0;
+  z-index: 8;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* The felt underneath stays readable around the card, and the card itself is
+     what takes the pointer — the rows are pokeable (`wireHighlight`). */
+  pointer-events: none;
+}
+#show-card[hidden] { display: none; }
+
+.show-card {
+  pointer-events: auto;
+  box-sizing: border-box;
+  max-width: min(20rem, 100%);
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.6rem 0.75rem;
+  border-radius: 0.8rem;
+  background: var(--panel-bg);
+  color: var(--panel-text);
+  border: 1px solid var(--panel-border);
+  box-shadow: 0 10px 30px var(--panel-shadow);
+  animation: show-card-in 220ms ease-out both;
+}
+
+@keyframes show-card-in {
+  from { opacity: 0; transform: translateY(0.5rem) scale(0.97); }
+  to { opacity: 1; transform: none; }
+}
+
+.show-card__title {
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  opacity: 0.8;
+}
+
+.show-card__faces {
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
+  flex: none;
+}
+
+.show-card__face {
+  /* Sized off the felt's own card variable so the card steps down with
+     everything else on a narrow screen (see #table). Small enough that five of
+     them and the starter's gap fit inside 20rem at any of those sizes. */
+  width: calc(var(--hand-card-w) * 0.62);
+  flex: none;
+  border-radius: 3px;
+  transition: transform 140ms ease-out, filter 140ms ease-out;
+}
+.show-card__face svg { display: block; width: 100%; height: auto; }
+
+/* The cut belongs to nobody, so it stands off the four that are somebody's. */
+.show-card__face--starter { margin-left: 0.45rem; }
+
+/* THE COMBINATION UNDER THE FINGER, and only its cards. Lifted and ringed
+   rather than dimming the others: dimming four cards to emphasise two is a
+   bigger change to the picture than the question deserves, and the ring is the
+   accent the felt already uses for "this is the one".
+
+   THE RING IS AN OUTLINE, not a drop-shadow. It was written
+   `drop-shadow(0 0 0 2px var(--accent))` — and `drop-shadow()` takes at most
+   three lengths (x, y, blur), so the fourth made the whole `filter` invalid
+   and the cascade dropped BOTH shadows in silence: the computed filter on a
+   lit face was `none` and the highlight was a 3px lift and nothing else. An
+   outline cannot fail that way, it follows the face's own corner radius, and
+   it costs no filter pass on five card faces. */
+.show-card__face--lit {
+  transform: translateY(-0.2rem);
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  filter: drop-shadow(0 3px 6px var(--card-shadow));
+}
+
+.show-card__parts {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  /* The half that gives way on a short felt — the cards and the total never
+     do. `min-height: 0` is what lets it actually shrink inside the column. */
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.show-card__part {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.1rem 0.25rem;
+  border-radius: 0.3rem;
+  font-size: 0.82rem;
+  cursor: default;
+  transition: background-color 140ms ease-out;
+}
+.show-card__part:hover { background: var(--chip-bg); }
+.show-card__part-name::first-letter { text-transform: uppercase; }
+.show-card__part-points { font-weight: 700; font-variant-numeric: tabular-nums; }
+
+.show-card__total {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.25rem 0.25rem 0;
+  border-top: 1px solid var(--panel-border);
+  font-size: 0.9rem;
+}
+.show-card__total-label {
+  text-transform: uppercase;
+  font-size: 0.62rem;
+  letter-spacing: 0.06em;
+  opacity: 0.75;
+}
+.show-card__total-points {
+  font-weight: 800;
+  font-size: 1.15rem;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+/* NINETEEN: the traditional name for a hand worth nothing, and the reason a
+   zero is not printed here. It is the one number five cards cannot make, so a
+   player who sees the word knows exactly what happened. */
+.show-card__nineteen {
+  align-self: center;
+  padding: 0.15rem 0.5rem;
+  font-size: 1rem;
+  font-weight: 700;
+  font-style: italic;
+  opacity: 0.75;
 }
 
 /* The winner's cards glow when a trick lands well; your own hand flinches
@@ -3978,6 +4350,8 @@ body.is-dragging .card-face { cursor: grabbing; }
   .seat--target,
   .event-banner--in,
   .event-banner--bad.event-banner--in,
+  .contract-chip[data-chip="broken"],
+  .show-card,
   .zone-celebrate,
   .zone-lament,
   .table--flash::after,
@@ -3993,6 +4367,17 @@ body.is-dragging .card-face { cursor: grabbing; }
   #rules-overlay .panel,
   #new-game-overlay .panel {
     animation: none !important;
+  }
+
+  /* The deal countdown (#150). Which of the two treatments runs is decided in
+     JS — `paintRoundPace` reads `motionAllowed()`, which also sees the SDK's
+     own reducedMotion setting, and CSS cannot — so this is here for the one
+     case JS cannot catch: the media query flipping while the sheet is already
+     open. The outline stays and is simply drawn whole; the timer is untouched
+     and the next hand still deals itself on time. */
+  .deal-ring--running .deal-ring__fill {
+    animation: none !important;
+    stroke-dashoffset: 0;
   }
 
   /* The pulses live on pseudo-elements, and stopping the animation alone would
@@ -4065,18 +4450,22 @@ body.is-dragging .card-face { cursor: grabbing; }
  * stylesheet rather than in its markup, its output is pinned by tests, and it
  * is deliberately the renderer that shipped before the style registry existed.
  * So it gets the same two colours by the route it already themes itself with.
- * Every value below is dullPaper()/dullInk() of the live one, computed once. */
-.card-face--muted .card-face__bg { fill: #daddd9; stroke: #c5c7c3; }
+ * Every value below is dullPaper()/dullInk() of the live one, computed once —
+ * and pinned to those functions by tests/cardStyles.test.js, because the one
+ * failure mode of copying a computed colour into a stylesheet is the day the
+ * function moves and the copy does not. (It had: the neutral index was still
+ * dullInk of a #3f3f46 that the live rule stopped using.) */
+.card-face--muted .card-face__bg { fill: #bec2bd; stroke: #b0b4af; }
 .card-face--muted.card-face--red .card-face__corner,
-.card-face--muted.card-face--red .card-face__pip { fill: #901616; }
+.card-face--muted.card-face--red .card-face__pip { fill: #7a1212; }
 .card-face--muted.card-face--black .card-face__corner,
-.card-face--muted.card-face--black .card-face__pip { fill: #0d0d0d; }
+.card-face--muted.card-face--black .card-face__pip { fill: #0b0b0b; }
 .card-face--muted.card-face--neutral .card-face__corner,
-.card-face--muted.card-face--neutral .card-face__pip { fill: #313137; }
-.card-face--muted.card-face--painted.card-face--red .card-face__bg { fill: #962c22; }
-.card-face--muted.card-face--painted.card-face--yellow .card-face__bg { fill: #b08a22; }
-.card-face--muted.card-face--painted.card-face--green .card-face__bg { fill: #1e884b; }
-.card-face--muted.card-face--painted.card-face--blue .card-face__bg { fill: #255789; }
+.card-face--muted.card-face--neutral .card-face__pip { fill: #2d2d2d; }
+.card-face--muted.card-face--painted.card-face--red .card-face__bg { fill: #7f261c; }
+.card-face--muted.card-face--painted.card-face--yellow .card-face__bg { fill: #94751d; }
+.card-face--muted.card-face--painted.card-face--green .card-face__bg { fill: #1a733f; }
+.card-face--muted.card-face--painted.card-face--blue .card-face__bg { fill: #1f4974; }
 .card-face--red .card-face__corner,
 .card-face--red .card-face__pip { fill: #b91c1c; }
 .card-face--black .card-face__corner,
@@ -4374,6 +4763,113 @@ body.is-dragging .card-face { cursor: grabbing; }
   font-weight: 600;
 }
 #round-continue:hover { background: var(--action-bg-hover); }
+
+/* ------------------------------------------------------------------ *
+ * The countdown to the next hand (#150)
+ * ------------------------------------------------------------------ *
+ *
+ * An outline filling in around the Deal button, and no digits anywhere. What a
+ * player needs off this is "something is about to happen, and roughly how
+ * soon"; a number turns a glance into arithmetic, and a number that counts down
+ * from 2 is a number nobody finishes reading.
+ *
+ * ONE SHOT, ALWAYS. The animation runs once, `forwards`, and the class is taken
+ * off the moment the sheet closes (src/ui/panels.js hideRoundSummary) — there
+ * is no state in which this is still ticking with nothing to count down to.
+ * Under reduced motion or the power saver it is not animated at all: the
+ * outline is simply drawn, whole and still, and the timer fires exactly when it
+ * would have (cardstock#24).
+ *
+ * The geometry is set from JS because it is a measurement, not a constant: the
+ * button is as wide as "Deal round 11" happens to be, and a dash array has to
+ * be the real perimeter of the real pill or the fill runs short or spills.
+ */
+.deal-ring-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+/* SIZED EXPLICITLY, not by `inset`. An `<svg>` is a REPLACED element with a
+   default intrinsic size of 300x150, and an absolutely-positioned replaced box
+   with `width: auto` takes that intrinsic size rather than the one its insets
+   describe — `inset: 1px` measured 288x144 over a 138x39 button, so the ring
+   was drawn a long way off the thing it was meant to be around. */
+/* INSET FAR ENOUGH TO BE WHOLLY ON THE BUTTON. A stroke centred on the
+   button's own edge spends half its width on the panel behind it, and the
+   panel is cream in the light theme — so half the ring was white on cream and
+   the whole indicator read as a smudge there while looking fine in the dark.
+   Two pixels in, and the ring is a groove in the action colour in both. */
+.deal-ring {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: calc(100% - 4px);
+  height: calc(100% - 4px);
+  overflow: visible;
+  /* The ring is decoration ON the button: every pointer that lands here is
+     meant for the button underneath it. */
+  pointer-events: none;
+}
+.deal-ring[hidden] { display: none; }
+
+.deal-ring__track,
+.deal-ring__fill {
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+/* The unfilled part. `--action-text` is what sits ON the action colour, so this
+   reads as a groove in the button in either theme rather than a second colour
+   introduced beside it. */
+.deal-ring__track {
+  stroke: var(--action-text);
+  opacity: 0.35;
+}
+
+.deal-ring__fill {
+  stroke: var(--action-text);
+  opacity: 0.85;
+  stroke-dasharray: var(--deal-ring-len);
+  /* At rest the fill is not drawn at all — 0%, the track alone. */
+  stroke-dashoffset: var(--deal-ring-len);
+}
+
+.deal-ring--running .deal-ring__fill {
+  animation: deal-ring-fill var(--deal-ring-ms, 2500ms) linear forwards;
+  animation-iteration-count: 1;
+}
+
+/* Reduced motion and power saving: the mark without the movement. The ring is
+   drawn whole, saying "this deals itself", and the timer still fires. */
+.deal-ring--static .deal-ring__fill {
+  stroke-dashoffset: 0;
+  opacity: 0.5;
+}
+
+@keyframes deal-ring-fill {
+  from { stroke-dashoffset: var(--deal-ring-len); }
+  to { stroke-dashoffset: 0; }
+}
+
+/* The rung, changeable at the moment you feel it. Deliberately the quietest
+   thing on the panel: it is an adjustment, not a decision, and the two buttons
+   above it are the decisions. */
+.round-pace {
+  display: block;
+  margin: 0.9rem auto 0;
+  padding: 0.3rem 0.5rem;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--panel-text);
+  font: inherit;
+  font-size: 0.8rem;
+  opacity: 0.6;
+  cursor: pointer;
+}
+.round-pace:hover { opacity: 1; }
+.round-pace[hidden] { display: none; }
 
 /* ------------------------------------------------------------------ *
  * The wild's question
@@ -5105,6 +5601,58 @@ body.is-dragging .card-face { cursor: grabbing; }
 .tile__together::before { content: '\1F465\A0'; }
 .tile__together:hover { background: var(--ghost-hover); }
 .tile__together[hidden] { display: none; }
+
+/* TODAY'S RUN. Two lines rather than one — the offer and what has become of it
+   — because "Daily run" alone says nothing about whether it is still there to
+   play, and that is the only question anybody has about a daily.
+
+   It sits in the same footer family as the three above and carries the accent,
+   which is this game's one way of saying "this one is yours today". Not a
+   pulse, not a badge: the tile already changes what it says when the run is
+   done, and a lobby that blinks at you is a lobby you stop reading. */
+.tile__daily {
+  display: block;
+  width: 100%;
+  padding: 0.45rem 0.5rem;
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: inherit;
+  text-align: center;
+  background: none;
+  border: none;
+  border-top: 1px solid var(--tile-border);
+  cursor: pointer;
+}
+.tile__daily::before { content: '\2600\FE0F\A0'; }
+button.tile__daily:hover { background: var(--ghost-hover); }
+.tile__daily-label { color: var(--accent); }
+.tile__daily-state {
+  display: block;
+  font-weight: 400;
+  font-size: 0.68rem;
+  opacity: 0.7;
+}
+
+/* A FINISHED RUN IS A STATEMENT, NOT A DEAD BUTTON. There is no second attempt
+   at a day, so it is rendered as text (a div, never a disabled control) and the
+   only thing left to press is the copy. */
+.tile__daily--done { cursor: default; }
+.tile__daily--done .tile__daily-label { color: inherit; opacity: 0.85; }
+
+.tile__daily-share {
+  display: block;
+  width: 100%;
+  padding: 0.4rem 0.5rem;
+  font: inherit;
+  font-size: 0.7rem;
+  color: inherit;
+  opacity: 0.65;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+.tile__daily-share:hover { opacity: 1; background: var(--ghost-hover); }
 
 /* ------------------------------------------------------------------ *
  * How to play

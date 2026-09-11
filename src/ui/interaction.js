@@ -53,6 +53,8 @@ export function handAddress(seat) {
  *                arms only while the selection is a legal play. The count is
  *                not fixed and legality is not a property of the cards one at a
  *                time, so it is answered live as they go in.
+ *   'take-pile'  tap one of several face-down piles to take the WHOLE of it.
+ *                The hand is empty and inert; the piles are the only control.
  *
  * And the question a mode must NEVER be asked: whether a given SEAT may be
  * assembling something. A mode is derived from the table-wide `turn.phase`, so
@@ -60,6 +62,7 @@ export function handAddress(seat) {
  */
 export const INTERACTION_MODES = Object.freeze([
   'tap', 'play-drawn', 'pass', 'rummy-draw', 'rummy-meld', 'place', 'bid', 'combination',
+  'take-pile',
 ]);
 
 /**
@@ -636,6 +639,21 @@ export function buildUiModel(state, { seat, moves = [], acts = false, selection 
     return ui;
   }
 
+  if (mode === 'take-pile') {
+    // THE SAME SHAPE AS THE RUMMY DRAW, and deliberately so: a pile lights up
+    // because a move named it, keyed by the zone address the felt draws it at.
+    // What differs is only what arrives — one card there, a whole hand here —
+    // and neither this function nor the pile it arms has to know which.
+    //
+    // NOTHING GOES IN `handSelectable`. The hand is empty during this phase, and
+    // an empty set is not a precaution here; it is the honest answer to "what
+    // may I do with my cards" when there are none.
+    for (const move of moves) {
+      if (move.type === 'takeHand' && move.from) ui.readyTargets.set(move.from, move);
+    }
+    return ui;
+  }
+
   if (mode === 'rummy-meld') {
     const ctx = makeCtx(state);
     // A seat that is done gathering is not in a lesser version of this mode: its
@@ -907,8 +925,9 @@ export function dropCandidates(state, { seat, moves = [], source }) {
   // Passing is a commit-by-button phase; dragging inside the hand is
   // rearranging, and there is nowhere on the felt to drop a card yet. Bidding
   // is the same answer for a stronger reason: no card is part of the move at
-  // all.
-  if (mode === 'pass' || mode === 'rummy-draw' || mode === 'bid') return [];
+  // all, and taking a face-down pile is that reason again with an empty hand
+  // behind it.
+  if (mode === 'pass' || mode === 'rummy-draw' || mode === 'bid' || mode === 'take-pile') return [];
 
   // A DRAG IS A ONE-CARD COMMIT. Dragging is a gesture for one card, and a
   // combination of several is what the button is for — so the drop is offered

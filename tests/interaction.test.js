@@ -15,6 +15,7 @@ import assert from "node:assert";
 import fs from "node:fs";
 import path from "node:path";
 import { loadPack } from "../src/engine/packLoader.js";
+import { rankLadderOf } from "../src/engine/cards.js";
 import { createState } from "../src/engine/state.js";
 import { makeCtx } from "../src/engine/context.js";
 import { validateMove, enumerateLegalMoves, applyMove } from "../src/engine/movePipeline.js";
@@ -66,13 +67,14 @@ const PACKS = ["crazy-eights", "wildfire", "hearts", "milestones", "stockpile",
   "thirteen", "cribbage"];
 
 test("every pack's interaction mode is one the table knows how to render", () => {
-  const known = new Set(["tap", "play-drawn", "pass", "rummy-draw", "rummy-meld", "place", "combination"]);
+  const known = new Set(["tap", "play-drawn", "pass", "rummy-draw", "rummy-meld", "place",
+    "combination", "take-pile"]);
   for (const packId of PACKS) {
     assert.ok(known.has(interactionMode(tableFor(packId))), `${packId} has an unknown mode`);
     // Every phase a template can reach, not only the one a fresh deal opens on:
     // a phase with no mode renders as 'tap' by accident, which is how a table
     // ends up offering the whole hand in a state that allows one card.
-    for (const phase of ["play", "pass", "draw", "meld", "discard", "playDrawn"]) {
+    for (const phase of ["play", "pass", "draw", "meld", "discard", "playDrawn", "choose"]) {
       const state = tableFor(packId, `phases:${packId}`);
       state.turn.phase = phase;
       assert.ok(known.has(interactionMode(state)),
@@ -531,6 +533,96 @@ test("every sort mode returns exactly the cards it was given", () => {
     assert.strictEqual(out.length, ids.length, `${mode} changed the hand size`);
     assert.deepStrictEqual(new Set(out), new Set(ids), `${mode} lost or invented a card`);
   }
+});
+
+/* ------------------------------------------------------------------ *
+ * Sort by rank is the PACK'S rank (#159)
+ * ------------------------------------------------------------------ *
+ *
+ * `rankIndex` read `Number(card.rank)` and then `RANKS`, both of which start at
+ * the 2, so "sort by rank" put Thirteen's 2 first and its ace last — the exact
+ * inverse of the ladder the whole game is played on. Pinochle's 10-above-king
+ * and Cribbage's low ace were wrong the same way. Three packs, three different
+ * declared orders, one assertion each: a fix that only knew about Thirteen
+ * would pass one of these and fail the other two.
+ *
+ * Hands are written out rather than dealt, so what is being pinned is the ORDER
+ * and not a seed.
+ */
+function sortedRanks(packId, cardIds, mode = "rank") {
+  const pack = packFromDisk(packId);
+  const ladder = rankLadderOf(pack);
+  const shuffled = cardIds.slice().reverse();
+  return orderHand(shuffled, (id) => pack.cardsById.get(id), mode, [], ladder)
+    .map((id) => pack.cardsById.get(id).rank);
+}
+
+test("sort by rank follows the pack's own ladder, not the deck's", () => {
+  const ladder = ["3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A", "2"];
+  assert.deepStrictEqual(
+    sortedRanks("thirteen", ladder.map((r) => `spades-${r}`)), ladder,
+    "Thirteen's hand sorted the 2 low and the ace high — the inverse of its ladder");
+
+  assert.deepStrictEqual(
+    sortedRanks("pinochle", ["9", "J", "Q", "K", "10", "A"].map((r) => `spades-${r}`)),
+    ["9", "J", "Q", "K", "10", "A"],
+    "Pinochle's ten did not sort between the king and the ace");
+
+  const cribbage = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"];
+  assert.deepStrictEqual(
+    sortedRanks("cribbage", cribbage.map((r) => `spades-${r}`)), cribbage,
+    "Cribbage's ace did not sort low");
+
+  // UNCHANGED WHERE NOTHING WAS DECLARED. Hearts names no `rankLadder`, so the
+  // ladder is derived from the deck and comes out as the order this always
+  // used — the fix must not move a pack that was already right.
+  const hearts = ["2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"];
+  assert.deepStrictEqual(
+    sortedRanks("hearts", hearts.map((r) => `spades-${r}`)), hearts,
+    "Hearts' rank order moved");
+});
+
+test("sort by rank breaks ties with the pack's suit ladder", () => {
+  // Thirteen ranks its suits spades-clubs-diamonds-hearts, which is a real fact
+  // about the game (`9♥9♦` beats `9♣9♠`) and is NOT alphabetical — so the four
+  // 9s were being fanned in an order the table itself contradicts.
+  const pack = packFromDisk("thirteen");
+  const ids = ["hearts-9", "spades-9", "diamonds-9", "clubs-9"];
+  const out = orderHand(ids, (id) => pack.cardsById.get(id), "rank", [], rankLadderOf(pack));
+  assert.deepStrictEqual(out, ["spades-9", "clubs-9", "diamonds-9", "hearts-9"],
+    "the four 9s did not fan in the suit ladder's order");
+
+  // And a pack that ranks no suits keeps the alphabetical answer, which is
+  // stable rather than meaningful and is all there is to say.
+  const hearts = packFromDisk("hearts");
+  const sameRank = ["spades-9", "hearts-9", "diamonds-9", "clubs-9"];
+  assert.deepStrictEqual(
+    orderHand(sameRank, (id) => hearts.cardsById.get(id), "rank", [], rankLadderOf(hearts)),
+    ["clubs-9", "diamonds-9", "hearts-9", "spades-9"],
+    "a pack with no suit ladder stopped falling back to the suit name");
+});
+
+test("sort by suit keeps its suit groups and orders inside them by the ladder", () => {
+  // The groups are by suit NAME on purpose: a player learns where their spades
+  // live, and the four blocks rearranging themselves under them would be a
+  // worse bug than the one being fixed. What the ladder fixes is INSIDE a group.
+  const pack = packFromDisk("thirteen");
+  const ids = ["spades-2", "spades-3", "spades-A", "clubs-2", "clubs-3", "clubs-A"];
+  const out = orderHand(ids, (id) => pack.cardsById.get(id), "suit", [], rankLadderOf(pack));
+  assert.deepStrictEqual(out,
+    ["clubs-3", "clubs-A", "clubs-2", "spades-3", "spades-A", "spades-2"],
+    "the suit sort's within-suit order is not the pack's ladder");
+});
+
+test("orderHand with no ladder still sorts, for a caller that has no pack", () => {
+  // The parameter is optional and the old tiers are the fallback, so the
+  // signature change cannot break a caller that has nothing to pass.
+  const pack = packFromDisk("hearts");
+  const ids = ["spades-A", "spades-10", "spades-2"];
+  assert.deepStrictEqual(
+    orderHand(ids, (id) => pack.cardsById.get(id), "rank", []),
+    ["spades-2", "spades-10", "spades-A"],
+    "the no-ladder fallback stopped working");
 });
 
 test("a manual order keeps newly drawn cards instead of dropping them", () => {

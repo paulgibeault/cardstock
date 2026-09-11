@@ -25,6 +25,89 @@ import { trickNarration } from './scoreDirection.js';
 // two describeEvent call sites must hand templates the same bag (#124).
 import { agrees } from './describe.js';
 
+/* ------------------------------------------------------------------ *
+ * The banner's geometry — pure, so it can be argued with in a test
+ * ------------------------------------------------------------------ */
+
+/**
+ * HOW LONG A SENTENCE STANDS ON THE FELT, in one place.
+ *
+ * It used to be two: this timer and a `2.2s` literal on `.event-banner--in` in
+ * table.css, which is the kind of pair that stays in step until the day it does
+ * not. The number is declared here and handed to the stylesheet as
+ * `--banner-hold` in showBanner; the CSS fallback is pinned to this constant by
+ * tests/eventBanner.test.js so the two cannot drift apart again.
+ */
+export const BANNER_HOLD_MS = 2200;
+
+/** Clearance kept between the pill and whatever is above and below it. */
+const BANNER_CLEARANCE = 6;
+
+/**
+ * WHERE THE PILL'S CENTRE GOES, in viewport pixels — the reserved band.
+ *
+ * The felt has exactly one strip that never holds a card value: between the
+ * bottom of the opponent row and the top of the centre piles. Everything below
+ * the piles is the player's own half — their piles, the staging tray, the fan —
+ * and the hand is sacred, so this only ever looks UP.
+ *
+ * Four boxes, all measured by the caller: `seats` is the opponent row (the
+ * ceiling), `piles` is the band the cards in the middle actually occupy (the
+ * floor, because that is the first thing below with a rank corner on it — see
+ * placeBanner, which measures the CARDS rather than the box nominally holding
+ * them), `middle` is the felt's middle (the anchor for the fallback), and
+ * `hand` stands in as the floor for a pack whose middle is empty. A missing
+ * box is a box that is not on this felt.
+ *
+ * `fits: false` means the band could not hold the pill at the height it was
+ * measured at with clearance on both sides; the caller shrinks it to one line
+ * and asks again. If even that is snug — Hearts at 375x812 leaves 37px between
+ * the row and the trick, and a one-line pill is 27 — it is hung from the top of
+ * the piles rather than centred, and spills up over the bottom edge of the seat
+ * row if it must, because plate chrome is a cheaper thing to cover than a rank.
+ */
+export function bannerBand(rects, height) {
+  const live = (r) => (r && r.height > 0 ? r : null);
+  const seats = live(rects.seats);
+  const middle = live(rects.middle);
+  const floorBox = live(rects.piles) || live(rects.hand);
+  const half = height / 2;
+  const pad = BANNER_CLEARANCE;
+  const ceiling = seats ? seats.bottom : (middle ? middle.top : 0);
+  if (!floorBox) return { top: ceiling + pad + half, fits: true };
+  const floor = floorBox.top;
+  if (floor - ceiling >= height + pad * 2) {
+    return { top: (ceiling + floor) / 2, fits: true };
+  }
+  const anchor = (middle ? middle.top : ceiling) + pad + half;
+  // Never off the top of the window: half a pill is not a sentence. The floor
+  // is half the pill plus the clearance rather than half plus a token 2px,
+  // because the exit frame of banner-in lifts the pill 0.115 of its own height
+  // as it fades, and a tight pill placed at 2px would take its first line off
+  // the top of the screen on the way out.
+  return { top: Math.max(half + pad, Math.min(anchor, floor - pad - half)), fits: false };
+}
+
+/**
+ * WHAT A TRICK'S OWN CELEBRATION IS WORTH, on the same scale `describeEvent`
+ * uses (src/templates/CONTRACT.md, "Saying which event ENDED the move").
+ *
+ * A trick is narrated by `celebrateTrick` rather than through `eventText`, so
+ * for a long time it was outside the priority system entirely and the table
+ * expressed "a trick beats everything" by simply not calling `celebrateAction`
+ * at all when one had fired. That is right for almost everything — a Draw 2 and
+ * a gathered trick in one move is two celebrations and reads as neither — and
+ * wrong for exactly the events that are BIGGER than the trick they arrived
+ * inside. Spades breaking is the case that found it (#151): the card that
+ * breaks a suit is very often the fourth card of a trick, so the one banner
+ * that mattered was the one guaranteed to be suppressed.
+ *
+ * So the rule is a number instead of a special case. A describer that means to
+ * outrank the trick says a priority above this; everything at or below it is
+ * suppressed exactly as before, which is every event in every other pack.
+ */
+export const TRICK_BANNER_PRIORITY = 1;
+
 /**
  * @param me          the seat lens (src/players/seats.js); everything is worded
  *                    from the point of view of the seat it names
@@ -111,6 +194,62 @@ export function createCelebrations({
   }
 
   /**
+   * Measure the felt and put the pill in the band that holds no card values.
+   *
+   * The banner used to sit at `top: 34%` of the WINDOW, which is a number about
+   * the phone rather than about the table: in Thirteen at 375x812 that lands at
+   * 276px and the combination pile starts at 277px, so the sentence covered the
+   * cards it was describing (#149). Measured instead, against the three boxes
+   * that decide where the felt's empty strip is on THIS layout.
+   *
+   * Done here rather than in layoutHand because it is not a layout — nothing
+   * else moves, the fan is untouched, and the answer is only wanted on the
+   * handful of frames a banner actually appears on.
+   */
+  function placeBanner() {
+    const banner = el.eventBanner;
+    // A hidden row measures 0x0 (#table-contract on a pack with no contract),
+    // and "not there" is what the band arithmetic needs to hear about it.
+    const box = (node) => {
+      const r = node ? node.getBoundingClientRect() : null;
+      return r && r.height > 0 ? { top: r.top, bottom: r.bottom, height: r.height } : null;
+    };
+    // THE FLOOR IS THE HIGHEST CARD, not the box that nominally holds them.
+    // Cards in the middle are posed: a trick is a fan of rotated copies and a
+    // cribbage sequence lives in #table-zones rather than #center-piles, so
+    // both routinely stick out above `#center-piles`'s own rect. Measuring the
+    // box left six banners on five packs grazing a rank corner that was
+    // technically outside the pile it belonged to.
+    const pilesBox = box(el.centerPiles);
+    let cardTop = Infinity;
+    for (const face of el.feltMiddle ? el.feltMiddle.querySelectorAll('.card-face') : []) {
+      const r = face.getBoundingClientRect();
+      if (r.height > 0) cardTop = Math.min(cardTop, r.top);
+    }
+    const top = Number.isFinite(cardTop)
+      ? Math.min(cardTop, pilesBox ? pilesBox.top : cardTop)
+      : (pilesBox ? pilesBox.top : null);
+    const bottom = pilesBox ? Math.max(pilesBox.bottom, top) : top;
+    const floor = top === null ? null : { top, bottom, height: Math.max(1, bottom - top) };
+    const rects = {
+      seats: box(el.opponentsTop),
+      middle: box(el.feltMiddle),
+      piles: floor,
+      hand: box(el.handRow),
+    };
+    banner.classList.remove('event-banner--tight');
+    let band = bannerBand(rects, banner.getBoundingClientRect().height);
+    if (!band.fits) {
+      // No band wide enough for the sentence as it wrapped: one line, smaller,
+      // ellipsised — which is the trade the issue asks for, because a truncated
+      // sentence is recoverable (#log has it whole) and a covered rank is not.
+      banner.classList.add('event-banner--tight');
+      band = bannerBand(rects, banner.getBoundingClientRect().height);
+    }
+    banner.style.setProperty('--banner-top', `${Math.round(band.top)}px`);
+  }
+
+  /**
    * The celebration layer. Decorative by construction — #log (a live region)
    * carries the same sentence — so it is aria-hidden and free to be theatrical.
    * `tone` is 'good' | 'bad' | 'neutral': winning a clean trick sparkles, eating
@@ -120,16 +259,21 @@ export function createCelebrations({
     if (session.bannerTimer) session.bannerTimer.cancel();
     el.eventBanner.textContent = text;
     el.eventBanner.className = `event-banner event-banner--${tone}`;
+    // The hold is ONE number (BANNER_HOLD_MS) spent twice: the timer below and
+    // the entrance animation's duration, which used to be a `2.2s` literal in
+    // table.css that nothing tied to this one.
+    el.eventBanner.style.setProperty('--banner-hold', `${BANNER_HOLD_MS}ms`);
     el.eventBanner.hidden = false;
-    // Restart the entrance animation when banners come back-to-back.
-    void el.eventBanner.offsetWidth;
+    // Measuring forces the same style flush `void offsetWidth` used to, so this
+    // is also what restarts the entrance animation on back-to-back banners.
+    placeBanner();
     el.eventBanner.classList.add('event-banner--in');
     const myEpoch = currentEpoch();
     session.bannerTimer = Arcade.session.setTimeout(() => {
       session.bannerTimer = null;
       if (myEpoch !== currentEpoch()) return;
       el.eventBanner.hidden = true;
-    }, 2200);
+    }, BANNER_HOLD_MS);
   }
 
   /**
@@ -270,17 +414,36 @@ export function createCelebrations({
    * with a number; ties fall to the first, which is the order events were
    * emitted in and the behaviour every other pack keeps.
    */
-  function celebrateAction(session, state, events) {
+  function celebrateAction(session, state, events, { floor = -1 } = {}) {
     let ev = null;
     let said = null;
     for (const candidate of events) {
       const text = eventText(state, candidate);
       if (!text) continue;
+      // `floor` is what the banner is ALREADY saying, on the same scale: the
+      // table passes TRICK_BANNER_PRIORITY when a trick has just been
+      // celebrated, so only an event that means to outrank a trick gets to
+      // overwrite it. The default of -1 is "the banner is free", which lets
+      // priority 0 — every event that says nothing about priority — through.
+      if ((text.priority || 0) <= floor) continue;
       if (said && (text.priority || 0) <= (said.priority || 0)) continue;
       ev = candidate;
       said = text;
     }
-    if (!said) return null;
+    // A MOVE THAT NARRATES NOTHING TAKES THE LAST SENTENCE DOWN (#149, inbox
+    // item 22). It used to leave it standing for the rest of its hold, so a
+    // pass from two plays ago was still over the felt while somebody else's
+    // cards landed — "on turns where I was leading a brand-new trick it still
+    // read 'Fig passed' from three plays ago". The banner describes a position,
+    // and the position has just changed; not having a new sentence is a reason
+    // to stop saying the old one, not a reason to keep it.
+    // NOTHING TO SAY CLEARS A STALE PILL (#149) — unless a trick banner was
+    // just shown for this same move (the caller raised the floor above the
+    // trick's rung, #151): that pill is this move's answer and stays.
+    if (!said) {
+      if (floor < 0) hideBanner(session);
+      return null;
+    }
 
     showBanner(session, said.text, said.tone);
     playActionCard({ against: me.holds(ev.seat) && said.tone === 'bad' });

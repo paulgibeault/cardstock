@@ -861,6 +861,24 @@ const shedding = {
     // drawn wild for the same reason it hangs on to a held one.
     if (move.type === 'draw' || move.type === 'pass') return -1;
     const card = ctx.cardById(move.cards[0]);
+    // A WILD IS THE LAST CARD OUT OF THE HAND, NOT THE FIRST.
+    //
+    // This used to read `1 + value×0.01 + (effect ? 0.5 : 0)`, and an eight has
+    // both the biggest value in the deck and an effect — so it scored 2.00 and
+    // was ALWAYS the first thing a bot played. Every difficulty inherited that:
+    // `easy` ranks by this alone, a `hard` rollout plays every chair with it
+    // (src/engine/bot.js), and the Hint button ranks with the same code, so the
+    // felt's own advice was "lead your eight" while the pack's how-to-play says
+    // the question is never whether to play one but when.
+    //
+    // ZERO, which is the whole fix: above the holding moves (a wild in hand is
+    // still a card you would rather spend than draw for) and below every
+    // natural, which all score at least 1. So a wild goes down when it is the
+    // only legal play, when the hand is down to it, or when the alternative is
+    // drawing — and never while something natural fits. Wilds that also attack
+    // (Wildfire's wild-draw4) are held on the same terms: the four cards it
+    // costs somebody are worth less than the turn it buys you later.
+    if (isWildCard(ctx, card)) return 0;
     // Prefer dumping high-value / action cards first — simple, deliberately dumb.
     return 1 + (card.value ?? 0) * 0.01 + (effectOf(card) ? 0.5 : 0);
   },
@@ -902,8 +920,21 @@ const shedding = {
       const card = ctx.cardById(id);
       // A wild is an exit AND an exit that chooses the next active value, so it
       // counts twice; anything matching the active value is one way out.
-      if (isWildCard(ctx, card)) score += w.EXIT_WORTH + w.WILD_WORTH;
-      else if (cardMatchesActive(ctx, card)) score += w.EXIT_WORTH;
+      if (isWildCard(ctx, card)) {
+        // AND IT IS NOT DEADWOOD. Both packs price a wild at the top of the
+        // deck — 50 — and at DEADWOOD_WORTH that is 2.5 against a WILD_WORTH
+        // of 1.5, so the evaluator used to rate the hand that had just thrown
+        // its eight away above the hand that still held one. That is the same
+        // defect as the move scorer's and it wants the same answer: the
+        // deadwood term prices the card you are LEFT HOLDING when somebody
+        // else goes out, and a wild is the one card in the deck you are never
+        // left holding — it plays on anything, so it goes down on the turn you
+        // need it. What it costs is the round you lose by having nothing to
+        // play, and that is what EXIT_WORTH and WILD_WORTH are already saying.
+        score += w.EXIT_WORTH + w.WILD_WORTH;
+        continue;
+      }
+      if (cardMatchesActive(ctx, card)) score += w.EXIT_WORTH;
       // Left holding these when somebody goes out, they are what the round
       // costs (scoring.roundScore: hand-values-to-winner).
       score -= cardValue(card, scoring) * w.DEADWOOD_WORTH;
