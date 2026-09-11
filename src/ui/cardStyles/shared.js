@@ -151,12 +151,22 @@ function isHex(value) {
  * card is unplayable. Greying the stock and DEEPENING the ink pulls the two
  * apart — the card recedes, the value stays readable. The tightest case in the
  * five packs (Milestones' yellow, which lives at 4.85:1 on white and could not
- * afford to lose any of it) comes out at 5.27:1 muted, better than it is live.
+ * afford to lose any of it) comes out at 4.91:1 muted, better than it is live.
  *
  * Two functions rather than one because a card has two kinds of colour and they
  * must move in OPPOSITE directions. Every style routes its fields through
  * dullPaper() and everything else through dullInk(); the split is per-style
  * because only the style knows which of its rectangles is the paper.
+ *
+ * THE STEP IS NOW TWICE WHAT IT WAS (#153). The first pass at this was timid:
+ * #fdfdfa -> #daddd9 is a 1.35:1 move, and on the felt a thirteen-card fan with
+ * half of it unplayable read as ONE fan — the 4px lift under the playable cards
+ * was doing all the work, and a cue you only notice by comparing two cards side
+ * by side is not a cue. The stock lands on #bec2bd instead, a 1.77:1 move, which
+ * is the same step applied twice; the ink is deepened further to pay for it.
+ * Both numbers sit at the edge the sweep in tests/cardStyles.test.js allows —
+ * one notch further (0.6 toward STOCK) puts Milestones' yellow at 4.64:1 and
+ * the notch after that breaks 4.5 outright.
  */
 
 /** Which way is "up" for the paper: a neutral the stock is pulled toward. */
@@ -165,15 +175,15 @@ const STOCK = '#8a928a';
 /**
  * Near-white paper -> grey stock. Desaturated most of the way (so a warm white
  * does not stay warm) and then pulled toward STOCK, which is what supplies the
- * visible step: #fdfdfa lands on #daddd9, a 1.34:1 move.
+ * visible step: #fdfdfa lands on #bec2bd, a 1.77:1 move.
  */
 export function dullPaper(hex) {
-  if (!isHex(hex)) return '#daddd9';
+  if (!isHex(hex)) return '#bec2bd';
   const c = channels(hex);
   const grey = 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
   const flat = c.map((v) => v + (grey - v) * 0.55);
   const stock = channels(STOCK);
-  return `#${flat.map((v, i) => clampByte(v + (stock[i] - v) * 0.3).toString(16).padStart(2, '0')).join('')}`;
+  return `#${flat.map((v, i) => clampByte(v + (stock[i] - v) * 0.55).toString(16).padStart(2, '0')).join('')}`;
 }
 
 /**
@@ -186,11 +196,15 @@ export function dullPaper(hex) {
  * longer sort by colour is worse than no cue at all. It also drove white-on-
  * yellow to 2.37:1. Darkening keeps every hue and every ratio.
  *
- * -0.22 is the smallest step that pays back the contrast the grey stock costs,
- * across all five packs.
+ * -0.34 is the smallest step that pays back the contrast the grey stock costs,
+ * across all five packs, now that the stock is a 1.77:1 move rather than a
+ * 1.35:1 one (#153). At the old -0.22 the darker paper took Milestones' yellow
+ * down to 3.96:1 and the sweep failed; at -0.34 it is 4.91:1, and Wildfire's
+ * four bodies are still four hues with 85 points of channel spread between the
+ * widest and narrowest channel (the sweep's floor is 30).
  */
 export function dullInk(hex) {
-  return isHex(hex) ? shade(hex, -0.22) : hex;
+  return isHex(hex) ? shade(hex, -0.34) : hex;
 }
 
 /* ------------------------------------------------------------------ *
