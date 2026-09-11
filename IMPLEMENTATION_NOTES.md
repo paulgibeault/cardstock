@@ -2690,7 +2690,8 @@ holds nothing (#122: an empty pile on the felt is a dashed rectangle, and the
 word is the missing half of a thing you can see is empty), so up here the word
 arrived alone and a Spades seat that had taken no tricks wore the bare claim
 **Won**. Four of them, every hand, before a card was played. A nine-pack sweep
-of the unmodified felt found twenty.
+of the unmodified felt at a fresh deal found sixteen: every opponent seat of
+Team Spades, Pinochle and Hearts, at both viewports.
 
 **Nobody had asked the other packs.** Stockpile showed its stock and nothing
 else; a Thirteen seat that had passed — which is the whole shape of a climbing
@@ -2804,7 +2805,51 @@ Two dev servers driven by the same probe — this branch on 4861, unmodified mai
 on 4880 — dumping every seat's head badges, their accessible names and their
 pile chips at 375x812 and 1280x860, in both seat views and both themes.
 
-PLACEHOLDER_VERIFICATION
+**The bare name is gone and nothing else lost a chip.** Sixteen bare `Won`
+chips before, none after, across the same nine-pack fresh-deal sweep at both
+viewports — and none in any of the eleven other probes either (mid-hand,
+minimized, open plate, light theme, an eight-handed Wildfire table). What
+REPLACES it on an open Spades seat is the `Tricks` digit, which that seat never
+had before: `tricks` was `minimizedOnly`, so the open plate's only reading of
+the trick count had been the pile chip that is now absent.
+
+**The pip row, read off the felt.** A four-handed Spades table minimized to the
+`faces` rung at 375x812 and to `collapsed` at 1280x860. Mid-hand at 375 the
+three faces read bid 3 / 4 / 5 with two taken each, at 65 / 75 / 85px of seat;
+one deal caught all three of the readings that are not an ordinary bid on one
+row — four open rings, the word `nil`, and the `—` of a seat still to speak.
+Both themes are painted from the palette tokens (the taken pip is `--accent`:
+`rgb(255,209,102)` dark, `rgb(154,100,0)` light) and a contact sheet of all
+thirteen readings was rendered through the real stylesheet in each.
+
+**The audit, probed per pack** (`[data-counter]` and `.seat__pips` on every
+minimized face, four seats, both viewports, this branch against main):
+
+| Pack | before | after |
+|---|---|---|
+| Thirteen | `hand` | `hand`, `passed` while out of the trick |
+| Hearts | `hand` | `hand` (unchanged) |
+| Milestones | `hand` | `hand` (unchanged; the rung is on the score chip) |
+| Team Spades | `hand`, `bid`, `tricks`, `bags` | `hand`, the pip row, `bags` |
+| Pinochle | `hand`, `bid`, `tricks`, `meld` | unchanged but for a passed seat's dash |
+| Stockpile | `stock` | `stock`, `hand` |
+| Wildfire | the unnamed default count | `hand`, escalated to `lastcard` at the call count |
+| Crazy Eights | the unnamed default count | `hand` — the pack declares no `lastCardCall`, so it never escalates |
+
+A Wildfire seat sits at exactly one card for a single bot turn, which a scripted
+hand walks past, so the escalation was read by re-tagging a live badge on the
+felt: same 43px width in both themes, `rgba(255,255,255,0.14)` becoming
+`rgb(163,58,58)` with a 1.5px halo (light: `rgb(154,47,47)`). The width is the
+point — the row's tier ladder is measured on it.
+
+**Gates.** `npm test` 862 pass / 0 fail (842 on main), `node tools/pack-test.mjs
+--all` green for all nine packs, `node tools/schema-check.mjs` silent,
+`node --check` on the three DOM modules, and all nine packs boot headlessly at
+both viewports with no page errors (18/18). Every one of the twenty-two new or
+changed assertions was verified by breaking what it watches — the fill reversed,
+`DENSE_ABOVE` raised past the clamp, the `aria-hidden` dropped, the trick auction
+check removed so Pinochle reached for circles, the chip's `null` turned back into
+a bare label, and so on — each one going red and green again from a scratch copy.
 
 ## Next steps
 
