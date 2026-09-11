@@ -433,7 +433,12 @@ async function tournamentPack(packId, games,
   const decisive = wins.reduce((a, b) => a + b, 0);
   const played = games - unfinished;
   const unit = match ? 'matches' : 'rounds';
-  log(`\n=== ${packId}: ${contenders.map((c) => c.name).join(' vs ')} (${seatCount} seats, ${games} ${unit}`
+  // THE HEADING NAMES THE RULE SET, like the other two printers' `label` does.
+  // A tournament that prints only the pack id cannot be told apart from one run
+  // under different house rules, which is half of why the dropped `variants`
+  // above went unnoticed.
+  const label = variants?.length ? `${packId} + ${variants.join(', ')}` : packId;
+  log(`\n=== ${label}: ${contenders.map((c) => c.name).join(' vs ')} (${seatCount} seats, ${games} ${unit}`
     + `${budgetMoves ? `, budgetMoves=${budgetMoves}` : ', shipped clock'}`
     + `${depth === undefined ? '' : `, depth=${depth}`}`
     + `${confidence === undefined ? '' : `, confidence=${confidence}`}) ===`);
@@ -863,8 +868,16 @@ async function main() {
   for (const packId of packIds) {
     try {
       if (contenders) {
+        // `--variants` REACHES THE TOURNAMENT TOO. `tournamentPack` has taken a
+        // `variants` option since it was written and this call never passed
+        // one, so `--vs=hard,easy --variants=x` quietly measured the pack's
+        // DEFAULTS and printed a heading that said otherwise — three runs at
+        // three different rule sets came back byte-identical, which is how it
+        // was found (#158). One set only: `--variants` on its own is the sweep,
+        // and a tournament per house rule is a different, much longer ask.
+        const variants = variantSets === 'each' ? undefined : variantSets?.[0];
         await tournamentPack(packId, games,
-          { seats, contenders, budgetMoves, depth, confidence, match });
+          { seats, variants, contenders, budgetMoves, depth, confidence, match });
         continue;
       }
       if (dailyFrom) {

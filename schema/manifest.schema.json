@@ -1304,7 +1304,14 @@
           "items": {
             "$ref": "#/$defs/selector"
           },
-          "description": "Cards no sequence may contain — Thirteen's 2, which sits at the TOP of the ladder and so has no neighbour above it ('K-A-2' is not a run and '2-2 A-A K-K' is not a bomb). Applies to runs and to consecutive pairs alike."
+          "description": "Cards no RUN may contain — Thirteen's 2, which sits at the TOP of the ladder and so has no neighbour above it ('K-A-2' is not a run). Runs only: `stripExcludes` below says the same thing for consecutive pairs, and a pack that plays the ordinary rule declares the same list in both. They are two keys because the commonest house rule in the genre moves exactly one of them (\"a 2 can end a run\", which is emphatically not \"2-2 A-A K-K is a bomb\")."
+        },
+        "stripExcludes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/selector"
+          },
+          "description": "Cards no strip of CONSECUTIVE PAIRS may contain ('2-2 A-A K-K' is not a bomb). Split from `runExcludes` above so the two shapes can disagree; a rank excluded by EITHER key is also barred from the `instantWins` dragon, which is what keeps that shape at the traditional 3-to-A rather than silently becoming a whole-hand 3-to-2 when a run's exclusion is lifted."
         },
         "matchShape": {
           "enum": [
@@ -1352,8 +1359,11 @@
           "description": "Who opens hand one, and with what. Unlike trick-taking's `firstLead` this is an object, because the card names the LEADER and may also be required to be IN the combination they lead.",
           "properties": {
             "card": {
-              "type": "string",
-              "description": "Card id ('spades-3'). Its holder leads the first hand of a match."
+              "anyOf": [
+                { "const": "lowest" },
+                { "type": "string", "pattern": "-" }
+              ],
+              "description": "Whose card opens hand one. Either the literal id of one nominated card ('spades-3'), or \"lowest\" — the lowest card IN PLAY on the pack's own total order (`cardOrder`, suit included, so exactly one card qualifies). Prefer \"lowest\" for any pack whose deal leaves cards out of play: a nominated card that was not dealt names no seat, and the lead then falls to the rotating opening seat rather than to the player the rule meant. Thirteen deals a flat thirteen, so at two seats half the deck is never dealt and the 3♠ is out of play in 50.7% of deals, measured over 400 (THIRTEEN_RULES.md D-11, D-2)."
             },
             "mustInclude": {
               "type": "boolean",

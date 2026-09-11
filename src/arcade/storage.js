@@ -166,6 +166,18 @@ export const SETTINGS_DEFAULTS = {
   // for anyone who never touches it. An unknown value is read as the default by
   // `chooseBotMove` itself, which is what makes a hand-edited save harmless.
   botDifficulty: 'medium',
+  // HOW LONG THE TABLE WAITS BETWEEN HANDS: 'manual' | 'relaxed' | 'quick' |
+  // 'instant' (src/ui/pace.js). A preference beside the two above and for the
+  // same reason — it never reaches the reducer, so a replay does not have to
+  // reproduce it, and a player who likes a brisk table likes it in every game.
+  //
+  // `quick` is the default because the playtest complaint was one-directional:
+  // nobody asked for a longer wait and several people asked for none. The
+  // summary still SHOWS at quick — the score sheet is the only place a round's
+  // damage is ever spelled out — it just deals itself once it has been up long
+  // enough to read. `manual` is exactly the behaviour that shipped, one tap
+  // away on the sheet itself, for anyone who wants the pause back.
+  pace: 'quick',
   showLegalHints: true,
   // How each pack's hand is arranged, per pack: { mode, order: [cardId, ...] }.
   // PRESENTATION ONLY (src/ui/handOrder.js) — it never reaches the engine, and

@@ -47,6 +47,7 @@ import { forkState } from '../engine/fork.js';
 import { rehydrateMatch, packVersionChanged } from '../engine/replay.js';
 import { baseId } from '../engine/selectors.js';
 import { handValue } from '../engine/scoring.js';
+import { rankLadderOf } from '../engine/cards.js';
 import { buildSeating } from '../players/roster.js';
 import { sidesOf, sideScores, sideScoreOf, hasSides } from '../engine/sides.js';
 import {
@@ -105,13 +106,14 @@ import {
   classifyHandGesture, SORT_LABELS,
 } from './handOrder.js';
 import {
-  initPanels, showRoundSummary, hideRoundSummary,
+  initPanels, showRoundSummary, hideRoundSummary, paintRoundPace,
   showScoreboard, showGameOver, hideAllPanels, showRules, awaitFinalLook,
 } from './panels.js';
 import { packRules } from './rules.js';
 import { roundBeatPlan, trickRevealPlan } from './roundBeat.js';
+import { paceLevel, nextPace } from './pace.js';
 import {
-  rememberPack, loadSettings, saveMatch, loadMatch, clearMatch, recordForfeit,
+  rememberPack, loadSettings, saveSettings, saveMatch, loadMatch, clearMatch, recordForfeit,
   loadHandPrefs, saveHandPrefs, recordDailyResult,
 } from '../arcade/storage.js';
 import { dailyRunFor, applyDailyLadder } from '../engine/dailyLadder.js';
@@ -137,17 +139,29 @@ const isMySeat = (seat) => me.holds(seat);
 // of spelling it as a bare literal in the two places that still need one.
 const SOLO_HUMAN_SEAT = 0;
 
-// The table's own default when nothing asks for anything else — a deep link,
-// a resumed match with its own seat count, a pack whose minimum is higher.
-// The new-game sheet (src/ui/newGame.js) is what usually decides this now.
+// The last resort when nothing asks for anything else AND the pack declines to
+// say — a manifest with no `players.best`. The new-game sheet
+// (src/ui/newGame.js) is what usually decides this, and the pack's own
+// recommendation is what decides it when nothing else does.
 const SEAT_COUNT = 3;
 
-/** Clamp a requested seat count to what the pack says it can seat. */
+/**
+ * Clamp a requested seat count to what the pack says it can seat.
+ *
+ * NO REQUEST MEANS THE PACK'S OWN RECOMMENDATION (#156). This used to fall
+ * through to a flat 3, which is the seat count a deep link (`?pack=thirteen`)
+ * and a resume-with-no-saved-setup got — so the table the playtester opened
+ * from a link was a three-handed Thirteen while the manifest's `players.best`
+ * said four, and the new-game sheet preselected four (newGame.js reads `best`
+ * for exactly this). Two surfaces answering the same question differently is
+ * how "the deal is wrong" reports arrive against a pack that is right at the
+ * table it was designed for.
+ */
 function seatsFor(pack, requested) {
   const players = pack.manifest.players || {};
   const min = players.min ?? 2;
   const max = players.max ?? 8;
-  const want = Number.isFinite(requested) ? requested : SEAT_COUNT;
+  const want = Number.isFinite(requested) ? requested : (players.best ?? SEAT_COUNT);
   return Math.max(min, Math.min(max, want));
 }
 
@@ -174,7 +188,11 @@ const el = {
   tableContract: document.getElementById('table-contract'),
   handRail: document.getElementById('hand-rail'),
   actionButton: document.getElementById('action-button'),
-  hintButton: document.getElementById('hint-button'),
+  helpButton: document.getElementById('help-button'),
+  helpSheet: document.getElementById('help-sheet'),
+  helpRules: document.getElementById('help-rules'),
+  helpHint: document.getElementById('help-hint'),
+  helpHintNote: document.getElementById('help-hint-note'),
   stageRow: document.getElementById('stage-row'),
   stageTray: document.getElementById('stage-tray'),
   handRow: document.getElementById('hand-row'),
@@ -2178,7 +2196,7 @@ function renderHand(state, ui, stagger, draggable) {
   const engineHand = state.zones.cards(handAddr);
   // The engine's order is dealing order and stays that way; what the player
   // sees is their own arrangement (src/ui/handOrder.js).
-  session.displayedHand = orderHand(engineHand, (id) => cardById(state, id), session.handPrefs.mode, session.handPrefs.order);
+  session.displayedHand = orderHand(engineHand, (id) => cardById(state, id), session.handPrefs.mode, session.handPrefs.order, rankLadderOf(state.pack));
   const committedPass = committedSelectionOf(state, mySeat());
 
   // Gathered cards are drawn in the tray instead, so the fan holds only what
@@ -2628,10 +2646,82 @@ function showHint() {
   persistMatch();
 }
 
+/* ------------------------------------------------------------------ *
+ * The help mark, and the two questions behind it (#155)
+ * ------------------------------------------------------------------ */
+
+/** What the Hint line says about itself when it cannot be taken. */
+const HINT_OFFER = Object.freeze({
+  turn: 'Only while it is your turn',
+  view: 'A joined table holds a view, not the cards',
+  over: 'The game is over',
+  showing: 'The hint is on the felt',
+  forced: 'There is only one play',
+  ready: 'What a player at this level would do',
+});
+
 /**
- * The rail beside the hand: the turn token, the Hint lamp, and the thumb slot
- * the action button and the sort toggle share (index.html says why it is a
- * rail and not a bar).
+ * Whether a ranking can be asked for, and what to say when it cannot.
+ *
+ * THE SAME FIVE CONDITIONS THE LAMP IN THE RAIL WAS SHOWN UNDER, moved rather
+ * than rewritten: the hint asks the engine to rank the position, so it is
+ * offered only where the felt HOLDS the position — a joiner's view has no
+ * opponents' hands to fork and gets a reason rather than a guess
+ * (src/ui/hint.js) — and only where there is a choice to make. One legal move
+ * is not a hint. It also steps aside once its answer is showing, so a player
+ * cannot ask the same question twice and have it counted twice.
+ *
+ * WHAT CHANGED IS THAT A REFUSAL NOW SAYS SOMETHING. In the rail the offer
+ * simply went invisible, which is the right treatment for an icon in a column
+ * of controls and the wrong one for a line in a sheet somebody has just opened
+ * looking for help: they would find a hint that had disappeared and learn
+ * nothing. Disabled, with the reason on it, is both answers at once.
+ */
+function hintOffer(state, humanActs, suggestion) {
+  if (!state || state.isView) return { ready: false, why: HINT_OFFER.view };
+  if (state.gameOver) return { ready: false, why: HINT_OFFER.over };
+  if (!humanActs) return { ready: false, why: HINT_OFFER.turn };
+  if (suggestion) return { ready: false, why: HINT_OFFER.showing };
+  if (movesFor(state, mySeat()).length <= 1) return { ready: false, why: HINT_OFFER.forced };
+  return { ready: true, why: HINT_OFFER.ready };
+}
+
+/** Repaint the sheet's Hint line. Called from renderRail, open sheet or not. */
+function renderHelpOffer(state, humanActs, suggestion) {
+  const offer = hintOffer(state, humanActs, suggestion);
+  el.helpHint.disabled = !offer.ready;
+  // The note is part of the button's accessible NAME rather than a description
+  // beside it: "Hint, only while it is your turn" is one thing to hear, and a
+  // disabled control's description is the half a screen reader may skip.
+  el.helpHintNote.textContent = offer.why;
+}
+
+function helpOpen() {
+  return !el.helpSheet.hidden;
+}
+
+/**
+ * Open or close the sheet.
+ *
+ * FOCUS GOES IN AND COMES BACK. Opening moves it to the first line, so the
+ * sheet is usable from a keyboard at all; closing returns it to the mark, but
+ * only when it is still inside the sheet — a close that fires because the
+ * player tapped a card must not steal the focus off that card.
+ */
+function setHelpOpen(open) {
+  if (open === helpOpen()) return;
+  el.helpSheet.hidden = !open;
+  el.helpButton.setAttribute('aria-expanded', String(open));
+  if (open) {
+    el.helpRules.focus({ preventScroll: true });
+  } else if (el.helpSheet.contains(document.activeElement)) {
+    el.helpButton.focus({ preventScroll: true });
+  }
+}
+
+/**
+ * The rail beside the hand: the turn token, the fan's sort toggle, the action
+ * button (index.html says why it is a rail and not a bar).
  *
  * TWO INVARIANTS, AND NEITHER IS THIS FUNCTION'S TO BREAK.
  *
@@ -2639,14 +2729,23 @@ function showHint() {
  * the rail as a group and layoutHand subtracts the rail from the room the fan
  * may use, so a rail that changed width would re-fan the hand under the
  * player's finger — #13 in the inline axis. That is held in CSS by a fixed
- * width, and held here by the action button and the sort toggle taking turns
- * in one slot rather than stacking.
+ * width, and held here by nothing in the stack ever being laid out to its own
+ * label.
  *
  * The rail's HEIGHT costs the felt nothing — its own box is zero-height, so
  * #hand-row is the fan's height whatever goes in the stack — but the stack
- * still has to be STILL, because it is two controls under a thumb that is
- * already reaching for them. That is why the token and the lamp are toggled
- * by class and keep their slots, rather than by `hidden`.
+ * still has to be STILL, because these are controls under a thumb that is
+ * already reaching for them. That is why every rung is toggled by class and
+ * keeps its slot, rather than by `hidden`.
+ *
+ * THE SORT TOGGLE AND THE ACTION BUTTON NO LONGER SHARE A SLOT (#154). They
+ * did, and the cost was that a bid, a Hearts pass, a cribbage crib discard or
+ * a staged Thirteen combination took the sort control off the felt for the
+ * whole phase — which is exactly the phase a player spends arranging their
+ * hand to decide. The lamp that used to stand between them went to the help
+ * mark in the felt's corner (#155), so the third rung was already paid for:
+ * the stack is the same three rungs tall and the rail the same 5rem wide as
+ * before, measured, and both controls are reachable at once.
  */
 function renderRail(state, ui, humanActs) {
   // A SUGGESTION IS A HIGHLIGHT NOW, NOT A SENTENCE. What the hint touches is
@@ -2666,28 +2765,22 @@ function renderRail(state, ui, humanActs) {
   if (session) session.humanActing = humanActs;
   el.handRail.classList.toggle('hand-rail--acting', humanActs);
 
-  // The lamp asks the engine to rank the position, so it is offered only where
-  // the felt HOLDS the position — a joiner's view has no opponents' hands to
-  // fork and gets no button rather than a guess (src/ui/hint.js) — and only
-  // where there is a choice to make. One legal move is not a hint. It also
-  // steps aside once its answer is showing, so a player cannot ask the same
-  // question twice and have it counted twice.
-  //
-  // A CLASS, NOT `hidden`, for the same reason the token uses one: the lamp
-  // keeps its slot and only loses `visibility`, so the rail's stack is one
-  // height from the first deal to the last card and nothing in it ever shifts
-  // under the thumb. `visibility: hidden` takes it out of the tab order and
-  // off the screen reader too, which `hidden` was doing before.
-  el.handRail.classList.toggle('hand-rail--hintable',
-    humanActs && !state.isView && !state.gameOver && !suggestion
-    && movesFor(state, mySeat()).length > 1);
+  // The offer that used to be a lamp in this stack is a line in the help sheet
+  // now (#155), and it is repainted from here because this is the function
+  // both render paths run — renderSelection repaints the rail without
+  // rebuilding the fan, and "is there a hint to be had" changes on a tap.
+  renderHelpOffer(state, humanActs, suggestion);
 
-  // THE THUMB SLOT, and who has it. An action displaces the sort toggle rather
-  // than standing above it: the rail may not outgrow the fan (see above), and a
-  // player who has just staged a meld is not reaching for "By suit". Both
+  // THE TWO CONTROLS, AND NEITHER OF THEM IN THE OTHER'S WAY (#154). Both
   // conditions are answered here rather than half of them in renderHand:
-  // renderSelection repaints the rail without rebuilding the fan, so a
-  // `hidden` written from there would outlive the action that displaced it.
+  // renderSelection repaints the rail without rebuilding the fan, so a state
+  // written from there would outlive the render that set it.
+  //
+  // A CLASS, NOT `hidden`, for the same reason the token uses one: a control
+  // with nothing to say keeps its slot and only loses `visibility`, so the
+  // stack is one height from the first deal to the last card and nothing in it
+  // ever shifts under the thumb. `visibility: hidden` takes it out of the tab
+  // order and off the screen reader too, which `hidden` was doing before.
   const acting = !!(ui.action && humanActs);
   // A REFUSED COMMIT IS STILL THE COMMIT'S SLOT. The button stays, disabled,
   // carrying the engine's own sentence for why — because the alternative,
@@ -2696,10 +2789,13 @@ function renderRail(state, ui, humanActs) {
   // (#122, round-5 item 19). `disabled` and not `hidden`: same box, same
   // height, and the reason reaches a screen reader through the name.
   const refused = acting && !!ui.action.disabled;
-  el.actionButton.hidden = !acting;
+  el.handRail.classList.toggle('hand-rail--committing', acting);
   el.actionButton.disabled = refused;
   el.actionButton.classList.toggle('action-button--refused', refused);
-  el.handSort.hidden = acting || state.zones.cards(handAddress(mySeat())).length < 2;
+  // A hand of one card has nothing to arrange, so the toggle goes quiet — and
+  // keeps its rung, because the button below it may not move while it does.
+  el.handRail.classList.toggle('hand-rail--sortable',
+    state.zones.cards(handAddress(mySeat())).length >= 2);
   if (acting) {
     el.actionButton.textContent = ui.action.label;
     if (refused) {
@@ -2720,6 +2816,15 @@ function renderRail(state, ui, humanActs) {
       };
     }
   } else {
+    // EMPTIED, not left holding the last phase's word. The button keeps its
+    // rung when there is nothing to commit and only loses `visibility` — which
+    // hides it from the eye, the tab order and the screen reader, but would
+    // leave "Your crib" sitting in the DOM for anything that reads the felt
+    // rather than looks at it. Its box is held by a min-height in the sheet,
+    // not by the text, so emptying it moves nothing.
+    el.actionButton.textContent = '';
+    el.actionButton.removeAttribute('aria-label');
+    el.actionButton.removeAttribute('title');
     el.actionButton.onclick = null;
   }
 }
@@ -3501,6 +3606,14 @@ async function endMatchFromSummary() {
   if (!liveState()) return;
   const state = liveState();
   const myEpoch = epoch;
+  // BEFORE THE QUESTION IS ASKED, not after it is answered (#150). The sheet
+  // deals itself now, and a confirm dialog is a pause of the player's own
+  // length — so a countdown left running would have dealt the next hand out
+  // from under "are you sure?", and the answer would have arrived at a match
+  // that had moved on. If they keep playing, it is re-armed below.
+  const held = paceLevel(currentPace().id);
+  cancelRoundBeat();
+  paintRoundPace({ ...paceView(held), autoMs: null });
   // AHEAD IS A SIDE'S QUESTION. Walking away while your partner is carrying the
   // score is not walking away from a loss, and the sentence has to say so.
   const totals = sideScores(state.pack, state.seats, state.scores);
@@ -3512,10 +3625,20 @@ async function endMatchFromSummary() {
     + (ahead ? '' : ' It counts as a forfeit.'),
     { okLabel: 'End match', cancelLabel: 'Keep playing' },
   );
-  if (!ok || myEpoch !== epoch || liveState() !== state) return;
+  if (!ok || myEpoch !== epoch || liveState() !== state) {
+    // "Keep playing" puts the countdown back exactly as it was, restarted —
+    // the player has just spent an unknown amount of time in a dialog.
+    if (myEpoch === epoch && session?.roundSummaryOpen) {
+      paintRoundPace(paceView(held));
+      armAutoAdvance(held.autoMs);
+    }
+    return;
+  }
 
   cancelBotTurn();
   cancelAnnouncementBeats();
+  // The sheet was counting down to a deal when the player asked to leave.
+  cancelRoundBeat();
   // WALKING OUT OF THE DAILY IS THIS DAY'S RESULT, not a forfeit against the
   // pack's own record: there is one run per day and no second attempt, so
   // abandoning it is losing it, and the streak has to end. The pack's casual
@@ -3536,13 +3659,24 @@ async function endMatchFromSummary() {
   exitToLobby();
 }
 
-function dismissRoundSummary() {
+/**
+ * @param message what #log says as the deal lands. The default names the new
+ *   round; the Instant rung (#150) passes the round's RESULT instead, because
+ *   at that rung there is no sheet and this line is the only place the score
+ *   change is ever said — and it has to be this one line, since the render
+ *   below would overwrite anything written just before it.
+ */
+function dismissRoundSummary(message) {
   // The SESSION says whether we are between rounds; the panel merely shows it.
   // This used to branch on `!el.roundOverlay.hidden` (panels.isRoundSummaryOpen),
   // which made a DOM attribute the only record of a game-state fact — and one
   // that any other code path hiding the overlay would silently erase.
   if (!session || !session.roundSummaryOpen || !liveState()) return;
   session.roundSummaryOpen = false;
+  // A TAP BEATS THE CLOCK, and the clock must not fire behind it. This is also
+  // what makes the door idempotent under the panel's two listeners: the second
+  // call finds `roundSummaryOpen` false and returns above.
+  cancelRoundBeat();
   // THIS IS WHERE THE NEXT HAND BECOMES VISIBLE. The engine dealt it inside the
   // round-ending move; until this line the felt has been showing where the
   // round ended (runRoundBeat), which is why the render below is the first
@@ -3552,7 +3686,7 @@ function dismissRoundSummary() {
   hideRoundSummary();
   session.dealAnimation = true;
   playDeal(liveState().seats);
-  render(liveState(), `Round ${liveState().roundNumber}.`);
+  render(liveState(), message || `Round ${liveState().roundNumber}.`);
   scheduleNextTurn();
 }
 
@@ -3781,8 +3915,12 @@ function runTrickReveal(poseState, move, from, reveal, resume) {
   animateMove(poseState, move, from);
 
   const myEpoch = epoch;
-  Arcade.session.setTimeout(() => {
+  // HELD ON THE SESSION (#150), not merely epoch-checked. The epoch guard stops
+  // a timer that has already fired from doing damage; a handle is what lets
+  // `stopSession` stop it firing at all.
+  session.revealTimer = Arcade.session.setTimeout(() => {
     if (myEpoch !== epoch || !session) return;
+    session.revealTimer = null;
     session.trickBeat = null;
     session.trickPoseState = null;
     resume();
@@ -3898,8 +4036,125 @@ function roundContractLines(finalState) {
  *                   and totals from, and the one the next deal is already in
  * @param finalState what the felt is showing: where the round ended
  */
-function runRoundBeat(state, plan, finalState) {
+/* ------------------------------------------------------------------ *
+ * How fast the table moves between hands (#150)
+ * ------------------------------------------------------------------ */
+
+/**
+ * The player's rung, read LIVE.
+ *
+ * `settings` is a snapshot refreshed by `rerenderTable`, and the one control
+ * that changes this — the summary's own "Pace · Quick ▸" — writes storage and
+ * updates the snapshot in the same breath (`cyclePace`). Falling back to a
+ * fresh read keeps the very first hand of a session honest, before any render
+ * has happened.
+ */
+function currentPace() {
+  return paceLevel(settings ? settings.pace : loadSettings().pace);
+}
+
+/**
+ * What `paintRoundPace` needs to draw: a name, a duration, and whether the
+ * duration may be animated.
+ *
+ * REDUCED MOTION AND THE POWER SAVER TAKE THE ANIMATION, NOT THE TIMER. A
+ * player who has asked for less movement has not asked the table to stop
+ * dealing — they have asked for the countdown to be a mark rather than a
+ * moving one. The sheet still deals itself at exactly the same moment.
+ */
+function paceView(level) {
+  return {
+    label: level.label,
+    autoMs: level.autoMs,
+    animate: motionAllowed() && !powerSaving(),
+  };
+}
+
+/**
+ * Deal the next hand by ourselves, once the sheet has been up for its rung.
+ *
+ * THROUGH `dismissRoundSummary` AND NOTHING ELSE. That function is the single
+ * door: it clears `roundSummaryOpen`, paints the deal, and only then calls
+ * `scheduleNextTurn`. A timer that reached for `scheduleNextTurn` directly
+ * would let a bot play its first card into a felt still showing the last hand.
+ */
+function armAutoAdvance(ms) {
+  if (ms == null) return;
   const myEpoch = epoch;
+  if (session.advanceTimer) session.advanceTimer.cancel();
+  session.advanceTimer = Arcade.session.setTimeout(() => {
+    if (myEpoch !== epoch || !session) return;
+    session.advanceTimer = null;
+    dismissRoundSummary();
+  }, ms);
+}
+
+/** Everything a round ending has in flight, stopped. Safe with no session. */
+function cancelRoundBeat() {
+  if (!session) return;
+  for (const timer of session.beatTimers) timer.cancel();
+  session.beatTimers = [];
+  if (session.advanceTimer) session.advanceTimer.cancel();
+  session.advanceTimer = null;
+}
+
+/** A beat timer that cancels with the session rather than only checking its epoch. */
+function beatTimer(fn, at) {
+  const myEpoch = epoch;
+  const handle = Arcade.session.setTimeout(() => {
+    if (myEpoch !== epoch || !session) return;
+    session.beatTimers = session.beatTimers.filter((t) => t !== handle);
+    fn();
+  }, at);
+  session.beatTimers.push(handle);
+  return handle;
+}
+
+/**
+ * The round's result as ONE SENTENCE, for the rung that shows no sheet.
+ *
+ * Instant is not "the summary, faster" — it is the summary traded away, and a
+ * round whose score went nowhere at all would be a rule change rather than a
+ * pace. So the totals still arrive, in #log, which is the live region a screen
+ * reader hears and the one surface on this felt that is a record rather than a
+ * moment.
+ *
+ * PER SIDE, like the sheet it stands in for (#125): a partnership pack banks a
+ * side's whole result on one seat, so a per-seat list would read as one partner
+ * carrying the team and the other scoring nothing all match.
+ *
+ * IT ENDS WITH THE NEW ROUND because it IS the deal's message: `#log` carries
+ * one sentence, and `dismissRoundSummary`'s own "Round 4." would otherwise
+ * overwrite this one in the same frame it was written.
+ */
+function roundResultLine(state, ev) {
+  const sides = sidesOf(state.pack, state.seats);
+  const totals = sideScores(state.pack, state.seats, ev.totals || []);
+  const parts = sides.map((members, i) => {
+    const who = members.map((seat) => seatLabel(seat)).join(' & ');
+    return `${who} ${totals[i] ?? 0}`;
+  });
+  return `Round ${ev.round} over — ${parts.join(', ')}. Round ${state.roundNumber}.`;
+}
+
+function cyclePace() {
+  const level = paceLevel(nextPace(currentPace().id));
+  const stored = loadSettings();
+  saveSettings({ ...stored, pace: level.id });
+  // The snapshot too, so the NEXT round reads the new rung without waiting for
+  // a settings event to come back round through main.js.
+  if (settings) settings.pace = level.id;
+  paintRoundPace(paceView(level));
+  // RESTARTED, NOT RESUMED, and the ring is redrawn to match: a player who
+  // reaches for this at 2.4s of a 2.5s countdown is asking for more time, and
+  // handing them a tenth of a second of Relaxed would be the opposite.
+  if (session?.advanceTimer) { session.advanceTimer.cancel(); session.advanceTimer = null; }
+  if (session?.roundSummaryOpen) armAutoAdvance(level.autoMs);
+}
+
+function runRoundBeat(state, plan, finalState) {
+  // Nothing from a previous ending may still be in flight under this one.
+  cancelRoundBeat();
   // WHO WON THE HAND, on the table rather than only on the sheet. A shedding
   // pack names the seat that went out (`ctx.endRound(winner)`, still on the
   // fork because the round boundary was not run over it); a trick-taking round
@@ -3909,15 +4164,26 @@ function runRoundBeat(state, plan, finalState) {
     pulseSeat(finalState.roundWinner, 'good');
   }
   for (const step of plan.steps) {
-    Arcade.session.setTimeout(() => {
-      if (myEpoch !== epoch || !session?.roundBeat) return;
+    beatTimer(() => {
+      if (!session.roundBeat) return;
       playShowStep(finalState, step);
     }, step.at);
   }
-  Arcade.session.setTimeout(() => {
-    if (myEpoch !== epoch) return;
+  beatTimer(() => {
     session.roundSummaryOpen = true;
-    showRoundSummary(state, plan.roundOver, session.seating, roundContractLines(finalState));
+    // THE RUNG THAT SHOWS NO SHEET (#150). Instant does not open the summary
+    // and then race it away — it never opens one. `roundSummaryOpen` is still
+    // set first, because `dismissRoundSummary` is the door and the door checks
+    // that flag; what is skipped is the panel, not the transition through it.
+    if (plan.instant) {
+      dismissRoundSummary(roundResultLine(state, plan.roundOver));
+      return;
+    }
+    showRoundSummary(
+      state, plan.roundOver, session.seating, roundContractLines(finalState),
+      paceView(paceLevel(plan.pace)),
+    );
+    armAutoAdvance(plan.autoAdvanceMs);
   }, plan.summaryAt);
 }
 
@@ -3994,6 +4260,9 @@ function afterMove(state, move, from, message, { publish = true } = {}) {
     // No snapshot means no ending to pose or repaint, so the reveal degrades to
     // the plain hold — the multiplayer path (afterRemoteMove).
     narrate: !!finalState,
+    // The rung is read HERE, when the round ends, so a pace changed on the last
+    // sheet is the pace this one runs at.
+    pace: currentPace().id,
   }) : null;
   // What the felt paints. The LIVE state everywhere else: it is what is saved,
   // what the summary reads, and what the next deal is already in.
@@ -4382,6 +4651,7 @@ function performAnnouncement(state, move, myEpoch = epoch) {
   const plan = roundOver ? roundBeatPlan(state.events, {
     flightMs: flightDurationMs(settings?.botDelayMs),
     narrate: !!finalState,
+    pace: currentPace().id,
   }) : null;
   if (plan) {
     session.roundBeat = true;
@@ -4496,6 +4766,7 @@ function adoptMatch(pack, state, message, {
   // card per pack for as long as the tab is open.
   clearSvgCache();
   hideAllPanels();
+  setHelpOpen(false);
   hideBanner();
   render(state, message);
   persistMatch();
@@ -4863,6 +5134,7 @@ export function closeTable() {
   preMoveFork = null;
   session = null;
   hideAllPanels();
+  setHelpOpen(false);
   if (ladder) ladder.hide();
   if (contractStrip) contractStrip.hide();
 }
@@ -4880,7 +5152,31 @@ export function rerenderTable() {
 export function initTable({ onExit }) {
   exitToLobby = onExit;
   settings = loadSettings();
-  el.hintButton.addEventListener('click', showHint);
+
+  // THE HELP MARK (#155). Two questions about the game — how is this played,
+  // and what would a good player do here — behind one `?` in the felt's
+  // corner, instead of the rules two taps deep in the scoreboard and the hint
+  // in among the buttons that commit.
+  el.helpButton.addEventListener('click', () => setHelpOpen(!helpOpen()));
+  el.helpRules.addEventListener('click', () => {
+    setHelpOpen(false);
+    if (livePack()) showRules(packRules(livePack()));
+  });
+  // CLOSED FIRST, AND THAT IS THE POINT OF THE ORDER: what a hint produces is
+  // a ring round cards on the felt, and a sheet standing over them answers the
+  // question with the answer hidden behind it.
+  el.helpHint.addEventListener('click', () => {
+    setHelpOpen(false);
+    showHint();
+  });
+  // A tap anywhere else closes it, the way the seat plate below answers the
+  // same gesture. Capturing, so the tap still reaches whatever it was aimed
+  // at: this closes a sheet, it does not swallow a move.
+  document.addEventListener('pointerdown', (event) => {
+    if (!helpOpen()) return;
+    if (el.helpSheet.contains(event.target) || el.helpButton.contains(event.target)) return;
+    setHelpOpen(false);
+  }, true);
 
   // AN OPEN SEAT PLATE IS DISMISSIBLE, by the two gestures every other overlay
   // on this screen already answers to. Wired once here rather than per render,
@@ -4930,6 +5226,11 @@ export function initTable({ onExit }) {
 
   window.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape' || !session) return;
+    // The sheet is the innermost thing open, so it is the first thing closed.
+    if (helpOpen()) {
+      setHelpOpen(false);
+      return;
+    }
     const node = openPlateSeat();
     if (!node) return;
     const seat = node.dataset.seat;
@@ -5062,6 +5363,7 @@ export function initTable({ onExit }) {
     onEndMatch: () => endMatchFromSummary(),
     onRules: () => livePack() && showRules(packRules(livePack())),
     onCloseScoreboard: () => {},
+    onCyclePace: () => cyclePace(),
   });
 
   // The fan's spacing is the one thing that depends on how much room the row

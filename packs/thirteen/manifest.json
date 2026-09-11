@@ -9,8 +9,8 @@
   "template": "climbing",
   "tagline": "Beat it, bomb it, or pass.",
   "howToPlay": [
-    "The 2 is the highest card in the game and the 3 is the lowest, which is the opposite of nearly every other game on this shelf. Suits break every tie — spades lowest, then clubs, diamonds, hearts — so no two cards are equal and there is always an answer or a pass.",
-    "A pass is final. Once you are out of a trick you stay out of it, so passing early to keep a run together is a real decision and not a shrug.",
+    "The 2 is the highest card in the game and the 3 is the lowest, which is the opposite of nearly every other game on this shelf. Suits break every tie — spades lowest, then clubs, diamonds, hearts — so no two cards are equal and there is always an answer or a pass. The lowest card in play leads the first hand and the lead has to contain it, which is the 3♠ at a full table and whatever survived the deal at a short one.",
+    "By default a pass only skips your turn and you are asked again when the play comes back round. Switch off \"Passing keeps you in the trick\" for the stricter rule, where a pass puts you out of the trick for good and passing early to keep a run together is a real decision rather than a shrug.",
     "The bombs are the point of the game. Three consecutive pairs kill a lone 2, four of a kind kills a pair of them, and a chop can itself be chopped — which is why holding the highest card in the deck is not the free win the ladder makes it look."
   ],
   "accent": "#c2562a",
@@ -23,6 +23,7 @@
     "deal": 13,
     "combinations": ["single", "pair", "triple", "run(3+)", "consecutive-pairs(3+)", "quad"],
     "runExcludes": ["rank:2"],
+    "stripExcludes": ["rank:2"],
     "matchShape": "same-type-same-size",
     "bombs": [
       { "shape": "consecutive-pairs(3)", "beats": ["single:rank:2"] },
@@ -31,7 +32,7 @@
       { "shape": "consecutive-pairs(5)", "beats": ["*"] }
     ],
     "passIsFinal": true,
-    "firstLead": { "card": "spades-3", "mustInclude": true },
+    "firstLead": { "card": "lowest", "mustInclude": true },
     "laterLead": "trick-winner",
     "direction": "counterclockwise",
     "winner": "first-empty-hand"
@@ -43,6 +44,22 @@
     "gameOver": { "when": "anyScore >= 50", "winner": "lowestScore" }
   },
   "variants": [
+    {
+      "id": "pass-stays-in",
+      "name": "Passing keeps you in the trick",
+      "description": "A pass only skips your turn — you are asked again when the play comes back round, instead of being out of the trick for good.",
+      "default": true,
+      "available": true,
+      "patch": { "rules.passIsFinal": false }
+    },
+    {
+      "id": "two-tops-runs",
+      "name": "A 2 can end a run",
+      "description": "Q-K-A-2 is a run. It still never wraps round to the 3, a 2 is still no part of consecutive pairs, and a dragon is still 3-to-A.",
+      "default": false,
+      "available": true,
+      "patch": { "rules.runExcludes": [] }
+    },
     {
       "id": "instant-wins",
       "name": "Instant wins",

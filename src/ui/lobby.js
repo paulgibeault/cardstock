@@ -409,7 +409,8 @@ function buildTile(manifest, summary, { featured }) {
 }
 
 /**
- * Remember how hard the player asked the bots to play.
+ * Remember how hard the player asked the bots to play, and how fast they asked
+ * the table to move between hands (#150).
  *
  * WRITTEN HERE RATHER THAN IN THE SHEET, so that backing out of the sheet
  * changes nothing — the answer is only kept by the gesture that actually deals.
@@ -419,10 +420,22 @@ function buildTile(manifest, summary, { featured }) {
  */
 function rememberDifficulty(setup) {
   const difficulty = setup?.difficulty;
-  if (!difficulty) return;
+  const pace = setup?.pace;
+  if (!difficulty && !pace) return;
   const settings = loadSettings();
-  if (settings.botDifficulty === difficulty) return;
-  saveSettings({ ...settings, botDifficulty: difficulty });
+  // THE SAME RULE, ONE ROW DOWN (#150). How long the table waits between hands
+  // is a preference exactly like how hard the bots play: it never reaches the
+  // reducer, the round summary reads it at the moment it opens, and backing out
+  // of the sheet must leave it alone. So both are written here, by the gesture
+  // that deals, and nowhere else in this file. An older sheet that answers with
+  // only one of them leaves the other exactly as it was.
+  const next = {
+    ...settings,
+    botDifficulty: difficulty || settings.botDifficulty,
+    pace: pace || settings.pace,
+  };
+  if (next.botDifficulty === settings.botDifficulty && next.pace === settings.pace) return;
+  saveSettings(next);
 }
 
 /** A pack whose manifest would not load still gets a tile, saying so. */
