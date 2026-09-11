@@ -1,4 +1,4 @@
-// A SEAT COUNTER DRAWN LONG — the platform's track renderer.
+// A SEAT COUNTER DRAWN AS A PICTURE — the platform's track and pip renderers.
 //
 // WHY THIS EXISTS. A cribbage board is 121 holes and two pegs a side, and it is
 // the thing a cribbage player looks at all game. It is not a card zone — no
@@ -118,5 +118,150 @@ export function renderCounterTrack(counter, doc = globalThis.document) {
   value.setAttribute('aria-hidden', 'true');
   wrap.appendChild(value);
 
+  return wrap;
+}
+
+/* ------------------------------------------------------------------ *
+ * A SEAT COUNTER DRAWN AS PIPS — a promise and how much of it is kept
+ * ------------------------------------------------------------------ *
+ *
+ * The second shape in this file, and it is here for the same reason the track
+ * is: `seatCounters` asks a template "what is this seat's number, and what KIND
+ * of number is it", and some kinds are not a quantity at all. A bid is a
+ * PROMISE and the tricks taken against it are how much of that promise is
+ * already kept — two numbers whose whole meaning is the comparison between
+ * them, which two pills of digits side by side refuse to make.
+ *
+ * That was the round-6 finding on Team Spades (#148): your partner's bid and
+ * their trick count both existed on the felt, as small captioned digits among
+ * Cards and Bags, and the one question a partnership is played on — "are we
+ * going to make it?" — needed reading four badges and doing the arithmetic. A
+ * row of circles does the arithmetic: one circle per trick promised, filled
+ * left to right as the tricks come in, and you can see from across the table
+ * whether a seat is short.
+ *
+ * THE VOCABULARY IS THE PLATFORM'S, the payload the template's — the same split
+ * COUNTER_TRACK_KINDS makes, and the same fail-soft: a kind this build has
+ * never heard of, or one without the numbers, falls through to the ordinary
+ * digit badge rather than throwing.
+ *
+ *   bid    how many were promised; null for a seat that has not spoken yet
+ *   taken  how many are in, which may be MORE than was promised
+ *   nil    the promise was to take none at all — a different thing from bidding
+ *          zero at a points auction, which is a pass (see `bidBadge`)
+ *
+ * FOUR READINGS, AND THE TWO THAT ARE NOT CIRCLES ARE WORDS. A seat that has
+ * not bid has no row to draw, and a nil has no circles to promise — so both
+ * print the template's own badge text (`—`, `nil`, `BN`) instead, and a nil
+ * that has been broken puts the tricks it was caught with beside the word.
+ * Nothing here invents that vocabulary; it prints what `text` already said.
+ *
+ * BATTERY RULE (GAME_INTEGRATION §6d, cardstock#24): a pip fills with a
+ * one-shot transition on `background-color` and then sits still. There is no
+ * keyframe animation for this component in the stylesheet at all.
+ */
+
+/**
+ * Counter kinds this build draws as a row of pips. A template naming anything
+ * else — or naming this without the numbers — gets the ordinary badge.
+ */
+export const COUNTER_PIP_KINDS = Object.freeze(['pips']);
+
+/**
+ * The most circles a row may hold. Thirteen is a whole hand at the only table
+ * that draws one today, and it is also about as many marks as stay countable
+ * at a glance; past it the row would be a texture rather than a number.
+ */
+export const MAX_PIPS = 13;
+
+/** Past this many, the row is drawn small so it still fits a seat's width. */
+const DENSE_ABOVE = 7;
+
+/**
+ * The row a counter describes, or null if it does not describe one.
+ *
+ * Pure, and separated from the DOM for the same reason `counterTrack` is:
+ * src/ui/table.js touches `document` at import time and cannot be loaded by a
+ * Node test, so a model that can be asserted without a browser is the only way
+ * this is ever checked (tests/counterTrack.test.js).
+ *
+ * `pips` is the row left to right, each one a tone:
+ *
+ *   taken   promised and in — the accent
+ *   open    promised and still owed — an empty ring
+ *   bag     past the promise: taken, but it is a BAG rather than a trick, and
+ *           bags are what eventually cost a Spades side a hundred points
+ *   broken  a trick taken on a nil, which is the promise broken
+ */
+export function counterPips(counter) {
+  if (!counter || !COUNTER_PIP_KINDS.includes(counter.kind)) return null;
+  const bid = Number.isInteger(counter.bid) && counter.bid >= 0 ? counter.bid : null;
+  const taken = Number.isInteger(counter.taken) && counter.taken > 0 ? counter.taken : 0;
+  // A nil is the template's word, not a number this file recognises: a 0 at a
+  // POINTS auction is a pass and means the opposite (src/templates/
+  // trick-taking.js `bidBadge`), so the flag is what decides and the zero is
+  // only the fallback for a template that declared one without the other.
+  const nil = counter.nil === true || bid === 0;
+  const pips = [];
+  if (bid === null) {
+    // Nothing promised yet, so there is nothing to draw a promise of.
+  } else if (nil) {
+    // A nil promises no circles. What it can collect is the count of times it
+    // has been broken, and those are worth seeing from across the table.
+    for (let i = 0; i < Math.min(taken, MAX_PIPS); i++) pips.push('broken');
+  } else {
+    for (let i = 0; i < Math.min(bid, MAX_PIPS); i++) pips.push(i < taken ? 'taken' : 'open');
+    for (let i = bid; i < Math.min(taken, MAX_PIPS); i++) pips.push('bag');
+  }
+  return {
+    kind: counter.kind,
+    bid,
+    taken,
+    nil,
+    // The word in front of the circles, where the reading is not circles at
+    // all. The template's own badge text — never a word invented here.
+    word: bid === null || nil ? (counter.text || '—') : null,
+    pips,
+    dense: pips.length > DENSE_ABOVE,
+  };
+}
+
+/**
+ * The row as DOM, or null.
+ *
+ * `doc` is a parameter rather than the global so this module stays testable —
+ * the same reason `counterPips` above is pure. Nothing from a manifest reaches
+ * an attribute here (§7b): the tones are this file's own closed vocabulary and
+ * the only pack-derived string is `word`, which goes in as `textContent`.
+ */
+export function renderCounterPips(counter, doc = globalThis.document) {
+  const row = counterPips(counter);
+  if (!row || !doc) return null;
+
+  const wrap = doc.createElement('span');
+  wrap.className = 'seat__pips';
+  wrap.dataset.pips = row.kind;
+  // ONE ACCESSIBLE NAME FOR THE WHOLE ROW, for the reason the track gives: a
+  // screen reader announcing thirteen circles and then a word would be far
+  // worse than the two numbers it replaces. The counter's own sentence — which
+  // still says both numbers in full — is the name, and every part below is
+  // aria-hidden.
+  wrap.setAttribute('role', 'img');
+  wrap.setAttribute('aria-label', counter.aria || '');
+  if (row.dense) wrap.dataset.dense = 'true';
+
+  if (row.word) {
+    const word = doc.createElement('span');
+    word.className = 'seat__pips-word';
+    word.textContent = row.word;
+    word.setAttribute('aria-hidden', 'true');
+    wrap.appendChild(word);
+  }
+  for (const tone of row.pips) {
+    const pip = doc.createElement('span');
+    pip.className = `seat__pip seat__pip--${tone}`;
+    pip.setAttribute('aria-hidden', 'true');
+    wrap.appendChild(pip);
+  }
   return wrap;
 }

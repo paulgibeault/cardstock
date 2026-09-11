@@ -81,6 +81,13 @@
   --danger-bg: #a33a3a;
   --danger-bg-hover: #862d2d;
   --ribbon-text: #1a1a1a;
+
+  /* The pip row (#148). An unfilled circle has to read as a RING against the
+     plate rather than as a smudge, and a bag has to be plainly filled and
+     plainly not the accent — a trick taken past the promise is still a trick
+     taken, it is just not the one that was promised. */
+  --pip-edge: rgba(255, 255, 255, 0.55);
+  --pip-bag: rgba(255, 255, 255, 0.82);
 }
 
 [data-theme="light"] {
@@ -135,6 +142,9 @@
   --danger-bg: #9a2f2f;
   --danger-bg-hover: #7a2424;
   --ribbon-text: #ffffff;
+
+  --pip-edge: rgba(20, 38, 28, 0.45);
+  --pip-bag: rgba(20, 38, 28, 0.68);
 }
 
 * { box-sizing: border-box; }
@@ -829,6 +839,20 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* DOWN TO THEIR LAST CARD (#148). The same badge, the same slot, the same
+   quantity — escalated, not duplicated. At an eight-handed Wildfire table every
+   face is an avatar with one small digit on its corner, and "who is about to go
+   out" is the only question the row is being scanned for; a second badge saying
+   so would cost width the seat-tier ladder is measured on, and this costs none.
+   A halo as well as the fill, so the mark is not carried by hue alone, and the
+   badge's own spoken name says it in words either way (shedding's
+   `seatCounters`). */
+.seat__count[data-counter="lastcard"] {
+  background: var(--danger-bg);
+  color: #ffffff;
+  box-shadow: 0 0 0 1.5px var(--danger-bg);
+}
+
 /* ------------------------------------------------------------------ *
  * ...AND THE WORD UNDER IT (#133, round-5 item 49)
  * ------------------------------------------------------------------ *
@@ -971,6 +995,103 @@ body {
 }
 
 /* ------------------------------------------------------------------ *
+ * A counter that is a PROMISE — the pip row (#148)
+ * ------------------------------------------------------------------ *
+ *
+ * The second shape in the platform's drawn-counter vocabulary
+ * (src/ui/counterTrack.js). A Spades bid and the tricks taken against it are
+ * two numbers whose entire meaning is the comparison between them, and as two
+ * 0.7rem badges among Cards and Bags that comparison was arithmetic the player
+ * had to do — on their PARTNER'S plate, four times a hand. One unfilled circle
+ * per trick promised, filled left to right as they come in: short is visible
+ * from across the table, made is visible, and over is a different colour.
+ *
+ * FOUR TONES, AND NOT ONE OF THEM IS HUE ALONE. Taken is a filled accent
+ * circle against an EMPTY ring — fill is the signal, colour is the
+ * reinforcement — and the two that are not ordinary tricks (a bag, a broken
+ * nil) are filled too, so what separates them from a plain taken trick is read
+ * against a row where the shape has already said the number.
+ *
+ * DENSE PAST SEVEN. A bid of nine or ten is rare and legal, and thirteen
+ * circles at the ordinary size is 95px of seat — wider than the name. Past
+ * seven the row halves its circles and its gaps rather than wrapping (the seat
+ * row's width is measured, and a second line would lie to the fit ladder) and
+ * thirteen fit in 79px, inside the 88px a track already takes.
+ *
+ * BATTERY (GAME_INTEGRATION §6d, cardstock#24): a pip fills with a one-shot
+ * transition and then sits still. There is deliberately no @keyframes here, so
+ * there is nothing for `--arcade-pulse-count` to cap.
+ */
+.seat__pips {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 0.18rem;
+  --pip-size: 0.46rem;
+}
+
+.seat__pips[data-dense="true"] {
+  gap: 0.1rem;
+  --pip-size: 0.32rem;
+}
+
+/* The readings that are NOT circles: a seat that has not bid, and a nil, which
+   promises no circles at all. The template's own badge text (`—`, `nil`,
+   `BN`), because the felt already says a bid that way everywhere else. */
+.seat__pips-word {
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  margin-right: 0.08rem;
+}
+
+.seat__pip {
+  flex: 0 0 auto;
+  width: var(--pip-size);
+  height: var(--pip-size);
+  border-radius: 50%;
+  border: 1px solid var(--pip-edge);
+  background: transparent;
+  /* One shot, on the fill. A trick lands and the circle takes; it does not
+     then keep doing anything. */
+  transition: background-color 240ms ease-out, border-color 240ms ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .seat__pip { transition: none; }
+}
+
+/* Promised and in. */
+.seat__pip--taken {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+/* Past the promise: taken, but it is a BAG, and ten of them cost a hundred
+   points. Filled like a trick because it IS one, in the ink of the thing it
+   has turned into rather than the accent that means "as promised". */
+.seat__pip--bag {
+  background: var(--pip-bag);
+  border-color: var(--pip-bag);
+}
+
+/* A trick taken on a nil: the promise broken, in the one tone this table
+   already uses for that (the Catch! button, a refused commit). */
+.seat__pip--broken {
+  background: var(--danger-bg);
+  border-color: var(--danger-bg);
+}
+
+/* Faces-only rung: the seat IS the avatar, so the row it sits beside has no
+   width to spare. No shipped pack reaches this rung with a bid — Spades and
+   Pinochle both seat exactly four — but the tier classes are cumulative and a
+   row that got here must not be the one that discovers it. */
+.opponent-row--faces .seat--collapsed .seat__pips {
+  gap: 0.07rem;
+  --pip-size: 0.26rem;
+}
+
+/* ------------------------------------------------------------------ *
  * A seat put away, and the plate it opens
  * ------------------------------------------------------------------ *
  *
@@ -1028,6 +1149,19 @@ body {
   background: var(--chip-bg);
   border: 1px solid var(--chip-border);
   font-variant-numeric: tabular-nums;
+}
+
+/* OUT OF THIS TRICK (#148, Thirteen). A word, not a number, and the one aux
+   badge that must not wear the accent: the accent on this row means "it is
+   this seat's turn", and a seat that has passed is precisely the one it is not.
+   Recessive, which is also what it is — a seat sitting the rest of the trick
+   out. */
+.seat__count--aux[data-counter="passed"] {
+  color: var(--chrome-text);
+  opacity: 0.62;
+  font-size: 0.58rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 /* ------------------------------------------------------------------ *
