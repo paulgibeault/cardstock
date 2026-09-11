@@ -2666,6 +2666,180 @@ against the felt's edge for the whole game. If it wants a floor later, the
 place to put one is a `--stage-card-w` that this rule and the 660px block both
 read.
 
+## The bot that beat its own partner (#161)
+
+**What was wrong.** Team Spades ruffed the trick its own partner had already
+won. The engine's side plumbing was never the problem — `src/engine/sides.js`
+has known which chairs share a score since #104 and the rollout grading has been
+side-aware since #105 — but the function that actually CHOSE the card had none
+of it. `botHeuristic` was two lines: `-rankOrder - cardValue`, with no reading
+of the trick, the trump, or who was winning. At `followSuit: 'must'` a void hand
+is offered every card it holds, and the lowest card in a Spades hand is very
+often a low spade, so "play low" was "trump your partner". The evaluator had the
+same bug in its own currency: `evaluateContract` credited the side with the
+whole of `holdsUp`, and a higher winning card raises it, so taking the trick off
+your partner's king with your ace scored BETTER than ducking under it.
+
+Measured over 300 hands, counting only the cards a seat could have declined to
+play — a hand whose every legal card ruffs or overtakes is the rules choosing,
+not the bot:
+
+| | ruffed the partner | overtook in suit |
+|---|---|---|
+| before, `easy` | 7.9% of 2090 | 0.0% |
+| before, `medium` | 4.2% of 3156 | 11.6% |
+| after, `easy` | 0.1% of 1397 | 0.3% |
+| after, `medium` | 2.6% of 2977 | 0.1% |
+
+The zero in the first row is the shape of the old bug rather than an absence of
+it: within one suit the card that overtakes is always the dearer card by
+`-rank - value`, so the old ranking ducked in suit by accident and had no
+opinion at all about the trump it was throwing.
+
+**Three classes, and the old ranking inside each.** `scorePlayCard` reads the
+trick. Partner winning: duck — never overtake, never ruff. Opponent winning: the
+cheapest card that wins, else the lowest. Leading: unchanged, because what to
+open with is a judgement about the whole hand and this function does not have
+one. The class step is derived from the DECK (`trickBand`, one clear of the
+widest `-rank - value` can be) rather than being a weight, because "any card
+that wins beats every card that does not" is a sort and not a quantity: a
+fraction of it would not be a different opinion, it would be a broken sort. What
+is left inside a class is exactly the old ranking, which is what makes "the
+cheapest card that wins" fall out instead of being written as a second rule.
+
+**The band is a SPREAD, not a ceiling.** `trickBand` started as `topRank +
+topValue + 1` — the priciest card in the deck, one clear — which is right only
+while every card value is a cost. A NEGATIVE value is a card the deck pays you
+to play, and it widens the ranking at the attractive end rather than the cheap
+one: an ace worth −20 scores twenty ABOVE where its rank puts it, and a charge
+sized to the top of the deck no longer outweighs it. Hearts patches exactly that
+in a shipped variant (`jack-of-diamonds`, `scoring.cardValues.diamonds-J =
+−10`), and Hearts is safe from it only by accident — it has no partner to duck
+under and no nil to protect, so no band is ever applied there. The first
+partnership pack to price a card as a bonus would have had the charge quietly
+fail and the sort invert, with nothing going red. So `perilOf` now sweeps
+`lowValue` alongside `topValue`, floored at zero, and the band is
+`topRank + topValue − lowValue + 1`. At all three shipped packs `lowValue` is
+zero and the number is the one it always was: every simulation in this section
+is character-for-character identical either way, which is how it was checked.
+
+Two clauses are about the promise. A live nil never takes a trick it could duck
+— playing low was most of a nil's game already, and what it missed is the void
+hand, where the lowest card left is a trump and wins. And a nil PARTNER who is
+winning is a nil dying, so the duck rule is suspended and the trick is taken
+back off them — in suit, never by ruffing, which spends a trump and a bag on a
+trick nobody wanted and which the seats still to play may take off them for
+nothing anyway.
+
+**The one line that keeps this out of Hearts.** Preferring to win is gated on
+`prizeSign`: a pack whose points are the PENALTY wants the exact opposite, and
+"lowest card, cheapest card" is already the right answer there. The partner
+clauses are NOT gated — ducking under your partner is right in either direction
+— and at Hearts they are dead code rather than a branch to reason about, because
+the pack declares no sides. Hearts is byte-identical before and after:
+`simulate.mjs hearts --games=300` and `--vs=medium,easy --games=200` both print
+the same lines they printed on main, character for character.
+
+**The evaluator's half.** A side that already held the trick is now credited
+with the hold it HAD (`beforeSide === side ? beforeHolds : holds`), not with the
+better one its own partner's overtake bought it. Taking a trick off an opponent
+is untouched — their hold was never this side's, so the whole of it is new. And
+`evaluateContract` grew the held-card term `evaluatePointsContract` grew first
+(#125), in the only currency a trick contract has: what a card left in hand is
+worth is its RANK, because an ace is a trick you have not taken yet and a two is
+not. That is what makes "win with the cheapest card that wins" fall out of the
+arithmetic as well as out of the sort.
+
+`CONTRACT_HELD_WORTH` is 0.025 and the tuner says both that it matters and that
+its exact value does not. `tune.mjs team-spades --match --games=200` over every
+weight accepted nothing at ±50%; asked specifically, `--only=CONTRACT_HELD_WORTH
+--step=1` puts the doubled value at 48.5% (identical play — 48.5% is this
+tournament's seat-order baseline, what a candidate that changes no decision
+scores) and the term REMOVED at 25.0% ± 3.1% of 200 matches. A seat without it
+cashes its high cards on tricks it was going to win anyway and has nothing left
+for the end of the hand, which is the failure #125's comment describes at
+Pinochle, in a pack where the cards carry no points at all.
+
+**What it is worth, and why `--vs=medium,easy` is the wrong bar for it.** The
+fix is in `botHeuristic`, which IS the `easy` bot, so both sides of that pairing
+moved and the gap between them is not a measure of anything. Seating the new
+template against the old one at the same difficulty, sides alternating so the
+deal cannot favour either, 200 matches:
+
+| pairing | new | old |
+|---|---|---|
+| team-spades, `medium` | 164 (82.0% ± 2.7) | 36 |
+| team-spades, `easy` | 199 (99.5% ± 0.5) | 1 |
+| pinochle, `medium` | 112 (56.0% ± 3.5) | 88 |
+
+`medium` vs `easy` at Team Spades goes from 93.0% to 57.0% of 200 matches
+because the floor came up: the old `easy` side finished a match on a mean total
+of 70 and the new one on 199. That is the fix working. The felt's easy Spades
+partner used to trump your ace; it does not now, and the ladder between the
+difficulties at this pack is correspondingly shorter.
+
+Pinochle moves a little and only where its rules leave room: `followSuit:
+'must-beat'` already forces the beat when a seat can make it, so the ordering
+below it rarely decides anything. `--vs=medium,easy` there goes 46.5% to 47.7%
+of 200 rounds — inside the noise, and reported as such.
+
+**#114 is not closed. It is wider, and that is the measurement.** `hard` at Team
+Spades plays its rollouts with the cheap heuristic (`src/engine/bot.js` plays
+every chair at `easy`), so a better heuristic is a better rollout policy, and
+the honest guess before measuring was that this would narrow #114's gap. It did
+the opposite. `simulate.mjs team-spades --vs=hard,easy --games=200 --match
+--budget-moves=600`, same seeds either side:
+
+| | hard | easy | unfinished | rounds/match |
+|---|---|---|---|---|
+| before | 30 (15.7%) | 161 (84.3%) | 9 | 30.9 |
+| after | 13 (6.5%) | 187 (93.5%) | 0 | 14.9 |
+
+That is what #114 predicts, taken seriously. `easy` IS the heuristic, so it
+takes the whole of this fix — the A/B table above measures how much, and at this
+pack it is nearly all of it. `hard` decides by the rollouts' terminal score
+delta and takes only as much as a better-played rollout world is worth; a
+rollout world where every chair now keeps its side's tricks is still graded by a
+signal that cannot tell a made contract from a lucky one, so the seat it
+strengthened is the one it was already losing to. The mean final totals say the
+same thing from the other side: the `easy` side goes 237.67 → 260.34 while the
+`hard` side goes 44.09 → 39.75.
+
+The one unambiguous improvement is in how the matches END: nine matches in two
+hundred used to run past a hundred rounds without either side reaching 500, and
+none do now (30.9 rounds a match down to 14.9). A table where both sides bag out
+forever was the old heuristic's signature, and it is gone.
+
+So the felt's default stays `medium`, `hard` at Spades is still the wrong bot,
+and the fix for that is a policy layer in `src/engine/bot.js` — out of scope
+here, and #114 is where it belongs.
+
+**Verified.** `npm test` 856 pass / 0 fail (842 on main, 14 new in
+`tests/spadesBot.test.js`); `node tools/pack-test.mjs --all` all nine packs 0
+failed; `simulate.mjs team-spades|hearts|pinochle --games=300` 0 stalled, 0
+errored each. Every clause was proven to bite: eleven separate breaks — the
+whole trick reading, the overtake charge, the ruff charge, the live-nil duck,
+the nil-partner rescue, the no-ruff-over-a-nil clause, the prize-direction gate,
+the cheapest-winner preference, the band's negative-value spread, the
+evaluator's already-held hold and its held-card term — each put back on its own,
+and each turned the tests that watch it red. The five that do not appear in that
+list are the controls: they assert what this change must NOT have moved (Hearts'
+ordering, a broken nil playing normally, a losing hand still preferring its
+lowest, still paying to take a trick off an opponent), so no break of a new
+clause can turn them red, and every break above leaving them green is the
+result.
+
+Two clauses needed a pack to exist, and both tables are
+`tests/fixtures/partnersPack.js` (#104's fixture) with one scoring block
+changed, because inventing a partnership pack to prove one clause would be
+inventing a game. "Never overtake your partner" is unexercisable at all three
+shipped packs, because their card values rise with their ranks and the duck is
+already the cheap card; give a partnership pack Hearts' queen of spades —
+thirteen points at the tenth rung with a free king and ace above it — and the
+accident reverses. The band's spread needs the same deck to pay for a card
+rather than charge for it: an ace worth −20 against a jack worth 13 is the
+narrowest pair where the old ceiling is not enough and the spread is.
+
 ## Next steps
 
 Multiplayer (Phase 8), per-pack UI polish (per-pack `theme.css`, custom
