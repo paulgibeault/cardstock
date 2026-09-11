@@ -88,8 +88,46 @@ export function paceLevel(id) {
     || PACE_LEVELS.find((level) => level.id === DEFAULT_PACE);
 }
 
-/** The rung a tap on the summary's own control moves to, wrapping round. */
-export function nextPace(id) {
-  const i = PACE_LEVELS.indexOf(paceLevel(id));
-  return PACE_LEVELS[(i + 1) % PACE_LEVELS.length].id;
+/**
+ * The rungs the summary's own control may offer, in the order it offers them.
+ *
+ * TWO THINGS ABOUT THIS LIST ARE DELIBERATE, and both of them are #174.
+ *
+ * IT LEAVES OUT `instant`, because a control that offers it deletes itself. The
+ * summary is the only surface that carries this control mid-match, `instant` is
+ * the rung that shows no summary, and the tap that picks it is therefore the
+ * last tap that can ever reach it: `runRoundBeat` takes its `dismissRoundSummary`
+ * early return from then on and no sheet opens again for the rest of the match.
+ * The rung itself is not going anywhere — src/ui/newGame.js still offers all
+ * four, and between matches there is no sheet to delete.
+ *
+ * IT RUNS THE LIST BACKWARDS, from most automatic to least, which is the one
+ * place in this module that does not read left-to-right off the segmented row.
+ * The row is a picture of the four rungs; this is a single button, and a button
+ * only knows the one thing the player just did with it. That thing is a tap
+ * made BECAUSE they are not ready to deal yet — so every tap has to hand them
+ * MORE time than they had, never less, and the walk goes Quick → Relaxed →
+ * Manual → Quick. Wrapping from Manual back to Quick is the only step that
+ * shortens anything, and it is the step out of the rung that never deals at all.
+ */
+const SUMMARY_PACE_CYCLE = Object.freeze(
+  PACE_LEVELS.filter((level) => !level.instant).map((level) => level.id).reverse(),
+);
+
+/**
+ * The rung a tap on the summary's own control moves to, wrapping round.
+ *
+ * Named for the surface rather than for the list because the surface is why a
+ * rung is missing: at the call site (src/ui/table.js's `cyclePace`) "summary"
+ * is the whole explanation for why this is not simply the next entry in
+ * `PACE_LEVELS`.
+ */
+export function nextSummaryPace(id) {
+  // An id that resolves to `instant` is not on the cycle, and -1 + 1 lands on
+  // the first entry — Quick, which is the right answer for the same reason the
+  // walk runs backwards: Quick is the shortest wait that still shows a sheet,
+  // and any wait at all is more time than Instant's none. It costs nothing
+  // today, because a player at `instant` is never shown a sheet to tap.
+  const i = SUMMARY_PACE_CYCLE.indexOf(paceLevel(id).id);
+  return SUMMARY_PACE_CYCLE[(i + 1) % SUMMARY_PACE_CYCLE.length];
 }

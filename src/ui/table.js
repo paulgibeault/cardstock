@@ -112,7 +112,7 @@ import {
 } from './panels.js';
 import { packRules } from './rules.js';
 import { roundBeatPlan, trickRevealPlan } from './roundBeat.js';
-import { paceLevel, nextPace } from './pace.js';
+import { paceLevel, nextSummaryPace } from './pace.js';
 import {
   rememberPack, loadSettings, saveSettings, saveMatch, loadMatch, clearMatch, recordForfeit,
   loadHandPrefs, saveHandPrefs, recordDailyResult,
@@ -4187,9 +4187,22 @@ function paceView(level) {
  * door: it clears `roundSummaryOpen`, paints the deal, and only then calls
  * `scheduleNextTurn`. A timer that reached for `scheduleNextTurn` directly
  * would let a bot play its first card into a felt still showing the last hand.
+ *
+ * `null` IS MANUAL and arms nothing: the sheet waits for a tap, forever.
+ *
+ * ZERO IS NOT "DEAL IMMEDIATELY" HERE — IT IS A BUG (#174). The rung that deals
+ * with no pause is `instant`, and `instant` never opens a sheet at all:
+ * `runRoundBeat` sees `plan.instant` and dismisses through the door before
+ * `showRoundSummary` is ever called. So there is no honest way for a sheet to
+ * be on screen with a delay of 0 to serve, and a `setTimeout(…, 0)` from here
+ * can only be a summary closing itself on the next tick — which is exactly how
+ * the pace control used to delete itself the first time it was tapped. The same
+ * guard takes a negative or a NaN, for the reason any arithmetic on a rung's
+ * `autoMs` could produce one: a countdown that is not a wait is not a countdown.
  */
 function armAutoAdvance(ms) {
   if (ms == null) return;
+  if (!(ms > 0)) return;
   const myEpoch = epoch;
   if (session.advanceTimer) session.advanceTimer.cancel();
   session.advanceTimer = Arcade.session.setTimeout(() => {
@@ -4248,7 +4261,7 @@ function roundResultLine(state, ev) {
 }
 
 function cyclePace() {
-  const level = paceLevel(nextPace(currentPace().id));
+  const level = paceLevel(nextSummaryPace(currentPace().id));
   const stored = loadSettings();
   saveSettings({ ...stored, pace: level.id });
   // The snapshot too, so the NEXT round reads the new rung without waiting for
