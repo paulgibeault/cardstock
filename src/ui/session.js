@@ -30,10 +30,19 @@ import { makeCtx } from '../engine/context.js';
  * @param cardArt  this pack's renderer (src/ui/cardStyles)
  * @param handPrefs the human's saved fan arrangement for this pack
  */
-export function createSession({ pack, state, seats, seating, cardArt, handPrefs, shared = false, hintsTaken = 0 }) {
+export function createSession({
+  pack, state, seats, seating, cardArt, handPrefs, shared = false, hintsTaken = 0, daily = null,
+}) {
   return {
     pack,
     state,
+    // IS THIS TODAY'S DAILY RUN? `{ date, seed }`, or null for an ordinary
+    // game. Per-match by construction — the ladder this table is playing was
+    // derived for that date and is not the ladder the pack ships, so a field
+    // that outlived the session would be a rule set outliving the match it
+    // belongs to. It decides which storage slot the match is written to
+    // (src/arcade/storage.js) and which record its ending goes into.
+    daily,
     // IS THIS A TABLE OTHER PEOPLE ARE AT? A shared match belongs to its
     // TableSession (src/match/tableSession.js) and is persisted there, under
     // `mpMatch.<tableId>`. The felt must not ALSO write it to the solo slot:
@@ -168,6 +177,20 @@ export function createSession({ pack, state, seats, seating, cardArt, handPrefs,
     botTimer: null,
     bannerTimer: null,
     announceTimers: [],
+    // THE ROUND ENDING'S OWN TIMERS (#150). `runRoundBeat` used to fire these
+    // straight at `Arcade.session.setTimeout` and keep no handle: the only
+    // thing that stopped a step from painting into a table that had already
+    // been closed was an epoch check inside the callback. That is enough to
+    // stop it doing damage and not enough to stop it running, and once the
+    // summary deals ITSELF there is a timer that must be cancellable by a tap
+    // rather than talked out of acting.
+    //
+    // `beatTimers` are the show's steps and the summary's own opening;
+    // `revealTimer` is the completed trick's hold (runTrickReveal);
+    // `advanceTimer` is the sheet dealing the next hand by itself.
+    beatTimers: [],
+    revealTimer: null,
+    advanceTimer: null,
     // The one-shot that replays a pulse when the human has been sitting on
     // their own turn (see scheduleIdleNudge in src/ui/table.js). Re-armed by
     // every render, so at most one of these exists at a time.
@@ -196,6 +219,12 @@ export function stopSession(session) {
   session.bannerTimer = null;
   for (const timer of session.announceTimers) timer.cancel();
   session.announceTimers = [];
+  for (const timer of session.beatTimers) timer.cancel();
+  session.beatTimers = [];
+  if (session.revealTimer) session.revealTimer.cancel();
+  session.revealTimer = null;
+  if (session.advanceTimer) session.advanceTimer.cancel();
+  session.advanceTimer = null;
   if (session.nudgeTimer) session.nudgeTimer.cancel();
   session.nudgeTimer = null;
   session.humanActing = false;

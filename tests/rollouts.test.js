@@ -28,7 +28,7 @@ import assert from "node:assert";
 import { createState } from "../src/engine/state.js";
 import { makeCtx } from "../src/engine/context.js";
 import { applyMove } from "../src/engine/movePipeline.js";
-import { chooseBotMove } from "../src/engine/bot.js";
+import { chooseBotMove, rankMoves } from "../src/engine/bot.js";
 import { forkState } from "../src/engine/fork.js";
 import { determinizeState } from "../src/engine/determinize.js";
 import { visibleCardIds } from "../src/engine/view.js";
@@ -75,6 +75,10 @@ function walk(state, limit, visit) {
  * move cap is small so the suite stays quick; strength is measured in
  * tools/simulate.mjs, not here.
  */
+/** A whole ranking — moves AND scores — as a comparable string. */
+const ranking = (state, seat, opts) =>
+  JSON.stringify(rankMoves(state, seat, opts).map((r) => [r.move, r.score]));
+
 function hardOptions(seed = "probe") {
   return {
     difficulty: "hard",
@@ -261,29 +265,39 @@ test("the hard bot cannot see through the back of a card", async () => {
           + "somewhere else — the decision depends on the hidden arrangement");
 
         probed += 1;
-        if (key(real) !== key(chooseBotMove(live, seat))) differed += 1;
+        // WHETHER THE ROLLOUT LAYER RAN, asked of the whole RANKING rather than
+        // of the move that came out of it. `scoreByRollout` returning null
+        // drops the turn to the one-ply chooser, and then hard's ranking is
+        // medium's to the last digit; a sampled ranking is a different set of
+        // numbers even in the common case where the same move still tops it.
+        // Reading only the top move made this a coin toss on how often the
+        // sample happened to overturn the favourite — 6 positions in 113 at
+        // Wildfire, so 14 probes came up empty about half the time (#160).
+        if (ranking(live, seat, hardOptions("fairness")) !== ranking(live, seat, {})) differed += 1;
       });
     }
 
     assert.ok(probed >= 8, `${packId}: only ${probed} positions probed — too few to conclude anything`);
 
     // A gate that passes because the rollouts never ran is a gate on nothing —
-    // so the hard chooser has to demonstrably disagree with the medium one
-    // somewhere above. EXCEPT where the pack declares no round scoring at all:
-    // Stockpile is a race with no points, every rollout of it ends on the same
-    // number, and the documented answer to a scorer with no opinion is to fall
-    // back rather than to shuffle the candidates. That is worth asserting in
-    // its own right, so the exception is a claim rather than a skip.
-    const steers = !!(await loadPackFromDisk(packId)).scoring?.roundScore;
-    if (steers) {
-      assert.ok(differed > 0,
-        `${packId}: across ${probed} positions the hard chooser never once played something the `
-        + "medium chooser would not have — the rollout layer is not running");
-    } else {
-      assert.strictEqual(differed, 0,
-        `${packId} declares no roundScore, so every rollout ends on the same value and hard must `
-        + "be medium here — a difference means the search is ranking on noise");
-    }
+    // so the hard chooser has to demonstrably rank differently from the medium
+    // one somewhere above.
+    //
+    // STOCKPILE USED TO BE THE EXCEPTION HERE, and #160 ended it. Its manifest
+    // still declares no scoring, so a finished rollout used to come back worth
+    // zero for every candidate and the documented answer to a scorer with no
+    // opinion — fall back rather than shuffle — was what this asserted. The
+    // sequencing template now answers `matchStanding` with the height of the
+    // seat's stock, which is the race itself, so a finished rollout has a
+    // spread again and every pack on this list steers.
+    const pack = await loadPackFromDisk(packId);
+    const steers = !!(pack.template.matchStanding || pack.scoring?.roundScore);
+    assert.ok(steers,
+      `${packId} has neither a roundScore nor a matchStanding — a finished rollout of it is `
+      + "worth the same whatever was played, and hard can only fall back to one ply");
+    assert.ok(differed > 0,
+      `${packId}: across ${probed} positions the hard ranking was never once the medium `
+      + "ranking's — the rollout layer is not running");
   }
 });
 
