@@ -104,17 +104,49 @@
   <div id="emote-layer" class="emote-layer" aria-hidden="true"></div>
 
   <div id="table-screen" hidden>
-    <!-- Three items, one line, always. The bar sits above the felt in a
+    <!-- Four items, one line, always. The bar sits above the felt in a
          viewport-capped flex column, so a bar that grows a second line pushes
          the whole table down under the player's hand mid-turn. Nothing here
-         may wrap, and nothing else belongs here: the variant's name is in the
-         launcher title bar, and abandoning a game is the lobby's door
-         (src/ui/lobby.js, the tile's "Start over"). -->
+         may wrap, and almost nothing else belongs here: the variant's name is
+         in the launcher title bar, and abandoning a game is the lobby's door
+         (src/ui/lobby.js, the tile's "Start over").
+
+         THE FOURTH ITEM IS THE EXCEPTION AND IT IS EARNED (#175). "The
+         gameplay flashes cards too fast for me to see properly" had no answer
+         anywhere in the app, and the control that answers it is the one
+         control that must not itself be something you have to catch in time.
+         Every other surface that could have held it is timed: the round
+         summary counts itself down (#174), the new-game sheet is gone the
+         moment you deal. This bar is the only persistent in-match strip with
+         no countdown on it, so a player who has just watched a card they could
+         not follow can reach it, on the turn it happened, without the reach
+         being a race. It is a chip and not a button precisely so the rule
+         above survives: it is the width of one short word.
+
+         The budget is unchanged and still absolute, and it was measured rather
+         than reasoned about. At a 320px viewport, with the longest rung word
+         ("Snappy") and the human's own peg board in the score chip — the
+         widest this bar can ever be — the four fixed items come to 309px of
+         320, leaving #status-text 11px to ellipsise into, with no overflow
+         (scrollWidth 320 = clientWidth) and the bar still 42.9px tall, which
+         is exactly what it measured with three items. In the ordinary case,
+         where the board is on the felt and the chip is the plain pill, the
+         sentence keeps 95px. #status-text remains the only elastic item. -->
     <div id="status-bar">
       <button id="lobby-button" class="ghost-button" aria-label="Back to the lobby">
         <span aria-hidden="true">←</span> Lobby
       </button>
       <span id="status-text">Loading…</span>
+      <!-- How fast a card crosses the felt, cycling on a tap (#175). The
+           rung's name and a glyph, because the bar has room for one short
+           word; the sentence that explains the rung is on aria-label, where
+           it costs no pixels. Painted by renderStatusBar — never hard-coded
+           here, or a build whose ladder changed would open showing a rung it
+           is not playing at. -->
+      <button type="button" id="speed-chip" class="speed-chip">
+        <span class="speed-chip__glyph" aria-hidden="true">»</span>
+        <span id="speed-chip-label"></span>
+      </button>
       <!-- Your score, always on screen, and the way into the full sheet.
            A number you have to open a menu to see is a number you stop
            checking. -->

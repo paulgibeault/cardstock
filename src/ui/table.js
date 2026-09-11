@@ -113,6 +113,7 @@ import {
 import { packRules } from './rules.js';
 import { roundBeatPlan, trickRevealPlan } from './roundBeat.js';
 import { paceLevel, nextSummaryPace } from './pace.js';
+import { speedLevel, speedForDelay, nextSpeed } from './speed.js';
 import {
   rememberPack, loadSettings, saveSettings, saveMatch, loadMatch, clearMatch, recordForfeit,
   loadHandPrefs, saveHandPrefs, recordDailyResult,
@@ -172,6 +173,8 @@ const el = {
   status: document.getElementById('status-bar'),
   statusText: document.getElementById('status-text'),
   lobbyButton: document.getElementById('lobby-button'),
+  speedChip: document.getElementById('speed-chip'),
+  speedChipLabel: document.getElementById('speed-chip-label'),
   scoreChip: document.getElementById('score-chip'),
   scoreChipTrack: document.getElementById('score-chip-track'),
   scoreChipValue: document.getElementById('score-chip-value'),
@@ -2865,6 +2868,10 @@ function renderRail(state, ui, humanActs) {
 
 function renderStatusBar(state, acting) {
   el.statusText.textContent = statusTextFor(state, acting);
+  // Repainted on every render rather than only when it is tapped, because the
+  // new-game sheet can change this between two hands and the chip has to agree
+  // with the felt it is sitting above.
+  paintSpeedChip();
   // `session.roundBeat` for the same reason `render` reads it: while the felt
   // holds a finished hand, nobody is on turn and the bar must not say so. A
   // trick reveal is the same claim for one beat (#123).
@@ -2912,6 +2919,66 @@ function renderStatusBar(state, acting) {
       + 'Open the scoreboard.');
   }
   renderTableCounters(state);
+}
+
+/* ------------------------------------------------------------------ *
+ * How fast a card crosses the felt (#175)
+ * ------------------------------------------------------------------ */
+
+/**
+ * The player's rung, read LIVE, exactly the way `currentPace` is.
+ *
+ * `settings` is the snapshot `rerenderTable` refreshes, and it is the snapshot
+ * — not storage — that every consumer of this number already reads:
+ * `flightDurationMs(settings?.botDelayMs)` at three call sites, and the bot
+ * driver's `botDelayMs: () => settings.botDelayMs`. Falling back to a fresh
+ * read keeps the first paint of a session honest, before any render has run.
+ */
+function currentSpeed() {
+  return speedForDelay(settings ? settings.botDelayMs : loadSettings().botDelayMs);
+}
+
+/**
+ * The chip: one short word, and the sentence behind it on `aria-label`.
+ *
+ * THE LABEL IS THE RUNG, NOT THE NUMBER. A chip reading "600ms" would be the
+ * text field src/ui/speed.js exists to avoid, in a smaller font.
+ */
+function paintSpeedChip() {
+  const level = currentSpeed();
+  el.speedChipLabel.textContent = level.label;
+  el.speedChip.setAttribute('aria-label',
+    `Card speed: ${level.label}. ${level.description} Tap to change.`);
+}
+
+/**
+ * Move to the next rung, on the tap that asked for it.
+ *
+ * THE SNAPSHOT IS UPDATED IN THE SAME BREATH AS STORAGE, which is the whole
+ * point of this control and the precedent `cyclePace` set for the summary's
+ * own. Writing storage alone would leave the very next flight at the old speed
+ * until a settings event came back round through main.js — and the next flight
+ * is precisely the one the player is watching for, because the reason they
+ * reached for this was that the last one went past too fast.
+ *
+ * NOTHING IN FLIGHT IS RESTARTED. Unlike the pace control, which cancels and
+ * re-arms a countdown it may have shortened, this changes nothing that has
+ * already been scheduled: a card mid-air keeps the duration it launched with,
+ * and a bot already sitting on its think timer plays when it was always going
+ * to. Both are over in well under a second, and a card that changed speed
+ * halfway across the table would be the opposite of legible.
+ *
+ * ANNOUNCED IN #log, the felt's live region, because otherwise the only
+ * evidence the tap did anything is the chip's own word changing — which is
+ * nothing at all to a screen reader, and easy to miss with eyes on the felt.
+ */
+function cycleSpeed() {
+  const level = speedLevel(nextSpeed(currentSpeed().id));
+  const stored = loadSettings();
+  saveSettings({ ...stored, botDelayMs: level.delayMs });
+  if (settings) settings.botDelayMs = level.delayMs;
+  paintSpeedChip();
+  el.log.textContent = `Card speed: ${level.label}. ${level.description}`;
 }
 
 /**
@@ -5639,7 +5706,12 @@ export function initTable({ onExit }) {
   });
 
   el.lobbyButton.addEventListener('click', () => exitToLobby());
+  el.speedChip.addEventListener('click', () => cycleSpeed());
   el.scoreChip.addEventListener('click', () => openScoreboard());
+  // The bar is on screen before the first render, so the chip needs its word
+  // now rather than at the first `renderStatusBar` — an empty pill in the
+  // chrome reads as a bug, not as a control waiting for a state.
+  paintSpeedChip();
   el.handSort.addEventListener('click', () => cycleHandSort());
 }
 

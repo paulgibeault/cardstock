@@ -74,7 +74,7 @@ test("the lobby saves the choice on the gesture that deals, and only then", () =
   // the other site's `if (!setup)` sitting close enough to satisfy the pattern.
   // A gate that passes while the thing it watches is broken is worse than no
   // gate, so this walks the sites.
-  const sites = [...src.matchAll(/askNewGame\(manifest\)([\s\S]{0,240}?)rememberDifficulty\(setup\)/g)];
+  const sites = [...src.matchAll(/askNewGame\(manifest\)([\s\S]{0,240}?)rememberPreferences\(setup\)/g)];
   assert.strictEqual(sites.length, 2,
     `${sites.length} new-game path(s) save the answer; both the tile and the re-deal must`);
   for (const [, between] of sites) {

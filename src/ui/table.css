@@ -337,6 +337,40 @@ body {
 .score-chip .seat__track-value { min-width: 1.4rem; }
 .score-chip #score-chip-value[hidden] { display: none; }
 
+/* HOW FAST A CARD CROSSES THE FELT, in the one strip that is always there and
+   never counting down (#175). It styles itself, like everything else in this
+   bar — see the NOTE above about why there is no `#status-bar button` rule to
+   inherit from.
+
+   QUIETER THAN THE SCORE CHIP, and the same argument the round summary's pace
+   control is quiet for: this is an adjustment, not a reading. The score is a
+   fact about the game and wears a filled pill; this is a preference and wears
+   an outline. Whichever one the eye lands on mid-hand should be the score.
+
+   `flex: 0 0 auto` is not decoration. #status-text is the only item in this
+   bar allowed to give, and a fourth flexible item would mean the bar deciding
+   for itself which of two things ellipsises. */
+.speed-chip {
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 0.22rem;
+  flex: 0 0 auto;
+  padding: 0.18rem 0.5rem;
+  border-radius: 999px;
+  border: 1px solid var(--chip-border);
+  background: transparent;
+  color: inherit;
+  opacity: 0.75;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.speed-chip:hover { opacity: 1; border-color: var(--accent); }
+.speed-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.speed-chip__glyph { opacity: 0.6; }
+
 .danger-button {
   font: inherit;
   padding: 0.6rem 1.1rem;
@@ -4283,6 +4317,10 @@ body.is-dragging .card-face { cursor: grabbing; }
   /* The chrome bar is not the game. It can no longer wrap (see #status-bar),
      but it can still be quieter about the room it takes. */
   #status-bar { padding: 0.35rem 0.5rem; font-size: 0.82rem; gap: 0.35rem; }
+  /* The speed chip gives up its padding before the sentence beside it gives
+     up characters — the glyph stays, because it is what makes a one-word pill
+     read as a control rather than as a second score. */
+  .speed-chip { font-size: 0.72rem; padding: 0.15rem 0.38rem; }
 }
 
 /* `card-face` is the class on the SVG ELEMENT itself (src/ui/cardStyles) —
