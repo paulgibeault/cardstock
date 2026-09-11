@@ -112,8 +112,9 @@ import { packRules } from './rules.js';
 import { roundBeatPlan, trickRevealPlan } from './roundBeat.js';
 import {
   rememberPack, loadSettings, saveMatch, loadMatch, clearMatch, recordForfeit,
-  loadHandPrefs, saveHandPrefs,
+  loadHandPrefs, saveHandPrefs, recordDailyResult,
 } from '../arcade/storage.js';
+import { dailyRunFor, applyDailyLadder } from '../engine/dailyLadder.js';
 import {
   playDeal, playCardPlayed, playDraw, playShuffle, playInvalid, playWin, playAnnouncement,
 } from '../arcade/audio.js';
@@ -3515,8 +3516,19 @@ async function endMatchFromSummary() {
 
   cancelBotTurn();
   cancelAnnouncementBeats();
-  clearMatch(state.pack.id);
-  recordForfeit(state.pack.id, session.seating);
+  // WALKING OUT OF THE DAILY IS THIS DAY'S RESULT, not a forfeit against the
+  // pack's own record: there is one run per day and no second attempt, so
+  // abandoning it is losing it, and the streak has to end. The pack's casual
+  // record is left alone for the reason src/arcade/storage.js gives — the
+  // daily's ladder is not the ladder that record is about.
+  clearMatch(state.pack.id, { slot: session.daily ? 'daily' : 'match' });
+  if (session.daily) {
+    recordDailyResult(state.pack.id, session.daily.date, {
+      won: false, hands: state.roundNumber,
+    });
+  } else {
+    recordForfeit(state.pack.id, session.seating);
+  }
   session.roundSummaryOpen = false;
   session.roundBeat = false;
   session.roundFinalState = null;
@@ -3573,7 +3585,13 @@ function persistMatch() {
   // the lobby tile a "Start over" that dealt a private hand beside a table
   // other people were still sitting at.
   if (session?.shared) return;
-  const ok = saveMatch(state, { hints: session.hintsTaken });
+  // A DAILY RUN GOES IN ITS OWN SLOT. Writing it to `match.<packId>` would
+  // silently overwrite whatever casual game was waiting on the lobby tile —
+  // the same mistake one shared slot per device made about two hosted tables.
+  const ok = saveMatch(state, {
+    hints: session.hintsTaken,
+    slot: session.daily ? 'daily' : 'match',
+  });
   if (ok !== false || saveFailureReported) return;
   saveFailureReported = true;
   reportTableError('This game could not be saved — it may not be here when you come back.');
@@ -4428,7 +4446,7 @@ function scheduleAnnouncementBeats() { if (bots) bots.scheduleAnnouncementBeats(
  * roll could survive into a match that had not been dealt when it was made.
  */
 function adoptMatch(pack, state, message, {
-  dealing = false, seats = null, seating = null, shared = false, hints = 0,
+  dealing = false, seats = null, seating = null, shared = false, hints = 0, daily = null,
 } = {}) {
   epoch += 1;
   stopSession(session);
@@ -4464,6 +4482,11 @@ function adoptMatch(pack, state, message, {
     // this function persists the match before it returns and a count set
     // after that write is a count the next reload has already lost.
     hintsTaken: hints,
+    // `{ date, seed }` when this is a daily run, null when it is an ordinary
+    // game. It decides which slot the match is written to and which record its
+    // ending goes into — both of which happen before the first render, so it
+    // has to arrive WITH the session rather than be set on it afterwards.
+    daily,
   });
   // Set on the NEW session, not before it exists: a fresh deal staggers its
   // cards in, a resumed match must not (the cards have been there all along).
@@ -4684,7 +4707,7 @@ export function rebaseSeats(localDeviceId) {
   return rebased;
 }
 
-function startGame(pack, seats) {
+function startGame(pack, seats, { seed, daily = null } = {}) {
   cancelBotTurn();
   cancelAnnouncementBeats();
   const seatCount = seatsFor(pack, seats);
@@ -4692,10 +4715,45 @@ function startGame(pack, seats) {
   // the match from the first write, which is what makes the log replayable
   // (src/engine/replay.js) rather than merely re-runnable — and, since the
   // seating is derived from it, what rotates the opponents per game.
-  const state = createState({ pack, seats: seatCount, seed: Date.now() });
+  //
+  // A DAILY RUN HANDS ITS OWN SEED IN, and that is the whole of what makes the
+  // day shared: `milestones|2026-09-10` deals the same cards and seats the same
+  // opponents on every device, because both are derived from it.
+  const state = createState({ pack, seats: seatCount, seed: seed ?? Date.now() });
   pack.template.setup(makeCtx(state));
   playDeal(seatCount);
-  adoptMatch(state.pack, state, `Playing ${pack.manifest.name}.`, { dealing: true });
+  adoptMatch(state.pack, state, daily
+    ? `${pack.manifest.name} daily — ${daily.date}.`
+    : `Playing ${pack.manifest.name}.`, { dealing: true, daily });
+}
+
+/**
+ * The day's run for `pack`, with the pack rewritten to play it.
+ *
+ * The ladder is DERIVED, never stored: everything about the day comes back out
+ * of `<packId>|<YYYY-MM-DD>`, so a resume re-derives it from the seed the save
+ * already carries rather than trusting ten contracts that were written to disk
+ * (src/engine/dailyLadder.js says why that matters). The pack object is the
+ * private clone `fetchPack` just handed us, so rewriting its rules affects this
+ * table and nothing else.
+ */
+function openDailyRun(pack) {
+  const run = dailyRunFor(pack);
+  applyDailyLadder(pack, run.ladder);
+  return { date: run.date, seed: run.seed };
+}
+
+/**
+ * How many chairs a daily run is played at.
+ *
+ * FIXED PER PACK, and read from the manifest rather than from the table's own
+ * default seat count: a daily everybody gets the same of cannot depend on a
+ * default that moves, and the seating is derived from the seed, so the seat
+ * count is the other half of "the same table everywhere".
+ */
+function dailySeats(pack) {
+  const players = pack.manifest.players || {};
+  return seatsFor(pack, players.best ?? players.min);
 }
 
 /**
@@ -4705,22 +4763,38 @@ function startGame(pack, seats) {
  * Every entry to the table goes through here — a lobby tap, a `?pack=` deep
  * link, and a save import (`onStateReplaced` is a fresh boot by contract, §3).
  */
-export async function openTable(packId, { variants, seats } = {}) {
+export async function openTable(packId, { variants, seats, daily = false } = {}) {
   const myToken = ++openToken;
   cancelBotTurn();
   cancelAnnouncementBeats();
   closeChoiceDialog();
 
   el.statusText.textContent = 'Dealing…';
+  // WHICH OF THE PACK'S TWO SOLO GAMES THIS IS. A casual save and today's daily
+  // sit in different slots (src/arcade/storage.js), so opening one never
+  // disturbs the other — the whole point of the second key.
+  const slot = daily ? 'daily' : 'match';
 
   // A stored match pins the variant set: the same pack loaded with different
   // variants is a different rule set, and replaying a log against it diverges.
   // A stored match wins over anything the caller asked for: its log was
   // recorded under ITS rule set and seating, and replaying it under another is
   // divergence, not a preference.
-  const stored = loadMatch(packId);
+  let stored = loadMatch(packId, { slot });
   const pack = await fetchPack(packId, stored ? stored.variants : variants);
   if (myToken !== openToken) return; // the player left before the pack landed
+
+  // TODAY'S LADDER, BEFORE ANYTHING IS DEALT OR REPLAYED. A stored daily has to
+  // be replayed under the rules its log was recorded against, which for a daily
+  // means the ladder its seed names — so the pack is rewritten first.
+  const run = daily ? openDailyRun(pack) : null;
+  if (run && stored && stored.seed !== run.seed) {
+    // Yesterday's unfinished run. A daily is not a game to come back to a week
+    // later — the puzzle it was is gone — so the slot is dropped and today's is
+    // dealt instead. Nothing is recorded: an abandoned daily was never a result.
+    clearMatch(packId, { slot });
+    stored = null;
+  }
 
   rememberPack(packId);
   // The variant's name ALONE, and only in the launcher's title bar. At a table
@@ -4728,7 +4802,12 @@ export async function openTable(packId, { variants, seats } = {}) {
   // it twice — once in the launcher bar, once in our own — cost the status bar
   // the room it needed to stay on one line. The lobby restores the wordmark
   // (src/main.js).
-  Arcade.ui.setTitle(pack.manifest.name);
+  //
+  // A DAILY SAYS WHICH DAY, and this bar is where it says it: the felt has no
+  // room for a second name — which is what the paragraph above is about — and a
+  // ladder being unfamiliar is not a label. This is the surface that answers
+  // "what am I looking at", so it is the one that carries the date.
+  Arcade.ui.setTitle(run ? `${pack.manifest.name} — daily ${run.date}` : pack.manifest.name);
   hideAllPanels();
 
   if (stored) {
@@ -4743,7 +4822,10 @@ export async function openTable(packId, { variants, seats } = {}) {
       if (rulesMoved) throw new Error(`pack version changed: ${stored.packVersion} → ${pack.manifest.version}`);
       const state = rehydrateMatch(pack, stored);
       if (!state.gameOver) {
-        adoptMatch(pack, state, `Resumed ${pack.manifest.name}.`, { hints: Number(stored.hints) || 0 });
+        adoptMatch(pack, state, run
+          ? `Back on the ${pack.manifest.name} daily — ${run.date}.`
+          : `Resumed ${pack.manifest.name}.`,
+        { hints: Number(stored.hints) || 0, daily: run });
         return;
       }
     } catch (err) {
@@ -4753,9 +4835,9 @@ export async function openTable(packId, { variants, seats } = {}) {
       console.warn('[cardstock] could not replay the stored match, starting fresh', err);
       if (rulesMoved) reportTableError(`${pack.manifest.name}'s rules have changed — dealing a fresh game.`);
     }
-    clearMatch(packId);
+    clearMatch(packId, { slot });
   }
-  startGame(pack, seats);
+  startGame(pack, run ? dailySeats(pack) : seats, run ? { seed: run.seed, daily: run } : {});
 }
 
 /**
@@ -4904,6 +4986,9 @@ export function initTable({ onExit }) {
     // The record is written on the way out of a match, so the timers stop
     // first — a bot turn landing after the books are closed would reopen it.
     onConclude: () => { cancelBotTurn(); cancelAnnouncementBeats(); },
+    // Which books this match's ending goes into. Asked at conclusion time,
+    // like `seating` above, because this object outlives any one match.
+    daily: () => session?.daily || null,
   });
 
   ladder = createContractLadder({
