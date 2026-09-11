@@ -4022,6 +4022,178 @@ stylesheet that let a rung leave the stack. A gate that watches those three
 files is the gate that can fail when this comes back, and it keeps a
 merge-heavy branch out of two files other polish branches are also editing.
 
+## Two-handed Thirteen: three hands on offer, and you pick one (#157)
+
+### What was wrong
+
+`rules.deal` is thirteen at every seat count, on purpose: the hand size is the
+name of the game, and short-handed the remainder is simply out of play
+(THIRTEEN_RULES.md D-11). At three seats that costs thirteen cards. At TWO it
+costs twenty-six — half the deck, half the pigs, half the bombs, dealt to
+nobody and never seen. What is left is not a short-handed game of Thirteen; it
+is a shuffle you play out. The 2♥ turns up in about a third of hands, a four of
+a kind almost never does, and the endgame the whole ladder exists for — one
+unanswerable pig, and whether anybody can still assemble a chop — is decided by
+which half of the deck was dealt rather than by anything either player did.
+
+Two people actually play it a different way, and it is the way the pack should
+have shipped: the whole deck goes into **three face-down hands of seventeen**,
+one odd card set aside, each player takes one, and the third hand sits out.
+Thirty-four cards in play instead of twenty-six, and the deal stops being
+something that happens to you.
+
+### What changed
+
+**`rules.offer: { atSeats, piles }`** (`src/templates/climbing.js`, schema
+`rules-climbing`). "At `atSeats` seats, split the whole deck into `piles`
+face-down piles and let each seat take one." The pile size is DERIVED — deck ÷
+piles, remainder aside — so it cannot disagree with the deck, and the odd card
+is the rule's own consequence rather than a second number to keep in sync.
+`atSeats` is a single count rather than a `byPlayers` map because this is not a
+hand SIZE that varies with the table; it is a different deal with a phase of
+its own.
+
+**Two zones, both hidden.** `offer.1..3` is `visibility: 'none'` —
+`interactive`, so a hidden pile keeps its place on the felt as the phase's only
+control (the draw pile's precedent), and `hideWhenEmpty`, so each one leaves as
+it is taken and all three are gone once the last is set aside. `aside` is
+hidden and drawn nowhere: the pile nobody took, plus the odd card. It is **not**
+the discard, and that is the load-bearing choice — `discard` is
+`visibility: 'all'` and `unseenBy` counts it as SEEN, so gathering seventeen
+unlooked-at cards there would tell both players exactly which seventeen are out
+of the game, which is information no table has.
+
+**A `choose` phase.** One `takeHand` move per open pile, carrying a `from`
+address and no cards. `interactionMode` is phase-driven now (`'choose'` →
+`'take-pile'`, else `'combination'`), `actingSeats` names the picker (`stillIn`
+reads "has cards", and in this phase nobody does — unguarded it answers with an
+empty list, which the simulator reports as a stalled table), and `validateMove`
+refuses everything but a pick with a sentence of its own rather than letting a
+`playCard` fall through to `not-in-hand`. `'take-pile'` is a new entry in
+`INTERACTION_MODES`; `buildUiModel` arms one `readyTargets` entry per move keyed
+by the zone address, which is the rummy-draw shape at a different scale, and
+`zoneRenderer`'s verb makes the pile say "Take Hand 2" rather than "Play your
+selected card onto Hand 2".
+
+**Pick order.** The seat that LOST the last hand picks first and the seat that
+won leads, which is the other half of D-3's bargain. `startRound` now reads the
+winner once and uses it twice — the lead is `rules.laterLead`'s to give away
+and a pack may decline it, the pick order is not — and parks the lead in a
+public `opening` var across the two moves the phase lasts, because the round
+boundary that decided it does not run again.
+
+### What was decided, and why
+
+**Hand one is a coin toss, off the match's own seeded stream.** The issue
+offered "the player who does not hold the lowest card picks first", and it
+cannot be built: at hand one the pick happens BEFORE anybody holds a card, so a
+rule phrased over the dealt hands is a rule about a fact that does not exist
+yet. The rotating opening seat was the other candidate and is the exact shape of
+the bug #156 removed — `openingSeat()` is seat 0 on round one, which is the
+human. What survives of the issue's intent is the compensation, and it is
+already the table's rule: whichever pile you end up with, the lowest card in
+play leads (#156), so the pick and the lead tend to fall on opposite sides.
+Measured over 1000 deals, hand one's first pick went 475/525.
+
+**The unchosen pile is gathered rather than left.** Leaving it would have been
+one fewer move and a felt that goes on showing a phase that is over; the
+`hideWhenEmpty` flag only takes a pile away once it is empty.
+
+**"Hand", not "Pile", on the badge.** The play pile is already called Pile, and
+three more piles beside it wearing the same word would name two different things
+the same. "Hand 1 / 17" is what the player is choosing.
+
+**Every offered pile is worth the same to a bot, and that is the honest
+answer.** The zone is `visibility: 'none'`, so a bot cannot see into a pile any
+more than a player can; the one-ply lookahead refuses to judge the move at all
+(taking a pile turns up seventeen cards the seat could not see beforehand, which
+is `revealsHiddenCards`); and nothing public distinguishes one face-down
+seventeen from another. `botHeuristic` returns the same number for all three, so
+the deterministic chooser takes the first still on offer and a persona's
+`mistakeRate` sometimes takes another. A heuristic that preferred one would be
+reading the deck.
+
+**`instantWinShape`'s "six pairs" is measured against the HAND, not against
+`rules.deal`.** The two are the same number at every table that deals flat and
+part company under the offer deal — half of seventeen is eight, and a
+seventeen-card hand asked for six pairs would be a much commoner instant win
+than the rule it is named after. (The variant is off by default either way.)
+
+**The new-game sheet reads `players.notes`, not `rules.offer`.** A new manifest
+key, one sentence per seat count, shown under that button — prose for the SHEET
+rather than the rules page. The alternative was the sheet reading a climbing
+rule by name, which is a platform file knowing one template's business.
+
+### How it was verified
+
+`npm test` 867 pass, 0 fail (this branch's baseline is 861: main's 842 plus
+nine from #156/#158/#159 and ten from #154/#155). `node tools/pack-test.mjs
+--all` green, thirteen 26 passed 0 failed (23 before). `node smoke.mjs
+http://127.0.0.1:4867` — all nine packs at 1280x860 and 375x812 — SMOKE OK:
+18/18, no page errors.
+
+0 stalls: 300 two-seat MATCHES to game over (`--seats=2 --match`, 21.2 rounds
+per match), and 200 hands at each of two, three and four seats. Three and four
+seats are byte-for-byte the deal they were — 26.8 and 39.0 moves a hand, the
+same numbers #156 measured — and two seats moves from 15.0 to 19.1, which is a
+seventeen-card hand plus the two picks. `--vs=hard,easy --games=100 --seats=2`
+keeps `hard` ahead by more than it was: 89 rounds to 11, and 100 matches to 0.
+The protocol run (host + one client, the per-move privacy audit) completed
+100/100 with no faults, which is the offer piles going over the wire.
+
+The felt, two seats through the lobby tile and the new-game sheet, at 1280x860
+and 375x812 in both themes:
+
+| | before (main @ 4880) | after |
+|---|---|---|
+| the sheet's 2-seat line | "2 players — you and 1 bot" | "…and 1 bot. Three face-down hands of 17 — you pick one each, and the third is set aside." |
+| the deal | 13 cards, straight into play | three piles badged `Hand 1 / 17`, `Hand 2 / 17`, `Hand 3 / 17`, all lit |
+| the pile's accessible name | — | "Take Hand 2, 17 cards. Face down." |
+| the fan at 375 | 13 cards, 2 rows, step 43.24px | 17 cards, 2 rows, step 33.25px |
+| the fan at 1280 | 13 cards, 1 row, step 69.52px | 17 cards, 1 row, step 64.69px |
+| `#hand-row` | 188px at 375, 123px at 1280 | 188px at 375, 123px at 1280 |
+
+**#134's two-row fan absorbs seventeen cards with no change in the row's
+height at either viewport** — `scrollHeight` is 812/812 and 860/860 and the
+page width equals the viewport in all four combinations, so nothing overflows.
+At 375 the centre row wraps and `Hand 3` sits below `Hand 1`/`Hand 2`; all
+three are visible, lit and badged, and the felt still does not scroll.
+
+Then the play: tapping a pile fills the hand with seventeen and hands the turn
+over ("You took a hand of 17"), the bot picks ("Bruno took a hand of 17"), the
+third pile leaves the table, and the first lead is refused on every card but
+one — "The first lead of the hand has to include the 3 of spades." The hint,
+through the help sheet, reads "Steady would take hand 1" and rings that pile.
+
+The loser picking first and the winner leading were asserted at **1213 round
+boundaries** across sixty two-seat matches, with no exceptions, plus a
+twelve-match sweep in `tests/climbing.test.js`. A match saved and rehydrated
+(`serializeMatch` → `rehydrateMatch`) mid-choose, after one pick, after both,
+and three rounds in comes back with identical zones, turn, vars and playerVars
+— the coin toss is on the match stream, so a replay tosses it the same way.
+
+Every new test was proven to bite by breaking what it watches and restoring
+from a scratch copy: the `actingSeats` choose branch removed (two tests red),
+the unchosen pile sent to `discard`, the winner made to pick first, hand one
+pinned to seat 0, `offerFor` made to ignore `atSeats` (seventeen tests red,
+including the three-and-four-seat one), the `buildUiModel` branch deleted, the
+offer zone made `visibility: 'all'` (the view leak test), the choose-phase
+guard removed, `finishChoose` made to leave the third pile, and the `opening`
+var never parked. Each turned its own test red and, with the one deliberate
+exception above, nothing else. The `"choose"` entry added to
+`tests/interaction.test.js`'s phase sweep is **coverage, not a gate** — an
+unknown mode falls back to `'tap'`, which that set already contains — and the
+assertion that actually bites is `interactionMode(state) === "take-pile"` in
+`tests/climbing.test.js`.
+
+### Left undone
+
+A `takeHand` reuses the draw's one-card flight (a card back from the pile to
+the seat, dissolving on arrival) rather than animating seventeen cards; the
+count says how many and the fan is the arrival. And during the choose phase both
+seat plates read `0 CARDS`, which is true and reads oddly — `seatCounters` is
+#148's, so it was left alone rather than edited from two branches at once.
+
 ## Next steps
 
 Multiplayer (Phase 8), per-pack UI polish (per-pack `theme.css`, custom

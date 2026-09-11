@@ -39,10 +39,18 @@ function rankLabel(rank) {
 function dealCount(rules) {
   const deal = rules.deal;
   if (deal === undefined || deal === null) return null;
-  if (typeof deal === 'number') return `${deal} cards each`;
-  const by = deal.byPlayers || {};
+  const by = typeof deal === 'number' ? {} : (deal.byPlayers || {});
   const exceptions = Object.entries(by).map(([n, count]) => `${count} with ${n} players`);
-  return `${deal.default} cards each${exceptions.length ? ` (${list(exceptions)})` : ''}`;
+  // A DIFFERENT DEAL IS NOT A DIFFERENT COUNT, which is why `byPlayers` cannot
+  // say this one: Thirteen two-handed deals the whole pack into face-down
+  // hands and lets the players pick (`rules.offer`, src/templates/climbing.js).
+  // Without it this line read "Deal 13 cards each" over the one table where
+  // nobody is dealt a hand at all.
+  if (rules.offer) {
+    exceptions.push(`${rules.offer.piles} face-down hands to pick from with ${rules.offer.atSeats}`);
+  }
+  const each = typeof deal === 'number' ? deal : deal.default;
+  return `${each} cards each${exceptions.length ? ` (${list(exceptions)})` : ''}`;
 }
 
 /**

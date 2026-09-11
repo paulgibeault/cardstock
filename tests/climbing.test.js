@@ -41,6 +41,26 @@ async function dealt(seats = 4, seed = "climbing", variants = undefined) {
   return state;
 }
 
+/**
+ * Every seat has picked a hand — a no-op at a table that does not deal for
+ * them (#157).
+ *
+ * A two-handed deal opens in `choose` with every hand empty, so a test that
+ * asserts anything about the HANDS has to get past it first. Bot moves rather
+ * than hand-written ones, because the enumerator is what the felt and the bot
+ * both read and a test that reached around it would be pinning a path nobody
+ * takes.
+ */
+function pickHands(state, limit = 8) {
+  for (let i = 0; i < limit && state.turn.phase === "choose"; i++) {
+    const move = chooseBotMove(state, state.turn.seat);
+    assert.ok(move, `nothing to pick with in the choose phase (step ${i})`);
+    applyMove(state, move);
+  }
+  assert.notStrictEqual(state.turn.phase, "choose", "the choose phase never ended");
+  return state;
+}
+
 /** Who may act, straight off the template's own hook. */
 function acting(state) {
   const template = state.pack.template;
@@ -600,20 +620,26 @@ function lowestInPlay(state) {
 test("the lowest card IN PLAY leads hand one at every seat count the pack offers", async () => {
   // THE BUG THIS PINS (#156). `firstLead.card` was the literal `spades-3`, and
   // Thirteen deals a flat thirteen with the remainder out of play (D-11), so
-  // short-handed the 3♠ is frequently not dealt at all — half the deck is never
-  // dealt at two seats and a quarter of it at three, and the card goes missing
-  // at about those rates (42 and 29 of the hundred deals THIS sweep walks; 50.7%
-  // and 25.8% over 400 each, which is the population). Every one of those fell
+  // short-handed the 3♠ is frequently not dealt at all — a quarter of the deck
+  // is never dealt at three seats and eighteen of the fifty-two sit out the
+  // two-handed offer deal, and the card goes missing at about those rates (33
+  // and 29 of the hundred deals THIS sweep walks; 34.6% and 25.0% are the
+  // populations). Every one of those fell
   // through to `ctx.openingSeat()`, which on hand one is seat 0, which is the
   // human: the player was handed the opening lead of a game whose first rule is
   // that the lowest card leads.
   //
   // A hundred deals per seat count at four counts is 400, and the bar is 100%:
   // this is not a statistical claim, it is the rule.
+  //
+  // TWO SEATS GETS THERE THROUGH THE PICKS (#157). The offer deal opens with
+  // every hand empty, so the rule this test is about cannot even be asked until
+  // both piles have been taken — which is the point at which the template asks
+  // it too (`finishChoose`).
   const missing = { 2: 0, 3: 0, 4: 0 };
   for (const seats of [2, 3, 4]) {
     for (let game = 0; game < 100; game++) {
-      const state = await dealt(seats, `lowest:${seats}:${game}`);
+      const state = pickHands(await dealt(seats, `lowest:${seats}:${game}`));
       const lowest = lowestInPlay(state);
       const holder = [...Array(seats).keys()]
         .find((s) => state.zones.cards(handAddress(s)).includes(lowest));
@@ -773,6 +799,145 @@ test("the 3 of spades leads hand one, and the seat that goes out leads hand two"
   assert.ok(state.playerVars.every((own) => !own.__mustInclude),
     "hand two still owes the 3 of spades");
   assert.strictEqual(state.turn.seat, state.vars.leader);
+});
+
+/* ------------------------------------------------------------------ *
+ * Two-handed: three hands on offer, and you pick one (#157)
+ * ------------------------------------------------------------------ */
+
+test("two seats are dealt three hands to choose from, and the piles say nothing but their size", async () => {
+  // WHY THE DEAL IS DIFFERENT AT ALL. `rules.deal` is thirteen at every seat
+  // count by design (D-11) — but two-handed that leaves twenty-six of the
+  // fifty-two unseen by anybody, which is half the pigs and half the bombs
+  // simply not turning up. Three piles of seventeen puts thirty-four in play.
+  const state = await dealt(2, "offer:deal");
+  assert.strictEqual(state.turn.phase, "choose", "the two-handed deal did not open on the pick");
+  assert.deepStrictEqual([0, 1].map((s) => state.zones.count(handAddress(s))), [0, 0],
+    "somebody was dealt a hand before anybody picked one");
+  assert.deepStrictEqual([1, 2, 3].map((n) => state.zones.count(`offer.${n}`)), [17, 17, 17]);
+  // 52 does not divide by three, and the odd card is out of play rather than
+  // quietly making one pile bigger.
+  assert.strictEqual(state.zones.count("aside"), 1, "the odd card is not set aside");
+
+  // THE PICKER IS AN ACTING SEAT. `stillIn` reads "has cards", and in this
+  // phase nobody does — so without the phase branch `actingSeats` answers with
+  // an empty list, which the simulator reports as a stalled table.
+  assert.deepStrictEqual(acting(state), [state.turn.seat]);
+
+  const moves = enumerateLegalMoves(state, state.turn.seat);
+  assert.deepStrictEqual(moves.map((m) => m.from), ["offer.1", "offer.2", "offer.3"]);
+  assert.ok(moves.every((m) => m.type === "takeHand" && !m.cards),
+    "a pick carries cards, so the move itself names the hand it is taking");
+  assert.deepStrictEqual(enumerateLegalMoves(state, 1 - state.turn.seat), [],
+    "the seat not picking was offered a move");
+
+  // ...and the felt lights all three, keyed by the address it draws them at.
+  assert.strictEqual(interactionMode(state), "take-pile");
+  const ui = buildUiModel(state, { seat: state.turn.seat, moves, acts: true });
+  assert.deepStrictEqual([...ui.readyTargets.keys()], ["offer.1", "offer.2", "offer.3"]);
+  assert.strictEqual(ui.handSelectable.size, 0, "an empty hand offered something to tap");
+});
+
+test("a pile taken is a hand of 17, and the one nobody took leaves the table", async () => {
+  const state = await dealt(2, "offer:take");
+  const first = state.turn.seat;
+  applyMove(state, { actor: first, type: "takeHand", from: "offer.2" });
+
+  assert.strictEqual(state.zones.count(handAddress(first)), 17, "the whole pile did not arrive");
+  assert.strictEqual(state.zones.count("offer.2"), 0);
+  assert.strictEqual(state.turn.phase, "choose", "the phase ended a pick early");
+  assert.strictEqual(state.turn.seat, 1 - first, "the other seat was not asked to pick");
+  // The pile that is gone is gone from the offer, so it cannot be taken twice.
+  assert.strictEqual(
+    validateMove(state, { actor: 1 - first, type: "takeHand", from: "offer.2" }).rule,
+    "not-on-offer");
+
+  applyMove(state, chooseBotMove(state, state.turn.seat));
+  assert.strictEqual(state.turn.phase, "play");
+  assert.deepStrictEqual([0, 1].map((s) => state.zones.count(handAddress(s))), [17, 17]);
+  assert.deepStrictEqual([1, 2, 3].map((n) => state.zones.count(`offer.${n}`)), [0, 0, 0],
+    "a pile nobody took is still sitting on the table");
+  // SEVENTEEN PLUS ONE, AND NOT INTO THE DISCARD. `discard` is public and
+  // `unseenBy` counts it as seen, so putting the unchosen pile there would tell
+  // every seat that seventeen named cards are out of play — which is exactly
+  // the information nobody at a real table has.
+  assert.strictEqual(state.zones.count("aside"), 18);
+  assert.strictEqual(state.zones.count("discard"), 0);
+
+  // And then the ordinary rule: the lowest card of the thirty-four in play
+  // leads, and owes that card (#156).
+  const lowest = lowestInPlay(state);
+  const holder = [0, 1].find((s) => state.zones.cards(handAddress(s)).includes(lowest));
+  assert.strictEqual(state.turn.seat, holder);
+  assert.strictEqual(state.playerVars[holder].__mustInclude, lowest);
+  assert.strictEqual(interactionMode(state), "combination", "the mode never left the pick");
+});
+
+test("the loser of a hand picks first, and the winner leads once the picks are in", async () => {
+  // THE BARGAIN THE RULE IS (#157): the player who lost gets first choice of
+  // pile, the player who won gets the lead. Asserted at every round boundary of
+  // several whole matches rather than on one seeded hand, because the two
+  // halves are decided in different places — `startRound` reads who won, and
+  // `finishChoose` spends it two moves later — and a test of one deal would not
+  // notice them drifting apart.
+  let boundaries = 0;
+  for (let game = 0; game < 12; game++) {
+    const state = await dealt(2, `offer:order:${game}`);
+    for (let step = 0; step < 4000 && !state.gameOver; step++) {
+      const seat = acting(state)[0];
+      assert.ok(seat !== undefined,
+        `the table stopped on round ${state.roundNumber}, phase ${state.turn.phase}`);
+      const round = state.roundNumber;
+      applyMove(state, chooseBotMove(state, seat));
+      if (state.roundNumber === round) continue;
+      // `seat` emptied its own hand, which is what ended the round.
+      boundaries += 1;
+      assert.strictEqual(state.turn.phase, "choose", "the next hand was not dealt as an offer");
+      assert.strictEqual(state.turn.seat, 1 - seat,
+        `the winner of round ${round} picked first`);
+      applyMove(state, chooseBotMove(state, state.turn.seat));
+      applyMove(state, chooseBotMove(state, state.turn.seat));
+      assert.strictEqual(state.turn.phase, "play");
+      assert.strictEqual(state.turn.seat, seat,
+        `round ${round + 1} did not open on the seat that went out`);
+      assert.ok(state.playerVars.every((own) => !own.__mustInclude),
+        "a later hand still owes the lowest card");
+    }
+  }
+  assert.ok(boundaries > 20, `only ${boundaries} hands finished — the sweep proved little`);
+});
+
+test("hand one's pick order is a coin toss, not the seat the human is sitting in", async () => {
+  // THE DECISION, PINNED (#157). At hand one nobody holds a card when the pick
+  // is made, so "the player who does not hold the lowest card picks first" is a
+  // rule about a fact that does not exist yet. The other candidate was the
+  // rotating opening seat, and on round one that is seat 0 — which is the human,
+  // and is the exact shape of the bug #156 removed. So it is the match's own
+  // seeded stream, and what this asserts is that it is neither constant nor the
+  // player.
+  const picks = [0, 0];
+  for (let game = 0; game < 120; game++) {
+    picks[(await dealt(2, `offer:flip:${game}`)).turn.seat] += 1;
+  }
+  assert.ok(picks[0] > 20 && picks[1] > 20,
+    `hand one's first pick went ${picks[0]}/${picks[1]} — that is not a coin toss`);
+});
+
+test("three and four seats are dealt exactly as they were — the offer is two-handed only", async () => {
+  // `rules.offer.atSeats` is a single seat count on purpose. A deal that leaked
+  // into the tables the pack is actually played at would be the fix costing more
+  // than the bug.
+  for (const seats of [3, 4]) {
+    const state = await dealt(seats, `offer:not:${seats}`);
+    assert.strictEqual(state.turn.phase, "play", `${seats} seats opened on a pick`);
+    for (let seat = 0; seat < seats; seat++) {
+      assert.strictEqual(state.zones.count(handAddress(seat)), 13,
+        `${seats} seats: seat ${seat} was not dealt a flat thirteen`);
+    }
+    assert.ok(!state.zones.has("offer.1"), `${seats} seats: the offer piles exist`);
+    assert.ok(!state.zones.has("aside"), `${seats} seats: the aside pile exists`);
+    assert.strictEqual(interactionMode(state), "combination");
+  }
 });
 
 test("a match plays from the deal to game over, and the lowest total wins", async () => {

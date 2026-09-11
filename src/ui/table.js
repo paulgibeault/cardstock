@@ -3447,12 +3447,18 @@ function animateMove(state, move, from) {
   // rather than a distinction between their cards and a bot's — see
   // flightDurationMs. `settings` is null for the instant before the first load.
   const duration = flightDurationMs(settings?.botDelayMs);
-  if (move.type === 'draw') {
+  if (move.type === 'draw' || move.type === 'takeHand') {
     // A draw has no single landing slot in a fanned hand, so it dissolves on
     // arrival rather than pretending to become a particular card. The human's
     // own draw is face-up because they are about to see it anyway.
+    //
+    // A WHOLE PILE TAKEN AS A HAND (#157) rides the same flight, and always
+    // face down: seventeen cards left that pile at once, nobody had seen any of
+    // them, and one back travelling from the pile to the seat says "that pile
+    // is now theirs" without picking one of the seventeen to stand for the
+    // rest.
     const to = cardSizedRect(seatRect(move.actor), from.width);
-    const card = isMySeat(move.actor)
+    const card = move.type === 'draw' && isMySeat(move.actor)
       ? cardById(state, state.zones.cards(handAddress(mySeat())).at(-1) || '')
       : null;
     flyCard(card ? art().face(card) : art().back(), from, to, { fade: true, duration });

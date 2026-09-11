@@ -91,6 +91,12 @@ function phrasesFor(state, seat, move) {
       }
       return ['draw from the deck', 'draw from the deck'];
     }
+    case 'takeHand': {
+      // The one move in the repo whose cards are a secret from the player
+      // making it, so the sentence names the pile and never its contents.
+      const n = move.from ? String(move.from).split('.')[1] : null;
+      return [n ? `take hand ${n}` : 'take one of the hands on offer', 'take the hand lit up'];
+    }
     case 'discard':
       return [`discard ${listOf(state, cards)}`, 'discard the card lit up'];
     case 'layDown': {
@@ -146,7 +152,9 @@ export function highlightsFor(state, seat, move) {
     for (const id of meld.cards || []) cardIds.add(id);
   }
   const zones = new Set();
-  if (move.type === 'draw') {
+  if (move.type === 'takeHand') {
+    if (move.from) zones.add(move.from);
+  } else if (move.type === 'draw') {
     const from = move.from ?? 'draw';
     zones.add(from);
     if (from === 'discard') {

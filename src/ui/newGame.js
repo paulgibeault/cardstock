@@ -131,7 +131,15 @@ export function askNewGame(manifest) {
     const output = document.createElement('span');
     output.className = 'new-game__seat-count';
     const paint = () => {
-      output.textContent = `${seats} players — you and ${seats - 1} ${seats === 2 ? 'bot' : 'bots'}`;
+      // AND WHAT THAT SEAT COUNT CHANGES, where the pack has something to say
+      // about it (`players.notes`). Thirteen at two seats is not the same deal
+      // as Thirteen at four — three face-down hands of seventeen that you pick
+      // from, rather than thirteen each (#157) — and the button is where that
+      // is decided, so it is where it has to be said. A pack with no note for
+      // this count gets the sentence it always had.
+      const note = manifest.players?.notes?.[String(seats)];
+      output.textContent = `${seats} players — you and ${seats - 1} ${seats === 2 ? 'bot' : 'bots'}`
+        + (note ? `. ${note}` : '');
     };
     for (let n = min; n <= max; n++) {
       const btn = document.createElement('button');

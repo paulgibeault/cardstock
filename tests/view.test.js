@@ -562,6 +562,63 @@ test('a shared var nobody declared is published to nobody', async () => {
   assert.equal(other.privateVars.somethingNobodyDeclared, undefined);
 });
 
+test('a hand on offer is a count to everybody, its own picker included', async () => {
+  // THE ONE PILE IN THE REPO WHOSE OWNER MAY NOT LOOK AT IT (#157). Thirteen at
+  // two seats deals three face-down hands of seventeen and each player takes
+  // one — and the whole decision is that you are picking blind. A `cards` array
+  // reaching ANY seat would not be a subtle privacy bug, it would be the phase
+  // stopping being a choice: the seat on turn would be picking the pile it had
+  // already read.
+  //
+  // The per-seat sweep at the top of this file covers three and four seats;
+  // this is the deal that only exists at two, and the seat it matters most for
+  // is the one the platform's own `privateVars` rule would otherwise let
+  // through — the seat whose turn it is.
+  const state = await tableFor('thirteen', 2);
+  assert.equal(state.turn.phase, 'choose', 'the two-handed deal did not open on the pick');
+  const offers = ['offer.1', 'offer.2', 'offer.3'];
+  for (const address of [...offers, 'aside']) {
+    assert.ok(state.zones.count(address) > 0, `${address} is empty, so this proves nothing`);
+  }
+
+  const isCardId = cardIdChecker(state);
+  for (const seat of [0, 1, null]) {
+    const view = viewFor(state, seat, {
+      moves: seat === null ? [] : enumerateLegalMoves(state, seat),
+    });
+    const wire = JSON.parse(JSON.stringify(view));
+    // Structural: no list at all, from a zone nobody may look into.
+    for (const address of [...offers, 'aside']) {
+      assert.equal(wire.zones[address].cards, undefined,
+        `seat ${seat} was sent the cards of ${address}`);
+      assert.equal(wire.zones[address].top, undefined,
+        `seat ${seat} was sent the top of ${address}`);
+      assert.equal(wire.zones[address].count, state.zones.count(address),
+        `seat ${seat} has the wrong count for ${address} — the SIZE is public`);
+    }
+    // ...and the sweep, over the whole payload including the legal moves that
+    // ride with it: a `takeHand` names a pile, never a card.
+    const allowed = entitled(state, seat);
+    for (const id of cardIdsIn(wire, isCardId)) {
+      assert.ok(allowed.has(id), `seat ${seat} was sent ${id}, which is sitting in a pile on offer`);
+    }
+  }
+
+  // Taking one is the moment the cards become yours and nobody else's — the
+  // same rule the hand zone has always had, arriving seventeen at a time.
+  const picker = state.turn.seat;
+  applyMove(state, { actor: picker, type: 'takeHand', from: 'offer.1' });
+  const mine = viewFor(state, picker);
+  const theirs = viewFor(state, 1 - picker);
+  assert.equal(mine.zones[`hand.${picker}`].cards.length, 17);
+  assert.equal(theirs.zones[`hand.${picker}`].cards, undefined);
+  assert.equal(theirs.zones[`hand.${picker}`].count, 17);
+  // And the event that announced it carried the count and never the ids.
+  const taken = state.events.find((e) => e.type === 'handTaken');
+  assert.ok(taken && taken.count === 17, 'no handTaken event, or it does not say how many');
+  assert.equal(taken.cards, undefined, 'the handTaken event carries card ids');
+});
+
 test('a joiner sees the combination on the table and who has dropped out', async () => {
   // WHAT A CLIMBING TABLE IS UNPLAYABLE WITHOUT (#102). A joiner holds a view
   // and never a state, so anything the felt draws that is not a zone has to be
