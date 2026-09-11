@@ -74,7 +74,8 @@ import { suggestMove } from './hint.js';
 import { schedule } from './clock.js';
 import { line, svgNode, clearSvgCache } from './dom.js';
 import { promptChoice, closeChoiceDialog } from './choiceDialog.js';
-import { createCelebrations } from './celebrations.js';
+import { createCelebrations, TRICK_BANNER_PRIORITY } from './celebrations.js';
+import { showCardModel, renderShowCard } from './showCard.js';
 import { createContractLadder } from './contractLadder.js';
 import { createContractStrip } from './contractStrip.js';
 import {
@@ -200,6 +201,7 @@ const el = {
   handSort: document.getElementById('hand-sort'),
   log: document.getElementById('log'),
   eventBanner: document.getElementById('event-banner'),
+  showCard: document.getElementById('show-card'),
 };
 
 // ONE OPEN MATCH, ONE OBJECT (src/ui/session.js). Everything a match owns —
@@ -3582,10 +3584,38 @@ let gestures = null;
 let zones = null;
 let record = null;
 
-function hideBanner() { if (moments) moments.hideBanner(session); }
-function showBanner(text, tone) { if (moments) moments.showBanner(session, text, tone); }
+// THE BANNER AND THE SHOW CARD ARE ONE SLOT. The card replaces the banner for
+// a scoring step (#152) and they must never be on the felt together — so every
+// door that puts one up or takes one down goes through here and clears the
+// other. That is also the card's whole teardown story: it is torn down exactly
+// where the banner would have been, which is every path that already called
+// `hideBanner` (leaving the table, a new deal, a closed session).
+function hideBanner() {
+  hideShowCard();
+  if (moments) moments.hideBanner(session);
+}
+function showBanner(text, tone) {
+  hideShowCard();
+  if (moments) moments.showBanner(session, text, tone);
+}
+
+/** Put one scoring step's card on the felt, over the middle. */
+function showShowCard(model) {
+  if (!el.showCard) return;
+  const node = renderShowCard(model, { art });
+  if (!node) return;
+  if (moments) moments.hideBanner(session);
+  el.showCard.replaceChildren(node);
+  el.showCard.hidden = false;
+}
+
+function hideShowCard() {
+  if (!el.showCard) return;
+  el.showCard.hidden = true;
+  el.showCard.replaceChildren();
+}
 function celebrateTrick(state, ev) { if (moments) moments.celebrateTrick(session, state, ev); }
-function celebrateAction(state, events) { return moments ? moments.celebrateAction(session, state, events) : null; }
+function celebrateAction(state, events, opts) { return moments ? moments.celebrateAction(session, state, events, opts) : null; }
 function animatePenaltyDraw(state, seat, count, delay) { if (moments) moments.animatePenaltyDraw(state, seat, count, delay); }
 
 /**
@@ -3985,10 +4015,48 @@ function playShowStep(finalState, step) {
   );
   const text = said?.text
     || `${seatPossessive(step.seat)} ${step.isCrib ? 'crib' : 'hand'} is worth ${step.points}.`;
-  showBanner(text, said?.tone || (step.points ? 'good' : 'neutral'));
+  // THE CARD INSTEAD OF THE BANNER (#152), and the sentence still in the log —
+  // which is the live region a screen reader hears, so nothing is lost by the
+  // card being decorative. The banner is a fallback rather than a second
+  // surface: a remote client's step has no card ids on it (cribbage.js's
+  // `partsOf` explains why), and a card with no cards on it is a caption in a
+  // box. `showCardFaces` returning empty is the test for that.
+  const model = showCardFor(finalState, step);
+  if (model) showShowCard(model);
+  else showBanner(text, said?.tone || (step.points ? 'good' : 'neutral'));
   el.log.textContent = text;
   pulseSeat(step.seat, step.points ? 'good' : 'neutral');
   spotlightZone(step.isCrib ? 'show' : `play.${step.seat}`);
+}
+
+/**
+ * One step of a show as a show card, or null when the felt cannot draw one.
+ *
+ * THE STARTER IS READ OFF THE POSITION, not off the event. It is a shared zone
+ * with `visibility: 'all'` and it is right there in the ending fork, so putting
+ * its id on the wire would be a second copy of a public fact, travelling
+ * outside the one field the view filter knows how to check (src/engine/view.js).
+ * The ending fork is also the only state that still HAS it by now: the engine
+ * crossed the round boundary inside this same move and the live state is
+ * already holding the next deal's cut.
+ *
+ * The positions in `step.parts` are relative to `[...step.cards, starter]`,
+ * which is the order `theShow` scored them in and the order drawn here.
+ */
+function showCardFor(finalState, step) {
+  if (!Array.isArray(step.cards) || !step.cards.length) return null;
+  const starterId = finalState.zones.has('starter') ? finalState.zones.cards('starter')[0] : null;
+  const ids = starterId ? [...step.cards, starterId] : step.cards.slice();
+  const cards = ids.map((id) => cardById(finalState, id) ?? null);
+  if (!cards.some(Boolean)) return null;
+  return showCardModel({
+    whose: seatPossessive(step.seat),
+    isCrib: step.isCrib,
+    points: step.points,
+    parts: step.parts,
+    cards,
+    starterAt: starterId ? ids.length - 1 : null,
+  });
 }
 
 /**
@@ -4170,6 +4238,13 @@ function runRoundBeat(state, plan, finalState) {
     }, step.at);
   }
   beatTimer(() => {
+    // THE LAST SHOW CARD COMES DOWN WITH THE SHEET GOING UP (#152). The banner
+    // this card replaced dismissed itself after 2200ms, so the sheet always
+    // opened onto a clear felt; a card sits until something takes it away, and
+    // the crib's — the last step of the beat — was still there UNDER the
+    // summary panel. The cards are the detail and the panel is the tally: they
+    // are never both the answer at once.
+    hideShowCard();
     session.roundSummaryOpen = true;
     // THE RUNG THAT SHOWS NO SHEET (#150). Instant does not open the summary
     // and then race it away — it never opens one. `roundSummaryOpen` is still
@@ -4315,11 +4390,19 @@ function afterMove(state, move, from, message, { publish = true } = {}) {
     // here would be the same card arriving twice.
     if (!reveal) animateMove(shown, move, from);
     if (trick) celebrateTrick(shown, trick);
-    // After the card has been seen to land, and only when a trick is not already
-    // holding the felt — two celebrations at once is neither. A show is the same
-    // rule again: its own steps are the narration, and the first `showScored`
-    // banner firing here would say pone's count over the last pegging card.
-    const action = (trick || plan?.steps.length) ? null : celebrateAction(shown, events);
+    // After the card has been seen to land. A show's own steps are the
+    // narration, so nothing competes with them — the first `showScored` banner
+    // firing here would say pone's count over the last pegging card.
+    //
+    // A GATHERED TRICK NO LONGER SILENCES THIS OUTRIGHT; it raises the bar.
+    // "Two celebrations at once is neither" is still the rule and
+    // TRICK_BANNER_PRIORITY is still where almost everything falls under it,
+    // but the card that breaks a suit is very often the fourth card of a trick,
+    // and suppressing that banner suppressed the only time the felt ever
+    // mentioned the rule (#151). See celebrations.js for the scale.
+    const action = plan?.steps.length
+      ? null
+      : celebrateAction(shown, events, { floor: trick ? TRICK_BANNER_PRIORITY : -1 });
     // The action is the better sentence: "Rook played." says less than nothing
     // next to "You draw 4 and lose your turn", and the log is the live region a
     // screen reader hears.

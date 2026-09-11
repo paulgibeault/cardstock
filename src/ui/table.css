@@ -1366,6 +1366,9 @@ body {
 #felt-middle {
   flex: 1;
   min-height: 0;
+  /* The anchor for #show-card, which is inset to this box so it can never
+     reach the fan (see THE SHOW CARD below). Changes nothing about the row. */
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2257,6 +2260,29 @@ button.pile-stack:focus-visible { outline: 2px solid var(--accent); outline-offs
 .contract-chip[data-chip="trump"] {
   border-color: var(--accent);
   box-shadow: 0 0 0 1px var(--accent);
+}
+/* THE SUIT IS FREE NOW, and it stays said (#151). The break used to be silent
+   in every sense: no sentence, no mark, and a player found out by discovering
+   that leading a spade was suddenly allowed. The banner says it once; this says
+   it for the rest of the hand, and it is drawn in the accent for the same
+   reason trump is — it governs every lead from here on.
+
+   The word is the value rather than the label so it takes the bold slot: the
+   chip reads "SPADES **Broken**" and the half worth reading at a glance is the
+   half in ink. Filled rather than ringed, because there is no second state to
+   tell it apart from — the chip either exists or it does not.
+
+   One shot on arrival, and the resting state is the whole chip: the mark
+   APPEARING is what the eye is meant to catch, and it never pulses again
+   (cardstock#24). */
+.contract-chip[data-chip="broken"] {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 18%, var(--chip-bg));
+  animation: contract-chip-in 260ms ease-out both;
+}
+@keyframes contract-chip-in {
+  from { opacity: 0; transform: translateY(-0.25rem); }
+  to { opacity: 1; transform: none; }
 }
 /* The pack's own card, at strip size (src/ui/cardStyles/chooser.js). */
 .contract-chip__art {
@@ -3581,6 +3607,173 @@ body.is-dragging .card-face { cursor: grabbing; }
   80% { margin-left: -3px; }
 }
 
+/* ------------------------------------------------------------------ *
+ * THE SHOW CARD (#152) — src/ui/showCard.js
+ * ------------------------------------------------------------------ *
+ *
+ * What the banner used to say in one sentence, drawn: the name, the five cards
+ * and one row per combination with its points.
+ *
+ * IN #felt-middle RATHER THAN FIXED TO THE VIEWPORT, which is the one thing
+ * worth reading this block for. #event-banner is `position: fixed; top: 34%`
+ * and fine as a pill, but this is a panel — at 375x812 a fixed one sized to its
+ * contents lands wherever the contents put it, and what is directly below 34%
+ * on a phone is the fan. Parented to the felt's middle and inset to it, the
+ * card is bounded by the row it sits in: it cannot reach the hand at any
+ * viewport, because the hand is not in this box.
+ *
+ * The middle is 191px of slack at 375x812 during the play (measured for the
+ * board, see #136 above) and the piles under it are what the card covers — the
+ * played cards it is COUNTING, which the player has just watched go down. The
+ * `max-height: 100%` plus the scroll on the combination list is what holds the
+ * promise that it fits without the page scrolling: on the narrowest felt the
+ * rows give up the room, never the cards or the total.
+ *
+ * BATTERY RULE (cardstock#24): one 220ms fade-and-rise on arrival, and then it
+ * is still. The highlight is a transition on a class, not a keyframe.
+ */
+#show-card {
+  position: absolute;
+  inset: 0;
+  z-index: 8;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* The felt underneath stays readable around the card, and the card itself is
+     what takes the pointer — the rows are pokeable (`wireHighlight`). */
+  pointer-events: none;
+}
+#show-card[hidden] { display: none; }
+
+.show-card {
+  pointer-events: auto;
+  box-sizing: border-box;
+  max-width: min(20rem, 100%);
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.6rem 0.75rem;
+  border-radius: 0.8rem;
+  background: var(--panel-bg);
+  color: var(--panel-text);
+  border: 1px solid var(--panel-border);
+  box-shadow: 0 10px 30px var(--panel-shadow);
+  animation: show-card-in 220ms ease-out both;
+}
+
+@keyframes show-card-in {
+  from { opacity: 0; transform: translateY(0.5rem) scale(0.97); }
+  to { opacity: 1; transform: none; }
+}
+
+.show-card__title {
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  opacity: 0.8;
+}
+
+.show-card__faces {
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
+  flex: none;
+}
+
+.show-card__face {
+  /* Sized off the felt's own card variable so the card steps down with
+     everything else on a narrow screen (see #table). Small enough that five of
+     them and the starter's gap fit inside 20rem at any of those sizes. */
+  width: calc(var(--hand-card-w) * 0.62);
+  flex: none;
+  border-radius: 3px;
+  transition: transform 140ms ease-out, filter 140ms ease-out;
+}
+.show-card__face svg { display: block; width: 100%; height: auto; }
+
+/* The cut belongs to nobody, so it stands off the four that are somebody's. */
+.show-card__face--starter { margin-left: 0.45rem; }
+
+/* THE COMBINATION UNDER THE FINGER, and only its cards. Lifted and ringed
+   rather than dimming the others: dimming four cards to emphasise two is a
+   bigger change to the picture than the question deserves, and the ring is the
+   accent the felt already uses for "this is the one".
+
+   THE RING IS AN OUTLINE, not a drop-shadow. It was written
+   `drop-shadow(0 0 0 2px var(--accent))` — and `drop-shadow()` takes at most
+   three lengths (x, y, blur), so the fourth made the whole `filter` invalid
+   and the cascade dropped BOTH shadows in silence: the computed filter on a
+   lit face was `none` and the highlight was a 3px lift and nothing else. An
+   outline cannot fail that way, it follows the face's own corner radius, and
+   it costs no filter pass on five card faces. */
+.show-card__face--lit {
+  transform: translateY(-0.2rem);
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  filter: drop-shadow(0 3px 6px var(--card-shadow));
+}
+
+.show-card__parts {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  /* The half that gives way on a short felt — the cards and the total never
+     do. `min-height: 0` is what lets it actually shrink inside the column. */
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.show-card__part {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.1rem 0.25rem;
+  border-radius: 0.3rem;
+  font-size: 0.82rem;
+  cursor: default;
+  transition: background-color 140ms ease-out;
+}
+.show-card__part:hover { background: var(--chip-bg); }
+.show-card__part-name::first-letter { text-transform: uppercase; }
+.show-card__part-points { font-weight: 700; font-variant-numeric: tabular-nums; }
+
+.show-card__total {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.25rem 0.25rem 0;
+  border-top: 1px solid var(--panel-border);
+  font-size: 0.9rem;
+}
+.show-card__total-label {
+  text-transform: uppercase;
+  font-size: 0.62rem;
+  letter-spacing: 0.06em;
+  opacity: 0.75;
+}
+.show-card__total-points {
+  font-weight: 800;
+  font-size: 1.15rem;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+/* NINETEEN: the traditional name for a hand worth nothing, and the reason a
+   zero is not printed here. It is the one number five cards cannot make, so a
+   player who sees the word knows exactly what happened. */
+.show-card__nineteen {
+  align-self: center;
+  padding: 0.15rem 0.5rem;
+  font-size: 1rem;
+  font-weight: 700;
+  font-style: italic;
+  opacity: 0.75;
+}
+
 /* The winner's cards glow when a trick lands well; your own hand flinches
    when the trick you just took was full of points. */
 .zone-celebrate { animation: zone-celebrate 0.9s ease-out; }
@@ -3958,6 +4151,8 @@ body.is-dragging .card-face { cursor: grabbing; }
   .seat--target,
   .event-banner--in,
   .event-banner--bad.event-banner--in,
+  .contract-chip[data-chip="broken"],
+  .show-card,
   .zone-celebrate,
   .zone-lament,
   .table--flash::after,

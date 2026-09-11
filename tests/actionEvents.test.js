@@ -13,6 +13,7 @@ import { createState } from "../src/engine/state.js";
 import { applyMove } from "../src/engine/movePipeline.js";
 import { makeCtx } from "../src/engine/context.js";
 import { loadPackFromDisk } from "../tools/pack-test.mjs";
+import { TRICK_BANNER_PRIORITY } from "../src/ui/celebrations.js";
 
 function put(state, address, cardIds) {
   const zone = state.zones.get(address);
@@ -169,4 +170,212 @@ test("a penalty's cards arrive at the END of the hand it lands on", async () => 
   assert.deepEqual(hand.slice(-ev.drew), deckTop.slice().reverse(),
     "the last `drew` cards of the hand are the ones just taken off the deck");
   assert.deepEqual(hand.slice(0, -ev.drew), ["blue-1"], "and nothing it held moved");
+});
+
+/* ------------------------------------------------------------------ *
+ * BREAKING (#151) — the one rule in the trick genre the felt never said
+ * ------------------------------------------------------------------ *
+ *
+ * `placeCard` in src/templates/trick-taking.js flipped `spadesBroken` and
+ * emitted nothing, so a player found out that spades were broken by noticing
+ * that leading one was suddenly allowed. These pin the event that fixes it:
+ * its payload, that it fires EXACTLY ONCE a hand, that the var it sets is one
+ * a joiner can actually see, and that its sentence outranks the trick it so
+ * often arrives inside.
+ */
+
+/** A trick table mid-hand, with the hands dealt by hand and nothing broken. */
+async function trickTable(packId, hands, { broken = false, seats = 4, trickNumber = 1 } = {}) {
+  const pack = await loadPackFromDisk(packId);
+  const state = createState({ pack, seats, seed: "breaking" });
+  for (let seat = 0; seat < seats; seat++) state.zones.get(`hand.${seat}`).cards.length = 0;
+  for (const [addr, cards] of Object.entries(hands)) put(state, addr, cards);
+  for (let seat = 0; seat < seats; seat++) state.playerVars[seat].bid = 3;
+  state.turn.phase = "play";
+  state.turn.seat = 0;
+  state.vars.trickNumber = trickNumber;
+  state.vars.leader = 0;
+  state.vars.led = null;
+  state.vars[pack.rules.breaking.var] = broken;
+  return { pack, state };
+}
+
+test("a suit breaking is an event, and it names the card that did it", async () => {
+  // Seat 0 leads a heart; seat 1 is void and throws a spade in. That is the
+  // whole of "spades are broken", and it used to happen in silence.
+  const { state } = await trickTable("team-spades", {
+    "hand.0": ["hearts-5", "clubs-3"],
+    "hand.1": ["spades-7", "diamonds-4"],
+    "hand.2": ["hearts-9", "clubs-8"],
+    "hand.3": ["hearts-2", "clubs-9"],
+  });
+  applyMove(state, { actor: 0, type: "playCard", cards: ["hearts-5"] });
+  assert.equal(eventOf(state, "broken"), undefined, "a heart breaks nothing");
+
+  applyMove(state, { actor: 1, type: "playCard", cards: ["spades-7"] });
+  const ev = eventOf(state, "broken");
+  assert.ok(ev, "the spade emits `broken`");
+  assert.equal(ev.seat, 1, "the seat that played it");
+  assert.deepEqual(ev.cards, ["spades-7"],
+    "the id rides in `cards`, which is the only field src/engine/view.js filters");
+  assert.equal(ev.suit, "spades", "the suit that may now be led");
+  assert.deepEqual(ev.card, { rank: "7", suit: "spades" },
+    "and what broke it, because describeEvent gets no card lookup");
+  assert.equal(ev.varName, "spadesBroken");
+  assert.equal(state.vars.spadesBroken, true, "and the rule really did change");
+});
+
+test("the break fires once a hand, however many spades follow it", async () => {
+  const { state } = await trickTable("team-spades", {
+    "hand.0": ["hearts-5", "hearts-6"],
+    "hand.1": ["spades-7", "spades-8"],
+    "hand.2": ["hearts-9", "hearts-10"],
+    "hand.3": ["hearts-2", "hearts-3"],
+  });
+  applyMove(state, { actor: 0, type: "playCard", cards: ["hearts-5"] });
+  applyMove(state, { actor: 1, type: "playCard", cards: ["spades-7"] });
+  assert.ok(eventOf(state, "broken"), "the first spade breaks them");
+
+  applyMove(state, { actor: 2, type: "playCard", cards: ["hearts-9"] });
+  applyMove(state, { actor: 3, type: "playCard", cards: ["hearts-2"] });
+  // Seat 1 took that trick with the spade, so it leads the next one — with the
+  // second spade, which breaks nothing because they are already broken.
+  applyMove(state, { actor: 1, type: "playCard", cards: ["spades-8"] });
+  assert.equal(eventOf(state, "broken"), undefined,
+    "a second spade in a hand where spades are already broken announces nothing");
+});
+
+test("hearts names the suit that is freed, not the suit of the card", async () => {
+  // The queen of spades breaks hearts: `breaking.when` is `tag:penalty played`
+  // and the lead constraint it lifts is `suit:hearts`. A sentence built off the
+  // card would say "Spades are broken" at a table with no spade rule in it.
+  const { state } = await trickTable("hearts", {
+    "hand.0": ["clubs-5", "clubs-3"],
+    "hand.1": ["spades-Q", "diamonds-4"],
+    "hand.2": ["clubs-9", "clubs-8"],
+    "hand.3": ["clubs-2", "clubs-4"],
+    // The queen is a `tag:penalty` card and those are barred from the first
+    // trick (`playConstraints: notTrick1`), so this is the second.
+  }, { trickNumber: 2 });
+  applyMove(state, { actor: 0, type: "playCard", cards: ["clubs-5"] });
+  applyMove(state, { actor: 1, type: "playCard", cards: ["spades-Q"] });
+
+  const ev = eventOf(state, "broken");
+  assert.ok(ev, "the queen emits `broken`");
+  assert.equal(ev.suit, "hearts", "hearts are what may now be led");
+  assert.deepEqual(ev.card, { rank: "Q", suit: "spades" }, "and a spade is what did it");
+  assert.equal(state.vars.heartsBroken, true);
+});
+
+// THE MISMATCH THIS ISSUE FOUND. `publicVars` read `rules.broken?.varName` and
+// no manifest has ever had a `rules.broken` — the key is `rules.breaking.var`.
+// The optional chaining made it silent, and the cost was a joiner whose own
+// lead constraint never lifted: their view said the suit had never been broken
+// for the whole hand while the host's legal-move list said otherwise.
+test("the var a break sets is one a joiner can see", async () => {
+  for (const [packId, varName] of [["team-spades", "spadesBroken"], ["hearts", "heartsBroken"]]) {
+    const pack = await loadPackFromDisk(packId);
+    assert.ok(pack.template.publicVars(pack.rules).includes(varName),
+      `${packId}: ${varName} must be public — it governs what every seat may lead`);
+  }
+});
+
+test("a pack with no breaking rule publishes no extra var", async () => {
+  const pack = await loadPackFromDisk("pinochle");
+  const published = pack.template.publicVars(pack.rules);
+  assert.deepEqual(published, ["leader", "led", "trickNumber", "passDirection", "trumpSuit"],
+    "nothing is invented for a pack that never breaks anything");
+});
+
+test("the break outranks the trick it so often arrives inside", async () => {
+  const { pack, state } = await trickTable("team-spades", {
+    "hand.0": ["hearts-5"],
+    "hand.1": ["hearts-9"],
+    "hand.2": ["hearts-2"],
+    "hand.3": ["spades-7"],
+  });
+  applyMove(state, { actor: 0, type: "playCard", cards: ["hearts-5"] });
+  applyMove(state, { actor: 1, type: "playCard", cards: ["hearts-9"] });
+  applyMove(state, { actor: 2, type: "playCard", cards: ["hearts-2"] });
+  // The FOURTH card of the trick is the spade, so the move that breaks them is
+  // also the move that sweeps the trick — which is the case the banner used to
+  // lose entirely (src/ui/table.js suppressed celebrateAction whenever a trick
+  // had fired).
+  applyMove(state, { actor: 3, type: "playCard", cards: ["spades-7"] });
+  assert.ok(eventOf(state, "trickWon"), "the trick resolved in the same move");
+
+  const ev = eventOf(state, "broken");
+  assert.ok(ev, "and the break is still on the event window");
+  const said = pack.template.describeEvent(ev, {
+    seatLabel: (seat) => ["Ada", "Fig", "Pip", "Sable"][seat], viewerSeat: 0,
+  });
+  assert.equal(said.text, "Spades are broken — Sable played the 7♠");
+  assert.ok((said.priority || 0) > TRICK_BANNER_PRIORITY,
+    "a break must out-rank a trick's own celebration or the banner never shows it");
+});
+
+test("the sentence says \"you\" to the seat that broke them", async () => {
+  const pack = await loadPackFromDisk("team-spades");
+  const ev = {
+    type: "broken", seat: 2, suit: "spades", card: { rank: "K", suit: "spades" },
+  };
+  const said = (viewerSeat) => pack.template.describeEvent(ev, {
+    seatLabel: (seat) => ["Ada", "Fig", "Pip", "Sable"][seat], viewerSeat,
+  }).text;
+  assert.equal(said(2), "Spades are broken — you played the K♠");
+  assert.equal(said(0), "Spades are broken — Pip played the K♠");
+});
+
+// The mark that outlives the banner: a chip on the contract strip, read off the
+// var rather than off the event, which is what makes it survive a reload.
+test("a broken suit leaves a chip on the felt until the next deal", async () => {
+  const { pack, state } = await trickTable("team-spades", {
+    "hand.0": ["hearts-5"], "hand.1": ["spades-7"], "hand.2": ["hearts-9"], "hand.3": ["hearts-2"],
+  });
+  const chips = () => pack.template.contractChips(makeCtx(state), 0) || [];
+  assert.equal(chips().find((c) => c.key === "broken"), undefined,
+    "nothing is marked before anything is broken");
+
+  applyMove(state, { actor: 0, type: "playCard", cards: ["hearts-5"] });
+  applyMove(state, { actor: 1, type: "playCard", cards: ["spades-7"] });
+  const chip = chips().find((c) => c.key === "broken");
+  assert.ok(chip, "the strip carries the mark once the suit is broken");
+  assert.equal(chip.value, "Broken");
+  assert.equal(chip.label, "Spades");
+  assert.equal(chip.suit, "spades", "drawn with the pack's own suit tile");
+
+  // THE NEXT DEAL CLEARS IT, and nothing had to remember to: `setup` sets the
+  // var back to false and the chip is a reading of the var.
+  state.vars.spadesBroken = false;
+  assert.equal(chips().find((c) => c.key === "broken"), undefined);
+});
+
+test("hearts marks hearts, and a pack that breaks nothing has no strip at all", async () => {
+  const { pack, state } = await trickTable("hearts", {
+    "hand.0": ["clubs-5"], "hand.1": ["hearts-4"], "hand.2": ["clubs-9"], "hand.3": ["clubs-2"],
+  });
+  state.vars.heartsBroken = true;
+  const chip = (pack.template.contractChips(makeCtx(state), 0) || [])
+    .find((c) => c.key === "broken");
+  assert.equal(chip.label, "Hearts");
+
+  const spades = await loadPackFromDisk("thirteen");
+  assert.equal(spades.template.contractChips?.(makeCtx(createState({
+    pack: spades, seats: 4, seed: "no-break",
+  })), 0) ?? null, null, "a pack with no contract and no breaking rule keeps the row's height");
+});
+
+// ONE SENTENCE ON THE RULES PAGE. The rule was enforced from the day the
+// template shipped and written down nowhere.
+test("the rules page explains breaking for the packs that do it", async () => {
+  for (const [packId, suit] of [["team-spades", "spades"], ["hearts", "hearts"]]) {
+    const pack = await loadPackFromDisk(packId);
+    const lines = pack.template.ruleLines(pack.rules);
+    const said = lines.find((line) => /broken/.test(line));
+    assert.ok(said, `${packId}: the rules page never mentions breaking`);
+    assert.ok(said.includes(suit), `${packId}: the sentence must name ${suit}`);
+  }
+  const pinochle = await loadPackFromDisk("pinochle");
+  assert.equal(pinochle.template.ruleLines(pinochle.rules).find((l) => /broken/.test(l)), undefined,
+    "and says nothing about it to a pack that has no such rule");
 });
