@@ -7,10 +7,13 @@
 // pack cannot end up with a card that renders as nothing.
 import { test } from "node:test";
 import assert from "node:assert";
+import fs from "node:fs";
+import path from "node:path";
 import {
   STYLE_IDS, buildTheme, makeCardRenderer, resolveStyleId,
 } from "../src/ui/cardStyles/index.js";
-import { dullPaper } from "../src/ui/cardStyles/shared.js";
+import { dullPaper, dullInk } from "../src/ui/cardStyles/shared.js";
+import { ROOT } from "../tools/stage.mjs";
 import { face as vanillaFace } from "../src/ui/cardStyles/vanilla.js";
 import { listPackIds, loadPackFromDisk } from "../tools/pack-test.mjs";
 
@@ -425,6 +428,97 @@ test("Wildfire's colours survive being muted, because they are the rules", () =>
     assert.ok(Math.max(r, g, b) - Math.min(r, g, b) > 30,
       `${body} came out of muting effectively grey`);
   }
+});
+
+/* ------------------------------------------------------------------ *
+ * ...and how far it has to move to be worth having (#153)
+ * ------------------------------------------------------------------ */
+
+/** The blank every style starts from: cardBase's rect, its fill and its edge. */
+function blank(svg) {
+  const m = /<rect x="1" y="1" width="98" height="138"[^>]*fill="(#[0-9a-f]{6})"[^>]*stroke="(#[0-9a-f]{6})"/i.exec(svg);
+  return m ? { fill: m[1], stroke: m[2] } : null;
+}
+
+/**
+ * THE FLOOR ON THE DIFFERENCE, which is the assertion the sweep above cannot
+ * make. Every other muting test asks "is the muted card still legible" — all of
+ * which a muted card identical to a live one passes perfectly. The playtest
+ * finding was the opposite failure: at #fdfdfa -> #daddd9 (1.35:1) a thirteen-
+ * card fan with half of it unplayable read as one fan, and the only strong cue
+ * was the 4px lift. 1.6 is below the 1.77:1 the stock moves today and well
+ * above the 1.35 it used to, so this goes red if anybody walks it back.
+ */
+const MIN_MUTE_STEP = 1.6;
+
+test("a muted card is printed on visibly darker stock than a live one", () => {
+  for (const [styleId, card] of [
+    ["sequencing", { rank: "12", color: "yellow" }],
+    ["sequencing", { rank: "7", color: "green" }],
+    ["rankrun", { rank: "6" }],
+    ["rankrun", { rank: "11" }],
+    ["shedding", { rank: "9", color: "yellow" }],
+    ["classic", { rank: "A", suit: "hearts" }],
+    ["classic", { rank: "10", suit: "spades" }],
+  ]) {
+    const renderer = makeCardRenderer({ ui: { cardStyle: styleId } });
+    const live = blank(renderer.face(card));
+    const muted = blank(renderer.face(card, true));
+    const what = `${styleId} ${JSON.stringify(card)}`;
+    assert.ok(live && muted, `${what} drew no card blank`);
+    const step = contrast(live.fill, muted.fill);
+    assert.ok(step >= MIN_MUTE_STEP,
+      `${what}: ${live.fill} -> ${muted.fill} is only ${step.toFixed(2)}:1, needs ${MIN_MUTE_STEP}`);
+    // Darker, not lighter: the paper recedes and never advances.
+    assert.ok(luminance(muted.fill) < luminance(live.fill), `${what} muted to a LIGHTER paper`);
+    // And the two move in opposite directions, which is the whole design (see
+    // the header of src/ui/cardStyles/shared.js): ink deepens as paper greys.
+    const head = { live: headline(renderer.face(card)), muted: headline(renderer.face(card, true)) };
+    assert.ok(luminance(head.muted.ink) < luminance(head.live.ink),
+      `${what}: the ink faded with the paper (${head.live.ink} -> ${head.muted.ink})`);
+  }
+});
+
+test("the vanilla stylesheet's muted palette is dullPaper/dullInk of its live one", () => {
+  // Vanilla's colours live in table.css rather than in its markup, so its muted
+  // face is a set of values COPIED out of these two functions. The one failure
+  // mode of a copied colour is the day the function moves and the copy does
+  // not — which had already happened: the muted neutral index was dullInk of a
+  // #3f3f46 that the live rule had stopped using.
+  const css = fs.readFileSync(path.join(ROOT, "src/ui/table.css"), "utf8");
+  const hex6 = (v) => (v.length === 4 ? `#${v[1]}${v[1]}${v[2]}${v[2]}${v[3]}${v[3]}` : v.toLowerCase());
+  const decl = (selector, prop) => {
+    const re = new RegExp(`(?:^|\\n)${selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[^{]*\\{([^}]*)\\}`);
+    const block = re.exec(css);
+    assert.ok(block, `no rule for ${selector} in src/ui/table.css`);
+    const value = new RegExp(`${prop}:\\s*(#[0-9a-fA-F]{3,6})`).exec(block[1]);
+    assert.ok(value, `${selector} declares no ${prop}`);
+    return hex6(value[1]);
+  };
+  const pairs = [
+    [".card-face__bg", "fill", ".card-face--muted .card-face__bg", "fill", dullPaper],
+    [".card-face__bg", "stroke", ".card-face--muted .card-face__bg", "stroke", dullPaper],
+    [".card-face--red .card-face__corner", "fill",
+      ".card-face--muted.card-face--red .card-face__corner", "fill", dullInk],
+    [".card-face--black .card-face__corner", "fill",
+      ".card-face--muted.card-face--black .card-face__corner", "fill", dullInk],
+    [".card-face--neutral .card-face__corner", "fill",
+      ".card-face--muted.card-face--neutral .card-face__corner", "fill", dullInk],
+  ];
+  for (const color of ["red", "yellow", "green", "blue"]) {
+    pairs.push([`.card-face--painted.card-face--${color} .card-face__bg`, "fill",
+      `.card-face--muted.card-face--painted.card-face--${color} .card-face__bg`, "fill", dullInk]);
+  }
+  for (const [liveSel, liveProp, mutedSel, mutedProp, dull] of pairs) {
+    const live = decl(liveSel, liveProp);
+    const muted = decl(mutedSel, mutedProp);
+    assert.strictEqual(muted, dull(live),
+      `${mutedSel} is ${muted}; ${dull.name}(${live}) is ${dull(live)}`);
+  }
+  // And the same floor the drawn styles are held to.
+  const step = contrast(decl(".card-face__bg", "fill"), decl(".card-face--muted .card-face__bg", "fill"));
+  assert.ok(step >= MIN_MUTE_STEP,
+    `vanilla's muted paper is only ${step.toFixed(2)}:1 off its live one, needs ${MIN_MUTE_STEP}`);
 });
 
 test("a white corner index is legible on the colour band behind it", () => {
