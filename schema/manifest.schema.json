@@ -1359,7 +1359,7 @@
                 { "const": "lowest" },
                 { "type": "string", "pattern": "-" }
               ],
-              "description": "Whose card opens hand one. Either the literal id of one nominated card ('spades-3'), or \"lowest\" — the lowest card IN PLAY on the pack's own total order (`cardOrder`, suit included, so exactly one card qualifies). Prefer \"lowest\" for any pack whose deal leaves cards out of play: a nominated card that was not dealt names no seat, and the lead then falls to the rotating opening seat rather than to the player the rule meant. Thirteen deals a flat thirteen, so at two seats the 3♠ is out of play in 52% of deals (THIRTEEN_RULES.md D-11, D-2)."
+              "description": "Whose card opens hand one. Either the literal id of one nominated card ('spades-3'), or \"lowest\" — the lowest card IN PLAY on the pack's own total order (`cardOrder`, suit included, so exactly one card qualifies). Prefer \"lowest\" for any pack whose deal leaves cards out of play: a nominated card that was not dealt names no seat, and the lead then falls to the rotating opening seat rather than to the player the rule meant. Thirteen deals a flat thirteen, so at two seats half the deck is never dealt and the 3♠ is out of play in 50.7% of deals, measured over 400 (THIRTEEN_RULES.md D-11, D-2)."
             },
             "mustInclude": {
               "type": "boolean",

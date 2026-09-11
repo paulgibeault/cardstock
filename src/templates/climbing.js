@@ -470,8 +470,10 @@ function dealHands(ctx) {
  * WHY "lowest" HAD TO EXIST (#156). The literal form is the rule everybody
  * describes — "the 3♠ leads" — and it is only correct at a FULL table. Thirteen
  * deals a flat thirteen and leaves the remainder out of play (D-11), so at two
- * seats the 3♠ is missing from the deal 52% of the time and at three seats 26%;
- * every one of those hands fell through to `ctx.openingSeat()`, which is seat 0,
+ * seats HALF the deck is never dealt and at three seats a quarter of it: the 3♠
+ * is missing from 50.7% of two-seat deals and 25.8% of three-seat ones, over
+ * 400 seeded deals each, which is the population figure and not a surprise.
+ * Every one of those hands fell through to `ctx.openingSeat()`, which is seat 0,
  * which is the human. The player was handed the opening lead by a bug, in the
  * game whose first rule is that the lowest card leads.
  *

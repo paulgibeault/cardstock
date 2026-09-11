@@ -600,8 +600,10 @@ function lowestInPlay(state) {
 test("the lowest card IN PLAY leads hand one at every seat count the pack offers", async () => {
   // THE BUG THIS PINS (#156). `firstLead.card` was the literal `spades-3`, and
   // Thirteen deals a flat thirteen with the remainder out of play (D-11), so
-  // short-handed the 3♠ is frequently not dealt at all — 52% of two-seat deals
-  // and 26% of three-seat ones, measured on this sweep. Every one of those fell
+  // short-handed the 3♠ is frequently not dealt at all — half the deck is never
+  // dealt at two seats and a quarter of it at three, and the card goes missing
+  // at about those rates (42 and 29 of the hundred deals THIS sweep walks; 50.7%
+  // and 25.8% over 400 each, which is the population). Every one of those fell
   // through to `ctx.openingSeat()`, which on hand one is seat 0, which is the
   // human: the player was handed the opening lead of a game whose first rule is
   // that the lowest card leads.
