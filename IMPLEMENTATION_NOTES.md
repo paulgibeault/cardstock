@@ -2666,6 +2666,173 @@ against the felt's edge for the whole game. If it wants a floor later, the
 place to put one is a `--stage-card-w` that this rule and the 660px block both
 read.
 
+## The next hand comes by itself, at a pace you pick (#150)
+
+### What was wrong
+
+`dismissRoundSummary` is the single door between hands — it clears the beat,
+paints the deal and re-arms the bots — and exactly one thing turned it: a tap
+on **Deal round N**. Round-6 playtest: some players want that pause and many
+do not, and there was no way at all to say which. The only speed preference in
+`SETTINGS_DEFAULTS` was `botDelayMs`, a millisecond count with no UI anywhere,
+which is the shape this deliberately does not copy — "how many milliseconds
+should a hand take" is not a question anybody has an answer to.
+
+### The four rungs, and why the default is Quick
+
+`src/ui/pace.js` is the list, a data module for the reason `difficulty.js` is
+one: the two things that render it reach for `document` at import time, so the
+list is the only part a Node test can hold. Manual is today's behaviour.
+Relaxed waits 6s and stretches a show step to 2100ms. Quick waits 2.5s at the
+shipped 1500ms step. Instant has no transition at all.
+
+**Quick is the default** because the complaint was one-directional: nobody
+asked for a longer wait between hands and several people asked for none. It
+still SHOWS the sheet — the score sheet is the only place a round's damage is
+ever spelled out, and Instant is the rung that trades that away, so it must be
+chosen rather than arrived at. 2.5s was measured against the widest sheet we
+ship rather than guessed: a four-seat summary is four rows of name, delta and
+total, and reading it is one saccade per row; the number was left at 2.5s
+because the sheet is also a countdown you can watch and cancel with a tap, so
+being a little short of a full read costs a tap and not the information.
+
+Written at the one gesture that deals (`rememberDifficulty` in
+src/ui/lobby.js, which now carries both preferences), so backing out of the
+new-game sheet changes nothing — the rule difficulty already had.
+
+### The pace is a term in the schedule, not a branch in the renderer
+
+`roundBeatPlan` already owned the arithmetic of a round ending and now takes
+the rung: it scales the show step, it reports `autoAdvanceMs` (null for
+Manual), and at Instant it collapses to `holdMs: 0`, no steps, `summaryAt: 0`.
+**The hold is not scaled**, and that is the one number a pace rung deliberately
+cannot touch: it is measured against the card flight so the last card has
+LANDED before anything asks to be read (#120), and the flight is already the
+player's own speed setting. A rung that shortened it would be a preference for
+reading a card that is still in the air.
+
+The timer goes through `dismissRoundSummary` and nothing else. A timer that
+reached for `scheduleNextTurn` would let a bot play its first card into a felt
+still showing the last hand, and `tests/pace.test.js` reads `armAutoAdvance`
+and fails if `scheduleNextTurn` appears in it.
+
+All three of a round ending's timers are now held on the session
+(`beatTimers`, `revealTimer`, `advanceTimer`) and cancelled by `stopSession`.
+They were previously anonymous `Arcade.session.setTimeout` calls guarded only
+by an epoch check inside the callback, which stops a timer doing damage and
+does not stop it running — not good enough once one of them deals a hand.
+`endMatchFromSummary` cancels the countdown BEFORE it asks "are you sure?" and
+re-arms it if the answer is no: a confirm dialog is a pause of the player's own
+length, and the next hand was otherwise dealt out from under the question.
+
+### The indicator
+
+A thin outline filling in around the Deal button, no digits: what is worth
+showing is "this is about to happen", and a number counting down from 2 is a
+number nobody finishes reading. One shot, `forwards`, class removed when the
+sheet closes — there is no state in which it is ticking with nothing to count
+down to (cardstock#24). Under reduced motion or the power saver the outline is
+simply drawn whole and still, and **the timer fires at exactly the same
+moment**: a player who asked for less movement did not ask the table to stop
+dealing.
+
+Two things about drawing it are worth writing down, because both cost real time
+and neither is visible in the code that looks wrong.
+
+**`hidden` does not exist on an `<svg>`.** It is an IDL property of
+HTMLElement; SVGElement has none, so `ring.hidden = false` defines a JavaScript
+expando and leaves the ATTRIBUTE — and `.deal-ring[hidden] { display: none }` —
+exactly where it was. The ring never appeared while every value the code could
+read said it should: `ring.hidden` false, dash array right, animation running,
+computed `display: none`. Shown by attribute now, and pinned by a test.
+
+**`inset` does not size a replaced element.** An `<svg>` has a default
+intrinsic size of 300x150, and an absolutely-positioned replaced box with
+`width: auto` takes that rather than the size its insets describe:
+`inset: 1px` measured 288x144 over a 138x39 button. Sized explicitly instead —
+`top/left: 2px` with `calc(100% - 4px)`, two pixels in so a 2px stroke centred
+on that edge lies wholly on the button rather than half on the panel behind it,
+which in the light theme was white on cream and read as a smudge.
+
+**A client rect is measured through the transform; the path is not.** The dash
+array is computed in JS rather than written in CSS because it is a measurement,
+not a constant — the button is as wide as "Deal round 11" happens to be, and a
+perimeter that is not the real one runs short or spills. But `paintRoundPace`
+runs on the frame the overlay is unhidden, and the panel's entrance animation
+(`settle-in`) starts at `scale(0.96)`: `getBoundingClientRect()` read then came
+back 96% of the button, while the svg's own layout box — the box the path is
+drawn in, which a transform does not touch — was full size. The dash array was
+327.5 against a real perimeter of 342.3, so the ring reached the end of its
+countdown with a ~15px gap still open at the top left. `offsetWidth` /
+`offsetHeight` are the border box in layout pixels, and are what it reads now.
+Measured after the fix: 341.7 with the entrance animating, 342.3 with it
+suppressed by reduced motion — 0.2%, which is `offsetWidth` rounding to whole
+pixels.
+
+### Tap anywhere, and change it where you feel it
+
+The whole panel deals. Three things opt out and the third is the dull one:
+**End match** leaves the game and swallowing that tap into a deal is the worst
+possible misread of it; the **pace control** is a tap you make BECAUSE you do
+not want to deal yet; and the **Deal button** has a listener of its own, so
+letting the panel's handler see the same click would call the door twice. (It
+is idempotent — `dismissRoundSummary` checks `roundSummaryOpen` — but a second
+call that only survives on a guard is not a design.)
+
+`Pace · Quick >` on the sheet cycles the rungs, persists immediately, and
+restarts the countdown at the new rung rather than resuming it: a player who
+reaches for this at 2.4s of a 2.5s countdown is asking for more time, and
+handing them a tenth of a second of Relaxed is the opposite.
+
+### Measured
+
+Chrome headless at 1280x860, `botDelayMs` 600 (420ms flight), from the
+round-ending move to the next hand's first card on the felt. The move's moment
+is taken from the felt's own timers rather than assumed: the beat arms its
+whole schedule synchronously inside the move, so the `at` of the timer that
+ends the beat IS the move.
+
+Cribbage, whose round ending is a three-step show:
+
+| Rung | beat (hold + show) | sheet held | move -> next hand |
+|---|---|---|---|
+| Manual | 5201ms | never (15s, then a tap) | 20712ms with the tap |
+| Relaxed | 7004ms (700 + 3x2100) | 6009ms | 13013ms |
+| Quick | 5205ms (700 + 3x1500) | 2510ms | 7715ms |
+| Instant | 12ms | no sheet | 12ms |
+
+Thirteen, whose round ending is the plain hold and nothing to count:
+
+| Rung | beat | sheet held | move -> next hand |
+|---|---|---|---|
+| Manual | 701ms | never (15s, then a tap) | 16049ms with the tap |
+| Relaxed | 705ms | 6009ms | 6713ms |
+| Quick | 705ms | 2512ms | 3216ms |
+| Instant | 16ms | no sheet | 16ms |
+
+Every rung lands within 12ms of `hold + rung`, which is what it should be: the
+pace is a term in `roundBeatPlan` and the packs differ only in what the hold
+has to cover. A tap on the panel during Relaxed dealt 7ms later on Cribbage and
+11ms on Thirteen. **The bots wait for the deal either way**: the first bot line
+after the deal render landed 419–1540ms after it across every run above, never
+before it.
+
+The ring, measured rather than eyeballed (computed `stroke-dashoffset` against
+the dash length it was given, Relaxed, both themes): 341.7 of 341.7 at 0%, 169
+at the 3s mark — 51% filled — and `animation-iteration-count: 1`. Under
+`prefers-reduced-motion` the treatment is `deal-ring--static`, the offset is 0
+throughout (the outline drawn whole and still), and the sheet still dealt
+itself inside the 6s. The preference walk: seeded Relaxed, the sheet's control
+cycled to Quick, and the ring's own `--deal-ring-ms` went 6000ms → 2500ms in
+the same frame; storage said `quick` immediately, still said it after a reload,
+and the next new-game sheet came up with Quick pressed.
+
+**Not done.** Shared tables are unchanged at the protocol level: the pace is a
+local presentation preference, and the table's actual progress is already
+host-driven because bots only run host-side (`scheduleNextTurn`). A joiner
+dismissing their own sheet early sees the deal sooner and nothing else moves,
+which is what "joiners just see the deal" amounts to without a new frame.
+
 ## The lowest card leads, the house rules are offered, and a sort knows its ladder (#156, #158, #159)
 
 ### What was wrong

@@ -106,13 +106,14 @@ import {
   classifyHandGesture, SORT_LABELS,
 } from './handOrder.js';
 import {
-  initPanels, showRoundSummary, hideRoundSummary,
+  initPanels, showRoundSummary, hideRoundSummary, paintRoundPace,
   showScoreboard, showGameOver, hideAllPanels, showRules, awaitFinalLook,
 } from './panels.js';
 import { packRules } from './rules.js';
 import { roundBeatPlan, trickRevealPlan } from './roundBeat.js';
+import { paceLevel, nextPace } from './pace.js';
 import {
-  rememberPack, loadSettings, saveMatch, loadMatch, clearMatch, recordForfeit,
+  rememberPack, loadSettings, saveSettings, saveMatch, loadMatch, clearMatch, recordForfeit,
   loadHandPrefs, saveHandPrefs,
 } from '../arcade/storage.js';
 import {
@@ -3604,6 +3605,14 @@ async function endMatchFromSummary() {
   if (!liveState()) return;
   const state = liveState();
   const myEpoch = epoch;
+  // BEFORE THE QUESTION IS ASKED, not after it is answered (#150). The sheet
+  // deals itself now, and a confirm dialog is a pause of the player's own
+  // length — so a countdown left running would have dealt the next hand out
+  // from under "are you sure?", and the answer would have arrived at a match
+  // that had moved on. If they keep playing, it is re-armed below.
+  const held = paceLevel(currentPace().id);
+  cancelRoundBeat();
+  paintRoundPace({ ...paceView(held), autoMs: null });
   // AHEAD IS A SIDE'S QUESTION. Walking away while your partner is carrying the
   // score is not walking away from a loss, and the sentence has to say so.
   const totals = sideScores(state.pack, state.seats, state.scores);
@@ -3615,10 +3624,20 @@ async function endMatchFromSummary() {
     + (ahead ? '' : ' It counts as a forfeit.'),
     { okLabel: 'End match', cancelLabel: 'Keep playing' },
   );
-  if (!ok || myEpoch !== epoch || liveState() !== state) return;
+  if (!ok || myEpoch !== epoch || liveState() !== state) {
+    // "Keep playing" puts the countdown back exactly as it was, restarted —
+    // the player has just spent an unknown amount of time in a dialog.
+    if (myEpoch === epoch && session?.roundSummaryOpen) {
+      paintRoundPace(paceView(held));
+      armAutoAdvance(held.autoMs);
+    }
+    return;
+  }
 
   cancelBotTurn();
   cancelAnnouncementBeats();
+  // The sheet was counting down to a deal when the player asked to leave.
+  cancelRoundBeat();
   clearMatch(state.pack.id);
   recordForfeit(state.pack.id, session.seating);
   session.roundSummaryOpen = false;
@@ -3628,13 +3647,24 @@ async function endMatchFromSummary() {
   exitToLobby();
 }
 
-function dismissRoundSummary() {
+/**
+ * @param message what #log says as the deal lands. The default names the new
+ *   round; the Instant rung (#150) passes the round's RESULT instead, because
+ *   at that rung there is no sheet and this line is the only place the score
+ *   change is ever said — and it has to be this one line, since the render
+ *   below would overwrite anything written just before it.
+ */
+function dismissRoundSummary(message) {
   // The SESSION says whether we are between rounds; the panel merely shows it.
   // This used to branch on `!el.roundOverlay.hidden` (panels.isRoundSummaryOpen),
   // which made a DOM attribute the only record of a game-state fact — and one
   // that any other code path hiding the overlay would silently erase.
   if (!session || !session.roundSummaryOpen || !liveState()) return;
   session.roundSummaryOpen = false;
+  // A TAP BEATS THE CLOCK, and the clock must not fire behind it. This is also
+  // what makes the door idempotent under the panel's two listeners: the second
+  // call finds `roundSummaryOpen` false and returns above.
+  cancelRoundBeat();
   // THIS IS WHERE THE NEXT HAND BECOMES VISIBLE. The engine dealt it inside the
   // round-ending move; until this line the felt has been showing where the
   // round ended (runRoundBeat), which is why the render below is the first
@@ -3644,7 +3674,7 @@ function dismissRoundSummary() {
   hideRoundSummary();
   session.dealAnimation = true;
   playDeal(liveState().seats);
-  render(liveState(), `Round ${liveState().roundNumber}.`);
+  render(liveState(), message || `Round ${liveState().roundNumber}.`);
   scheduleNextTurn();
 }
 
@@ -3867,8 +3897,12 @@ function runTrickReveal(poseState, move, from, reveal, resume) {
   animateMove(poseState, move, from);
 
   const myEpoch = epoch;
-  Arcade.session.setTimeout(() => {
+  // HELD ON THE SESSION (#150), not merely epoch-checked. The epoch guard stops
+  // a timer that has already fired from doing damage; a handle is what lets
+  // `stopSession` stop it firing at all.
+  session.revealTimer = Arcade.session.setTimeout(() => {
     if (myEpoch !== epoch || !session) return;
+    session.revealTimer = null;
     session.trickBeat = null;
     session.trickPoseState = null;
     resume();
@@ -3984,8 +4018,125 @@ function roundContractLines(finalState) {
  *                   and totals from, and the one the next deal is already in
  * @param finalState what the felt is showing: where the round ended
  */
-function runRoundBeat(state, plan, finalState) {
+/* ------------------------------------------------------------------ *
+ * How fast the table moves between hands (#150)
+ * ------------------------------------------------------------------ */
+
+/**
+ * The player's rung, read LIVE.
+ *
+ * `settings` is a snapshot refreshed by `rerenderTable`, and the one control
+ * that changes this — the summary's own "Pace · Quick ▸" — writes storage and
+ * updates the snapshot in the same breath (`cyclePace`). Falling back to a
+ * fresh read keeps the very first hand of a session honest, before any render
+ * has happened.
+ */
+function currentPace() {
+  return paceLevel(settings ? settings.pace : loadSettings().pace);
+}
+
+/**
+ * What `paintRoundPace` needs to draw: a name, a duration, and whether the
+ * duration may be animated.
+ *
+ * REDUCED MOTION AND THE POWER SAVER TAKE THE ANIMATION, NOT THE TIMER. A
+ * player who has asked for less movement has not asked the table to stop
+ * dealing — they have asked for the countdown to be a mark rather than a
+ * moving one. The sheet still deals itself at exactly the same moment.
+ */
+function paceView(level) {
+  return {
+    label: level.label,
+    autoMs: level.autoMs,
+    animate: motionAllowed() && !powerSaving(),
+  };
+}
+
+/**
+ * Deal the next hand by ourselves, once the sheet has been up for its rung.
+ *
+ * THROUGH `dismissRoundSummary` AND NOTHING ELSE. That function is the single
+ * door: it clears `roundSummaryOpen`, paints the deal, and only then calls
+ * `scheduleNextTurn`. A timer that reached for `scheduleNextTurn` directly
+ * would let a bot play its first card into a felt still showing the last hand.
+ */
+function armAutoAdvance(ms) {
+  if (ms == null) return;
   const myEpoch = epoch;
+  if (session.advanceTimer) session.advanceTimer.cancel();
+  session.advanceTimer = Arcade.session.setTimeout(() => {
+    if (myEpoch !== epoch || !session) return;
+    session.advanceTimer = null;
+    dismissRoundSummary();
+  }, ms);
+}
+
+/** Everything a round ending has in flight, stopped. Safe with no session. */
+function cancelRoundBeat() {
+  if (!session) return;
+  for (const timer of session.beatTimers) timer.cancel();
+  session.beatTimers = [];
+  if (session.advanceTimer) session.advanceTimer.cancel();
+  session.advanceTimer = null;
+}
+
+/** A beat timer that cancels with the session rather than only checking its epoch. */
+function beatTimer(fn, at) {
+  const myEpoch = epoch;
+  const handle = Arcade.session.setTimeout(() => {
+    if (myEpoch !== epoch || !session) return;
+    session.beatTimers = session.beatTimers.filter((t) => t !== handle);
+    fn();
+  }, at);
+  session.beatTimers.push(handle);
+  return handle;
+}
+
+/**
+ * The round's result as ONE SENTENCE, for the rung that shows no sheet.
+ *
+ * Instant is not "the summary, faster" — it is the summary traded away, and a
+ * round whose score went nowhere at all would be a rule change rather than a
+ * pace. So the totals still arrive, in #log, which is the live region a screen
+ * reader hears and the one surface on this felt that is a record rather than a
+ * moment.
+ *
+ * PER SIDE, like the sheet it stands in for (#125): a partnership pack banks a
+ * side's whole result on one seat, so a per-seat list would read as one partner
+ * carrying the team and the other scoring nothing all match.
+ *
+ * IT ENDS WITH THE NEW ROUND because it IS the deal's message: `#log` carries
+ * one sentence, and `dismissRoundSummary`'s own "Round 4." would otherwise
+ * overwrite this one in the same frame it was written.
+ */
+function roundResultLine(state, ev) {
+  const sides = sidesOf(state.pack, state.seats);
+  const totals = sideScores(state.pack, state.seats, ev.totals || []);
+  const parts = sides.map((members, i) => {
+    const who = members.map((seat) => seatLabel(seat)).join(' & ');
+    return `${who} ${totals[i] ?? 0}`;
+  });
+  return `Round ${ev.round} over — ${parts.join(', ')}. Round ${state.roundNumber}.`;
+}
+
+function cyclePace() {
+  const level = paceLevel(nextPace(currentPace().id));
+  const stored = loadSettings();
+  saveSettings({ ...stored, pace: level.id });
+  // The snapshot too, so the NEXT round reads the new rung without waiting for
+  // a settings event to come back round through main.js.
+  if (settings) settings.pace = level.id;
+  paintRoundPace(paceView(level));
+  // RESTARTED, NOT RESUMED, and the ring is redrawn to match: a player who
+  // reaches for this at 2.4s of a 2.5s countdown is asking for more time, and
+  // handing them a tenth of a second of Relaxed would be the opposite.
+  if (session?.advanceTimer) { session.advanceTimer.cancel(); session.advanceTimer = null; }
+  if (session?.roundSummaryOpen) armAutoAdvance(level.autoMs);
+}
+
+function runRoundBeat(state, plan, finalState) {
+  // Nothing from a previous ending may still be in flight under this one.
+  cancelRoundBeat();
   // WHO WON THE HAND, on the table rather than only on the sheet. A shedding
   // pack names the seat that went out (`ctx.endRound(winner)`, still on the
   // fork because the round boundary was not run over it); a trick-taking round
@@ -3995,15 +4146,26 @@ function runRoundBeat(state, plan, finalState) {
     pulseSeat(finalState.roundWinner, 'good');
   }
   for (const step of plan.steps) {
-    Arcade.session.setTimeout(() => {
-      if (myEpoch !== epoch || !session?.roundBeat) return;
+    beatTimer(() => {
+      if (!session.roundBeat) return;
       playShowStep(finalState, step);
     }, step.at);
   }
-  Arcade.session.setTimeout(() => {
-    if (myEpoch !== epoch) return;
+  beatTimer(() => {
     session.roundSummaryOpen = true;
-    showRoundSummary(state, plan.roundOver, session.seating, roundContractLines(finalState));
+    // THE RUNG THAT SHOWS NO SHEET (#150). Instant does not open the summary
+    // and then race it away — it never opens one. `roundSummaryOpen` is still
+    // set first, because `dismissRoundSummary` is the door and the door checks
+    // that flag; what is skipped is the panel, not the transition through it.
+    if (plan.instant) {
+      dismissRoundSummary(roundResultLine(state, plan.roundOver));
+      return;
+    }
+    showRoundSummary(
+      state, plan.roundOver, session.seating, roundContractLines(finalState),
+      paceView(paceLevel(plan.pace)),
+    );
+    armAutoAdvance(plan.autoAdvanceMs);
   }, plan.summaryAt);
 }
 
@@ -4080,6 +4242,9 @@ function afterMove(state, move, from, message, { publish = true } = {}) {
     // No snapshot means no ending to pose or repaint, so the reveal degrades to
     // the plain hold — the multiplayer path (afterRemoteMove).
     narrate: !!finalState,
+    // The rung is read HERE, when the round ends, so a pace changed on the last
+    // sheet is the pace this one runs at.
+    pace: currentPace().id,
   }) : null;
   // What the felt paints. The LIVE state everywhere else: it is what is saved,
   // what the summary reads, and what the next deal is already in.
@@ -4468,6 +4633,7 @@ function performAnnouncement(state, move, myEpoch = epoch) {
   const plan = roundOver ? roundBeatPlan(state.events, {
     flightMs: flightDurationMs(settings?.botDelayMs),
     narrate: !!finalState,
+    pace: currentPace().id,
   }) : null;
   if (plan) {
     session.roundBeat = true;
@@ -5112,6 +5278,7 @@ export function initTable({ onExit }) {
     onEndMatch: () => endMatchFromSummary(),
     onRules: () => livePack() && showRules(packRules(livePack())),
     onCloseScoreboard: () => {},
+    onCyclePace: () => cyclePace(),
   });
 
   // The fan's spacing is the one thing that depends on how much room the row
