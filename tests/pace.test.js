@@ -189,7 +189,7 @@ test("the lobby saves the rung on the gesture that deals, and only then", () => 
   // Both doors into a new game, each checked BETWEEN its own askNewGame and its
   // own save — the same walk tests/difficulty.test.js does, for the same
   // reason: a guard that merely appears somewhere in the file does not bite.
-  const sites = [...src.matchAll(/askNewGame\(manifest\)([\s\S]{0,240}?)rememberDifficulty\(setup\)/g)];
+  const sites = [...src.matchAll(/askNewGame\(manifest\)([\s\S]{0,240}?)rememberPreferences\(setup\)/g)];
   assert.strictEqual(sites.length, 2,
     `${sites.length} new-game path(s) save the answer; both the tile and the re-deal must`);
   for (const [, between] of sites) {

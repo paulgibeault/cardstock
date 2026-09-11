@@ -21,6 +21,7 @@ import { confirmAction, closeConfirm } from './confirm.js';
 import { showRules } from './panels.js';
 import { packRules } from './rules.js';
 import { askNewGame, hasChoices, closeNewGame } from './newGame.js';
+import { speedLevel } from './speed.js';
 import { templateInfo } from '../templates/registry.js';
 import { line } from './dom.js';
 
@@ -305,7 +306,7 @@ function buildTile(manifest, summary, { featured }) {
     }
     const setup = await askNewGame(manifest);
     if (!setup) return;
-    rememberDifficulty(setup);
+    rememberPreferences(setup);
     openTable(manifest.id, setup);
   });
   tile.appendChild(open);
@@ -399,7 +400,7 @@ function buildTile(manifest, summary, { featured }) {
       // Re-dealing is a NEW game, so it gets the same choices a new game gets.
       const setup = hasChoices(manifest) ? await askNewGame(manifest) : {};
       if (!setup) { renderLobby(); return; }   // backed out after abandoning
-      rememberDifficulty(setup);
+      rememberPreferences(setup);
       openTable(manifest.id, setup);
     });
     tile.appendChild(restart);
@@ -409,32 +410,47 @@ function buildTile(manifest, summary, { featured }) {
 }
 
 /**
- * Remember how hard the player asked the bots to play, and how fast they asked
- * the table to move between hands (#150).
+ * Remember everything the new-game sheet asked that is a PREFERENCE rather
+ * than part of the deal: how hard the bots play, how long the table waits
+ * between hands (#150), and how fast a card crosses the felt (#175).
+ *
+ * RENAMED FROM `rememberDifficulty`, because it stopped being about difficulty
+ * two issues ago and a function whose name lists one of the three things it
+ * writes is a function the next row gets added outside of.
  *
  * WRITTEN HERE RATHER THAN IN THE SHEET, so that backing out of the sheet
- * changes nothing — the answer is only kept by the gesture that actually deals.
- * It is a preference and it outlives the match, exactly like `botDelayMs` beside
- * it: the drivers read it at fire time (src/ui/botDriver.js), so the next hand
- * plays at whatever was last chosen without anything having to be told.
+ * changes nothing — the answers are only kept by the gesture that actually
+ * deals. They are preferences and they outlive the match: the drivers read
+ * them at fire time (src/ui/botDriver.js), so the next hand plays at whatever
+ * was last chosen without anything having to be told.
  */
-function rememberDifficulty(setup) {
+function rememberPreferences(setup) {
   const difficulty = setup?.difficulty;
   const pace = setup?.pace;
-  if (!difficulty && !pace) return;
+  const speed = setup?.speed;
+  if (!difficulty && !pace && !speed) return;
   const settings = loadSettings();
-  // THE SAME RULE, ONE ROW DOWN (#150). How long the table waits between hands
-  // is a preference exactly like how hard the bots play: it never reaches the
-  // reducer, the round summary reads it at the moment it opens, and backing out
-  // of the sheet must leave it alone. So both are written here, by the gesture
-  // that deals, and nowhere else in this file. An older sheet that answers with
-  // only one of them leaves the other exactly as it was.
+  // THE SAME RULE, ONE ROW DOWN, TWICE OVER (#150, #175). How long the table
+  // waits between hands and how fast a card crosses it are preferences exactly
+  // like how hard the bots play: none of the three reaches the reducer, each is
+  // read at the moment it matters, and backing out of the sheet must leave all
+  // of them alone. So all three are written here, by the gesture that deals,
+  // and nowhere else in this file. An older sheet that answers with only some
+  // of them leaves the rest exactly as they were.
+  //
+  // THE SPEED ROW ANSWERS WITH A RUNG AND THE SETTING IS A NUMBER, which is the
+  // one translation on this road: `botDelayMs` is arithmetic that two other
+  // modules do (src/ui/flight.js, src/players/roster.js) and neither of them
+  // should have to know the ladder exists. `speedLevel` is tolerant, so a rung
+  // rolled back between builds writes the shipped default rather than NaN.
   const next = {
     ...settings,
     botDifficulty: difficulty || settings.botDifficulty,
     pace: pace || settings.pace,
+    botDelayMs: speed ? speedLevel(speed).delayMs : settings.botDelayMs,
   };
-  if (next.botDifficulty === settings.botDifficulty && next.pace === settings.pace) return;
+  if (next.botDifficulty === settings.botDifficulty && next.pace === settings.pace
+      && next.botDelayMs === settings.botDelayMs) return;
   saveSettings(next);
 }
 
