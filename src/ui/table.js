@@ -173,7 +173,11 @@ const el = {
   tableContract: document.getElementById('table-contract'),
   handRail: document.getElementById('hand-rail'),
   actionButton: document.getElementById('action-button'),
-  hintButton: document.getElementById('hint-button'),
+  helpButton: document.getElementById('help-button'),
+  helpSheet: document.getElementById('help-sheet'),
+  helpRules: document.getElementById('help-rules'),
+  helpHint: document.getElementById('help-hint'),
+  helpHintNote: document.getElementById('help-hint-note'),
   stageRow: document.getElementById('stage-row'),
   stageTray: document.getElementById('stage-tray'),
   handRow: document.getElementById('hand-row'),
@@ -2627,10 +2631,82 @@ function showHint() {
   persistMatch();
 }
 
+/* ------------------------------------------------------------------ *
+ * The help mark, and the two questions behind it (#155)
+ * ------------------------------------------------------------------ */
+
+/** What the Hint line says about itself when it cannot be taken. */
+const HINT_OFFER = Object.freeze({
+  turn: 'Only while it is your turn',
+  view: 'A joined table holds a view, not the cards',
+  over: 'The game is over',
+  showing: 'The hint is on the felt',
+  forced: 'There is only one play',
+  ready: 'What a player at this level would do',
+});
+
 /**
- * The rail beside the hand: the turn token, the Hint lamp, and the thumb slot
- * the action button and the sort toggle share (index.html says why it is a
- * rail and not a bar).
+ * Whether a ranking can be asked for, and what to say when it cannot.
+ *
+ * THE SAME FIVE CONDITIONS THE LAMP IN THE RAIL WAS SHOWN UNDER, moved rather
+ * than rewritten: the hint asks the engine to rank the position, so it is
+ * offered only where the felt HOLDS the position — a joiner's view has no
+ * opponents' hands to fork and gets a reason rather than a guess
+ * (src/ui/hint.js) — and only where there is a choice to make. One legal move
+ * is not a hint. It also steps aside once its answer is showing, so a player
+ * cannot ask the same question twice and have it counted twice.
+ *
+ * WHAT CHANGED IS THAT A REFUSAL NOW SAYS SOMETHING. In the rail the offer
+ * simply went invisible, which is the right treatment for an icon in a column
+ * of controls and the wrong one for a line in a sheet somebody has just opened
+ * looking for help: they would find a hint that had disappeared and learn
+ * nothing. Disabled, with the reason on it, is both answers at once.
+ */
+function hintOffer(state, humanActs, suggestion) {
+  if (!state || state.isView) return { ready: false, why: HINT_OFFER.view };
+  if (state.gameOver) return { ready: false, why: HINT_OFFER.over };
+  if (!humanActs) return { ready: false, why: HINT_OFFER.turn };
+  if (suggestion) return { ready: false, why: HINT_OFFER.showing };
+  if (movesFor(state, mySeat()).length <= 1) return { ready: false, why: HINT_OFFER.forced };
+  return { ready: true, why: HINT_OFFER.ready };
+}
+
+/** Repaint the sheet's Hint line. Called from renderRail, open sheet or not. */
+function renderHelpOffer(state, humanActs, suggestion) {
+  const offer = hintOffer(state, humanActs, suggestion);
+  el.helpHint.disabled = !offer.ready;
+  // The note is part of the button's accessible NAME rather than a description
+  // beside it: "Hint, only while it is your turn" is one thing to hear, and a
+  // disabled control's description is the half a screen reader may skip.
+  el.helpHintNote.textContent = offer.why;
+}
+
+function helpOpen() {
+  return !el.helpSheet.hidden;
+}
+
+/**
+ * Open or close the sheet.
+ *
+ * FOCUS GOES IN AND COMES BACK. Opening moves it to the first line, so the
+ * sheet is usable from a keyboard at all; closing returns it to the mark, but
+ * only when it is still inside the sheet — a close that fires because the
+ * player tapped a card must not steal the focus off that card.
+ */
+function setHelpOpen(open) {
+  if (open === helpOpen()) return;
+  el.helpSheet.hidden = !open;
+  el.helpButton.setAttribute('aria-expanded', String(open));
+  if (open) {
+    el.helpRules.focus({ preventScroll: true });
+  } else if (el.helpSheet.contains(document.activeElement)) {
+    el.helpButton.focus({ preventScroll: true });
+  }
+}
+
+/**
+ * The rail beside the hand: the turn token, the fan's sort toggle, the action
+ * button (index.html says why it is a rail and not a bar).
  *
  * TWO INVARIANTS, AND NEITHER IS THIS FUNCTION'S TO BREAK.
  *
@@ -2638,14 +2714,23 @@ function showHint() {
  * the rail as a group and layoutHand subtracts the rail from the room the fan
  * may use, so a rail that changed width would re-fan the hand under the
  * player's finger — #13 in the inline axis. That is held in CSS by a fixed
- * width, and held here by the action button and the sort toggle taking turns
- * in one slot rather than stacking.
+ * width, and held here by nothing in the stack ever being laid out to its own
+ * label.
  *
  * The rail's HEIGHT costs the felt nothing — its own box is zero-height, so
  * #hand-row is the fan's height whatever goes in the stack — but the stack
- * still has to be STILL, because it is two controls under a thumb that is
- * already reaching for them. That is why the token and the lamp are toggled
- * by class and keep their slots, rather than by `hidden`.
+ * still has to be STILL, because these are controls under a thumb that is
+ * already reaching for them. That is why every rung is toggled by class and
+ * keeps its slot, rather than by `hidden`.
+ *
+ * THE SORT TOGGLE AND THE ACTION BUTTON NO LONGER SHARE A SLOT (#154). They
+ * did, and the cost was that a bid, a Hearts pass, a cribbage crib discard or
+ * a staged Thirteen combination took the sort control off the felt for the
+ * whole phase — which is exactly the phase a player spends arranging their
+ * hand to decide. The lamp that used to stand between them went to the help
+ * mark in the felt's corner (#155), so the third rung was already paid for:
+ * the stack is the same three rungs tall and the rail the same 5rem wide as
+ * before, measured, and both controls are reachable at once.
  */
 function renderRail(state, ui, humanActs) {
   // A SUGGESTION IS A HIGHLIGHT NOW, NOT A SENTENCE. What the hint touches is
@@ -2665,28 +2750,22 @@ function renderRail(state, ui, humanActs) {
   if (session) session.humanActing = humanActs;
   el.handRail.classList.toggle('hand-rail--acting', humanActs);
 
-  // The lamp asks the engine to rank the position, so it is offered only where
-  // the felt HOLDS the position — a joiner's view has no opponents' hands to
-  // fork and gets no button rather than a guess (src/ui/hint.js) — and only
-  // where there is a choice to make. One legal move is not a hint. It also
-  // steps aside once its answer is showing, so a player cannot ask the same
-  // question twice and have it counted twice.
-  //
-  // A CLASS, NOT `hidden`, for the same reason the token uses one: the lamp
-  // keeps its slot and only loses `visibility`, so the rail's stack is one
-  // height from the first deal to the last card and nothing in it ever shifts
-  // under the thumb. `visibility: hidden` takes it out of the tab order and
-  // off the screen reader too, which `hidden` was doing before.
-  el.handRail.classList.toggle('hand-rail--hintable',
-    humanActs && !state.isView && !state.gameOver && !suggestion
-    && movesFor(state, mySeat()).length > 1);
+  // The offer that used to be a lamp in this stack is a line in the help sheet
+  // now (#155), and it is repainted from here because this is the function
+  // both render paths run — renderSelection repaints the rail without
+  // rebuilding the fan, and "is there a hint to be had" changes on a tap.
+  renderHelpOffer(state, humanActs, suggestion);
 
-  // THE THUMB SLOT, and who has it. An action displaces the sort toggle rather
-  // than standing above it: the rail may not outgrow the fan (see above), and a
-  // player who has just staged a meld is not reaching for "By suit". Both
+  // THE TWO CONTROLS, AND NEITHER OF THEM IN THE OTHER'S WAY (#154). Both
   // conditions are answered here rather than half of them in renderHand:
-  // renderSelection repaints the rail without rebuilding the fan, so a
-  // `hidden` written from there would outlive the action that displaced it.
+  // renderSelection repaints the rail without rebuilding the fan, so a state
+  // written from there would outlive the render that set it.
+  //
+  // A CLASS, NOT `hidden`, for the same reason the token uses one: a control
+  // with nothing to say keeps its slot and only loses `visibility`, so the
+  // stack is one height from the first deal to the last card and nothing in it
+  // ever shifts under the thumb. `visibility: hidden` takes it out of the tab
+  // order and off the screen reader too, which `hidden` was doing before.
   const acting = !!(ui.action && humanActs);
   // A REFUSED COMMIT IS STILL THE COMMIT'S SLOT. The button stays, disabled,
   // carrying the engine's own sentence for why — because the alternative,
@@ -2695,10 +2774,13 @@ function renderRail(state, ui, humanActs) {
   // (#122, round-5 item 19). `disabled` and not `hidden`: same box, same
   // height, and the reason reaches a screen reader through the name.
   const refused = acting && !!ui.action.disabled;
-  el.actionButton.hidden = !acting;
+  el.handRail.classList.toggle('hand-rail--committing', acting);
   el.actionButton.disabled = refused;
   el.actionButton.classList.toggle('action-button--refused', refused);
-  el.handSort.hidden = acting || state.zones.cards(handAddress(mySeat())).length < 2;
+  // A hand of one card has nothing to arrange, so the toggle goes quiet — and
+  // keeps its rung, because the button below it may not move while it does.
+  el.handRail.classList.toggle('hand-rail--sortable',
+    state.zones.cards(handAddress(mySeat())).length >= 2);
   if (acting) {
     el.actionButton.textContent = ui.action.label;
     if (refused) {
@@ -2719,6 +2801,15 @@ function renderRail(state, ui, humanActs) {
       };
     }
   } else {
+    // EMPTIED, not left holding the last phase's word. The button keeps its
+    // rung when there is nothing to commit and only loses `visibility` — which
+    // hides it from the eye, the tab order and the screen reader, but would
+    // leave "Your crib" sitting in the DOM for anything that reads the felt
+    // rather than looks at it. Its box is held by a min-height in the sheet,
+    // not by the text, so emptying it moves nothing.
+    el.actionButton.textContent = '';
+    el.actionButton.removeAttribute('aria-label');
+    el.actionButton.removeAttribute('title');
     el.actionButton.onclick = null;
   }
 }
@@ -4473,6 +4564,7 @@ function adoptMatch(pack, state, message, {
   // card per pack for as long as the tab is open.
   clearSvgCache();
   hideAllPanels();
+  setHelpOpen(false);
   hideBanner();
   render(state, message);
   persistMatch();
@@ -4781,6 +4873,7 @@ export function closeTable() {
   preMoveFork = null;
   session = null;
   hideAllPanels();
+  setHelpOpen(false);
   if (ladder) ladder.hide();
   if (contractStrip) contractStrip.hide();
 }
@@ -4798,7 +4891,31 @@ export function rerenderTable() {
 export function initTable({ onExit }) {
   exitToLobby = onExit;
   settings = loadSettings();
-  el.hintButton.addEventListener('click', showHint);
+
+  // THE HELP MARK (#155). Two questions about the game — how is this played,
+  // and what would a good player do here — behind one `?` in the felt's
+  // corner, instead of the rules two taps deep in the scoreboard and the hint
+  // in among the buttons that commit.
+  el.helpButton.addEventListener('click', () => setHelpOpen(!helpOpen()));
+  el.helpRules.addEventListener('click', () => {
+    setHelpOpen(false);
+    if (livePack()) showRules(packRules(livePack()));
+  });
+  // CLOSED FIRST, AND THAT IS THE POINT OF THE ORDER: what a hint produces is
+  // a ring round cards on the felt, and a sheet standing over them answers the
+  // question with the answer hidden behind it.
+  el.helpHint.addEventListener('click', () => {
+    setHelpOpen(false);
+    showHint();
+  });
+  // A tap anywhere else closes it, the way the seat plate below answers the
+  // same gesture. Capturing, so the tap still reaches whatever it was aimed
+  // at: this closes a sheet, it does not swallow a move.
+  document.addEventListener('pointerdown', (event) => {
+    if (!helpOpen()) return;
+    if (el.helpSheet.contains(event.target) || el.helpButton.contains(event.target)) return;
+    setHelpOpen(false);
+  }, true);
 
   // AN OPEN SEAT PLATE IS DISMISSIBLE, by the two gestures every other overlay
   // on this screen already answers to. Wired once here rather than per render,
@@ -4848,6 +4965,11 @@ export function initTable({ onExit }) {
 
   window.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape' || !session) return;
+    // The sheet is the innermost thing open, so it is the first thing closed.
+    if (helpOpen()) {
+      setHelpOpen(false);
+      return;
+    }
     const node = openPlateSeat();
     if (!node) return;
     const seat = node.dataset.seat;

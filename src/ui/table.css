@@ -2468,8 +2468,19 @@ button.pile-stack:focus-visible { outline: 2px solid var(--accent); outline-offs
    may use, so a rail that changed width would slide the hand sideways and
    re-fan it — which is what a cycling "Deal order" → "By suit" → "By rank"
    label did before its own width was pinned. Every control in here is laid out
-   to that fixed box, and the two that come and go share one slot rather than
-   stacking, so the width is a constant and not a maximum.
+   to that fixed box rather than to its own label, so the width is a constant
+   and not a maximum.
+
+   THREE RUNGS, AND ALL THREE ALWAYS THERE (#154, #155). The sort toggle and
+   the action button used to take turns in one slot, which meant a bid, a
+   Hearts pass, a cribbage crib discard or a staged Thirteen combination hid
+   the sort control for the whole phase — the phase a player spends arranging
+   their hand to decide with. They have a rung each now, paid for by the Hint
+   lamp leaving for the help mark in the felt's corner: the stack was already
+   three rungs tall with the lamp in it, so it came out SHORTER — 73px with the
+   lamp, 69px with the sort toggle in its place, measured at 1280x860 — and the
+   rail is the same 5rem, so #hand-row and #hand are pixel-identical to what
+   they were and the fan's room is untouched.
 
    It flips sides with handedness along with everything else that has a side. */
 .hand-rail {
@@ -2490,22 +2501,35 @@ button.pile-stack:focus-visible { outline: 2px solid var(--accent); outline-offs
   gap: 0.3rem;
 }
 
-/* THE STACK IS ONE HEIGHT, ALWAYS. The token and the lamp keep their slots and
-   only lose `visibility` — `display: none` would shuffle the column upward
-   every time the turn changed hands or an answer was given, moving the two
-   controls under the thumb while the thumb was reaching for them. (The rail's
-   own box is zero-height either way, so this is about the stack being still,
-   not about the felt moving.) `visibility` also takes both out of the tab
-   order and off the screen reader, which is what `hidden` was doing before. */
+/* THE STACK IS ONE HEIGHT, ALWAYS. Every rung keeps its slot and only loses
+   `visibility` — `display: none` would shuffle the column upward every time
+   the turn changed hands or a phase ended, moving the controls under the thumb
+   while the thumb was reaching for them. (The rail's own box is zero-height
+   either way, so this is about the stack being still, not about the felt
+   moving.) `visibility` also takes a rung out of the tab order and off the
+   screen reader, which is what `hidden` was doing before.
+
+   THE ACTION BUTTON IS ONE OF THEM NOW (#154). It was `hidden`, because it
+   shared the bottom slot with the sort toggle and one of the two was always
+   standing in it; with a rung each, an empty thumb slot has to be an empty
+   slot rather than a missing row, or the sort toggle would step down into it
+   the moment a commit phase ended. */
 .hand-rail:not(.hand-rail--acting) .turn-token { visibility: hidden; }
-.hand-rail:not(.hand-rail--hintable) #hint-button { visibility: hidden; }
+.hand-rail:not(.hand-rail--committing) #action-button { visibility: hidden; }
+.hand-rail:not(.hand-rail--sortable) .hand-sort { visibility: hidden; }
 
 /* The sort toggle's width is FIXED to the longest label it can wear, and now
-   also to the rail that holds it. */
+   also to the rail that holds it.
+   6.8em AND NOT 6.2: "Deal order" measured 75px against a floor of 69, so the
+   pill was re-centring itself by 3px every time the mode came round to the
+   long label — which nothing else in the rail depended on while the toggle
+   only appeared between phases, and which is 3px of movement under the eye now
+   that it stands beside the action button all match (#154). The floor is above
+   the longest of the four labels, so the box is a constant again. */
 .hand-sort {
   font: inherit;
   font-size: 0.7rem;
-  min-width: 6.2em;
+  min-width: 6.8em;
   text-align: center;
   padding: 0.2rem 0.55rem;
   border-radius: 999px;
@@ -2517,7 +2541,6 @@ button.pile-stack:focus-visible { outline: 2px solid var(--accent); outline-offs
   opacity: 0.75;
 }
 .hand-sort:hover { opacity: 1; border-color: var(--accent); }
-.hand-sort[hidden] { display: none; }
 .hand-sort:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* ON A PORTRAIT PHONE THE RAIL LEAVES THE ROW.
@@ -2537,15 +2560,17 @@ button.pile-stack:focus-visible { outline: 2px solid var(--accent); outline-offs
  *
  * THE HEIGHT IS FIXED, WHICH IS THE SAME PROMISE THE ZERO-HEIGHT BOX WAS
  * MAKING. A band that sized itself to its contents would grow the instant the
- * turn token lit or the action button replaced the sort toggle, and the whole
- * felt would step down under a thumb already reaching for it (#13). So the band
- * is one height whatever is standing in it, and the stack is still absolutely
- * positioned inside it — the same two elements doing the same two jobs, turned
- * through ninety degrees.
+ * turn token lit or the action button appeared, and the whole felt would step
+ * down under a thumb already reaching for it (#13). So the band is one height
+ * whatever is standing in it, and the stack is still absolutely positioned
+ * inside it — the same two elements doing the same two jobs, turned through
+ * ninety degrees.
  *
- * AND ITS WIDTHS ARE PINNED FOR THE MIRROR-IMAGE REASON, now that the controls
- * sit side by side: the thumb slot is held to the sort toggle's own 6.2em so
- * the token and the lamp do not slide sideways when the button takes it. */
+ * AND ITS WIDTHS ARE PINNED FOR THE MIRROR-IMAGE REASON: every control here
+ * has the width it is laid out to everywhere else, so nothing in the band
+ * slides sideways when a phase begins or ends. The rail beside the fan stacked
+ * its three rungs; the band stands them in a row, and the action button keeps
+ * the thumb's end of it whether or not there is an action in it (#154). */
 @media (orientation: portrait) and (max-width: 480px) {
   #hand-row {
     flex-wrap: wrap;
@@ -2569,12 +2594,11 @@ button.pile-stack:focus-visible { outline: 2px solid var(--accent); outline-offs
   }
   /* The thumb reaches the same side it always did. */
   [data-handedness="left"] .hand-rail__stack { flex-direction: row-reverse; }
-  /* ONE SLOT, ONE WIDTH — the rail's own 5rem, which is the width the action
+  /* ONE WIDTH FOR BOTH — the rail's own 5rem, which is the width the action
      button is laid out to everywhere else and the width its label budget
      (ACTION_LABEL_MAX_CHARS, src/ui/interaction.js) is written against. Left to
-     size themselves, the button and the toggle it shares the slot with come out
-     a few pixels apart, and the token and the lamp beside them would step
-     sideways every time the turn changed. */
+     size themselves the two come out a few pixels apart, and the token beside
+     them would step sideways every time the turn changed. */
   .hand-rail__stack #action-button,
   .hand-rail__stack .hand-sort {
     flex: none;
@@ -3014,38 +3038,16 @@ body.is-dragging .card-face { cursor: grabbing; }
  * The rail's controls
  * ------------------------------------------------------------------ */
 
-/* THE HINT LAMP, and what it lights.
-   A quiet disc at the fan's edge, in the sort toggle's register: it is there
-   every turn and it is not the thing to look at. Icon only — the word "Hint"
-   bought nothing that a lamp beside your own hand does not already say, and
-   the words are what cost the felt its room.
-   ITS ANSWER IS THE FELT, NOT A SENTENCE. What the suggestion touches gets a
-   ring in a colour of its own: the accent already means "legal here", and a
-   hint has to be tellable from that at a glance — the ring says "this one",
-   not "you may". Static, no pulse: it is answering a question the player just
-   asked, so it has their attention. The sentence still exists and still goes
-   to #log, the live region below the felt, because a player who cannot see a
-   ring is exactly the player a hint is for (src/ui/table.js showHint). */
-#hint-button {
-  font: inherit;
-  font-size: 0.85rem;
-  line-height: 1;
-  width: 1.6rem;
-  height: 1.6rem;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  border-radius: 50%;
-  border: 1px solid var(--chip-border);
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-  opacity: 0.75;
-}
-#hint-button:hover { opacity: 1; border-color: var(--hint); color: var(--hint); }
-#hint-button:focus-visible { outline: 2px solid var(--hint); outline-offset: 2px; }
-
+/* WHAT A HINT LIGHTS — the lamp that used to sit in this rail is a line in the
+   help sheet now (#155, .help-sheet below), but what it produces is unchanged
+   and it is the felt rather than a sentence.
+   What the suggestion touches gets a ring in a colour of its own: the accent
+   already means "legal here", and a hint has to be tellable from that at a
+   glance — the ring says "this one", not "you may". Static, no pulse: it is
+   answering a question the player just asked, so it has their attention. The
+   sentence still exists and still goes to #log, the live region below the felt,
+   because a player who cannot see a ring is exactly the player a hint is for
+   (src/ui/table.js showHint). */
 .card-face-wrap--hinted .card-face,
 .stage-card.card-face-wrap--hinted .card-face {
   box-shadow: 0 0 0 3px var(--hint), 0 3px 4px var(--card-shadow);
@@ -3091,6 +3093,14 @@ body.is-dragging .card-face { cursor: grabbing; }
   line-height: 1.15;
   font-weight: 600;
   width: 100%;
+  /* ITS BOX IS THE SAME BOX WITH NO LABEL IN IT. The button keeps its rung
+     when there is no action (see .hand-rail above), and an empty button is
+     nine pixels of padding — which measured as the stack standing 13px taller
+     the moment a commit phase began, with the sort toggle and the turn token
+     sliding up under a thumb already on them. One line of type plus this
+     rule's own padding, derived from the two declarations above rather than
+     typed as a number, so a change to either carries. */
+  min-height: calc(1.15em + 0.6rem);
   padding: 0.3rem 0.25rem;
   border-radius: 999px;
   border: none;
@@ -3101,7 +3111,6 @@ body.is-dragging .card-face { cursor: grabbing; }
   text-align: center;
 }
 #action-button:hover { background: var(--action-bg-hover); }
-#action-button[hidden] { display: none; }
 
 /* THE COMMIT, REFUSED. Same box, same slot, same height — only the button is
    off, because the alternative measured on the felt was the Pass pill
@@ -3119,6 +3128,107 @@ body.is-dragging .card-face { cursor: grabbing; }
   padding: calc(0.3rem - 1px) calc(0.25rem - 1px);
 }
 #action-button:disabled:hover { background: var(--chip-bg); }
+
+/* ------------------------------------------------------------------ *
+ * The help mark, and its sheet
+ * ------------------------------------------------------------------ */
+
+/* A `?` IN THE CORNER THE SEATS DO NOT USE (#155).
+   The rules were two taps inside the scoreboard and the hint was a lamp among
+   the buttons that commit, so a player meeting a game for the first time had
+   nothing on the felt to reach for. This is that thing, and it is deliberately
+   the quietest mark on the table: a hairline disc in the register the
+   seat-view toggle set (.opponent-row__toggle, which is the same idea in the
+   other corner) — out of the seat row's flow so it leans on nothing, above the
+   felt at z-index 3 and far below the dialogs at 10.
+
+   32px of TARGET around 13px of ink, which is the minimum a thumb is owed
+   (§5); the ring is what makes it findable, and the low opacity is what keeps
+   it from competing with a card. It does not mirror with handedness: the
+   toggle has the right corner under both, and this is not a control anyone
+   reaches for mid-trick — a mark that swapped sides would land on top of it. */
+.table-help {
+  position: absolute;
+  top: 0.5rem;
+  left: 0.6rem;
+  z-index: 3;
+  width: 2rem;
+  height: 2rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font: inherit;
+  font-size: 0.85rem;
+  line-height: 1;
+  border-radius: 50%;
+  border: 1px solid var(--chip-border);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  opacity: 0.7;
+}
+.table-help:hover { opacity: 1; border-color: var(--accent); color: var(--accent); }
+.table-help:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.table-help[aria-expanded="true"] { opacity: 1; border-color: var(--accent); color: var(--accent); }
+
+/* THE SHEET HANGS OFF THE MARK, not off the middle of the screen. It is two
+   lines of furniture answering a tap in a corner, and a modal that took the
+   whole felt to say them would be the thing the rules panel already is. Above
+   the seats and the piles, below every dialog — including the rules panel it
+   opens, which is why it closes on the way there. */
+.help-sheet {
+  position: absolute;
+  top: 2.8rem;
+  left: 0.6rem;
+  z-index: 8;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 12rem;
+  max-width: min(16rem, calc(100% - 1.2rem));
+  padding: 0.3rem;
+  border-radius: 12px;
+  border: 1px solid var(--panel-border);
+  background: var(--panel-bg);
+  color: var(--panel-text);
+  box-shadow: 0 8px 24px var(--panel-shadow);
+}
+.help-sheet[hidden] { display: none; }
+
+.help-sheet__item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.1rem;
+  width: 100%;
+  padding: 0.4rem 0.55rem;
+  border: none;
+  border-radius: 9px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.help-sheet__item:hover { background: var(--chip-bg); }
+.help-sheet__item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.help-sheet__label { font-size: 0.85rem; font-weight: 600; }
+/* The second line is the reason as often as it is the promise — see
+   `hintOffer` in src/ui/table.js — so it is styled as a note either way and
+   never as an error. */
+.help-sheet__note { font-size: 0.7rem; opacity: 0.72; }
+
+/* OFF, AND SAYING WHY. A hint that cannot be given is a line that stays on the
+   sheet with its reason on it rather than one that disappears: somebody who
+   has just opened this is looking for help, and a control that is missing
+   teaches them nothing. Same box, dimmer ink — the treatment the refused
+   commit in the rail already uses. */
+.help-sheet__item:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+.help-sheet__item:disabled:hover { background: transparent; }
 
 /* ------------------------------------------------------------------ *
  * Compact piles on the seats, and melds
