@@ -146,11 +146,39 @@ const DISCARD_BURIES = 1;
 const DISCARD_DUPLICATE = 1.5;
 /** Enough that it loses to every natural discard, and is only ever forced. */
 const DISCARD_WILD = 5;
+/** Below every discard, above `pass`: a hand card spent past your own stock. */
+const WASTED_HAND_PLAY = -2;
+
+/** Would one more card fill this pile and sweep it back into circulation? */
+function completesPile(ctx, buildAddr) {
+  return requiredRank(ctx, buildAddr) === ctx.rules.buildRule.to;
+}
 
 function scorePlayMove(ctx, move) {
   const { kind } = zoneKindAndSeat(move.from);
   const wants = rankAfterPlay(ctx, move.to);
   const mine = stockTopRank(ctx, move.actor);
+  // A HAND CARD PLAYED PAST YOUR OWN STOCK IS A CARD THROWN AWAY, and four
+  // seats doing it is how this table dies. The circulating pool is small — 162
+  // cards, 120 of them dealt into the four stocks, so about forty are ever in
+  // play at once — and a bot that plays every card it legally can feeds all
+  // forty onto the build piles. Probed at the move cap, that is exactly what a
+  // Stockpile stall looks like: build piles at 7/11/11/11 holding forty cards,
+  // every hand empty, the draw and the recycle pile both empty, four stocks
+  // barely touched, and nothing left that can move. The card that would
+  // complete a pile and send twelve back to the draw is buried in somebody's
+  // discard pile, and the game passes until the harness stops it.
+  //
+  // So a hand card is spent only when it is going somewhere: onto a pile still
+  // BELOW my own stock top (every rank between here and there is a rank I have
+  // to put down anyway), or onto the last slot of a pile, which sweeps twelve
+  // cards back into the draw and is how the deck keeps breathing. Anything
+  // else goes below the discards, and the turn ends with the card kept.
+  // Stock and discard-pile plays are never withheld: one is the race and the
+  // other frees a card that was already out of circulation.
+  if (kind === 'hand' && !completesPile(ctx, move.to) && mine !== null && wants > mine) {
+    return WASTED_HAND_PLAY;
+  }
   let score = PLAY_FROM[kind] ?? PLAY_FROM.hand;
   if (mine !== null && wants === mine) return score + SETS_UP_OWN_PLAY;
   if (rivalStockRanks(ctx, move.actor).has(wants)) score -= FEEDS_RIVAL_PLAY;
@@ -233,8 +261,26 @@ const BRIDGE_WORTH = 2;
 const WILD_IN_HAND = 3;
 /** An empty discard pile is somewhere to put anything. */
 const OPEN_PILE = 1;
-/** A discard pile whose top card is one rank below the card under it. */
-const SEQUENCE_WORTH = 1.5;
+/**
+ * Every card of mine lying UNDER the top of one of my discard piles.
+ *
+ * Only the top card of a personal pile is playable, so a card under one is out
+ * of the game until the ones above it come off — and a table whose four seats
+ * have buried forty cards between them is a table where the draw pile is thin,
+ * the build piles stop completing and nothing recycles, which is what a
+ * Stockpile live-lock actually is. Without this term the evaluator rates
+ * burying a card at zero and opening a fresh pile at −OPEN_PILE, so it buries
+ * by preference: `medium` stalled 6 games in 100 against `easy`'s 1.
+ */
+const BURY_COST = 1.5;
+/**
+ * A discard pile whose top card is one rank below the card under it.
+ *
+ * Above BURY_COST, because a card laid one below the card it covers is not
+ * buried at all — it is two plays stacked in the order the build piles will
+ * want them, which is the one shape a discard pile can have that helps.
+ */
+const SEQUENCE_WORTH = 2.5;
 /** A build pile left on a rank an opponent's stock is waiting for. */
 const FEEDS_RIVAL = 2.5;
 /** How much the nearest opponent's stock discounts your own position. */
@@ -247,7 +293,7 @@ const RIVAL_SHARE = 9;
  */
 export const WEIGHTS = Object.freeze({
   STOCK_CARD, HELD_CARD, STOCK_OUT, BRIDGE_WORTH, WILD_IN_HAND,
-  OPEN_PILE, SEQUENCE_WORTH, FEEDS_RIVAL, RIVAL_SHARE,
+  OPEN_PILE, BURY_COST, SEQUENCE_WORTH, FEEDS_RIVAL, RIVAL_SHARE,
 });
 
 const sequencing = {
@@ -539,6 +585,9 @@ const sequencing = {
       const ids = ctx.cardIdsIn(`discard.${n}.${seat}`);
       score -= ids.length * w.HELD_CARD;
       if (ids.length === 0) { score += w.OPEN_PILE; continue; }
+      // Everything but the top card of the pile is out of the game until the
+      // cards above it come off.
+      score -= (ids.length - 1) * w.BURY_COST;
       if (ids.length < 2) continue;
       const top = Number(ctx.cardById(ids[ids.length - 1]).rank);
       const under = Number(ctx.cardById(ids[ids.length - 2]).rank);

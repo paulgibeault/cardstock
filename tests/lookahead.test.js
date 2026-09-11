@@ -106,8 +106,11 @@ test("a template with no evaluateState is ranked exactly as it always was", asyn
   let checked = 0;
   walk(state, 60, (live, seat) => {
     const ctx = makeCtx(live);
+    // `rankMoves` sorts, stably, so equal scores keep enumeration order —
+    // which is the other half of the claim and is what this reproduces.
     const cheap = enumerateLegalMoves(live, seat)
-      .map((move) => [move, template.botHeuristic(ctx, move, template.weights)]);
+      .map((move) => [move, template.botHeuristic(ctx, move, template.weights)])
+      .sort((a, b) => b[1] - a[1]);
     const hook = template.evaluateState;
     delete template.evaluateState;
     try {
