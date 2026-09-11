@@ -303,7 +303,12 @@
   </div>
 
   <div id="round-overlay" hidden>
-    <div class="panel">
+    <!-- TAPPING THE PANEL DEALS (#150). The whole sheet is the button, not
+         merely the button — a player who has read the score reaches for the
+         thing they are looking at. "End match" and the pace control opt out of
+         that in src/ui/panels.js, because a tap meant for either of them must
+         not be swallowed by the deal. -->
+    <div class="panel" id="round-panel">
       <div id="round-title" class="panel__title"></div>
       <div id="round-scores" class="round-scores"></div>
       <!-- The round summary is the one moment a player is actually deciding
@@ -312,9 +317,24 @@
            table, which keeps the game in progress and waiting in the lobby. -->
       <div id="round-target" class="round-target"></div>
       <div class="panel__actions">
-        <button id="round-continue">Deal the next round</button>
+        <!-- The countdown, drawn ON the button it is counting down to rather
+             than beside it as digits: the fact worth showing is "this is about
+             to happen", and a number turns that into arithmetic. The two rects
+             are sized from the button by src/ui/panels.js — the outline has to
+             match a pill whose width is the round number's, and the geometry is
+             a measurement, not a constant. -->
+        <span class="deal-ring-wrap">
+          <svg id="round-ring" class="deal-ring" aria-hidden="true" hidden focusable="false">
+            <rect class="deal-ring__track" x="0" y="0" width="100%" height="100%"></rect>
+            <rect class="deal-ring__fill" x="0" y="0" width="100%" height="100%"></rect>
+          </svg>
+          <button id="round-continue">Deal the next round</button>
+        </span>
         <button id="round-end-match" class="ghost-button">End match</button>
       </div>
+      <!-- Changing the pace AT THE MOMENT YOU FEEL IT, rather than in a sheet
+           two screens away that you next see when the match is over. -->
+      <button type="button" id="round-pace" class="round-pace"></button>
     </div>
   </div>
 

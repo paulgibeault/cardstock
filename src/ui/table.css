@@ -3846,6 +3846,17 @@ body.is-dragging .card-face { cursor: grabbing; }
     animation: none !important;
   }
 
+  /* The deal countdown (#150). Which of the two treatments runs is decided in
+     JS — `paintRoundPace` reads `motionAllowed()`, which also sees the SDK's
+     own reducedMotion setting, and CSS cannot — so this is here for the one
+     case JS cannot catch: the media query flipping while the sheet is already
+     open. The outline stays and is simply drawn whole; the timer is untouched
+     and the next hand still deals itself on time. */
+  .deal-ring--running .deal-ring__fill {
+    animation: none !important;
+    stroke-dashoffset: 0;
+  }
+
   /* The pulses live on pseudo-elements, and stopping the animation alone would
      freeze one at whatever opacity it happened to hold. Hidden outright: the
      thing each one emphasises is already said by a colour — the accent border
@@ -4225,6 +4236,113 @@ body.is-dragging .card-face { cursor: grabbing; }
   font-weight: 600;
 }
 #round-continue:hover { background: var(--action-bg-hover); }
+
+/* ------------------------------------------------------------------ *
+ * The countdown to the next hand (#150)
+ * ------------------------------------------------------------------ *
+ *
+ * An outline filling in around the Deal button, and no digits anywhere. What a
+ * player needs off this is "something is about to happen, and roughly how
+ * soon"; a number turns a glance into arithmetic, and a number that counts down
+ * from 2 is a number nobody finishes reading.
+ *
+ * ONE SHOT, ALWAYS. The animation runs once, `forwards`, and the class is taken
+ * off the moment the sheet closes (src/ui/panels.js hideRoundSummary) — there
+ * is no state in which this is still ticking with nothing to count down to.
+ * Under reduced motion or the power saver it is not animated at all: the
+ * outline is simply drawn, whole and still, and the timer fires exactly when it
+ * would have (cardstock#24).
+ *
+ * The geometry is set from JS because it is a measurement, not a constant: the
+ * button is as wide as "Deal round 11" happens to be, and a dash array has to
+ * be the real perimeter of the real pill or the fill runs short or spills.
+ */
+.deal-ring-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+/* SIZED EXPLICITLY, not by `inset`. An `<svg>` is a REPLACED element with a
+   default intrinsic size of 300x150, and an absolutely-positioned replaced box
+   with `width: auto` takes that intrinsic size rather than the one its insets
+   describe — `inset: 1px` measured 288x144 over a 138x39 button, so the ring
+   was drawn a long way off the thing it was meant to be around. */
+/* INSET FAR ENOUGH TO BE WHOLLY ON THE BUTTON. A stroke centred on the
+   button's own edge spends half its width on the panel behind it, and the
+   panel is cream in the light theme — so half the ring was white on cream and
+   the whole indicator read as a smudge there while looking fine in the dark.
+   Two pixels in, and the ring is a groove in the action colour in both. */
+.deal-ring {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: calc(100% - 4px);
+  height: calc(100% - 4px);
+  overflow: visible;
+  /* The ring is decoration ON the button: every pointer that lands here is
+     meant for the button underneath it. */
+  pointer-events: none;
+}
+.deal-ring[hidden] { display: none; }
+
+.deal-ring__track,
+.deal-ring__fill {
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+/* The unfilled part. `--action-text` is what sits ON the action colour, so this
+   reads as a groove in the button in either theme rather than a second colour
+   introduced beside it. */
+.deal-ring__track {
+  stroke: var(--action-text);
+  opacity: 0.35;
+}
+
+.deal-ring__fill {
+  stroke: var(--action-text);
+  opacity: 0.85;
+  stroke-dasharray: var(--deal-ring-len);
+  /* At rest the fill is not drawn at all — 0%, the track alone. */
+  stroke-dashoffset: var(--deal-ring-len);
+}
+
+.deal-ring--running .deal-ring__fill {
+  animation: deal-ring-fill var(--deal-ring-ms, 2500ms) linear forwards;
+  animation-iteration-count: 1;
+}
+
+/* Reduced motion and power saving: the mark without the movement. The ring is
+   drawn whole, saying "this deals itself", and the timer still fires. */
+.deal-ring--static .deal-ring__fill {
+  stroke-dashoffset: 0;
+  opacity: 0.5;
+}
+
+@keyframes deal-ring-fill {
+  from { stroke-dashoffset: var(--deal-ring-len); }
+  to { stroke-dashoffset: 0; }
+}
+
+/* The rung, changeable at the moment you feel it. Deliberately the quietest
+   thing on the panel: it is an adjustment, not a decision, and the two buttons
+   above it are the decisions. */
+.round-pace {
+  display: block;
+  margin: 0.9rem auto 0;
+  padding: 0.3rem 0.5rem;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--panel-text);
+  font: inherit;
+  font-size: 0.8rem;
+  opacity: 0.6;
+  cursor: pointer;
+}
+.round-pace:hover { opacity: 1; }
+.round-pace[hidden] { display: none; }
 
 /* ------------------------------------------------------------------ *
  * The wild's question
