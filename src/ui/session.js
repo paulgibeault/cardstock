@@ -30,10 +30,19 @@ import { makeCtx } from '../engine/context.js';
  * @param cardArt  this pack's renderer (src/ui/cardStyles)
  * @param handPrefs the human's saved fan arrangement for this pack
  */
-export function createSession({ pack, state, seats, seating, cardArt, handPrefs, shared = false, hintsTaken = 0 }) {
+export function createSession({
+  pack, state, seats, seating, cardArt, handPrefs, shared = false, hintsTaken = 0, daily = null,
+}) {
   return {
     pack,
     state,
+    // IS THIS TODAY'S DAILY RUN? `{ date, seed }`, or null for an ordinary
+    // game. Per-match by construction — the ladder this table is playing was
+    // derived for that date and is not the ladder the pack ships, so a field
+    // that outlived the session would be a rule set outliving the match it
+    // belongs to. It decides which storage slot the match is written to
+    // (src/arcade/storage.js) and which record its ending goes into.
+    daily,
     // IS THIS A TABLE OTHER PEOPLE ARE AT? A shared match belongs to its
     // TableSession (src/match/tableSession.js) and is persisted there, under
     // `mpMatch.<tableId>`. The felt must not ALSO write it to the solo slot:
