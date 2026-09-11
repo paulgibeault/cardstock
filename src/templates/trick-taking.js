@@ -6,7 +6,7 @@
 import { rankLadderOf, rankOrder } from '../engine/cards.js';
 import { selectorMatches } from '../engine/selectors.js';
 import { cardValue, handValue } from '../engine/scoring.js';
-import { sidesOf, sideOfSeat } from '../engine/sides.js';
+import { sidesOf, sideOfSeat, arePartners } from '../engine/sides.js';
 import { detectDeclaredMelds } from './melds.js';
 
 /* ------------------------------------------------------------------ *
@@ -331,14 +331,19 @@ function perilOf(ctx) {
   // per-call sweep would recompute once per candidate bid.
   const suits = new Set();
   let topRank = 0;
+  // And the priciest card in the deck, on the same sweep. `botHeuristic` needs
+  // it to know how wide its own ranking is — see `trickBand`.
+  let topValue = 0;
   for (const card of ctx.pack.cardsById.values()) {
     const rank = rankOrder(card, ladder);
     if (rank > topRank) topRank = rank;
+    const value = cardValue(card, scoring);
+    if (value > topValue) topValue = value;
     if (card.suit !== undefined && card.suit !== null) suits.add(card.suit);
-    if (!card.suit || cardValue(card, scoring) <= 0) continue;
+    if (!card.suit || value <= 0) continue;
     if (rank > (peril.get(card.suit) ?? -Infinity)) peril.set(card.suit, rank);
   }
-  cached = { peril, topRank, suits };
+  cached = { peril, topRank, topValue, suits };
   packPeril.set(ctx.pack, cached);
   return cached;
 }
@@ -486,6 +491,20 @@ const SHORTFALL_COST = 2;
  */
 const NIL_WORTH = 4;
 
+/**
+ * ONE RUNG OF THE LADDER, STILL IN HAND, against one trick of the contract.
+ *
+ * The term it scales is `evaluateContract`'s held-card term, and it is small
+ * on purpose: a full hand of thirteen cards is some eighty rungs, so anything
+ * near a whole trick would drown every other term in the evaluator and make a
+ * bot that never plays a card it does not have to. What it has to be big enough
+ * to do is separate two cards that take the SAME trick — the ace and the ten
+ * that both beat a king — which is twelve rungs at the widest, so a fortieth of
+ * a trick puts a third of a trick between them and leaves winning the trick
+ * comfortably worth more than the card it costs. See the term's own comment.
+ */
+const CONTRACT_HELD_WORTH = 0.025;
+
 /** How much the best opposing side's contract discounts your own. */
 const CONTRACT_RIVAL_SHARE = 0.5;
 
@@ -499,7 +518,8 @@ const CONTRACT_RIVAL_SHARE = 0.5;
 export const WEIGHTS = Object.freeze({
   TAKEN_WORTH, AT_RISK_WORTH, HELD_VALUE_WORTH, LOOSE_POINT_RISK, HELD_LIABILITY_WORTH,
   RIVAL_SHARE, PASS_VALUE_WORTH, PASS_LIABILITY_WORTH, PASS_VOID_WORTH,
-  CONTRACT_TRICK_WORTH, BAG_COST, SHORTFALL_COST, NIL_WORTH, CONTRACT_RIVAL_SHARE,
+  CONTRACT_TRICK_WORTH, BAG_COST, SHORTFALL_COST, NIL_WORTH, CONTRACT_HELD_WORTH,
+  CONTRACT_RIVAL_SHARE,
 });
 
 function scorePass(ctx, move, w = WEIGHTS) {
@@ -1415,15 +1435,58 @@ function evaluateContract(ctx, seat, w = WEIGHTS) {
 
   const sides = sidesOf(ctx.pack, ctx.seats);
   const mine = sideOfSeat(ctx.pack, ctx.seats, seat);
+  const trickIds = ctx.cardIdsIn('trick');
   const taking = trickLeaderSoFar(ctx);
   const holds = holdsUp(ctx, taking);
   const takingSide = taking.seat === null ? null : sideOfSeat(ctx.pack, ctx.seats, taking.seat);
 
+  /**
+   * WHO HELD THE TRICK ONE CARD AGO, and why an evaluator that does not ask is
+   * a bad partner however side-aware the rest of it is.
+   *
+   * The hold term below is what makes a bot want the trick, and it was reading
+   * the WHOLE of it every time — so a seat that overtook the partner who
+   * already held it was paid for the trick a second time, and paid MORE,
+   * because a higher winning card raises `holdsUp`. Taking the trick off your
+   * own partner scored better than ducking under them, which is #161's bug
+   * stated in the evaluator rather than in the heuristic.
+   *
+   * It is one card back, not the move that was played: a position evaluator is
+   * not told what produced it, and the trick zone being in play order is what
+   * makes "one card ago" a fact about the position rather than about the move.
+   */
+  const before = trickIds.length > 1
+    ? trickLeaderSoFar(ctx, trickIds.slice(0, -1))
+    : { seat: null, rank: -1 };
+  const beforeSide = before.seat === null ? null : sideOfSeat(ctx.pack, ctx.seats, before.seat);
+  const beforeHolds = holdsUp(ctx, before);
+
   // How many tricks are left to be taken by anybody: every trick costs the
   // table one card per seat, so the cards still out say it exactly.
-  let outstanding = ctx.countIn('trick');
+  let outstanding = trickIds.length;
   for (let s = 0; s < ctx.seats; s++) outstanding += ctx.countIn(ctx.zoneAddr('hand', s));
   const remaining = Math.floor(outstanding / ctx.seats);
+
+  /**
+   * WHAT IS STILL IN THIS SEAT'S OWN HAND, in the only currency a trick
+   * contract has: tricks it can still take.
+   *
+   * `evaluatePointsContract` grew the same term first and its comment says why
+   * (an evaluator blind to the card it spent cashes its aces on trick one and
+   * has nothing left to win the end of the hand with). Here the cards carry no
+   * points at all, so what a held card is worth is its RANK and nothing else —
+   * an ace is a trick you have not taken yet, a two is not. That is what makes
+   * "win with the cheapest card that wins" and "do not overtake your partner"
+   * fall out of the arithmetic instead of being written twice.
+   *
+   * ONLY THIS SEAT'S HAND, never the partner's: `evaluateState` is asked of one
+   * seat and may read nothing it could not see.
+   */
+  const ladder = rankLadderOf(ctx.pack);
+  let held = 0;
+  for (const id of ctx.cardIdsIn(ctx.zoneAddr('hand', seat))) {
+    held += rankOrder(ctx.cardById(id), ladder);
+  }
 
   const valueOfSide = (side) => {
     const members = sides[side];
@@ -1459,8 +1522,19 @@ function evaluateContract(ctx, seat, w = WEIGHTS) {
     if (owed > 0) value -= w.SHORTFALL_COST * (owed / Math.max(1, remaining));
 
     if (takingSide === side) {
-      value += (owed > 0 ? w.CONTRACT_TRICK_WORTH : -w.BAG_COST) * holds;
+      // A SIDE THAT ALREADY HELD THE TRICK IS CREDITED WITH THE HOLD IT HAD,
+      // not with the better one its own partner's overtake just bought it. That
+      // one substitution is #161's bug in the evaluator: the trick is the
+      // side's either way, so the ace that took it off the partner's king
+      // bought the side nothing — and the old term paid for it anyway, because
+      // a higher winning card raises `holdsUp`, and rated overtaking your own
+      // partner above ducking under them. Taking a trick off an OPPONENT is
+      // untouched: their hold was not this side's, so there is nothing to
+      // carry over and the whole of it is new.
+      const hold = beforeSide === side ? beforeHolds : holds;
+      value += (owed > 0 ? w.CONTRACT_TRICK_WORTH : -w.BAG_COST) * hold;
     }
+    if (side === mine) value += held * w.CONTRACT_HELD_WORTH;
     return value;
   };
 
@@ -1471,6 +1545,114 @@ function evaluateContract(ctx, seat, w = WEIGHTS) {
   }
   const value = valueOfSide(mine) - (Number.isFinite(rival) ? rival * w.CONTRACT_RIVAL_SHARE : 0);
   return prizeSign(ctx) * value;
+}
+
+/* ------------------------------------------------------------------ *
+ * WHAT A CARD IS WORTH, PLAYED INTO THIS TRICK (`botHeuristic`, #161)
+ * ------------------------------------------------------------------ *
+ *
+ * The cheap ranking used to be `-rank - value` and nothing else: play low, shed
+ * what the pack charges for. That is the right instinct for a seat sitting
+ * alone in a game about avoiding points, and it is the wrong one twice over at
+ * a partnership game about keeping a promise.
+ *
+ *   1. IT NEVER LOOKED AT THE TRICK, so it beat its own partner. `followSuit:
+ *      'must'` offers a void hand every card it holds, and the lowest card in a
+ *      Spades hand is very often a low spade — a ruff, on top of the partner
+ *      who had the trick won. The engine's side plumbing was partner-aware from
+ *      #104 and this, the function that actually chose the card, was not.
+ *   2. IT IS ALSO THE `hard` BOT'S ROLLOUT POLICY (src/engine/bot.js plays
+ *      every chair at `easy`), so the same blindness is in every sampled world
+ *      the Monte Carlo layer grades — which is the unfixed core of #114.
+ *
+ * THREE CLASSES, AND WITHIN A CLASS THE OLD ORDER. This is a sort, not a
+ * quantity: "any card that wins beats every card that does not" is not a number
+ * anybody can hold an opinion about, so the class step is derived from the deck
+ * (`trickBand` — one clear of the widest `-rank - value` can be) rather than
+ * being a weight for tools/tune.mjs to take a fraction of. A fraction of it
+ * would not be a different strategy, it would be a broken sort. What is left
+ * inside a class is exactly the old ranking, which is what makes "the cheapest
+ * card that wins" fall out rather than being written as a second rule.
+ */
+
+/** One clear of the widest the `-rank - value` ranking below can be. */
+function trickBand(ctx) {
+  const { topRank, topValue } = perilOf(ctx);
+  return topRank + topValue + 1;
+}
+
+/**
+ * A seat that promised NOTHING and has not broken it yet.
+ *
+ * `bidOf` is null at a pack that takes no bid, so this is false all game at
+ * Hearts and every clause built on it is dead code there rather than a branch
+ * Hearts has to be reasoned about.
+ */
+function isLiveNil(ctx, seat) {
+  return seat !== null && bidOf(ctx, seat) === 0 && tricksTakenBy(ctx, seat) === 0;
+}
+
+function scorePlayCard(ctx, move) {
+  const ladder = rankLadderOf(ctx.pack);
+  const card = ctx.cardById(move.cards[0]);
+  // Play low, and shed anything the pack charges you for holding. The second
+  // clause used to be `card.tags?.includes('penalty')` — Hearts' own tag name,
+  // hardcoded into the template, and worth exactly −5 whether the card was a
+  // two of hearts or the queen of spades. The pack's scoring config already
+  // says what each card costs, so it says it here too.
+  const base = -rankOrder(card, ladder) - cardValue(card, ctx.pack.scoring || {});
+
+  // LEADING IS A DIFFERENT QUESTION and this deliberately does not answer it.
+  // There is no trick to read, and what to open with is a judgement about the
+  // whole hand — the evaluator's job at `medium`, and out of scope here.
+  if (ctx.countIn('trick') === 0) return base;
+
+  const taking = trickLeaderSoFar(ctx);
+  const actor = move.actor ?? ctx.turn.seat;
+  // Nobody is winning an empty trick, and a seat plays into a trick once, so
+  // the second clause is a guard rather than a case.
+  if (taking.seat === null || taking.seat === actor) return base;
+
+  const trump = trickTrumpOf(ctx);
+  const shelf = trumpShelf(ctx, trump);
+  const isTrump = trump !== null && card.suit === trump;
+  // The SAME number line trick resolution uses (`trickLeaderSoFar`), so "this
+  // card wins" here and "this card won" there can never disagree.
+  const wins = rankOrder(card, ladder) + (isTrump ? shelf : 0) > taking.rank;
+  // A ruff is a trump spent on a trick that was NOT led in trumps. Following a
+  // trump lead with a trump is not a ruff and is not what the rules below mean.
+  const ruffs = isTrump && ctx.var('led') !== trump;
+  const band = trickBand(ctx);
+
+  // A SEAT THAT PROMISED NOTHING MAY NOT TAKE THIS TRICK, whatever else is
+  // true. Playing low was already most of a nil's game; what it missed is the
+  // void hand, where the lowest card left is a trump and wins.
+  if (isLiveNil(ctx, actor)) return base - (wins ? band : 0);
+
+  const partnerWinning = arePartners(ctx.pack, ctx.seats, actor, taking.seat);
+  // A NIL PARTNER WINNING IS A NIL DYING. The trick is the partner's promise
+  // being broken in front of you, so the duck rule below is suspended: take it
+  // off them if the hand allows — but never with a trump. Ruffing a partner's
+  // trick to save a nil spends a trump and a bag on a trick nobody wanted, and
+  // the seats still to play may yet take it off them for nothing (#161).
+  const savingNil = partnerWinning && isLiveNil(ctx, taking.seat);
+
+  if (partnerWinning && !savingNil) {
+    // THE TRICK IS ALREADY YOURS. The side is credited with it either way, so
+    // every card that takes it back off your own partner spends a winner to buy
+    // nothing — and a trump spends one that could have taken a trick the side
+    // has no other way of reaching.
+    return base - (wins ? band : 0) - (ruffs ? band : 0);
+  }
+  if (savingNil && ruffs) return base - band;
+
+  // WINNING IS ONLY WORTH SOMETHING WHERE THE TRICKS ARE THE PRIZE, and that
+  // is the one line that keeps this out of Hearts. A pack whose points are the
+  // PENALTY (`scoring.gameOver.winner`, read once by `prizeSign`) wants the
+  // exact opposite of "take it if you can", and the old ranking — lowest card,
+  // cheapest card — is already the right answer there.
+  if (prizeSign(ctx) !== 1) return base;
+  return base + (wins ? band : 0);
 }
 
 function seatsForTrick(ctx, leader, count) {
@@ -1489,9 +1671,14 @@ function seatsForTrick(ctx, leader, count) {
  * Split out of resolveTrick because a half-played trick has an answer too, and
  * `evaluateState` needs it: the whole question a trick-taking bot is asking is
  * "am I about to be handed this pile". `{ seat: null }` for an empty trick.
+ *
+ * `cards` IS A PREFIX OF THE TRICK, and defaults to the whole of it. The trick
+ * zone is in play order, so dropping its last card is the position one card
+ * back — which is what `evaluateContract` asks for when it wants to know what
+ * the move it is judging actually CHANGED (#161).
  */
-function trickLeaderSoFar(ctx) {
-  const trickCards = ctx.cardIdsIn('trick');
+function trickLeaderSoFar(ctx, cards = null) {
+  const trickCards = cards ?? ctx.cardIdsIn('trick');
   if (!trickCards.length) return { seat: null, rank: -1 };
   const leader = ctx.var('leader');
   const led = ctx.var('led');
@@ -2443,15 +2630,10 @@ const trickTaking = {
     // played, so `evaluateState` declines the whole phase (see below) and this
     // is the entire judgement.
     if (move.type === 'bid') return scoreBid(ctx, move, w);
-    const card = ctx.cardById(move.cards[0]);
-    // Play low, and shed anything the pack charges you for holding. The second
-    // clause used to be `card.tags?.includes('penalty')` — Hearts' own tag name,
-    // hardcoded into the template, and worth exactly −5 whether the card was a
-    // two of hearts or the queen of spades. The pack's scoring config already
-    // says what each card costs, so it says it here too.
-    let score = -rankOrder(card, rankLadderOf(ctx.pack));
-    score -= cardValue(card, ctx.pack.scoring || {});
-    return score;
+    // A CARD IS WORTH WHAT THE TRICK ON THE TABLE MAKES IT WORTH — see
+    // `scorePlayCard`, which is where the partner, the trump and the nil live
+    // (#161). It used to be two lines here and they read nothing but the card.
+    return scorePlayCard(ctx, move);
   },
 
   /**
