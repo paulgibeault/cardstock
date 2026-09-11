@@ -2666,6 +2666,201 @@ against the felt's edge for the whole game. If it wants a floor later, the
 place to put one is a `--stage-card-w` that this rule and the 660px block both
 read.
 
+## The lowest card leads, the house rules are offered, and a sort knows its ladder (#156, #158, #159)
+
+### What was wrong
+
+Three reports off one table, and the first two are the same mistake written
+twice: a rule expressed as the thing it *usually* produces rather than as the
+thing it *means*.
+
+**The lead (#156).** Thirteen's `rules.firstLead.card` was the literal
+`spades-3`, and `beginHand` handed the lead to whoever held that card. Thirteen
+deals a flat thirteen and leaves the remainder out of play (THIRTEEN_RULES.md
+D-11), so short-handed the 3♠ is frequently not dealt at all — half the deck is
+never dealt at two seats and a quarter of it at three. Measured over 400 seeded
+deals per seat count: out of play in 50.7% of two-seat deals and 25.8% of
+three-seat ones, which is the population rate and not bad luck. `seatHolding` then named no seat and the lead fell through
+to `ctx.openingSeat()`, which on hand one is seat 0, which is the human — so
+the opening lead was handed to the player by a bug, in the game whose first
+rule is that the lowest card leads. Before: the opening seat held the lowest
+card in play in 77.3% of two-seat deals and 83.0% of three-seat ones, and the
+lead landed on seat 0 in 77.8% and 49.3% of them. At four seats it was already
+right in every deal, because there the 3♠ always *is* the lowest card in play.
+
+Two smaller things sat beside it. `dealHands` passed a step count into
+`nextSeat`'s *direction* parameter (`nextSeat(openingSeat(), n)`), which visits
+every seat exactly once and so dealt a valid hand — clockwise, at a
+counter-clockwise table. Nothing downstream noticed, because every seat still
+got thirteen cards. And `seatsFor` in `src/ui/table.js` fell back to a flat
+`SEAT_COUNT = 3` when nothing asked for a seat count, which is what a deep
+link and a resume-with-no-saved-setup got: `?pack=thirteen` opened a
+three-handed table while the manifest's `players.best` said four and the
+new-game sheet preselected four. Two surfaces answering one question
+differently is how "the deal is wrong" arrives against a pack that is right at
+the table it was designed for.
+
+**The house rules (#158).** Two rules players asked for, both nearly supported
+already. `rules.passIsFinal: false` — a pass skips your turn instead of putting
+you out of the trick — was implemented in `stillIn` and unreachable, because no
+pack offered it. And `Q-K-A-2` as a run was one key away, except that the one
+key was doing three jobs: `rules.runExcludes: ["rank:2"]` barred the 2 from
+runs, from consecutive-pair strips, *and* from the ranks the `instantWins`
+dragon is counted over. Dropping it to buy the run would silently have sold
+`2-2 A-A K-K` as a bomb-eligible strip, and moved the dragon from 3-to-A
+(twelve ranks) to 3-to-2 (thirteen ranks — the whole hand), a shape rare enough
+that the instant win would have stopped happening while the rules page went on
+offering it.
+
+**The sort (#159).** `rankIndex` in `src/ui/handOrder.js` read `Number(rank)`
+and then `RANKS`, both of which start at the 2, and `orderHand` never saw the
+pack. So "By rank" in Thirteen fanned `2♣ 2♦ 2♥ 3♣ … A♣` — the exact inverse of
+the ladder the whole game is played on. Pinochle's ten sorted between the 9 and
+the jack instead of between the king and the ace, and Cribbage's ace sorted
+last. The suit sort's within-suit tiebreak had the same bug.
+
+### What changed
+
+**`firstLead.card` gains the selector `"lowest"`** (`src/templates/climbing.js`
+`firstLeadCard`, schema `rules-climbing`): the minimum `cardOrder` — suit
+included, so exactly one card qualifies — among the cards actually dealt. A
+literal card id keeps working for a pack that really does nominate one card.
+Thirteen's manifest switches to `"lowest"`, and `ruleLines` says so, because
+the felt refuses moves over this rule and a refusal is a bad way to learn it.
+`dealHands` steps one seat at a time, the same walk `advance` does, so the deal
+and the turn order cannot disagree. `seatsFor` falls back to `players.best`.
+
+**The sequence exclusion splits by shape.** `rules.runExcludes` governs runs,
+the new `rules.stripExcludes` governs consecutive pairs, and a pack playing the
+ordinary rule declares the same list in both — which Thirteen does.
+`outOfSequence` takes a `kind`, and `null` means "excluded from *any* shape",
+which is what `instantWinShape` asks: the dragon is the intersection, so it
+stays 3-to-A under either reading, and that is now stated in the code rather
+than being a consequence. `rankCounts` carries `run`, `strip` and `seq`
+counters instead of one `seq`, so `handShape` and `candidateSets` — the bot's
+view — see the longer runs the variant allows without seeing a strip it does
+not. Variants `pass-stays-in` (default **on**) and `two-tops-runs` (default
+off) ship on the new-game sheet.
+
+**`orderHand` takes the pack's ladder** (`rankLadderOf(state.pack)`, #101's
+primitive) from its one call site in `renderHand`, and orders by it. Today's
+tiers survive as the fallback for ranks a ladder does not name (wilds,
+Milestones' `skip`) and for a pack that declares no ladder; off-ladder ranks
+sort after every ranked card rather than interleaving with them. The rank
+sort's tiebreak and the suit sort's within-suit order use the same ladder,
+including a declared `suitLadder` — Thirteen's four 9s now fan
+spades-clubs-diamonds-hearts, which is how the table ranks them. The suit
+sort's *groups* stay in suit-name order on purpose: a player learns where
+their spades live, and rearranging the four blocks would be a worse bug than
+the one being fixed.
+
+### What was decided, and why
+
+**`"lowest"` as an enum member of `firstLead.card`, not a new `firstLead.lowest`
+flag.** The issue offered both. One key with two forms keeps "who opens hand
+one" as a single question with a single answer; a second key invites a manifest
+that sets both and a template that has to decide which wins.
+
+**`stripExcludes` defaults to nothing rather than to `runExcludes`.** A pack
+that means the ordinary rule writes the list twice. The alternative — infer the
+strip's exclusion from the run's — is exactly the coupling #158 exists to
+break, and it would have made `two-tops-runs` a patch that silently moved two
+rules again.
+
+**The dragon is the intersection, spelled out.** `instantWinShape` asks
+`outOfSequence(ctx, card)` with no `kind`, and the comment says why. The
+alternative, a `dragonExcludes` key, is a third list nobody would keep in sync.
+
+**`pass-stays-in` ships on.** It is the rule the report asked for and, per D-12,
+the one more tables play. The strict rule is still the pack's own
+`rules.passIsFinal: true` and one toggle away; a resumed match keeps whichever
+it was dealt under, which is pre-existing machinery (`src/engine/replay.js`
+records `activeVariants`) and was verified rather than assumed.
+
+**`tools/simulate.mjs --vs` was measuring the wrong pack.** `tournamentPack`
+has taken a `variants` option since it was written; `main` never passed one, so
+`--vs=hard,easy --variants=two-tops-runs` quietly played the pack's defaults.
+It went unnoticed because the tournament heading printed only the pack id, so
+two runs under different rules were indistinguishable on paper. Found the way
+these things are found: three runs at three rule sets came back byte-identical,
+down to the mean round score. The option is threaded through and the heading
+names the rule set like the other two printers' `label` does. Untested, because
+`tournamentPack` is not exported and a tournament is minutes rather than
+milliseconds — it is a dev tool, and this is written down rather than pinned.
+
+**`tools/pack-test.mjs` had to learn the difference between "no variants named"
+and "no variants".** Its per-variant pack memo keyed both on `''`, so
+`"variants": []` — the only way a rule test can pin the strict side of a
+variant that ships `default: true` — silently got whichever pack the first
+lookup had cached. Fixed, and the existing "a seat that passed is out of the
+trick" test now names `[]`, because with `pass-stays-in` on by default a test
+that named nothing would have asserted the weak rule while claiming the strong
+one.
+
+### How it was verified
+
+`npm test` 851 pass, 0 fail (main's baseline is 842; nine new cases).
+`node tools/pack-test.mjs --all` green, thirteen 23 passed 0 failed.
+`node smoke.mjs http://127.0.0.1:4866` — all nine packs at 1280x860 and
+375x812 — SMOKE OK: 18/18.
+
+400 seeded deals per seat count, plain rules, before (main @ b0a39ae) and after:
+
+| seats | opening seat holds the lowest card | before | 3♠ out of play |
+|---|---|---|---|
+| 2 | 400/400 100.0% | 309/400 77.3% | 203/400 50.7% |
+| 3 | 400/400 100.0% | 332/400 83.0% | 103/400 25.8% |
+| 4 | 400/400 100.0% | 400/400 100.0% | 0/400 0.0% |
+
+The opening lead is refused without that card in 100.0% of deals at all three
+counts, against 49.3% and 74.3% at two and three seats before.
+
+The deep link `?pack=<id>` with no saved setup, before → after: thirteen 3 → 4,
+hearts 3 → 4 (and a 13-card hand rather than the 17 a three-handed Hearts
+deals), milestones/wildfire/crazy-eights/stockpile 3 → 4, cribbage 2 → 2,
+pinochle and team-spades 4 → 4. Every pack now opens at the seat count its own
+manifest recommends.
+
+The fan, "By rank", read off the felt, before → after. Thirteen: `2♣ 2♦ 2♥ 3♣
+3♦ 4♣ 6♦ 8♥ 9♦ Q♦ Q♥ K♣ A♣` → `3♥ 4♠ 4♦ 5♠ 6♦ 6♥ 7♥ 8♦ 9♠ 10♠ Q♠ K♠ 2♥` — the
+2 moves from the head of the fan to its tail, and 4♠ before 4♦ and 6♦ before 6♥
+is the suit ladder in the tiebreak. Pinochle (a doubled deck, so `9#2♥` is the
+second copy of the 9 of hearts): `9#2♥ 9#2♠ 9♠ 10♣ 10#2♠ J♦ Q♣ Q#2♣ Q#2♦ Q#2♥
+Q#2♠ K#2♠` → `9#2♦ 9♠ J♣ Q#2♣ Q♣ K♦ K♠ K#2♠ 10#2♣ 10♦ 10♥ A#2♥` — the ten
+moves from just above the 9 to between the king and the ace. Cribbage, on a hand dealt until it held an ace: `5♥ 7♦ 9♣
+10♥ K♣ A♥` → `A♦ 4♣ 4♥ 4♠ 7♥ Q♠`. Hearts unchanged, 2 through ace in both.
+"By suit" in Thirteen: `2♣ 3♣ 4♣ K♣ A♣ …` → `… 3♥ 6♥ 7♥ 2♥ …` — same groups in
+the same order, the 2 at the top of each instead of the bottom.
+
+The new-game sheet for Thirteen, before → after: three house rules, none on →
+five, with "Passing keeps you in the trick" checked and "A 2 can end a run"
+not. Seat buttons 2/3/4 with 4 preselected, unchanged. The sheet's body is
+`overflow-y: auto` and the two extra rows scroll rather than clip — at 375x812
+its content goes 472 → 686 against a 471 viewport, and the last row is fully
+visible once scrolled, same at 1280x860. A match dealt with *both* toggles
+flipped away from their defaults reads back the flipped rules on a fresh load
+of `?pack=thirteen`, so a resume keeps its own variants.
+
+The four-seat table itself: 3 opponents instead of 2, no felt overflow and no
+page errors in either theme at 1280x860 or 375x812 (`table-screen` 860/860 and
+812/812, page width equal to the viewport in all four). The mobile seat row
+already scrolled at two opponents, so the extra seat lands in a treatment the
+other four-seat packs were already using.
+
+0 stalls everywhere: 200 games at 2, 3 and 4 seats (avg 15.0 / 26.8 / 39.0
+moves), and 300 games at 4 seats under plain rules (35.8), the shipped defaults
+(39.4), `two-tops-runs` alone (34.8) and both together (38.0). `--vs=hard,easy
+--games=100` with the shipped defaults keeps `hard` ahead: 90 rounds to 10, and
+100 matches to 0 with `--match`.
+
+Every new test was proven to bite by breaking what it watches: the `"lowest"`
+selector reverted to the literal card, `dealHands` reverted to the step-count
+misuse, `outOfSequence` collapsed back to one list, the dragon read off
+`runExcludes` alone, `stillIn`'s weak-rule branch removed, the first-lead
+refusal removed, `rankIndex`'s ladder ignored, the suit-ladder tiebreak
+removed, the no-ladder fallback flattened, and `pack-test`'s memo key reverted
+— each turned its own test red and nothing else.
+
 ## Both controls at once, and a `?` on the felt (#154, #155)
 
 ### What was wrong
