@@ -87,14 +87,14 @@ import { feltClock } from '../match/clock.js';
 import { createMatchRecord } from './matchRecord.js';
 import { watchHandGestures } from './handGestures.js';
 import { createZoneRenderer } from './zoneRenderer.js';
-import { counterTrack, renderCounterTrack } from './counterTrack.js';
+import { counterTrack, renderCounterTrack, counterPips, renderCounterPips } from './counterTrack.js';
 import { sharedBoard, renderSharedBoard, updateSharedBoard } from './sharedBoard.js';
 import { closeConfirm, confirmAction } from './confirm.js';
 import { createDragController } from './dragController.js';
 import { attachInspector, hideInspector } from './inspector.js';
 import {
   describeCard, cardAriaLabel, cardName,
-  possessive, agrees, zoneBadge,
+  possessive, agrees, hiddenPileChip,
 } from './describe.js';
 import {
   interactionMode, gathers, stagedSelection, buildUiModel, dropCandidates, draggableSources,
@@ -948,8 +948,13 @@ function seatHasReadyTarget(state, seat, ui) {
  * thing the whole game is a race on, was the number it had put away.
  *
  * See `seatCounters` in src/templates/CONTRACT.md.
+ *
+ * `all` is for the callers that want the template's whole declaration rather
+ * than what a face shows — the round summary reads the bid and the trick count
+ * off it, and both of those are `openOnly` at a Spades table (#148), where the
+ * minimized face wears the pip row instead.
  */
-function seatCountersFor(state, seat, { minimized }) {
+function seatCountersFor(state, seat, { minimized, all = false }) {
   const declared = state.pack.template.seatCounters?.(makeCtx(state), seat);
   const count = state.zones.count(`hand.${seat}`);
   // `label` on the DEFAULT too, and not only on the templates' own counters:
@@ -971,7 +976,17 @@ function seatCountersFor(state, seat, { minimized }) {
   // `minimizedOnly` is for the counters that are genuinely redundant when the
   // seat is open: a rummy meld count sits directly above the meld chips, and
   // Hearts' points sit above the won pile that holds them.
-  return minimized ? list : list.filter((counter) => !counter.minimizedOnly);
+  //
+  // `openOnly` is the other half of the same pair, and it arrived with the pip
+  // row (#148): a picture that says a bid and its tricks in one mark REPLACES
+  // the two digit badges on a face that has no room for either, and printing
+  // all three would be the same hand said twice. The digits are still what an
+  // open plate shows, captioned and spoken, so nothing is lost where there is
+  // width to lose it in.
+  if (all) return list;
+  return minimized
+    ? list.filter((counter) => !counter.openOnly)
+    : list.filter((counter) => !counter.minimizedOnly);
 }
 
 /**
@@ -1095,17 +1110,25 @@ function buildSeatBody(state, seat, stagger, ui, into, { compactZones = true } =
         // fours — "Won 4", "Won 8" — beside a bid counted in tricks (#123,
         // item 29). `zoneBadge` is what the pile wears everywhere else, and it
         // is the template that knows four cards are one trick.
-        const badge = zoneBadge(state, inst);
-        const label = inst.def.label || inst.def.id;
-        const chip = line('seat__pilechip',
-          `${badge.kind === 'name' ? badge.text : `${label} ${badge.text}`}${pts ? ` · ${pts}` : ''}`);
-        chip.dataset.zone = inst.address;
-        strip.appendChild(chip);
+        //
+        // AND AN EMPTY ONE SAYS NOTHING (#148). There is no dashed rectangle up
+        // here for the name to be the missing half of — the chip is the whole
+        // pile — so the word arrived alone, and "Won" on a seat that has taken
+        // nothing reads as a claim rather than a label. See `hiddenPileChip`.
+        const chip = hiddenPileChip(state, inst, pts);
+        if (!chip) continue;
+        const node = line('seat__pilechip', chip.text);
+        node.dataset.zone = inst.address;
+        strip.appendChild(node);
       } else {
         strip.appendChild(zones.buildPileNode(state, inst, ui, { mini: compactZones }));
       }
     }
-    into.appendChild(strip);
+    // A seat whose only pile is an empty hidden one now draws NOTHING here, and
+    // an empty strip is not nothing: `.seat__zones` carries a top margin, so
+    // appending it would leave every Spades plate a few pixels taller before
+    // the first trick than after it — the row's fit ladder measures that.
+    if (strip.childElementCount) into.appendChild(strip);
   }
 }
 
@@ -1476,6 +1499,15 @@ function buildSeatRow(state, stagger, acting, ui, { tier, carousel, mustOpen, sh
       // counter still counts for the collapsed head's spoken name below.
       if (counterTrack(counter)) {
         if (!session?.board) head.appendChild(renderCounterTrack(counter));
+        return;
+      }
+      // A NUMBER THAT IS A PROMISE GETS DRAWN AS ONE (#148). The other shape
+      // in the same closed vocabulary: a bid and the tricks taken against it
+      // are two numbers whose only meaning is the comparison between them, and
+      // a row of circles makes that comparison where two digit badges left it
+      // to the player to do. Same fail-soft as the track above.
+      if (counterPips(counter)) {
+        head.appendChild(renderCounterPips(counter));
         return;
       }
       const badge = document.createElement('span');
@@ -4084,7 +4116,11 @@ function roundContractLines(finalState) {
   const rows = [];
   let any = false;
   for (let seat = 0; seat < finalState.seats; seat++) {
-    const counters = seatCountersFor(finalState, seat, { minimized: true });
+    // `all`: the template's whole declaration, not what either kind of face
+    // shows. A Spades bid and its trick count are `openOnly` since #148 — the
+    // minimized face wears the pip row in their place — and a sheet that asked
+    // for the minimized list would have quietly lost both words.
+    const counters = seatCountersFor(finalState, seat, { all: true });
     const bid = counters.find((c) => c.kind === 'bid');
     const tricks = counters.find((c) => c.kind === 'tricks');
     if (!bid) continue;

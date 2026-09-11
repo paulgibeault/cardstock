@@ -13,7 +13,7 @@
 // DOM-free, which is the whole reason the words live in it.
 import { test } from "node:test";
 import assert from "node:assert";
-import { zoneBadge } from "../src/ui/describe.js";
+import { zoneBadge, hiddenPileChip } from "../src/ui/describe.js";
 import { createState } from "../src/engine/state.js";
 import { makeCtx } from "../src/engine/context.js";
 import { loadPackFromDisk } from "../tools/pack-test.mjs";
@@ -58,4 +58,71 @@ test("the suit in force still outranks the name on a one-card discard", async ()
     "a one-card discard prints the rule in force, not the pile's name");
   const active = state.pack.template.activeMatch(ctx);
   assert.ok(active && active.address === "discard");
+});
+
+/* ------------------------------------------------------------------ *
+ * ...AND THE ONE SURFACE WHERE AN EMPTY PILE SAYS NOTHING (#148)
+ * ------------------------------------------------------------------ *
+ *
+ * A seat plate has no dashed rectangle on it. The pile is a chip of WORDS, so
+ * the name the rule above keeps arrives on its own with nothing under it — and
+ * "Won" on a seat that has taken no tricks reads as a claim that they won
+ * something, on all four plates, every hand, before a card is played.
+ */
+
+test("an empty hidden pile draws no chip on a plate, and a full one still does", async () => {
+  const { state, ctx, inst } = await table("team-spades", 4, "chip:spades");
+  const won = inst("won", "won.0");
+
+  // The felt is unchanged: on a dashed rectangle the word is the missing half.
+  assert.deepStrictEqual(zoneBadge(state, won), { text: "Won", kind: "name" });
+  // The plate is not: there is no rectangle, so there is nothing to be half of.
+  assert.strictEqual(hiddenPileChip(state, won), null,
+    'a seat that has taken nothing wore the bare word "Won"');
+
+  // Four cards is one trick, and the template is what knows that (#123). Once
+  // there IS something to report, the chip comes back, named and counted.
+  // Two tricks' worth, taken off the seats that are holding them.
+  for (let seat = 0; seat < 4; seat++) {
+    const hand = ctx.zoneAddr("hand", seat);
+    ctx.moveCards(ctx.cardIdsIn(hand).slice(0, 2), hand, "won.0");
+  }
+  assert.strictEqual(state.zones.count("won.0"), 8, "the fixture did not move two tricks");
+  assert.deepStrictEqual(hiddenPileChip(state, won), { text: "Won 2 tricks" });
+  // And the points ride along where the pile publishes them, unchanged.
+  assert.deepStrictEqual(hiddenPileChip(state, won, "4 pts"), { text: "Won 2 tricks · 4 pts" });
+});
+
+// EVERY pack, not just the one the finding came from: the empty-pile rule is
+// the platform's, and "same shape on every pack with a hidden won pile" was
+// half of what #148 asked for.
+test("no pack's plate prints a bare pile name at a fresh deal", async () => {
+  const { listPackIds } = await import("../tools/pack-test.mjs");
+  let checked = 0;
+  for (const packId of listPackIds()) {
+    const pack = await loadPackFromDisk(packId);
+    const seats = Math.max(2, Math.min(4, pack.manifest.players.max));
+    const state = createState({ pack, seats, seed: `chip:${packId}` });
+    pack.template.setup(makeCtx(state));
+    for (const [id, def] of state.zones.defs) {
+      if (def.per !== "player" || def.visibility !== "none") continue;
+      for (let seat = 0; seat < seats; seat++) {
+        const address = `${id}.${seat}`;
+        if (!state.zones.has(address)) continue;
+        checked++;
+        const chip = hiddenPileChip(state, { def, n: null, address });
+        const name = def.label || id;
+        if (state.zones.count(address) === 0) {
+          assert.strictEqual(chip, null,
+            `${packId}: an empty hidden ${id} still draws a chip on the plate`);
+        } else {
+          assert.notStrictEqual(chip?.text, name,
+            `${packId}: the ${id} chip is the bare word "${name}" with no number beside it`);
+        }
+      }
+    }
+  }
+  // AN EMPTY SWEEP IS A FAILURE: a renamed visibility value would otherwise
+  // leave every `continue` taken and this green over nothing.
+  assert.ok(checked >= 12, `only ${checked} hidden per-seat piles were examined`);
 });

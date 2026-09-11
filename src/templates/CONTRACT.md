@@ -143,7 +143,7 @@ platform file.
 | `activeMatch` | `(ctx) -> {address, attr, value, onCard} \| null` | `describe.js`, `table.js` | none |
 | `zoneFocus` | `(ctx, address) -> {cards, label, seat?} \| null` | `describe.js`, `zoneRenderer.js` | none |
 | `scoreChip` | `(ctx, seat) -> {short, long, label?, aria} \| null` | `table.js` | the SIDE's total (the seat's own, where there are no sides), labelled `Score` |
-| `seatCounters` | `(ctx, seat) -> {text, aria, label, kind?}[] \| null` | `table.js` | the hand count, labelled `Cards` |
+| `seatCounters` | `(ctx, seat) -> {text, aria, label, kind?, minimizedOnly?, openOnly?}[] \| null` | `table.js` | the hand count, labelled `Cards` |
 | `tableCounters` | `(ctx) -> {text, label, aria?}[] \| null` | `table.js` | no strip at all |
 | `commitPrompt` | `(ctx, seat) -> {action, staging, waiting, count \| min+max, moveType?} \| null` | `interaction.js`, `table.js` | count and move type read off the enumeration; the button says "Commit" |
 | `poseMove` | `(ctx, move) -> boolean` | `src/ui/table.js` | no pose; the felt paints where the move ENDED |
@@ -474,6 +474,15 @@ won pile that holds them. Do NOT use it for the primary number: a row that read
 `20 20 5 20 20`, where the 5 was the open seat showing a hand count while the
 rest showed stock, is the bug this rule exists to prevent.
 
+`openOnly: true` is the other half of that pair (#148): the counter is drawn on
+an open plate and NOT on a minimized face. It is for the digits a drawn counter
+REPLACES — Spades' Bid and Tricks are `openOnly` because the pip row below says
+both of them in one mark, and printing all three would be the same hand said
+twice on the face that has least room for it. The plate keeps the digits, their
+captions and their spoken sentences, so nothing is lost where there is width to
+lose it in. A caller that wants the template's whole declaration rather than
+either face — the round summary does — asks `seatCountersFor(state, seat, { all: true })`.
+
 Return `null` or `[]` to take the default.
 
 ### A counter that is a POSITION — the track kinds
@@ -517,6 +526,42 @@ This is what a board that is not a zone looks like. No card is ever in it, so
 nothing on the felt could have drawn it, and the two obvious ways to add one —
 a `board` hook only one template will ever implement, or a `pack.id ===` in the
 seat renderer — are both the thing this file exists to prevent.
+
+### A counter that is a PROMISE — the pip kinds
+
+The second drawn shape, and the same split: `COUNTER_PIP_KINDS` in
+`src/ui/counterTrack.js` is the platform's closed list, the payload is the
+template's, and an unknown kind gets the ordinary badge.
+
+A bid and the tricks taken against it are two numbers whose whole meaning is the
+comparison between them, and two pills of digits refuse to make it — that was
+the round-6 finding on Team Spades (#148): a partner's bid and trick count were
+both on the felt, as small captioned digits among Cards and Bags, and "are we
+going to make it" was four badges and some arithmetic. `kind: 'pips'` draws one
+unfilled circle per trick promised and fills them left to right as the tricks
+come in.
+
+| Field | Meaning |
+|---|---|
+| `bid` | how many were promised; `null` for a seat that has not spoken yet |
+| `taken` | how many are in — which may be MORE than was promised |
+| `nil` | the promise was to take none at all |
+
+```js
+{ text: bidBadge(ctx, seat).text, aria: 'bid 4 tricks, 2 taken',
+  label: 'Tricks', kind: 'pips', bid: 4, taken: 2, nil: false, minimizedOnly: true }
+```
+
+Tricks past the bid append in the bag tone; a broken nil draws the tricks it was
+caught with in the bad tone. The two readings that are not circles at all — a
+seat that has not bid, and a nil — print `text` as a word instead, so the felt
+says a bid in the template's own vocabulary here as everywhere else. `aria` is
+still the whole truth in words and the circles are `aria-hidden`, so a screen
+reader hears one sentence and not thirteen marks. Past seven circles the row
+draws itself small rather than wrapping; `MAX_PIPS` is the ceiling.
+
+Pair it with `openOnly` on the digits it replaces, so the open plate still
+carries the captioned, spoken numbers.
 
 ## Zone definition fields the platform reads
 

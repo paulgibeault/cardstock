@@ -486,12 +486,22 @@ const sequencing = {
    * times — while the number the entire game is a race on was the one it had
    * put away behind a tap.
    *
-   * The hand is not offered as a second counter for the same reason it is not
-   * the first: it is a constant. What is worth the space beside the stock is
-   * nothing at all.
+   * THE HAND COMES SECOND, AND ONLY ON A FACE (#148). It used to be left off
+   * entirely, on the grounds that it is a constant — a turn ends by topping it
+   * back up to five, so five is what it says almost always. That is true
+   * BETWEEN turns and it is the reason the hand may not be the primary number;
+   * it is not true during one, and "almost always" is exactly when a departure
+   * from it is worth seeing. A seat sitting on two cards has spent its turn and
+   * is about to end it, and a seat the draw pile can no longer top up is a
+   * table running out — neither has anywhere else on a minimized face to show.
+   *
+   * `minimizedOnly`, because an open seat draws the hand as a fan of backs
+   * directly above, and counting the cards in a picture of them is the
+   * redundancy this flag exists for.
    */
   seatCounters(ctx, seat) {
     const stock = ctx.countIn(`stock.${seat}`);
+    const hand = ctx.countIn(ctx.zoneAddr('hand', seat));
     return [{
       text: String(stock),
       // Said in full, because the printed form is a bare digit that could be
@@ -499,6 +509,12 @@ const sequencing = {
       aria: `${stock} left in stock`,
       label: 'Stock',
       kind: 'stock',
+    }, {
+      text: String(hand),
+      aria: `${hand} ${hand === 1 ? 'card' : 'cards'} in hand`,
+      label: 'Cards',
+      kind: 'hand',
+      minimizedOnly: true,
     }];
   },
 

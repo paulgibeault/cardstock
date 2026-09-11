@@ -2666,6 +2666,190 @@ against the felt's edge for the whole game. If it wants a floor later, the
 place to put one is a `--stage-card-w` that this rule and the 660px block both
 read.
 
+## What a seat plate is worth showing, per game (#148)
+
+Round-6 playtest. Three findings that are one question: the numbers on the
+minimized player cards were chosen once, for the platform, and never audited per
+game.
+
+### What was wrong
+
+**Team Spades hid the two numbers a partner needs in plain sight.** What a seat
+bid and how many tricks they have taken were both on the felt — `Bid` and
+`Tricks` in `seatCounters` — as 0.7rem digits with 0.48rem captions under them,
+in a row with `Cards`, `Bags` and a score pill. "Are we going to make it", which
+is the question a partnership is played on, was four badges and some arithmetic,
+on your PARTNER'S plate, four times a hand. Worse at 375px: the row minimizes to
+`faces`, where `.seat__count--aux` is absolutely positioned on the avatar's
+top-left corner — so Bid, Tricks and Bags were three 15px badges stacked in the
+same 15px of space on a 35px avatar.
+
+**"Won" with nothing won.** A `visibility: 'none'` pile draws no picture on a
+seat plate; the chip IS the pile. `zoneBadge` returns the pile's NAME when it
+holds nothing (#122: an empty pile on the felt is a dashed rectangle, and the
+word is the missing half of a thing you can see is empty), so up here the word
+arrived alone and a Spades seat that had taken no tricks wore the bare claim
+**Won**. Four of them, every hand, before a card was played. A nine-pack sweep
+of the unmodified felt at a fresh deal found sixteen: every opponent seat of
+Team Spades, Pinochle and Hearts, at both viewports.
+
+**Nobody had asked the other packs.** Stockpile showed its stock and nothing
+else; a Thirteen seat that had passed — which is the whole shape of a climbing
+trick — was announced by a banner and then never mentioned again; Wildfire's
+eight-handed row was eight identical corner digits with no mark on the seat
+about to go out; and Pinochle drew `—` on a passed seat and `—` on a seat that
+had not spoken yet, which is #133's own complaint with the words filed off.
+
+### What changed
+
+**A second drawn-counter kind.** `COUNTER_PIP_KINDS` in `src/ui/counterTrack.js`
+joins `COUNTER_TRACK_KINDS` on the same terms: the platform owns the closed list
+of kinds it draws as a picture, the template names one and hands over the
+numbers, and a kind this build has never heard of falls through to the digit
+badge. `kind: 'pips'` carries `{bid, taken, nil}` and draws one unfilled circle
+per trick promised, filled left to right as the tricks come in.
+
+The four readings, and why each is what it is:
+
+| Reading | Drawn as |
+|---|---|
+| bid *n*, *k* taken | *n* circles, the first *k* filled in the accent |
+| more taken than bid | the extras APPEND, filled in the bag tone — made and made-with-bags are not the same picture |
+| nil | the word (`nil`, or `BN` blind), and any trick taken filled in the bad tone: a nil promises no circles, so a row of them would say the reverse of what was promised |
+| not bid yet | the word `—` alone |
+
+The two words are the template's own `text`, never vocabulary invented in the
+renderer — the felt says a bid the same way here as in the bid dialog, the
+round summary and the human's own strip. Fill is the signal and colour the
+reinforcement, so the row still says a number read without hue, and `aria` still
+says both numbers in one sentence with every circle `aria-hidden`. Past seven
+circles the row halves its circles and gaps rather than wrapping (a second line
+would lie to the seat row's fit ladder, which is measured): seven circles are
+69px at full size and thirteen are 86px dense, inside the 88px a cribbage track
+already takes. `MAX_PIPS` is thirteen and is a real clamp, not an expectation.
+
+**The faces rung keeps them full size, and that was the one real trade.** A
+375px Spades table reaches `faces` — three collapsed seats, each an avatar with
+a corner badge — and the first cut shrank the circles to 0.26rem there so the
+row would still fit. That fitted three seats into 127px and made the pips 4.2px
+dots nobody could count, which is the whole feature spent on a constraint the
+row does not have: the row SCROLLS when a rung runs out, by design and by its
+own note. So the circles keep their 7.4px and the seat pays for them — 65px for
+a bid of three against a bare 35px — and a real Spades row (three opponents
+sharing the thirteen tricks) is about 225px of a 332px row. Only a table where
+all three opponents overbid heavily runs past it, and then it scrolls. The card
+count, which hangs off the seat's corner, now rides the corner of the
+avatar-plus-pips plate rather than the avatar's own edge.
+
+**`openOnly`, the other half of `minimizedOnly`.** A drawn counter REPLACES the
+digits it says, so Spades' `Bid` and `Tricks` are `openOnly`: drawn on an open
+plate, captioned and spoken, and not on a face that has room for one mark.
+Printing all three would be the same hand three times in the place with least
+width for it. `roundContractLines` reads both of those kinds to write "Bid 4,
+took 5" on the round sheet, so it now asks `seatCountersFor(state, seat,
+{ all: true })` — the template's whole declaration, not what either kind of face
+shows. Both are in `src/templates/CONTRACT.md`.
+
+**A pip row is a TRICK auction**, and that is the genre's distinction rather than
+a pack check: Pinochle bids 250, and 250 circles is not a picture of anything.
+It keeps its digits and #125's meld chips. What it gets instead is the end of a
+dash that meant two opposite things — a seat that has PASSED now gives its face
+back to the meld and keeps its badge, and its sentence, on the plate, while a
+seat that has not spoken yet still wears `—` where that is the useful fact.
+
+**`hiddenPileChip` in `src/ui/describe.js`** is the plate's own reading of a
+hidden pile, and it asks `zoneReading` first and unconditionally — `zoneBadge`
+shortcuts out at zero before it ever gets there — so a template that wants "no
+tricks yet" up here has somewhere to put it. None does today, so today the
+answer is the chip's absence. The felt's rule is untouched: both halves are
+pinned in one test, because the tempting fix is to take the name off `zoneBadge`
+and that is #122 undone. An empty strip is not nothing either — `.seat__zones`
+carries a top margin, so appending one made every Spades plate taller before the
+first trick than after it, and the fit ladder measures that height.
+
+### The audit — what every pack's minimized face shows, and why
+
+`Cards` is the platform's default (the hand count) and is right wherever the
+hand is the race. Where a row says "unchanged" the audit agreed with what was
+already there.
+
+| Pack | Minimized face | Open plate adds | Why |
+|---|---|---|---|
+| Thirteen | Cards, `PASS` while out of the trick | — | The hand IS the race, one card at a time. The pass mark is new (#148): a climbing trick is seats dropping out one at a time and the last one standing leads the next, and nothing on the felt said who was still in. Read off the PUBLIC `passed` var, and worded about this trick rather than about being out for good, so it stays true if #158 relaxes `passIsFinal` |
+| Hearts | Cards, `♥N` taken | the won pile, with its points | Unchanged. The points are what the game is watched for and the pile that holds them is put away when the seat is |
+| Team Spades | Cards, the pip row, Bags | `Bid` and `Tricks` as digits | The pip row replaces both digits on the face. Bags stay: they are a SIDE's number and the thing overtricks turn into, and no picture says them |
+| Pinochle | Cards, Bid (bidder only), Meld | the passed seats' `—`, Tricks | Unchanged but for the pass. A points bid cannot be circles; the meld is what a Pinochle seat is read for (#125) |
+| Cribbage | the peg track, Cards | — | Unchanged (#136: the plate draws no track while the felt draws a shared board) |
+| Milestones | Cards, `▤N` laid down | the meld chips themselves | Unchanged. The contract rung is already on the seat's own score chip, captioned `CONTRACT` (#133) |
+| Stockpile | Stock, Cards | — | Stock is the race and stays primary (that is why it is not the hand). The hand is NEW as a second, face-only counter: "it is always five" is true between turns and not during one, and a seat the draw can no longer top up is a table running out |
+| Wildfire | Cards, escalated at the call count | — | The count is the right number; what it lacked was a mark. Same slot, same quantity, danger tone and a halo — never a second badge, because the row's width is what the tier ladder measures |
+| Crazy Eights | Cards | — | Unchanged, and deliberately: the pack declares no `lastCardCall`, and nothing else on that table earns the space |
+
+Two things the audit decided NOT to do, so they are not read as oversights.
+**The human's own strip keeps digits** (`MY_SEAT_KINDS` is `['bid','bags']`):
+the pip row is for reading somebody ELSE's promise across a table, and your own
+bid is one chip with room for a word next to it. **Wildfire's mark does not say
+whether the seat CALLED.** `__<id>Called` is private per-seat state
+(`src/engine/view.js`): it reads true in solo play and `undefined` at a joined
+table, so a counter asked of every seat would publish a different fact depending
+on how you reached the table — the inconsistency `climbing.js` already refuses
+for its bomb count. The felt has the honest affordance already: a seat at the
+count that never declared wears the **Catch!** button and one that did, does not.
+Making the flag public would mean renaming it out of the `__` convention, which
+reaches the view filter and two packs' rule-test fixtures; it is worth doing and
+it is not this issue.
+
+### How it was verified
+
+Two dev servers driven by the same probe — this branch on 4861, unmodified main
+on 4880 — dumping every seat's head badges, their accessible names and their
+pile chips at 375x812 and 1280x860, in both seat views and both themes.
+
+**The bare name is gone and nothing else lost a chip.** Sixteen bare `Won`
+chips before, none after, across the same nine-pack fresh-deal sweep at both
+viewports — and none in any of the eleven other probes either (mid-hand,
+minimized, open plate, light theme, an eight-handed Wildfire table). What
+REPLACES it on an open Spades seat is the `Tricks` digit, which that seat never
+had before: `tricks` was `minimizedOnly`, so the open plate's only reading of
+the trick count had been the pile chip that is now absent.
+
+**The pip row, read off the felt.** A four-handed Spades table minimized to the
+`faces` rung at 375x812 and to `collapsed` at 1280x860. Mid-hand at 375 the
+three faces read bid 3 / 4 / 5 with two taken each, at 65 / 75 / 85px of seat;
+one deal caught all three of the readings that are not an ordinary bid on one
+row — four open rings, the word `nil`, and the `—` of a seat still to speak.
+Both themes are painted from the palette tokens (the taken pip is `--accent`:
+`rgb(255,209,102)` dark, `rgb(154,100,0)` light) and a contact sheet of all
+thirteen readings was rendered through the real stylesheet in each.
+
+**The audit, probed per pack** (`[data-counter]` and `.seat__pips` on every
+minimized face, four seats, both viewports, this branch against main):
+
+| Pack | before | after |
+|---|---|---|
+| Thirteen | `hand` | `hand`, `passed` while out of the trick |
+| Hearts | `hand` | `hand` (unchanged) |
+| Milestones | `hand` | `hand` (unchanged; the rung is on the score chip) |
+| Team Spades | `hand`, `bid`, `tricks`, `bags` | `hand`, the pip row, `bags` |
+| Pinochle | `hand`, `bid`, `tricks`, `meld` | unchanged but for a passed seat's dash |
+| Stockpile | `stock` | `stock`, `hand` |
+| Wildfire | the unnamed default count | `hand`, escalated to `lastcard` at the call count |
+| Crazy Eights | the unnamed default count | `hand` — the pack declares no `lastCardCall`, so it never escalates |
+
+A Wildfire seat sits at exactly one card for a single bot turn, which a scripted
+hand walks past, so the escalation was read by re-tagging a live badge on the
+felt: same 43px width in both themes, `rgba(255,255,255,0.14)` becoming
+`rgb(163,58,58)` with a 1.5px halo (light: `rgb(154,47,47)`). The width is the
+point — the row's tier ladder is measured on it.
+
+**Gates.** `npm test` 862 pass / 0 fail (842 on main), `node tools/pack-test.mjs
+--all` green for all nine packs, `node tools/schema-check.mjs` silent,
+`node --check` on the three DOM modules, and all nine packs boot headlessly at
+both viewports with no page errors (18/18). Every one of the twenty-two new or
+changed assertions was verified by breaking what it watches — the fill reversed,
+`DENSE_ABOVE` raised past the clamp, the `aria-hidden` dropped, the trick auction
+check removed so Pinochle reached for circles, the chip's `null` turned back into
+a bare label, and so on — each one going red and green again from a scratch copy.
 ## The narration pill gets a band of its own (#149)
 
 `#event-banner` was `position: fixed; top: 34%; white-space: nowrap`. 34% is a

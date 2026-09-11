@@ -705,6 +705,56 @@ function bidBadge(ctx, seat) {
   };
 }
 
+/**
+ * THE SAME PROMISE, DRAWN RATHER THAN SPELLED — the pip row (#148).
+ *
+ * Round 6's finding on Team Spades: the two numbers a partner actually needs,
+ * what they bid and how many they have taken, were both on the felt and
+ * neither was readable at a glance. They were 0.7rem digits with 0.48rem words
+ * under them, in a row with Cards and Bags, and the question a partnership is
+ * played on — are we going to make it — was four badges and some arithmetic.
+ * `kind: 'pips'` hands the platform the two numbers and it draws one circle per
+ * trick promised, filling them left to right as the tricks come in
+ * (src/ui/counterTrack.js).
+ *
+ * A TRICK AUCTION ONLY, and that is not a pack check but the genre's own
+ * distinction: at a POINTS auction a bid is 250 and a circle apiece is not a
+ * picture of anything, so Pinochle keeps its digits and its meld chips (#125).
+ * `bidUnitOf` is the same question `bidBadge` asks to decide whether a zero is
+ * a nil or a pass.
+ *
+ * It is the MINIMIZED face's counter. An open plate has room for the words, so
+ * it keeps the captioned Bid and Tricks digits and their spoken sentences —
+ * which is also what the round summary reads (`roundContractLines`).
+ */
+function pipsBadge(ctx, seat) {
+  if (!ctx.rules.bidding || bidUnitOf(ctx) !== 'tricks') return null;
+  const badge = bidBadge(ctx, seat);
+  const bid = bidOf(ctx, seat);
+  const taken = tricksTakenBy(ctx, seat);
+  const over = bid !== null && bid > 0 ? Math.max(0, taken - bid) : 0;
+  // The picture is the pips; this is the whole of it in words, because the
+  // circles are `aria-hidden` and the badge they replace said both numbers.
+  const aria = bid === null ? badge.aria
+    : bid === 0
+      ? (taken
+        ? `${badge.aria}, and has taken ${taken} — the nil is broken`
+        : `${badge.aria}, none taken`)
+      : `${badge.aria}, ${taken} taken${over ? `, ${over} over` : ''}`;
+  return {
+    // Still printed if this build ever stops knowing the kind: the bid, in the
+    // template's own vocabulary. The fail-soft is the badge, not a blank.
+    text: badge.text,
+    aria,
+    label: 'Tricks',
+    kind: 'pips',
+    bid,
+    taken,
+    nil: bid === 0,
+    minimizedOnly: true,
+  };
+}
+
 /** Was it declared blind — without looking? (`bidSight`, a public per-seat var.) */
 function bidIsBlind(ctx, seat) {
   return ctx.playerVar(seat, 'bidSight') === 'blind';
@@ -2466,7 +2516,23 @@ const trickTaking = {
     // numbers apart rather than as "2/4" is what keeps each inside the couple
     // of characters a badge has (a made thirteen would be five).
     if (ctx.rules.bidding) {
-      counters.push({ ...bidBadge(ctx, seat), label: 'Bid', kind: 'bid' });
+      const pips = pipsBadge(ctx, seat);
+      // A DASH THAT MEANS TWO OPPOSITE THINGS IS NOT A COUNTER (#148). At a
+      // POINTS auction `bidBadge` prints `—` both for a seat that has not
+      // spoken and for one that has passed, so three of Pinochle's four faces
+      // wore the same mark for the whole hand and only one of them meant "this
+      // seat is out of it". A pass has nothing left to report, so it keeps its
+      // captioned, spoken badge on the open plate and gives the face back to
+      // the meld — which is the number a Pinochle seat is actually read for.
+      const passed = bidUnitOf(ctx) === 'points' && bidOf(ctx, seat) === 0;
+      counters.push({
+        ...bidBadge(ctx, seat),
+        label: 'Bid',
+        kind: 'bid',
+        // Replaced on the face by the pip row, which says this number and the
+        // trick count in one mark.
+        ...(pips || passed ? { openOnly: true } : {}),
+      });
       const tricks = tricksTakenBy(ctx, seat);
       counters.push({
         text: String(tricks),
@@ -2477,8 +2543,14 @@ const trickTaking = {
         // number in as many words (`zoneReading`) — which it was NOT before
         // #123: the pile counted cards, so it climbed in fours beside a bid
         // counted in tricks and every comparison needed dividing by four.
-        minimizedOnly: true,
+        //
+        // ...EXCEPT WHERE THE PIPS TAKE THE FACE. Then the digits are what the
+        // OPEN plate has that the face does not, and they have to be on it: an
+        // empty won pile no longer draws a chip at all (#148), so a seat that
+        // has taken nothing would otherwise have nowhere the zero is written.
+        ...(pips ? { openOnly: true } : { minimizedOnly: true }),
       });
+      if (pips) counters.push(pips);
 
       // WHAT THE OVERTRICKS HAVE TURNED INTO. Bags accumulated correctly and
       // the word never appeared on the felt (#123, item 31): the only

@@ -763,6 +763,43 @@ const shedding = {
     };
   },
 
+  /**
+   * THE HAND IS THE RACE, so the platform's default count is already the right
+   * number — what this adds is the MARK on it (#148).
+   *
+   * A shedding table is watched for one thing: who is about to go out. The
+   * count says so, and at eight seats it says so as one small digit among
+   * eight, on a row that has minimized every face to an avatar with a corner
+   * badge. So the seat AT THE CALL COUNT is escalated rather than counted
+   * twice: the same badge, in the same slot, holding the same quantity, drawn
+   * in the danger tone. Nothing is added to the row's width, which is the
+   * constraint the whole seat-tier ladder is measured against.
+   *
+   * WHAT THIS DOES NOT SAY IS WHETHER THEY CALLED IT, and that is deliberate.
+   * `__<id>Called` is a private per-seat var (src/engine/view.js): it reads
+   * true in solo play and `undefined` at a joined table, so a counter asked of
+   * every seat would publish a different fact depending on how you got to the
+   * table — the same inconsistency climbing.js refuses for its bomb count. The
+   * felt already has the honest affordance for it: a seat at the count that
+   * never declared wears the Catch! button, and one that did, does not.
+   */
+  seatCounters(ctx, seat) {
+    const hand = ctx.cardIdsIn(ctx.zoneAddr('hand', seat)).length;
+    const cfg = ctx.rules.lastCardCall;
+    const atCall = !!cfg && hand > 0 && hand <= callCountOf(cfg);
+    return [{
+      text: String(hand),
+      aria: atCall
+        ? `${hand} ${hand === 1 ? 'card' : 'cards'} left — down to their last`
+        : `${hand} ${hand === 1 ? 'card' : 'cards'}`,
+      label: 'Cards',
+      // The KIND is the escalation. It is still the hand count in the primary
+      // slot either way (CONTRACT.md: the badge in a given spot must not change
+      // what it measures); only how loudly it is drawn changes.
+      kind: atCall ? 'lastcard' : 'hand',
+    }];
+  },
+
   /** The shape of a turn, for the generated rules page (src/ui/rules.js). */
   ruleLines(rules) {
     // "or", emphatically: matching on colour AND rank would be a different and

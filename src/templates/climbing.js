@@ -1603,12 +1603,40 @@ const climbing = {
    */
   seatCounters(ctx, seat) {
     const hand = ctx.countIn(ctx.zoneAddr('hand', seat));
-    return [{
+    const counters = [{
       text: String(hand),
       aria: `${hand} ${hand === 1 ? 'card' : 'cards'} left`,
       label: 'Cards',
       kind: 'hand',
     }];
+
+    // WHO IS STILL IN THIS TRICK (#148). The whole shape of a climbing trick is
+    // that seats drop out of it one at a time and the last one standing leads
+    // the next — so "has this seat passed" is the fact the table is read for
+    // between one play and the next, and until now the only thing that ever
+    // said it was a banner that had already gone. It is not a leak, unlike the
+    // bomb count above: `passed` is a PUBLIC table var (`publicVars`), a list
+    // of seats everybody watched pass.
+    //
+    // The wording is deliberately about THIS trick rather than about being out
+    // for good: `passIsFinal` is a rule a pack declares (D-12), and #158 may
+    // relax it — under the weaker rule a passed seat is simply passed for this
+    // round of the trick, which is the same mark and the same sentence.
+    //
+    // `passedSeats` and not `stillIn`, which answers a different question and
+    // is wrong here twice over: it is false for a seat that has gone OUT (an
+    // empty hand is not a pass, and that seat has already won its place), and
+    // true for a passed seat under `passIsFinal: false`, which is exactly the
+    // seat this mark exists for.
+    if (hand > 0 && passedSeats(ctx).includes(seat)) {
+      counters.push({
+        text: 'pass',
+        aria: 'has passed this trick',
+        label: 'Passed',
+        kind: 'passed',
+      });
+    }
+    return counters;
   },
 
   /**

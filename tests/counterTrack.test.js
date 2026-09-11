@@ -12,7 +12,10 @@
 // started, not like a bug.
 import { test } from "node:test";
 import assert from "node:assert";
-import { counterTrack, renderCounterTrack, COUNTER_TRACK_KINDS } from "../src/ui/counterTrack.js";
+import {
+  counterTrack, renderCounterTrack, COUNTER_TRACK_KINDS,
+  counterPips, renderCounterPips, COUNTER_PIP_KINDS, MAX_PIPS,
+} from "../src/ui/counterTrack.js";
 import { createState } from "../src/engine/state.js";
 import { makeCtx } from "../src/engine/context.js";
 import { loadPackFromDisk, listPackIds } from "../tools/pack-test.mjs";
@@ -167,4 +170,145 @@ test("cribbage's own counter is a track, and every other pack's primary is not",
   }
   assert.strictEqual(tracked, 1,
     "exactly one shipped pack draws its primary counter as a track — if that changed, say so here");
+});
+
+/* ------------------------------------------------------------------ *
+ * THE PIP ROW (#148) — a promise, and how much of it is kept
+ * ------------------------------------------------------------------ *
+ *
+ * The other drawn counter, and its failure modes are quieter than the track's.
+ * A row that filled from the wrong end, or counted a bag as a trick, would look
+ * like a plausible hand rather than like a bug — and it is the number a partner
+ * decides their own play on.
+ */
+
+test("a counter with no pip kind, or no numbers, is not a pip row", () => {
+  assert.strictEqual(counterPips(null), null);
+  assert.strictEqual(counterPips({ text: "5", aria: "5 cards" }), null,
+    "a counter with no kind at all takes the plain badge");
+  assert.strictEqual(counterPips({ text: "4", kind: "bid", bid: 4, taken: 2 }), null,
+    "a kind this build does not draw as pips takes the plain badge");
+  // The track kinds and the pip kinds are two closed sets and neither answers
+  // for the other — a counter must not come out as both.
+  assert.strictEqual(counterPips({ text: "78", kind: "peg", value: 78, of: 121 }), null);
+  assert.strictEqual(counterTrack({ text: "4", kind: "pips", bid: 4, taken: 2 }), null);
+});
+
+test("the row is the bid, filled left to right by the tricks taken", () => {
+  const row = (bid, taken, nil = false) => counterPips({ text: String(bid), kind: "pips", bid, taken, nil });
+
+  assert.deepStrictEqual(row(4, 0).pips, ["open", "open", "open", "open"],
+    "a bid nobody has started on is four empty rings");
+  assert.deepStrictEqual(row(4, 2).pips, ["taken", "taken", "open", "open"],
+    "the fill goes LEFT TO RIGHT — a row that filled from the right reads as a different bid");
+  assert.deepStrictEqual(row(4, 4).pips, ["taken", "taken", "taken", "taken"],
+    "a contract exactly made has no empty ring left");
+
+  // PAST THE PROMISE IS NOT MORE OF THE PROMISE. The extras append in the bag
+  // tone, so "made it" and "made it and is two bags up" are not the same
+  // picture — which is the whole reason the bid is drawn rather than printed.
+  assert.deepStrictEqual(row(3, 5).pips, ["taken", "taken", "taken", "bag", "bag"]);
+  assert.strictEqual(row(3, 5).pips.filter((p) => p === "bag").length, 2);
+});
+
+test("the two readings that are not circles are the template's own word", () => {
+  // A seat that has not spoken. There is no promise to draw a picture of, so
+  // the badge text — which trick-taking.js makes "—" — is the whole reading.
+  const unbid = counterPips({ text: "—", kind: "pips", bid: null, taken: 0 });
+  assert.deepStrictEqual(unbid.pips, [], "an unbid seat drew circles for a bid it has not made");
+  assert.strictEqual(unbid.word, "—");
+
+  // A nil promises NO circles, so a row of them would say the opposite of what
+  // was promised. What it can collect is the tricks that broke it.
+  const nil = counterPips({ text: "nil", kind: "pips", bid: 0, taken: 0, nil: true });
+  assert.deepStrictEqual(nil.pips, []);
+  assert.strictEqual(nil.word, "nil");
+  const broken = counterPips({ text: "nil", kind: "pips", bid: 0, taken: 2, nil: true });
+  assert.deepStrictEqual(broken.pips, ["broken", "broken"],
+    "a broken nil must not draw its tricks as kept promises");
+  // Blind nil is the same shape and a different word, and the word is the
+  // template's: nothing in this module invents vocabulary for a bid.
+  assert.strictEqual(counterPips({ text: "BN", kind: "pips", bid: 0, taken: 0, nil: true }).word, "BN");
+
+  // An ordinary bid has no word at all — the circles are the reading.
+  assert.strictEqual(counterPips({ text: "4", kind: "pips", bid: 4, taken: 1 }).word, null);
+});
+
+test("a big bid goes dense rather than wide, and never past MAX_PIPS", () => {
+  const at = (bid, taken = 0) => counterPips({ text: String(bid), kind: "pips", bid, taken });
+  assert.strictEqual(at(7).dense, false, "seven still fits at full size");
+  assert.strictEqual(at(8).dense, true, "eight is where the row starts drawing small");
+  assert.strictEqual(at(13).pips.length, MAX_PIPS);
+  // The ceiling is a ceiling. A hand cannot take more tricks than it holds
+  // cards, but a counter is data and the row must not be able to run off a
+  // seat because a template said something impossible.
+  assert.strictEqual(at(40, 40).pips.length, MAX_PIPS);
+  assert.strictEqual(at(2, 40).pips.length, MAX_PIPS);
+});
+
+test("the rendered row is one labelled group of aria-hidden circles", () => {
+  const doc = stubDocument();
+  const counter = {
+    text: "4", aria: "bid 4 tricks, 5 taken, 1 over", label: "Tricks",
+    kind: "pips", bid: 4, taken: 5, nil: false,
+  };
+  const node = renderCounterPips(counter, doc);
+  assert.ok(node, "a well-formed pip counter rendered nothing");
+
+  // ONE accessible name, like the track. Five circles announced one at a time
+  // would be far worse than the two digits they replace.
+  assert.strictEqual(node.attrs.role, "img");
+  assert.strictEqual(node.attrs["aria-label"], "bid 4 tricks, 5 taken, 1 over");
+  assert.strictEqual(node.dataset.pips, "pips");
+  const pips = findAll(node, "seat__pip");
+  assert.strictEqual(pips.length, 5, "four promised and one over is five circles");
+  for (const pip of pips) {
+    assert.strictEqual(pip.attrs["aria-hidden"], "true", "a decorative circle is announced");
+    assert.strictEqual(parentOf(node, pip), node, "the circles are the row's own children");
+  }
+  assert.ok(pips[4].className.includes("seat__pip--bag"), "the overtrick is not drawn as a bag");
+  assert.strictEqual(node.dataset.dense, undefined, "five circles must not be drawn small");
+
+  // The word, where there is one, and it is aria-hidden for the same reason.
+  const nil = renderCounterPips({ text: "nil", aria: "bid nil, none taken", kind: "pips", bid: 0, taken: 0, nil: true }, doc);
+  const word = find(nil, "seat__pips-word");
+  assert.ok(word, "a nil rendered no word at all — the row would be empty");
+  assert.strictEqual(word.textContent, "nil");
+  assert.strictEqual(word.attrs["aria-hidden"], "true");
+
+  assert.strictEqual(renderCounterPips({ text: "5", kind: "hand" }, doc), null,
+    "a counter that is not a pip row renders nothing, so the caller falls back to the badge");
+});
+
+test("exactly one shipped pack draws a pip row, and it is a TRICK auction", async () => {
+  // The end-to-end claim through the template registry rather than a pack id:
+  // the row on the felt comes from `seatCounters` and nothing else, and a
+  // points auction (Pinochle bids 250) must never reach for it.
+  let rows = 0;
+  for (const packId of listPackIds()) {
+    const pack = await loadPackFromDisk(packId);
+    if (!pack.template.seatCounters) continue;
+    const seats = Math.max(2, Math.min(4, pack.manifest.players.max));
+    const state = createState({ pack, seats, seed: `pips:${packId}` });
+    pack.template.setup(makeCtx(state));
+
+    const counters = pack.template.seatCounters(makeCtx(state), 1);
+    const pip = counters.find((c) => counterPips(c));
+    if (!pip) continue;
+    rows++;
+    assert.ok(COUNTER_PIP_KINDS.includes(pip.kind));
+    assert.notStrictEqual(pack.rules.bidding?.unit, "points",
+      `${packId}: a points auction cannot be a row of circles — 250 of them is not a picture`);
+    assert.ok(pip.minimizedOnly,
+      `${packId}: the pip row is the MINIMIZED face's counter; an open plate keeps the digits`);
+    // ...and the digits it replaces are still declared, still spoken, and
+    // marked as the open plate's (the round summary reads them).
+    for (const kind of ["bid", "tricks"]) {
+      const digits = counters.find((c) => c.kind === kind);
+      assert.ok(digits && digits.openOnly,
+        `${packId}: the ${kind} digits are gone or still drawn on the face beside the pips`);
+    }
+  }
+  assert.strictEqual(rows, 1,
+    "exactly one shipped pack draws a pip row — if that changed, say so here");
 });
