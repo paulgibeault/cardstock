@@ -115,6 +115,10 @@
       "pattern": "^#[0-9a-fA-F]{6}$",
       "description": "The pack's colour on its lobby tile. A 6-digit hex literal and nothing else: this value reaches an inline style, and the UI re-validates it against the same pattern before use (\u00a77b)."
     },
+    "daily": {
+      "type": "boolean",
+      "description": "Does this pack offer a DAILY RUN \u2014 one seeded game per calendar day, the same for everybody, with its own save slot and its own record. The lobby reads this flag and nothing else, which is what keeps it pack-agnostic: the day itself is derived by src/engine/dailyLadder.js from the seed `<packId>|<YYYY-MM-DD>`. Only contract-rummy packs can answer true today, because the ladder is what the generator varies."
+    },
     "heroCards": {
       "type": "array",
       "minItems": 3,

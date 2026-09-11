@@ -5204,6 +5204,58 @@ body.is-dragging .card-face { cursor: grabbing; }
 .tile__together:hover { background: var(--ghost-hover); }
 .tile__together[hidden] { display: none; }
 
+/* TODAY'S RUN. Two lines rather than one — the offer and what has become of it
+   — because "Daily run" alone says nothing about whether it is still there to
+   play, and that is the only question anybody has about a daily.
+
+   It sits in the same footer family as the three above and carries the accent,
+   which is this game's one way of saying "this one is yours today". Not a
+   pulse, not a badge: the tile already changes what it says when the run is
+   done, and a lobby that blinks at you is a lobby you stop reading. */
+.tile__daily {
+  display: block;
+  width: 100%;
+  padding: 0.45rem 0.5rem;
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: inherit;
+  text-align: center;
+  background: none;
+  border: none;
+  border-top: 1px solid var(--tile-border);
+  cursor: pointer;
+}
+.tile__daily::before { content: '\2600\FE0F\A0'; }
+button.tile__daily:hover { background: var(--ghost-hover); }
+.tile__daily-label { color: var(--accent); }
+.tile__daily-state {
+  display: block;
+  font-weight: 400;
+  font-size: 0.68rem;
+  opacity: 0.7;
+}
+
+/* A FINISHED RUN IS A STATEMENT, NOT A DEAD BUTTON. There is no second attempt
+   at a day, so it is rendered as text (a div, never a disabled control) and the
+   only thing left to press is the copy. */
+.tile__daily--done { cursor: default; }
+.tile__daily--done .tile__daily-label { color: inherit; opacity: 0.85; }
+
+.tile__daily-share {
+  display: block;
+  width: 100%;
+  padding: 0.4rem 0.5rem;
+  font: inherit;
+  font-size: 0.7rem;
+  color: inherit;
+  opacity: 0.65;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+.tile__daily-share:hover { opacity: 1; background: var(--ghost-hover); }
+
 /* ------------------------------------------------------------------ *
  * How to play
  * ------------------------------------------------------------------ */

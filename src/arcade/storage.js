@@ -17,6 +17,8 @@
 // which is exactly what the stub below is reserved for.
 
 import { serializeMatch, isReplayableMatch } from '../engine/replay.js';
+import { dailyDateStr } from '../engine/arcade-rng.js';
+import { isDailyDate, dateOfDailySeed, previousDate } from '../engine/dailyLadder.js';
 // A table id is a SAFE_ID and the key it becomes goes to the launcher, so it is
 // held to the same rule as everything else on the wire — a key is not a place
 // to relax a validator.
@@ -100,6 +102,43 @@ export function matchKey(packId) {
 
 export function isMatchKey(key) {
   return typeof key === 'string' && key.startsWith(MATCH_KEY_PREFIX);
+}
+
+/**
+ * THE DAILY RUN GETS ITS OWN SLOT — `daily.<packId>` beside `match.<packId>`.
+ *
+ * The same reasoning `mpMatch.` is kept apart for: a casual Milestones game and
+ * today's daily are two different games of the same pack, and one slot would
+ * mean opening the daily silently threw away whatever was in progress. It also
+ * keeps the lobby honest — `listMatchSummaries` reads the casual prefix only,
+ * so the daily never shows up as a "game in progress" ribbon on the tile; it
+ * has its own control that says what it actually is.
+ *
+ * A daily slot is DISPOSABLE in a way a casual save is not: its seed names the
+ * day it belongs to, so yesterday's unfinished run is not resumed, it is
+ * dropped (see `dailyStatus` and src/ui/table.js openTable).
+ */
+export const DAILY_KEY_PREFIX = 'daily.';
+
+export function dailyKey(packId) {
+  return `${DAILY_KEY_PREFIX}${packId}`;
+}
+
+export function isDailyKey(key) {
+  return typeof key === 'string' && key.startsWith(DAILY_KEY_PREFIX);
+}
+
+/**
+ * Which of a pack's two solo slots a read or a write means.
+ *
+ * A name rather than a boolean because the two are not "normal" and "special":
+ * they are two saved games, and a caller that says `{ slot: 'daily' }` reads as
+ * what it is at the call site.
+ */
+const SLOT_KEY = { match: matchKey, daily: dailyKey };
+
+function slotKeyFor(packId, slot) {
+  return (SLOT_KEY[slot] || matchKey)(packId);
 }
 
 // Fully-qualified names for the async surfaces, pinned now so the replay work
@@ -241,12 +280,19 @@ export function saveHandPrefs(packId, prefs) {
  * which is why registerStorageErrorHandler exists rather than this checking
  * being sufficient on its own.
  */
-export function saveMatch(state, { hints = 0 } = {}) {
+export function saveMatch(state, { hints = 0, slot = 'match' } = {}) {
   // `hints` rides BESIDE the match, not in it: how many times the player asked
   // the bar for a suggestion is not part of the game — replaying the log
   // reproduces every card whether or not anybody was helped — but it is part
   // of what a resume should bring back, and what the record counts at the end.
-  return Arcade.state.set(matchKey(state.pack.id), { ...serializeMatch(state), hints });
+  //
+  // `slot` picks which of the pack's two solo games this is. The PAYLOAD is
+  // identical either way, deliberately: a daily save is an ordinary seed + log,
+  // and the fact that it is a daily is carried by the key it is under and by
+  // the seed's own `<packId>|<date>` shape. That is why MATCH_FORMAT_VERSION
+  // did not need bumping and why every save written before the daily existed
+  // still loads.
+  return Arcade.state.set(slotKeyFor(state.pack.id, slot), { ...serializeMatch(state), hints });
 }
 
 /**
@@ -431,9 +477,9 @@ export function sweepStaleTables({ now = Date.now(), maxAgeMs = TABLE_ROLL_OFF_M
   return dropped;
 }
 
-export function loadMatch(packId) {
+export function loadMatch(packId, { slot = 'match' } = {}) {
   if (!isValidPackId(packId)) return null;
-  const stored = Arcade.state.get(matchKey(packId));
+  const stored = Arcade.state.get(slotKeyFor(packId, slot));
   if (!isReplayableMatch(stored) || stored.packId !== packId) return null;
   return stored;
 }
@@ -443,9 +489,9 @@ export function loadMatch(packId) {
  * something to resume into), on an unreplayable log, and when the player
  * abandons a game from the lobby.
  */
-export function clearMatch(packId) {
+export function clearMatch(packId, { slot = 'match' } = {}) {
   if (!isValidPackId(packId)) return false;
-  return Arcade.state.remove(matchKey(packId));
+  return Arcade.state.remove(slotKeyFor(packId, slot));
 }
 
 /**
@@ -571,6 +617,116 @@ export function readStats(packId) {
   return normalizeStats(Arcade.stats.getOrInit(packId, STATS_DEFAULTS));
 }
 
+/* ------------------------------------------------------------------ *
+ * The daily record — a different record of a different game
+ * ------------------------------------------------------------------ */
+
+/**
+ * WHY THE DAILY DOES NOT TOUCH THE PACK'S OWN RECORD.
+ *
+ * "Won 4 of 9 in Milestones" is a sentence about the ladder the pack ships. A
+ * daily run is ten contracts nobody authored, at a seat count and a seed the
+ * player did not choose, and folding it in would make that sentence mean two
+ * different games at once — and would put a daily loss into the casual streak,
+ * which is the number the lobby tile shows. So it is a record of its own, under
+ * a category of its own (`dailyStats.<packId>`), and `recordResult` is not
+ * called for a daily at all (src/ui/matchRecord.js).
+ *
+ * `streak` here is CONSECUTIVE DAYS, not consecutive wins — which is the only
+ * reading that means anything for a daily, and the reason it cannot be the
+ * pack's `streak` field with a different name.
+ */
+const DAILY_STATS_DEFAULTS = {
+  played: 0,
+  won: 0,
+  streak: 0,
+  bestStreak: 0,
+  // The last day recorded, which is also the "have I already played today"
+  // flag the tile reads and the guard that makes recording idempotent.
+  lastDate: null,
+  lastWon: false,
+  // How many hands the last run took, for the share line.
+  lastHands: 0,
+};
+
+export function dailyStatsCategory(packId) {
+  return `dailyStats.${packId}`;
+}
+
+function normalizeDailyStats(prev) {
+  const base = { ...DAILY_STATS_DEFAULTS, ...(prev || {}) };
+  if (!isDailyDate(base.lastDate)) base.lastDate = null;
+  return base;
+}
+
+export function readDailyStats(packId) {
+  if (!isValidPackId(packId)) return { ...DAILY_STATS_DEFAULTS };
+  return normalizeDailyStats(Arcade.stats.getOrInit(dailyStatsCategory(packId), DAILY_STATS_DEFAULTS));
+}
+
+/**
+ * Record today's run.
+ *
+ * ONE RESULT PER DAY, enforced here rather than trusted from the callers: the
+ * table concludes a finished match and the "End match" door records a forfeit,
+ * and a player who does both — finishes the run, then walks back in — must not
+ * be able to play the streak twice. A second write for a date already recorded
+ * is a no-op, which also makes this safe to call from a resume path.
+ *
+ * @param won   did the player win the run outright
+ * @param hands how many hands it took (state.roundNumber), for the share line
+ */
+export function recordDailyResult(packId, date, { won = false, hands = 0 } = {}) {
+  if (!isValidPackId(packId) || !isDailyDate(date)) return;
+  Arcade.stats.update(dailyStatsCategory(packId), (prev) => {
+    const base = normalizeDailyStats(prev);
+    if (base.lastDate === date) return base;
+    // Consecutive CALENDAR days. A win the day after a win extends the run; a
+    // win after a gap starts a new one; any loss ends it.
+    const streak = won ? (base.lastDate === previousDate(date) ? base.streak + 1 : 1) : 0;
+    return {
+      played: base.played + 1,
+      won: base.won + (won ? 1 : 0),
+      streak,
+      bestStreak: Math.max(base.bestStreak, streak),
+      lastDate: date,
+      lastWon: !!won,
+      lastHands: Number.isFinite(hands) && hands > 0 ? Math.floor(hands) : 0,
+    };
+  });
+}
+
+/**
+ * Everything the lobby tile needs to draw today's run, in one read.
+ *
+ * The date is resolved HERE rather than by the caller so the save slot, the
+ * record and the tile can never disagree about what day it is — and it is the
+ * device-local day, because that is the platform's daily rule (`dailyDateStr`).
+ *
+ * @returns { date, finished, won, hands, streak, bestStreak, played,
+ *            inProgress: { moves, savedAt } | null }
+ */
+export function dailyStatus(packId, { today = dailyDateStr() } = {}) {
+  if (!isValidPackId(packId)) return null;
+  const record = readDailyStats(packId);
+  const stored = loadMatch(packId, { slot: 'daily' });
+  // A save whose seed names another day is LAST week's run, not this one.
+  const current = stored && dateOfDailySeed(stored.seed) === today ? stored : null;
+  const finished = record.lastDate === today;
+  return {
+    date: today,
+    finished,
+    won: finished && !!record.lastWon,
+    hands: finished ? record.lastHands : 0,
+    streak: record.streak,
+    bestStreak: record.bestStreak,
+    played: record.played,
+    inProgress: !finished && current
+      ? { moves: current.log.length, savedAt: current.savedAt }
+      : null,
+  };
+}
+
 /** This player's record against one opponent, or null when they have never met. */
 export function readHeadToHead(packId, opponentKey) {
   if (!OPPONENT_KEY_RE.test(opponentKey || '')) return null;
@@ -589,7 +745,7 @@ export function readHeadToHead(packId, opponentKey) {
 export function registerStorageErrorHandler() {
   Arcade.onStorageError(({ key }) => {
     Arcade.ui.toast(
-      isMatchKey(key)
+      isMatchKey(key) || isDailyKey(key)
         ? 'Storage full — this match will not be saved.'
         : 'Storage full — settings could not be saved.',
       { kind: 'error', duration: 4000 });

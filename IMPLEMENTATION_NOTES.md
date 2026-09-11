@@ -2666,6 +2666,161 @@ against the felt's edge for the whole game. If it wants a floor later, the
 place to put one is a `--stage-card-w` that this rule and the 660px block both
 read.
 
+## A ladder nobody wrote: the Milestones daily run (#162)
+
+### What was wrong
+
+Milestones had one ladder. `packs/milestones/manifest.json` `rules.contracts` is
+ten contracts a human chose, and every game of Milestones anybody has ever
+played has been those ten in that order. Nothing daily existed anywhere, though
+the pieces did and had done for a while: `src/engine/arcade-rng.js` shipped
+`dailyDateStr`, `dailySeed` and `hashU32` and *nothing imported them*,
+`createRng` already took a string seed, the ladder is data checked by the same
+`itemsMatchContract` door a human's lay-down goes through, and the contract
+strip is data-driven. The day was there to be built; it just was not.
+
+### The shape of it
+
+**One string is the whole day.** `milestones|2026-09-11` seeds the ladder AND
+the deal, so two devices on the same date get the same ten rungs and the same
+cards. The date is device-local, which is the platform's rule (`dailyDateStr`
+says why): a daily rolls at the player's midnight, not UTC's.
+
+**The ladder is derived, never stored.** `serializeMatch` is untouched and
+`MATCH_FORMAT_VERSION` did not move — a daily save is an ordinary `{seed, log,
+variants…}`, and the only thing marking it a daily is the key it sits under and
+the `<packId>|<date>` shape of its own seed. A resume re-derives the ten
+contracts from that seed before a single move is replayed, which is what makes
+"the same ladder came back" true rather than hoped for, and it means every save
+written before the daily existed still loads.
+
+**Two solo slots per pack.** `daily.<packId>` beside `match.<packId>`, for the
+reason `mpMatch.` is kept apart: a casual Milestones game and today's run are
+two different games, and one slot would mean opening the daily silently threw
+the other away. `listMatchSummaries` reads the casual prefix only, so the daily
+never shows up as an "In progress" ribbon — it has its own control that says
+what it is.
+
+**Its own record.** `dailyStats.<packId>`, and `recordResult` is not called for
+a daily at all. "Won 4 of 9 in Milestones" is a sentence about the ladder the
+pack ships; folding in ten contracts nobody authored would make it a sentence
+about two different games, and would let a daily loss break the casual streak
+the tile shows. `streak` here is consecutive CALENDAR DAYS, which is the only
+reading that means anything for a daily. One result per day is enforced in
+`recordDailyResult` rather than trusted from the callers, because the table
+concludes a finished match and the "End match" door records a loss and a player
+who does both must not play the streak twice.
+
+**The tile is the whole entry.** A `daily: true` flag on the manifest, and the
+lobby knows there is such a thing as a daily run and nothing whatever about
+ladders or seeds. A finished day is rendered as TEXT, not a disabled button:
+there is no second attempt, so offering something to press would be offering a
+door that does not open. The share line is plain prose — `shareEncode` exists
+for a payload somebody has to decode, and the date is the whole of the state.
+
+### The two doors a generated rung goes through
+
+Feasibility was the obvious one and the easy one: `findDeckLayDown` finds a
+concrete lay-down for every rung in the pack's actual deck, ordered run-first
+and backtracking over the choice each item has, and the test pushes that
+lay-down through `resolveMeld` — the same door a human's cards go through.
+
+It was also not the one that mattered. The deck holding a lay-down says nothing
+about whether eleven cards ever BECOME one, and the first generated ladders
+stalled: twenty consecutive days at `--match --games=100` gave **6 bad days and
+55 stalled matches**, every one of them a round where four seats drew and
+discarded to the 4000-move cap with no lay-down and nobody going out. The
+shipped ladder does not do this (100/100).
+
+So every rung shape the generator can emit over a year — 79 of them — was played
+as a hand EVERY SEAT IS ON, four seats, the same cap, 50 hands each, and the
+23 that looked marginal again at 300. Two families failed and nothing else did:
+
+    run(6) set(3)        25/50      run(5) set(3)        46/50
+    run(5) set(4)        42/50      run(4) set(3)        48/50
+    run(5) set(2) set(2) 48/50      set(5)              297/300
+                                    set(6)              299/300
+
+**A long run and a real set pull opposite ways.** A run wants a different rank
+at every slot, a set wants the same rank over and over, and a seat owing
+`run(6) set(3)` has to hold nine of its eleven cards in two shapes that
+disagree about what a good card is. `isPlayableRung` refuses a run of four or
+more beside three or more cards owed as sets. `run(7) set(2)`, `run(5) run(4)`
+and `run(3) set(6)` all survive — a colour group asks about colour and says
+nothing about ranks, so it conflicts with neither.
+
+**A rung that is one set and nothing else** is the least absorbent felt in the
+game. Laying down is only half a hand; somebody has to GO OUT, and that means
+shedding the rest onto what is on the table. A run takes cards at both ends, a
+colour group takes anything of its colour, but a set of sixes only ever takes
+another six and five of the eight are already in the meld. A lone `set(5)` also
+leaves the most cards to get rid of, which is why it is the only single-meld
+rung that ever stalls — `run(9)` and `colorGroup(8)` finished 300 of 300. Two
+sets are fine: `set(6) set(3)` puts two targets down and leaves two cards.
+
+With both doors in place: **20 days x 100 matches, 0 stalled, 0 errored**, and
+60 further days x 50 matches at 0 as well.
+
+The first of those is really a statement about the bot, and it is worth saying
+plainly rather than hiding behind the generator. `keepValue` in
+`src/templates/contract-rummy-bot.js` grades a card by a contract's appetites
+BLENDED in proportion to the cards each owes, so on a mixed run/set rung it
+half-collects two things and finishes neither. Teaching it to commit belongs in
+that file (#160 is in there); until then the generator does not write a rung the
+table cannot play. The pack's own ladder still ships `set(3) run(4)` and
+`set(4) run(4)` and is untouched — a fixed ladder is ten rungs a human read, and
+seats spread across it long before they reach those.
+
+### Two smaller decisions
+
+**At most four rungs may cost the same.** The size jitter would happily put six
+of the ten rungs on one total, and the smallest total is the one with least to
+say: at five cards the whole grammar offers four rungs, so a day that spends six
+there cannot avoid printing the same contract twice in a row. 2026-01-20 was
+that day. The cap fits what the narrowest size can supply; `hi` is always at
+least two above `lo`, so three sizes at four apiece is more room than ten rungs
+need.
+
+**The difficulty measure is written down so a test can hold the generator to
+it**: `[total cards, longest run, longest set]`, compared lexicographically.
+Total cards first because that is what a rung costs out of a ten-card hand and
+it is the number a player feels; run length as the tiebreak because a run is the
+shape the deck makes scarce, so `run(7)` sits above `colorGroup(7)` at equal
+cost. It is a ranking, not a win probability — what it has to be is total, cheap
+and defensible.
+
+### How it was verified
+
+`tests/dailyLadder.test.js` (19) and `tests/dailyRun.test.js` (16) sweep 365
+consecutive dates: 365 distinct ladders, never fewer than 9 distinct shapes
+inside one, no rung costing the whole deal, no rung easier than the one below
+it, every rung's lay-down resolved through `resolveMeld`, and both playability
+doors. Every one of the 35 was proved to bite by breaking what it watches —
+28 mutations across the three modules, each restored from a scratch copy.
+`npm test` 876 pass 0 fail (842 on main), `node tools/pack-test.mjs --all` all
+nine packs 0 failed, schema check silent, all nine packs boot clean headless at
+1280x860 and 375x812.
+
+On the felt (Chrome, 1280x860, against a dev server on the worktree): the tile
+offers "Daily run · Sep 11", opening it titles the bar "Milestones — daily
+2026-09-11", deals four seats from `players.best` and draws a ladder that is not
+the shipped one; the casual save is byte-for-byte untouched through all of it; a
+reload brings back the same ten rungs and the same ten cards; playing the hand
+out and using "End match" writes `{played:1, won:0, streak:0, lastDate}` to the
+daily record, leaves `stats.milestones` at zero, and the tile changes to
+"Today's run · Sep 11 · lost" with a Copy result button whose clipboard text is
+`Milestones daily 2026-09-11 — won in 7 hands · 3-day streak`. No page errors.
+
+**Not done, and why.** `closeTable()` calls `flushTable()`, which writes the
+match back to storage AFTER `endMatchFromSummary` has cleared it — so ending a
+match from the round summary leaves its save behind. This is not the daily's
+doing: main does exactly the same to `match.<packId>` (reproduced against an
+unmodified checkout — the tile still reads "In progress · 62 moves" after "End
+match" records the forfeit). The daily inherits it and is not harmed by it,
+because `dailyStatus` reads FINISHED from the record and the record wins over a
+leftover save, so the tile is right either way and there is no button left to
+walk back in through. It wants fixing in `closeTable`, which is nobody's scope
+this round.
 ## The next hand comes by itself, at a pace you pick (#150)
 
 ### What was wrong

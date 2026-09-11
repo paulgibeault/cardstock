@@ -15,7 +15,7 @@
 import { serializeMatch } from '../engine/replay.js';
 import { computeMatchStats, placements, sideStandings } from '../stats/matchStats.js';
 import { sideOfSeat } from '../engine/sides.js';
-import { recordResult, readStats, clearMatch } from '../arcade/storage.js';
+import { recordResult, readStats, clearMatch, recordDailyResult, readDailyStats } from '../arcade/storage.js';
 
 /** Display-only faces from the manifest; see schema `heroCards`. */
 export function heroFaces(manifest) {
@@ -29,8 +29,11 @@ export function heroFaces(manifest) {
  * @param art        () => the open match's card renderer
  * @param onConclude () => void, called before the record is written (the
  *                   table's cue to stop its timers)
+ * @param daily      () => the open match's daily context (`{ date, seed }`) or
+ *                   null. A function rather than a value for the same reason
+ *                   `seating` is one: this object outlives any one match.
  */
-export function createMatchRecord({ me, seating, art, onConclude }) {
+export function createMatchRecord({ me, seating, art, onConclude, daily = () => null }) {
   /**
    * This match's numbers, replayed out of its own log (src/stats/matchStats.js).
    *
@@ -78,6 +81,23 @@ export function createMatchRecord({ me, seating, art, onConclude }) {
     return sideOfSeat(state.pack, state.seats, mine) === sideOfSeat(state.pack, state.seats, seat);
   }
 
+  /**
+   * The sentence under a finished DAILY run, which is a different record of a
+   * different game — see src/arcade/storage.js on why the daily never touches
+   * the pack's own numbers. Days rather than matches, and the streak is the
+   * headline because consecutive days is what a daily is played for.
+   */
+  function dailySentence(packId) {
+    const record = readDailyStats(packId);
+    const overall = record.played
+      ? `${record.won} of ${record.played} daily ${record.played === 1 ? 'run' : 'runs'}`
+      : '';
+    const streak = record.streak > 1 ? `${record.streak} days in a row` : '';
+    const best = record.bestStreak > record.streak && record.bestStreak > 1
+      ? `best ${record.bestStreak}` : '';
+    return [overall, streak, best].filter(Boolean).join(' — ');
+  }
+
   function recordSentence(state) {
     const record = readStats(state.pack.id);
     const overall = record.played
@@ -114,15 +134,27 @@ export function createMatchRecord({ me, seating, art, onConclude }) {
    */
   function concludeMatch(state, { hints = 0 } = {}) {
     onConclude();
-    // A finished match is not something to resume into.
-    clearMatch(state.pack.id);
+    const run = daily();
+    // A finished match is not something to resume into — and a daily is not
+    // something to resume into twice, so its own slot is the one cleared.
+    clearMatch(state.pack.id, { slot: run ? 'daily' : 'match' });
     const stats = safeStats(state);
-    recordResult(state.pack.id, {
-      won: wonBySide(state),
-      forfeit: false,
-      opponents: opponentOutcomes(state, stats),
-      hints,
-    });
+    const won = wonBySide(state);
+    // ONE RESULT, IN ONE BOOK. A daily run is recorded against the day, and
+    // deliberately NOT against the pack's lifetime record: its ladder is
+    // generated rather than the one the pack ships, so counting it there would
+    // make "Won 4 of 9 in Milestones" a sentence about two different games —
+    // and would let a daily loss break the casual streak the tile shows.
+    if (run) {
+      recordDailyResult(state.pack.id, run.date, { won, hands: state.roundNumber });
+    } else {
+      recordResult(state.pack.id, {
+        won,
+        forfeit: false,
+        opponents: opponentOutcomes(state, stats),
+        hints,
+      });
+    }
     return {
       seating: seating(),
       stats,
@@ -137,7 +169,10 @@ export function createMatchRecord({ me, seating, art, onConclude }) {
       // device holds, because that is who pressed the button.
       hints,
       hintSeat: me.seat(),
-      recordText: recordSentence(state),
+      // WHICH RUN THIS WAS, so the sheet and anything downstream of it can say
+      // "the 2026-09-10 daily" rather than "Milestones".
+      daily: run,
+      recordText: run ? dailySentence(state.pack.id) : recordSentence(state),
       heroFaces: heroFaces(state.pack.manifest),
       renderFace: (face) => art().face(face),
     };
