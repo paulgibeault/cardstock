@@ -133,9 +133,14 @@ export function createZoneRenderer({
     stack.classList.toggle('pile-stack--hinted', !!session().hint?.zones?.has(address));
 
     if (target) {
+      // THE VERB IS THE MOVE'S, NOT THE MODE'S — a pile says what tapping it
+      // does. `takeHand` takes the whole pile as your hand, which is the one
+      // target here that is not about a card you are already holding, so
+      // "Play your selected card onto Hand 2" would have been exactly wrong.
       const verb = target.type === 'draw' ? 'Draw a card from'
         : target.type === 'discard' ? 'Discard to'
-          : 'Play your selected card onto';
+          : target.type === 'takeHand' ? 'Take'
+            : 'Play your selected card onto';
       stack.disabled = false;
       stack.setAttribute('aria-label', `${verb} ${ariaLabel}`);
     } else if (sourceTop) {

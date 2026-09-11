@@ -187,8 +187,17 @@ how to render, exported as `INTERACTION_MODES` from `src/ui/interaction.js`).
 | `place` | select a card, then tap the pile it goes on |
 | `bid` | no card answers a tap; the action button asks a question and the answer is the move |
 | `combination` | multi-select **any** number, commit with the action button — which arms only while the selection is a legal play |
+| `take-pile` | tap one of several face-down piles to take the **whole** of it; the hand is empty and inert |
 
 A mode this build does not know falls back to `tap`.
+
+`take-pile` is `rummy-draw`'s shape at a different scale, and it is a separate
+mode because the two sentences a pile says are different: "draw a card from
+this" and "take this as your hand". Thirteen at two seats is the case — three
+face-down piles of seventeen, one each, the rest set aside (`rules.offer`) —
+and the model is the same one every other pile target uses: a `readyTargets`
+entry per enumerated move, keyed by the zone address. Nothing goes in
+`handSelectable`, because in this phase there is no hand.
 
 `combination` is the one whose legality is a **live** answer rather than a
 count. `pass` commits at exactly N and the button can be armed by counting; a
@@ -563,6 +572,8 @@ And the audit itself, which is the part worth keeping:
 | `show` | cribbage | `all`. Where the crib is turned face up to be counted; the MOVE into it is the reveal (see below). |
 | `play` | cribbage | `all`, per player. Laid face up in front of you during the count, and taken back for the show — which is why this template never has to remember who played what. |
 | `starter` | cribbage | `all`. Cut face up. |
+| `offer` | climbing | `none`, two-handed only (`rules.offer`). The other pile nobody may look into, and for a reason the crib does not have: you are about to CHOOSE one of these, and a seat that could read a pile before taking it is not choosing. `interactive`, so the hidden pile stays on the felt as the phase's only control, and `hideWhenEmpty`, so each one leaves as it is taken. |
+| `aside` | climbing | `none`, and drawn nowhere at all. The pile nobody took, plus the odd card the split left over — out of play, and hidden rather than discarded, because `discard` is public and `unseenBy` counts it as SEEN: seventeen cards nobody has ever looked at are not that. |
 
 ### Vars
 

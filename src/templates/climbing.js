@@ -461,6 +461,108 @@ function dealHands(ctx) {
   }
 }
 
+/* ------------------------------------------------------------------ *
+ * Two-handed: three piles, and you pick one
+ * ------------------------------------------------------------------ */
+
+/** The shared, face-down piles on offer, and the pile nobody took. */
+const OFFER = 'offer';
+const ASIDE = 'aside';
+
+function offerAddress(n) {
+  return `${OFFER}.${n}`;
+}
+
+/**
+ * THE DEAL THIS TABLE PLAYS, or null for the ordinary one.
+ *
+ * `rules.offer` is "deal the whole deck into N face-down piles and let the
+ * players pick one each", and it exists because the flat deal is the wrong
+ * game SHORT-HANDED. `rules.deal` is thirteen at every seat count by design
+ * (D-11) — a hand size is the name of the game — but at TWO seats that leaves
+ * twenty-six of the fifty-two cards unseen by anybody, which is half a deck of
+ * pigs and bombs that simply never turns up. Two people actually play it by
+ * dealing three piles of seventeen, picking one each, and setting the third
+ * aside: thirty-four cards in play instead of twenty-six, and the choice of
+ * pile is a decision worth having in place of a deal nobody influences.
+ *
+ * `atSeats` rather than a `byPlayers` map because this is not a hand SIZE that
+ * varies with the table — it is a different deal, with a phase of its own, and
+ * a pack declares the one seat count it replaces the ordinary deal at.
+ */
+function offerFor(rules, seats) {
+  const offer = rules.offer;
+  if (!offer || seats !== offer.atSeats) return null;
+  return offer;
+}
+
+/**
+ * `rules.offer` piles, dealt off one shuffle.
+ *
+ * The pile size is DERIVED rather than declared: the rule is "the whole deck,
+ * split evenly", and 52 into three is seventeen each with one over. A declared
+ * size would be a second number that could disagree with the deck, and the one
+ * card left over is the rule's own consequence rather than a separate fact.
+ * It goes face down beside the pile nobody takes — out of play, unseen, which
+ * is exactly what the flat deal does with its own remainder.
+ *
+ * Writes the zone arrays directly for the same reason `dealHands` does — the
+ * initial deal is sanctioned (src/templates/CONTRACT.md).
+ */
+function dealOffer(ctx, offer) {
+  const ids = ctx.rng.shuffle([...ctx.pack.cardsById.keys()]);
+  const per = Math.floor(ids.length / offer.piles);
+  const put = (addr, id) => {
+    ctx.zone(addr).cards.push(id);
+    ctx.state.cardLocation.set(id, addr);
+  };
+  let at = 0;
+  for (let n = 1; n <= offer.piles; n++) {
+    for (let i = 0; i < per; i++) put(offerAddress(n), ids[at++]);
+  }
+  for (; at < ids.length; at++) put(ASIDE, ids[at]);
+}
+
+/** The piles still on offer — the ones nobody has taken. */
+function openOffers(ctx) {
+  const offer = offerFor(ctx.rules, ctx.seats);
+  if (!offer) return [];
+  const out = [];
+  for (let n = 1; n <= offer.piles; n++) {
+    const address = offerAddress(n);
+    if (ctx.hasZone(address) && ctx.countIn(address) > 0) out.push(address);
+  }
+  return out;
+}
+
+/**
+ * WHO PICKS FIRST, and the one decision in this rule that had to be made
+ * rather than implemented (#157).
+ *
+ * Hand two onward is the rule everybody plays: the seat that LOST the last
+ * hand picks first, and — because `laterLead` hands the lead to the seat that
+ * went out — the winner gets the lead in exchange. Written as "the seat after
+ * the winner", which at two seats IS the loser and at any larger table is the
+ * winner picking last, so the same line serves a pack that offers piles to
+ * three.
+ *
+ * HAND ONE IS A COIN FLIP, off the match's own seeded stream. The issue's other
+ * candidate — "the player who does not hold the lowest card picks first" —
+ * cannot be built, and it is worth writing down why rather than leaving it to
+ * be rediscovered: at hand one the pick happens BEFORE anybody holds anything,
+ * so a rule phrased over the dealt hands is a rule about a fact that does not
+ * exist yet. What survives of it is the compensation, and that is already the
+ * table's rule: whichever pile each player ends up with, the lowest card in
+ * play leads (#156), so the first picker's advantage is answered by the lead
+ * going wherever the 3♠ went. A rotation was the other option and is the bug
+ * #156 just removed — `openingSeat()` is seat 0 on round one, which is the
+ * human.
+ */
+function firstPicker(ctx, wonLast) {
+  if (wonLast === null || wonLast === undefined) return ctx.rng.int(ctx.seats);
+  return ctx.nextSeat(wonLast);
+}
+
 /**
  * The card whose holder opens hand one, or null for a table with no such rule.
  *
@@ -506,16 +608,45 @@ function firstLeadCard(ctx) {
  *
  * @param opening `null` to apply `rules.firstLead` (hand one, D-2), or the seat
  *                that leads because `rules.laterLead` said so (D-3).
+ * @param wonLast the seat that went out last hand, whatever `laterLead` does
+ *                with it — the OFFER deal needs it even where the lead does
+ *                not, because the loser picks first.
  */
-function beginHand(ctx, opening) {
+function beginHand(ctx, opening, wonLast = null) {
   ctx.setDirection(ctx.rules.direction === 'counterclockwise' ? -1 : 1);
-  dealHands(ctx);
   ctx.setVar('combo', null);
   ctx.setVar('passed', []);
   ctx.setVar('lastPlayer', null);
   ctx.setVar('trickNumber', 1);
   ctx.setVar('instantWin', null);
   for (let seat = 0; seat < ctx.seats; seat++) ctx.setPlayerVar(seat, '__mustInclude', null);
+
+  const offer = offerFor(ctx.rules, ctx.seats);
+  if (offer) {
+    dealOffer(ctx, offer);
+    // PARKED, NOT DROPPED. Who leads once the hands are chosen is decided now
+    // — it is the hand that just ended talking — but it cannot be acted on
+    // until there are hands to lead from, and the round boundary that computed
+    // it will not be run again. It is a fact of the table (everybody watched
+    // the last hand end), so it is a plain public var rather than a `__` one.
+    ctx.setVar('opening', opening ?? null);
+    ctx.setTurnSeat(firstPicker(ctx, wonLast));
+    ctx.setPhase('choose');
+    return;
+  }
+  dealHands(ctx);
+  openPlay(ctx, opening);
+}
+
+/**
+ * The hands exist; play begins. Split out of `beginHand` because the offer deal
+ * (above) puts a whole phase between the two — nothing here may be asked before
+ * every seat is holding its cards, and `instantWinShape` is the reason: tới
+ * trắng is a fact about a HAND, and at a two-handed table the hands do not
+ * exist until both piles have been picked.
+ */
+function openPlay(ctx, opening) {
+  ctx.setVar('opening', null);
 
   // TỚI TRẮNG IS A FACT ABOUT THE DEAL, so it is asked here and nowhere else —
   // once a card has been played the hand is an ordinary hand, however it was
@@ -564,6 +695,26 @@ function beginHand(ctx, opening) {
   ctx.setVar('leader', leader);
   ctx.setTurnSeat(leader);
   ctx.setPhase('play');
+}
+
+/**
+ * Every seat has picked: the pile nobody took leaves the table, and the hand
+ * begins.
+ *
+ * IT GOES TO `aside`, NOT TO `discard`, and the difference is the whole
+ * information model of this game. `discard` is `visibility: 'all'` because
+ * everybody watched those cards being played, and `unseenBy` — which is how the
+ * bot works out whether a pig can still be chopped — counts it as SEEN. Seventeen
+ * cards nobody has ever looked at are not that. `aside` is hidden from everyone,
+ * so the pile nobody chose stays in the pool of cards that might be anywhere,
+ * which is the honest reading at a real table: you know a pile is over there,
+ * and you do not know what is in it.
+ */
+function finishChoose(ctx) {
+  for (const address of openOffers(ctx)) {
+    ctx.moveCards(ctx.cardIdsIn(address).slice(), address, ASIDE);
+  }
+  openPlay(ctx, ctx.var('opening') ?? null);
 }
 
 /* ------------------------------------------------------------------ *
@@ -990,7 +1141,11 @@ function instantWinShape(ctx, cardIds) {
     if (entry.total >= 2) pairs += 1;
     if (entry.seq >= 1) sequenceable += 1;
   }
-  if (vocab.has('pair') && pairs >= Math.floor((ctx.rules.deal ?? cardIds.length) / 2)) return 'six pairs';
+  // HALF THE HAND IN FRONT OF YOU, not half of `rules.deal`. The two are the
+  // same number at every table that deals flat, and they part company under the
+  // offer deal — a seventeen-card hand asked for six pairs would be a much
+  // commoner instant win than the rule it is named after (#157).
+  if (vocab.has('pair') && pairs >= Math.floor(cardIds.length / 2)) return 'six pairs';
 
   const run = vocab.get('run');
   // No `kind`: a rank ANY sequence shape bars is barred from the dragon.
@@ -1074,10 +1229,15 @@ const climbing = {
    * `instantWin` names a SEAT and a shape, never a card: tới trắng is declared
    * out loud at the table the moment it is dealt, and the hand it names is
    * about to be laid face up anyway.
+   *
+   * `opening` is a SEAT, parked between the round boundary that decided it and
+   * the choose phase that spends it (see `beginHand`) — who leads the next hand
+   * is something everybody at the table watched being settled.
    */
-  publicVars: ['combo', 'passed', 'leader', 'lastPlayer', 'trickNumber', 'instantWin'],
+  publicVars: ['combo', 'passed', 'leader', 'lastPlayer', 'trickNumber', 'instantWin', 'opening'],
 
-  defaultZones(rules, seats) {   // eslint-disable-line no-unused-vars
+  defaultZones(rules, seats) {
+    const offer = offerFor(rules, seats);
     return [
       { id: 'hand', per: 'player', visibility: 'owner', layout: 'fan', order: 'sorted', facing: 'up' },
       // The standing combination, face up in the middle. `landing: 'play'` is
@@ -1088,6 +1248,26 @@ const climbing = {
       // out there, hiding them would delete public information rather than
       // protect private information.
       { id: 'discard', per: 'shared', visibility: 'all', layout: 'stack', order: 'stack', facing: 'up', label: 'Played' },
+      // THE PILES ON OFFER, and only at the table that plays for them. Labelled
+      // "Hand" because that is what the player is choosing — the felt draws
+      // "Hand 1" over a count of seventeen, and a second pile called "Pile"
+      // beside the play pile would name two different things the same.
+      //
+      // `visibility: 'none'` is the rule and not the dressing: nobody may look
+      // into a pile before taking it, their own pick included, so the view
+      // filter sends a COUNT and no ids (src/engine/view.js). `interactive`
+      // keeps a hidden pile on the felt — the draw pile's precedent — because
+      // it is the only control the phase has; `hideWhenEmpty` takes each one
+      // away as it is taken, and takes all three away when the last is set
+      // aside, so the felt stops showing a phase that is over.
+      ...(offer ? [
+        { id: OFFER, per: 'shared', count: offer.piles, visibility: 'none', layout: 'stack', order: 'stack', facing: 'down', label: 'Hand', interactive: true, hideWhenEmpty: true },
+        // The pile nobody took, and the odd card the split left over. Hidden
+        // from everyone and never drawn — the cards are out of play, which is
+        // what the flat deal does with its own remainder by simply not dealing
+        // it. Stockpile's `recycled` is the same shape of zone.
+        { id: ASIDE, per: 'shared', visibility: 'none', layout: 'stack', order: 'stack', facing: 'down' },
+      ] : []),
     ];
   },
 
@@ -1106,16 +1286,44 @@ const climbing = {
    * D-3) — which is meta-state that outlives a round.
    */
   startRound(ctx) {
-    let opening = null;
+    // READ ONCE, USED TWICE, and the two uses are not the same question. The
+    // LEAD is `rules.laterLead`'s to give away and a pack may decline it; the
+    // PICK ORDER under the offer deal is the other half of the same bargain
+    // (the loser picks first, the winner leads) and needs the winner whatever
+    // the lead rule says. Collapsing them — which is what reading only
+    // `opening` did — meant a pack with no `laterLead` dealt its piles to a
+    // coin flip every hand.
+    let wonLast = null;
     for (let seat = 0; seat < ctx.seats; seat++) {
-      if (ctx.playerVar(seat, 'wonLastHand')) opening = seat;
+      if (ctx.playerVar(seat, 'wonLastHand')) wonLast = seat;
       ctx.setPlayerVar(seat, 'wonLastHand', false);
     }
-    if (ctx.rules.laterLead !== 'trick-winner') opening = null;
-    beginHand(ctx, opening);
+    beginHand(ctx, ctx.rules.laterLead === 'trick-winner' ? wonLast : null, wonLast);
   },
 
   validateMove(ctx, move) {
+    // THE CHOOSE PHASE IS A CLOSED DOOR, stated once here rather than as a
+    // condition on each branch below. Nothing is in anybody's hand yet, so a
+    // `playCard` would already fail on `not-in-hand` and a `pass` on
+    // `must-lead` — both true, both the wrong sentence, and both an accident of
+    // the order the checks happen to be written in.
+    if (ctx.turn.phase === 'choose' && move.type !== 'takeHand') {
+      return ctx.fail('choosing', 'Take one of the hands on offer first.');
+    }
+
+    if (move.type === 'takeHand') {
+      if (ctx.turn.phase !== 'choose') return ctx.fail('not-choosing', 'The hands have already been dealt.');
+      if (move.actor !== ctx.turn.seat) return ctx.fail('turn', "It's not your turn to pick.");
+      const from = move.from;
+      // Asked of the OPEN piles rather than of the address's shape: a pile that
+      // has been taken is gone from that list, which is the same answer as "you
+      // cannot have that one" without a second rule saying so.
+      if (!from || !openOffers(ctx).includes(from)) {
+        return ctx.fail('not-on-offer', 'That is not one of the hands on offer.');
+      }
+      return ctx.ok();
+    }
+
     if (move.type === 'playCard') {
       if (move.actor !== ctx.turn.seat) return ctx.fail('turn', "It's not your turn.");
       if (!stillIn(ctx, move.actor)) return ctx.fail('passed', 'You have passed; you are out of this trick.');
@@ -1183,6 +1391,27 @@ const climbing = {
 
   applyMove(ctx, move) {
     const seat = move.actor;
+    if (move.type === 'takeHand') {
+      const cards = ctx.cardIdsIn(move.from).slice();
+      ctx.moveCards(cards, move.from, ctx.zoneAddr('hand', seat));
+      // A COUNT AND NO IDS. Everybody watched a pile of seventeen go into
+      // somebody's hand, and that is the whole of what they watched — the ids
+      // would be filtered out of the event for every other seat anyway
+      // (src/engine/view.js), so putting them in would be a leak the filter
+      // happens to catch rather than a fact nobody published.
+      ctx.emit('handTaken', { seat, count: cards.length });
+      // The last seat to pick ends the phase. Asked of the HANDS rather than
+      // counted in a var: the state already knows how many seats are holding
+      // cards, and a counter beside it is one more thing that can disagree.
+      let everyoneHolds = true;
+      for (let s = 0; s < ctx.seats; s++) {
+        if (ctx.countIn(ctx.zoneAddr('hand', s)) === 0) everyoneHolds = false;
+      }
+      if (everyoneHolds) finishChoose(ctx);
+      else ctx.setTurnSeat(ctx.nextSeat(seat));
+      return;
+    }
+
     if (move.type === 'pass') {
       // WHAT `passed` MEANS DEPENDS ON THE RULE, and it is worth saying which.
       // Under `passIsFinal` it is the roster of seats out of this trick, and
@@ -1233,6 +1462,15 @@ const climbing = {
 
   enumerateLegalMoves(ctx, seat) {
     if (seat !== ctx.turn.seat) return [];
+
+    // ONE MOVE PER PILE STILL ON OFFER — which is what makes the piles tappable
+    // on the felt, because every tap target is derived from an enumerated move
+    // (src/ui/interaction.js). The `from` address is the whole move: there is
+    // nothing to choose about a face-down pile except which one.
+    if (ctx.turn.phase === 'choose') {
+      return openOffers(ctx).map((from) => ({ actor: seat, type: 'takeHand', from }));
+    }
+
     // A SEAT THAT HAS PASSED IS OFFERED NOTHING for the rest of the trick — the
     // same answer `actingSeats` gives, from the same predicate, so the felt's
     // turn token and the bot scheduler cannot disagree about it.
@@ -1294,6 +1532,11 @@ const climbing = {
    * stall (tools/simulate.mjs) rather than a bot offered a move that throws.
    */
   actingSeats(ctx) {
+    // `stillIn` reads "has cards and has not passed", and in the choose phase
+    // NOBODY has cards — so the unguarded answer is an empty list, which
+    // tools/simulate.mjs reports as a stalled table and the felt draws as a turn
+    // token pointing at nobody. The picker is the acting seat.
+    if (ctx.turn.phase === 'choose') return [ctx.turn.seat];
     return stillIn(ctx, ctx.turn.seat) ? [ctx.turn.seat] : [];
   },
 
@@ -1311,8 +1554,16 @@ const climbing = {
    * here the count is whatever the combination is, and whether the selection is
    * a play at all is a live question the action button answers as cards go in.
    */
-  interactionMode() {
-    return 'combination';
+  /*
+   * PHASE-DRIVEN NOW, because the offer deal opens a phase where the hand is
+   * empty and the only live control on the felt is a face-down pile (#157).
+   * `take-pile` is a tap on a zone; `combination` is a gathered selection
+   * committed by a button. Two genuinely different input shapes, so two modes —
+   * the vocabulary is the platform's and which phase means which is this
+   * template's (src/ui/interaction.js).
+   */
+  interactionMode(ctx) {
+    return ctx.turn.phase === 'choose' ? 'take-pile' : 'combination';
   },
 
   /**
@@ -1321,6 +1572,14 @@ const climbing = {
    * hand and the felt never moves under the fan (#13). It also buys the
    * off-turn tray, which is the one thing a Thirteen player genuinely wants to
    * do while the bots think — line up the run before it is your turn.
+   *
+   * STILL TRUE THROUGH THE CHOOSE PHASE (#157), for exactly the reason above:
+   * there is nothing to gather while the hands are still in piles, and a tray
+   * slot that appeared when the hand arrived would move the felt under the fan
+   * at the one moment a player is looking at it. The slot sits empty for the
+   * two taps the phase lasts. (`stagingPhase` — the platform's default for a
+   * template with no opinion — would say no here; climbing has an opinion, and
+   * this is it.)
    */
   gathers() {
     return true;
@@ -1396,6 +1655,14 @@ const climbing = {
         ? { text: 'Everybody passed — the lead is yours', tone: 'good', priority: 2 }
         : { text: `${who(ev.seat)} takes the trick and leads`, tone: 'neutral', priority: 2 };
     }
+    if (ev.type === 'handTaken') {
+      // The count, because the count is the public fact — and because the other
+      // player is about to want to know how big the hand they are picking from
+      // the rest of is.
+      return mine(ev.seat)
+        ? { text: `You took a hand of ${ev.count}`, tone: 'good' }
+        : { text: `${who(ev.seat)} took a hand of ${ev.count}`, tone: 'neutral' };
+    }
     if (ev.type === 'instantWin') {
       return { text: `${who(ev.seat)} was dealt ${ev.shape} — the hand is over`, tone: 'good', priority: 3 };
     }
@@ -1413,6 +1680,15 @@ const climbing = {
 
   ruleLines(rules) {
     const out = ['Beat the cards on the table with the same shape, higher — or pass.'];
+    // WRITTEN AS A FACT ABOUT THE PACK, NOT ABOUT THIS TABLE, because this hook
+    // is handed the rules and not the seat count (src/ui/rules.js) — and it
+    // reads better that way anyway: a player at a four-handed table is being
+    // told what happens if they sit down with one other person.
+    if (rules.offer) {
+      out.push(`With ${rules.offer.atSeats} players the deck is dealt into `
+        + `${rules.offer.piles} face-down hands instead: you pick one each and the rest is set `
+        + 'aside. Whoever lost the last hand picks first.');
+    }
     if (rules.matchShape === 'same-type-same-size') {
       out.push('A run only answers a run of the same length; a pair only answers a pair.');
     }
@@ -1463,7 +1739,7 @@ const climbing = {
     return out;
   },
 
-  botVerbs: { pass: 'passed' },
+  botVerbs: { pass: 'passed', takeHand: 'picked a hand' },
 
   /**
    * PLAY LEGALLY, AND GET THERE — the bar #102 owes and no more (#103 is the
@@ -1478,6 +1754,17 @@ const climbing = {
    * cannot run longer than the deck.
    */
   botHeuristic(ctx, move, w = WEIGHTS) {
+    // EVERY PILE IS WORTH THE SAME, AND THAT IS THE HONEST ANSWER (#157). A bot
+    // cannot see into an offered pile any more than a player can: the zone is
+    // `visibility: 'none'`, and the lookahead refuses to judge the move anyway
+    // because taking a pile turns up seventeen cards the seat could not see
+    // beforehand (src/engine/bot.js, `revealsHiddenCards`). Nothing public
+    // distinguishes one seventeen-card face-down pile from another, so a
+    // heuristic that preferred one would be reading the deck. Equal scores mean
+    // the deterministic chooser takes the first pile still on offer, and a
+    // persona's `mistakeRate` will sometimes take another — which is exactly as
+    // much of a decision as the position contains.
+    if (move.type === 'takeHand') return 0;
     if (move.type === 'pass') return w.PASS_WORTH;
     const played = classify(ctx, move.cards);
     if (!played) return w.PASS_WORTH;

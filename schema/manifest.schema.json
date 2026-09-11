@@ -50,6 +50,16 @@
           "minimum": 1,
           "maximum": 8
         },
+        "notes": {
+          "type": "object",
+          "propertyNames": {
+            "pattern": "^[1-8]$"
+          },
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "One sentence per seat count, shown under that button on the new-game sheet — for a table that plays a materially different game from the pack's usual one. Thirteen's two-handed deal is the case: three face-down hands of 17 that the players pick from, rather than thirteen each (`rules.offer`). Prose for the SHEET, so it says what the player is choosing between rather than restating the rule the rules page carries."
+        },
         "teams": {
           "type": "integer",
           "minimum": 2,
@@ -1285,6 +1295,29 @@
           "type": "integer",
           "minimum": 1,
           "description": "Cards per player, the same number at every seat count — the hand size is the name of the game and short-handed tables simply leave the remainder out of play (THIRTEEN_RULES.md D-11). A flat integer rather than `countOrByPlayers` for that reason."
+        },
+        "offer": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "atSeats",
+            "piles"
+          ],
+          "description": "A DIFFERENT DEAL AT ONE SEAT COUNT: split the whole deck into `piles` face-down piles, let each seat take one, and set the rest aside face down. This replaces the flat `deal` at exactly `atSeats` seats and nowhere else, because it is an answer to a specific problem — `deal` is the same number at every table by design (the hand size is the name of the game, THIRTEEN_RULES.md D-11), and two-handed that leaves 26 of the 52 cards unseen by anybody. Three piles of 17 puts 34 in play and makes the deal a decision. The pile size is DERIVED (deck / piles, remainder set aside), so it can never disagree with the deck. The seat that lost the previous hand picks first; hand one is a coin toss (src/templates/climbing.js).",
+          "properties": {
+            "atSeats": {
+              "type": "integer",
+              "minimum": 2,
+              "maximum": 8,
+              "description": "The one seat count this deal replaces `deal` at."
+            },
+            "piles": {
+              "type": "integer",
+              "minimum": 2,
+              "maximum": 8,
+              "description": "How many face-down piles the deck splits into. More than `atSeats`, or nobody is choosing anything."
+            }
+          }
         },
         "combinations": {
           "type": "array",

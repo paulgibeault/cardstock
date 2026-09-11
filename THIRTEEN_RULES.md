@@ -158,6 +158,23 @@ whoever still has cards and has not passed.
   usually names. The manifest says `firstLead.card: "lowest"`.
 * **Later hands:** see D-3.
 
+### 1.6a Two-handed: three hands on offer
+
+Two players do not deal thirteen each — that would leave twenty-six of the
+fifty-two cards unseen by anybody, which is half the pigs and half the bombs
+simply not turning up. Instead the whole pack goes into **three face-down
+hands of seventeen**, with the odd card set aside, and each player **takes
+one**; the third hand sits out (D-14). Thirty-four cards in play instead of
+twenty-six, and the deal becomes a decision rather than something that happens
+to you.
+
+The player who **lost the previous hand picks first**, which is the other half
+of D-3's bargain: the winner gets the lead, the loser gets first choice of
+pile. The first hand of a match is a coin toss, because at that point nobody
+is holding anything for a rule to be written over. Once both hands are
+chosen the ordinary first-lead rule applies to them — the lowest card of the
+thirty-four in play leads, and it is the 3♠ about two thirds of the time.
+
 ### 1.7 Winning
 
 The first player to shed all thirteen cards has *tiến lên* — gone forward —
@@ -188,9 +205,10 @@ intent without offering a switch that changes nothing.
 | **D-8** | Instant wins on the deal (*tới trắng*) | **off, shipped as a variant** | Four 2s; six pairs; a 3-to-A dragon run; five consecutive pairs; three consecutive triples. Fun, but it ends a hand before anybody plays — which is the wrong first impression from the lobby. Off by default, on by switch. |
 | **D-9** | Scoring | **one point per card left, paid to the winner** | The simplest thing that is really played, and it maps onto the existing `scoring` block. See below. |
 | **D-10** | Pig/bomb penalties (*thúi heo*) | **off, deferred** | Being caught holding a 2 or an unspent bomb costs extra. Real, but it is a second scoring vocabulary; it should follow the first playable build, not lead it. |
-| **D-11** | Player counts other than 4 | **2 and 3 supported, 13 each, remainder out of play** | 3 players leaves 13 cards unseen, which is genuinely how it is played short-handed. Solo-vs-bots means 4 is what almost everybody will see. |
+| **D-11** | Player counts other than 4 | **2 and 3 supported; 3 deals 13 each with the remainder out of play, 2 deals for the pick (D-14)** | 3 players leaves 13 cards unseen, which is genuinely how it is played short-handed. Solo-vs-bots means 4 is what almost everybody will see. |
 | **D-12** | Passing out of a trick | **you stay in, shipped as a variant that is ON** | §1.5.3. Somebody asked. The strict rule is still the pack's `rules.passIsFinal: true`; the variant `pass-stays-in` patches it to `false`, ships `default: true`, and is what a new table gets — a pass skips your turn and the play comes back round to you. The strict rule is one toggle away, and a resumed match keeps whichever it was dealt under. |
 | **D-13** | Can a 2 end a run? | **no, shipped as a variant that is OFF** | §1.3. `Q-K-A-2` is a widely played house rule; `2-2 A-A K-K` as a bomb-eligible strip is not, and neither is a 3-to-2 dragon. One exclusion list could not tell those apart, so the pack declares `runExcludes` and `stripExcludes` separately and the variant `two-tops-runs` empties only the first. The run still never wraps (`A-2-3` is not a run), the strip is untouched, and the instant-win dragon is measured against the ranks *both* lists allow, so it stays 3-to-A under either reading. |
+| **D-14** | The two-handed deal | **three face-down hands of 17, pick one each; loser picks first** | §1.6a. A flat thirteen each leaves 26 of the 52 unseen, and at two seats that is the difference between a game of Thirteen and a shuffle. `rules.offer: { atSeats: 2, piles: 3 }`; the pile size is derived (deck ÷ piles) so it cannot disagree with the deck, and the odd card plus the pile nobody takes go face down and out of play — hidden rather than discarded, because a discard is public and the bot reads it. Hand one's pick order is a **coin toss** off the match's own seed: "the player who does not hold the lowest card picks first" reads well and cannot be built, since at hand one the pick happens before anybody holds a card, and the rotating opening seat is seat 0 on round one, which is the human. The compensation is D-2's, which already exists: whichever pile you take, the lowest card in play leads. |
 
 ### Scoring, concretely
 
