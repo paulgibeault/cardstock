@@ -7,12 +7,17 @@
 // score, and wants the next hand. Round-6 playtest, item on #150: "some people
 // want that pause; many want the next hand to just come."
 //
-// A DIAL WITH NAMED RUNGS AND NO NUMBER BOX. `botDelayMs` sits next door in
+// A DIAL WITH NAMED RUNGS AND NO NUMBER BOX. `botDelayMs` sat next door in
 // SETTINGS_DEFAULTS as a millisecond count with no UI at all, and the reason it
-// never grew one is that "how many milliseconds should a card take" is not a
-// question anybody has an answer to. Four rungs a player can feel the
+// had never grown one is that "how many milliseconds should a card take" is not
+// a question anybody has an answer to. Four rungs a player can feel the
 // difference between is a question they do: wait for me, give me a breath, get
 // on with it, don't stop.
+//
+// THAT ARGUMENT OUTLIVED THIS FILE, and it is why the sentence above is in the
+// past tense: src/ui/speed.js (#175) gave the millisecond count next door the
+// same four-rung treatment rather than leaving the one setting that decides how
+// fast a card crosses the felt reachable only by hand-editing a save.
 //
 // A DATA MODULE, for the reason src/ui/difficulty.js is one: the two things
 // that render this list (src/ui/newGame.js, src/ui/panels.js) both reach for
