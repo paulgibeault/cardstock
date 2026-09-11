@@ -233,6 +233,10 @@ test("a move that says nothing takes the last sentence down", () => {
   const source = read("src/ui/celebrations.js");
   const body = /function celebrateAction\([\s\S]*?\n  \}/.exec(source);
   assert.ok(body, "celebrateAction is not where this test thinks it is");
-  assert.match(body[0], /if \(!said\) \{ hideBanner\(session\); return null; \}/,
+  assert.match(body[0], /if \(!said\) \{\s*if \(floor < 0\) hideBanner\(session\);\s*return null;\s*\}/,
     "a silent move leaves the previous banner on the felt again");
+  // ...unless the caller has just raised a trick's own pill for this move
+  // (#151's floor): clearing then would wipe the trick banner, not a stale one.
+  assert.doesNotMatch(body[0], /if \(!said\) \{ hideBanner\(session\); return null; \}/,
+    "the stale-pill clear no longer spares a trick banner raised for the same move");
 });

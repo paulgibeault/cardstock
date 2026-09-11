@@ -437,7 +437,13 @@ export function createCelebrations({
     // read 'Fig passed' from three plays ago". The banner describes a position,
     // and the position has just changed; not having a new sentence is a reason
     // to stop saying the old one, not a reason to keep it.
-    if (!said) { hideBanner(session); return null; }
+    // NOTHING TO SAY CLEARS A STALE PILL (#149) — unless a trick banner was
+    // just shown for this same move (the caller raised the floor above the
+    // trick's rung, #151): that pill is this move's answer and stays.
+    if (!said) {
+      if (floor < 0) hideBanner(session);
+      return null;
+    }
 
     showBanner(session, said.text, said.tone);
     playActionCard({ against: me.holds(ev.seat) && said.tone === 'bad' });
