@@ -2736,6 +2736,16 @@ viewport, and a fixed panel sized to its contents lands on it at 375×812. A
 hand worth nothing says `nineteen` — the traditional word, and the lowest score
 five cards cannot make.
 
+Two things the felt found that a screenshot forgives at a glance. The
+highlight's ring was never painted: `drop-shadow(0 0 0 2px var(--accent))` has
+four lengths and `drop-shadow()` takes three, so the whole `filter` declaration
+was invalid and the cascade dropped both shadows — a lit face computed
+`filter: none` and the combination under the finger was a 3px lift. It is an
+`outline` now, which cannot fail that way. And the last card of the beat was
+still on the felt UNDER the round summary panel: the banner it replaced
+dismissed itself after 2200ms, a card sits until something takes it away, so
+`runRoundBeat` now takes it down as the sheet goes up.
+
 `partsOf` now also carries `at`: WHERE in the scored five each part's cards
 are, as positions rather than ids. Positions are what the highlight needs, they
 survive the redeal, and they are meaningless to anybody who cannot already see
@@ -2760,7 +2770,11 @@ Cribbage, driven through the show: three cards in the order the rules score
 them — "Cass's hand" 12 (fifteen 2, fifteen 2, a pair 2, a run of 4 6), "Your
 hand" 6, "Your crib" 16 (three fifteens, a pair, a run of 5 8) — each row
 listing exactly the parts of its `showScored` event and adding to the event's
-total. A 375×812 run dealt a zero hand and drew the nineteen card with no rows.
+total. Hovering a row lights exactly that row's cards and no others, in all
+three steps, at both viewports and both themes. When the round summary opens,
+`#show-card` is hidden with no children — and with that one line removed it is
+visible with the crib's card still in it, under the panel. A 375×812 run dealt
+a zero hand and drew the nineteen card with no rows.
 The card is 274×248 at most at 1280×860 with the hand at y 795, and 188×183 at
 375×812 with the hand at y 720, so it clears the fan by 177px and 164px; no run
 scrolled. Main, the same probe: no card at all, and "Cass pegs 2 — a pair — the

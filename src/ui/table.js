@@ -3966,6 +3966,13 @@ function runRoundBeat(state, plan, finalState) {
   }
   Arcade.session.setTimeout(() => {
     if (myEpoch !== epoch) return;
+    // THE LAST SHOW CARD COMES DOWN WITH THE SHEET GOING UP (#152). The banner
+    // this card replaced dismissed itself after 2200ms, so the sheet always
+    // opened onto a clear felt; a card sits until something takes it away, and
+    // the crib's — the last step of the beat — was still there UNDER the
+    // summary panel. The cards are the detail and the panel is the tally: they
+    // are never both the answer at once.
+    hideShowCard();
     session.roundSummaryOpen = true;
     showRoundSummary(state, plan.roundOver, session.seating, roundContractLines(finalState));
   }, plan.summaryAt);
