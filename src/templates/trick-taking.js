@@ -6,7 +6,7 @@
 import { rankLadderOf, rankOrder } from '../engine/cards.js';
 import { selectorMatches } from '../engine/selectors.js';
 import { cardValue, handValue } from '../engine/scoring.js';
-import { sidesOf, sideOfSeat } from '../engine/sides.js';
+import { sidesOf, sideOfSeat, arePartners } from '../engine/sides.js';
 import { detectDeclaredMelds } from './melds.js';
 
 /* ------------------------------------------------------------------ *
@@ -92,6 +92,69 @@ function suitLabel(suit) {
   return name ? name[0].toUpperCase() + name.slice(1) : name;
 }
 
+/**
+ * A card named the short way — "7♠" — for a banner that must not wrap.
+ *
+ * Four characters rather than an import: `SUIT_GLYPH` also exists in
+ * src/ui/cardStyles/shared.js and this file must not reach into src/ui. A
+ * template is loaded by tools/simulate.mjs and tools/pack-test.mjs with no
+ * document in the room, and the day somebody puts a DOM read behind that import
+ * the whole headless toolchain goes with it. Null for a deck whose cards have no
+ * suit, which is every shedding pack and no trick-taking one.
+ */
+const SUIT_GLYPH = { clubs: '♣', diamonds: '♦', hearts: '♥', spades: '♠' };
+
+/**
+ * The break outranks the trick it arrived inside.
+ *
+ * Above `TRICK_BANNER_PRIORITY` (src/ui/celebrations.js), which is the rung the
+ * table gives a trick's own celebration — the two numbers have to be read
+ * together and tests/actionEvents.test.js pins the comparison rather than
+ * either value. See `describeEvent` for why the break is the bigger moment.
+ */
+const BROKEN_PRIORITY = 2;
+
+/**
+ * THE BANNER IS GONE IN TWO SECONDS AND THE RULE LASTS THE HAND.
+ *
+ * A sentence that has already scrolled away is no help to a player deciding, on
+ * trick nine, whether they may lead a spade — so the break also leaves a mark
+ * (#151). It goes on the contract strip rather than in a new widget because that
+ * strip is already the felt's answer to "what is in force right now", it is
+ * already styled for both themes, and a second row of chrome saying one word
+ * would cost every trick pack the height.
+ *
+ * READ OFF THE VAR, not off the event, which is what makes it persistent for
+ * free: the var is set by `placeCard`, cleared by `setup` at the next deal, and
+ * public (`publicVars`), so the mark survives a reload, a rejoin and a replay
+ * without anything remembering that a banner once fired. There is nothing here
+ * to clear at the round boundary because there is nothing here that is state.
+ *
+ * Appended to whatever the auction already put on the strip: no pack today both
+ * bids for trump and breaks a suit, but "one chip or the other" would be a rule
+ * with no reason behind it.
+ */
+function brokenChips(ctx, chips) {
+  const breaking = breakingSelectorAndVar(ctx);
+  const suit = breaking ? brokenLeadSuit(ctx.rules) : null;
+  if (suit && ctx.var(breaking.varName)) {
+    chips.push({
+      key: 'broken',
+      label: suitLabel(suit),
+      value: 'Broken',
+      suit,
+      aria: `${suitLabel(suit)} are broken — they may be led`,
+    });
+  }
+  return chips.length ? chips : null;
+}
+
+function shortCardName(rank, suit) {
+  const glyph = SUIT_GLYPH[suit];
+  if (rank == null || !glyph) return null;
+  return `${rank}${glyph}`;
+}
+
 /* ------------------------------------------------------------------ *
  * FOLLOW, AND BEAT IF YOU CAN — `followSuit: 'must-beat'`
  * ------------------------------------------------------------------ *
@@ -172,12 +235,46 @@ function applyConstraint(ctx, pool, selector, active) {
   return filtered.length ? filtered : pool;
 }
 
-function breakingSelectorAndVar(ctx) {
-  const breaking = ctx.rules.breaking;
+/**
+ * The breaking rule read off `rules` alone.
+ *
+ * Split out of `breakingSelectorAndVar` because `publicVars` is handed the
+ * rules and never a ctx — and because it was reading `rules.broken?.varName`,
+ * a shape no manifest has ever declared (the schema's key is `breaking.var`).
+ * That silent `undefined` meant `spadesBroken` and `heartsBroken` were never in
+ * the public set, so a joiner at a shared table held a view in which the suit
+ * had never been broken: their own lead constraint stayed on for the whole hand
+ * and the host's legal-move list disagreed with it. Pinned by
+ * tests/actionEvents.test.js.
+ */
+function breakingRule(rules) {
+  const breaking = rules?.breaking;
   if (!breaking) return null;
   const m = /^(.+)\s+played$/.exec(breaking.when);
   if (!m) return null;
   return { selector: m[1].trim(), varName: breaking.var };
+}
+
+function breakingSelectorAndVar(ctx) {
+  return breakingRule(ctx.rules);
+}
+
+/**
+ * WHICH SUIT THE BREAK SETS FREE — the lead constraint's suit, not the
+ * breaking selector's.
+ *
+ * They are the same thing in Spades and deliberately different in Hearts, where
+ * the queen of spades breaks hearts: `breaking.when` is `tag:penalty played` and
+ * what it unlocks is `suit:hearts`. The felt is announcing what may now be LED,
+ * so it asks the lead constraint.
+ */
+function brokenLeadSuit(rules) {
+  for (const [selector, rule] of Object.entries(rules?.leadConstraints || {})) {
+    if (rule !== 'untilBroken') continue;
+    const m = /^suit:(.+)$/.exec(selector);
+    if (m) return m[1];
+  }
+  return null;
 }
 
 // Returns the ids in `hand` that are legal to play right now, applying first-lead,
@@ -331,14 +428,27 @@ function perilOf(ctx) {
   // per-call sweep would recompute once per candidate bid.
   const suits = new Set();
   let topRank = 0;
+  // And the priciest and the cheapest card in the deck, on the same sweep.
+  // `botHeuristic` needs both to know how wide its own ranking is — see
+  // `trickBand`. `lowValue` floors at zero because a deck with no values at all
+  // must give the same answer as one whose values are all zero, and because
+  // what the band has to clear is the SPREAD: a pack with a card worth −10
+  // (Hearts' `jack-of-diamonds` variant patches exactly that) makes that card
+  // the most attractive in the deck by `-rank - value`, ten clear of the top,
+  // and a band that did not count the ten would not outweigh it.
+  let topValue = 0;
+  let lowValue = 0;
   for (const card of ctx.pack.cardsById.values()) {
     const rank = rankOrder(card, ladder);
     if (rank > topRank) topRank = rank;
+    const value = cardValue(card, scoring);
+    if (value > topValue) topValue = value;
+    if (value < lowValue) lowValue = value;
     if (card.suit !== undefined && card.suit !== null) suits.add(card.suit);
-    if (!card.suit || cardValue(card, scoring) <= 0) continue;
+    if (!card.suit || value <= 0) continue;
     if (rank > (peril.get(card.suit) ?? -Infinity)) peril.set(card.suit, rank);
   }
-  cached = { peril, topRank, suits };
+  cached = { peril, topRank, topValue, lowValue, suits };
   packPeril.set(ctx.pack, cached);
   return cached;
 }
@@ -486,6 +596,20 @@ const SHORTFALL_COST = 2;
  */
 const NIL_WORTH = 4;
 
+/**
+ * ONE RUNG OF THE LADDER, STILL IN HAND, against one trick of the contract.
+ *
+ * The term it scales is `evaluateContract`'s held-card term, and it is small
+ * on purpose: a full hand of thirteen cards is some eighty rungs, so anything
+ * near a whole trick would drown every other term in the evaluator and make a
+ * bot that never plays a card it does not have to. What it has to be big enough
+ * to do is separate two cards that take the SAME trick — the ace and the ten
+ * that both beat a king — which is twelve rungs at the widest, so a fortieth of
+ * a trick puts a third of a trick between them and leaves winning the trick
+ * comfortably worth more than the card it costs. See the term's own comment.
+ */
+const CONTRACT_HELD_WORTH = 0.025;
+
 /** How much the best opposing side's contract discounts your own. */
 const CONTRACT_RIVAL_SHARE = 0.5;
 
@@ -499,7 +623,8 @@ const CONTRACT_RIVAL_SHARE = 0.5;
 export const WEIGHTS = Object.freeze({
   TAKEN_WORTH, AT_RISK_WORTH, HELD_VALUE_WORTH, LOOSE_POINT_RISK, HELD_LIABILITY_WORTH,
   RIVAL_SHARE, PASS_VALUE_WORTH, PASS_LIABILITY_WORTH, PASS_VOID_WORTH,
-  CONTRACT_TRICK_WORTH, BAG_COST, SHORTFALL_COST, NIL_WORTH, CONTRACT_RIVAL_SHARE,
+  CONTRACT_TRICK_WORTH, BAG_COST, SHORTFALL_COST, NIL_WORTH, CONTRACT_HELD_WORTH,
+  CONTRACT_RIVAL_SHARE,
 });
 
 function scorePass(ctx, move, w = WEIGHTS) {
@@ -1415,15 +1540,58 @@ function evaluateContract(ctx, seat, w = WEIGHTS) {
 
   const sides = sidesOf(ctx.pack, ctx.seats);
   const mine = sideOfSeat(ctx.pack, ctx.seats, seat);
+  const trickIds = ctx.cardIdsIn('trick');
   const taking = trickLeaderSoFar(ctx);
   const holds = holdsUp(ctx, taking);
   const takingSide = taking.seat === null ? null : sideOfSeat(ctx.pack, ctx.seats, taking.seat);
 
+  /**
+   * WHO HELD THE TRICK ONE CARD AGO, and why an evaluator that does not ask is
+   * a bad partner however side-aware the rest of it is.
+   *
+   * The hold term below is what makes a bot want the trick, and it was reading
+   * the WHOLE of it every time — so a seat that overtook the partner who
+   * already held it was paid for the trick a second time, and paid MORE,
+   * because a higher winning card raises `holdsUp`. Taking the trick off your
+   * own partner scored better than ducking under them, which is #161's bug
+   * stated in the evaluator rather than in the heuristic.
+   *
+   * It is one card back, not the move that was played: a position evaluator is
+   * not told what produced it, and the trick zone being in play order is what
+   * makes "one card ago" a fact about the position rather than about the move.
+   */
+  const before = trickIds.length > 1
+    ? trickLeaderSoFar(ctx, trickIds.slice(0, -1))
+    : { seat: null, rank: -1 };
+  const beforeSide = before.seat === null ? null : sideOfSeat(ctx.pack, ctx.seats, before.seat);
+  const beforeHolds = holdsUp(ctx, before);
+
   // How many tricks are left to be taken by anybody: every trick costs the
   // table one card per seat, so the cards still out say it exactly.
-  let outstanding = ctx.countIn('trick');
+  let outstanding = trickIds.length;
   for (let s = 0; s < ctx.seats; s++) outstanding += ctx.countIn(ctx.zoneAddr('hand', s));
   const remaining = Math.floor(outstanding / ctx.seats);
+
+  /**
+   * WHAT IS STILL IN THIS SEAT'S OWN HAND, in the only currency a trick
+   * contract has: tricks it can still take.
+   *
+   * `evaluatePointsContract` grew the same term first and its comment says why
+   * (an evaluator blind to the card it spent cashes its aces on trick one and
+   * has nothing left to win the end of the hand with). Here the cards carry no
+   * points at all, so what a held card is worth is its RANK and nothing else —
+   * an ace is a trick you have not taken yet, a two is not. That is what makes
+   * "win with the cheapest card that wins" and "do not overtake your partner"
+   * fall out of the arithmetic instead of being written twice.
+   *
+   * ONLY THIS SEAT'S HAND, never the partner's: `evaluateState` is asked of one
+   * seat and may read nothing it could not see.
+   */
+  const ladder = rankLadderOf(ctx.pack);
+  let held = 0;
+  for (const id of ctx.cardIdsIn(ctx.zoneAddr('hand', seat))) {
+    held += rankOrder(ctx.cardById(id), ladder);
+  }
 
   const valueOfSide = (side) => {
     const members = sides[side];
@@ -1459,8 +1627,19 @@ function evaluateContract(ctx, seat, w = WEIGHTS) {
     if (owed > 0) value -= w.SHORTFALL_COST * (owed / Math.max(1, remaining));
 
     if (takingSide === side) {
-      value += (owed > 0 ? w.CONTRACT_TRICK_WORTH : -w.BAG_COST) * holds;
+      // A SIDE THAT ALREADY HELD THE TRICK IS CREDITED WITH THE HOLD IT HAD,
+      // not with the better one its own partner's overtake just bought it. That
+      // one substitution is #161's bug in the evaluator: the trick is the
+      // side's either way, so the ace that took it off the partner's king
+      // bought the side nothing — and the old term paid for it anyway, because
+      // a higher winning card raises `holdsUp`, and rated overtaking your own
+      // partner above ducking under them. Taking a trick off an OPPONENT is
+      // untouched: their hold was not this side's, so there is nothing to
+      // carry over and the whole of it is new.
+      const hold = beforeSide === side ? beforeHolds : holds;
+      value += (owed > 0 ? w.CONTRACT_TRICK_WORTH : -w.BAG_COST) * hold;
     }
+    if (side === mine) value += held * w.CONTRACT_HELD_WORTH;
     return value;
   };
 
@@ -1471,6 +1650,122 @@ function evaluateContract(ctx, seat, w = WEIGHTS) {
   }
   const value = valueOfSide(mine) - (Number.isFinite(rival) ? rival * w.CONTRACT_RIVAL_SHARE : 0);
   return prizeSign(ctx) * value;
+}
+
+/* ------------------------------------------------------------------ *
+ * WHAT A CARD IS WORTH, PLAYED INTO THIS TRICK (`botHeuristic`, #161)
+ * ------------------------------------------------------------------ *
+ *
+ * The cheap ranking used to be `-rank - value` and nothing else: play low, shed
+ * what the pack charges for. That is the right instinct for a seat sitting
+ * alone in a game about avoiding points, and it is the wrong one twice over at
+ * a partnership game about keeping a promise.
+ *
+ *   1. IT NEVER LOOKED AT THE TRICK, so it beat its own partner. `followSuit:
+ *      'must'` offers a void hand every card it holds, and the lowest card in a
+ *      Spades hand is very often a low spade — a ruff, on top of the partner
+ *      who had the trick won. The engine's side plumbing was partner-aware from
+ *      #104 and this, the function that actually chose the card, was not.
+ *   2. IT IS ALSO THE `hard` BOT'S ROLLOUT POLICY (src/engine/bot.js plays
+ *      every chair at `easy`), so the same blindness is in every sampled world
+ *      the Monte Carlo layer grades — which is the unfixed core of #114.
+ *
+ * THREE CLASSES, AND WITHIN A CLASS THE OLD ORDER. This is a sort, not a
+ * quantity: "any card that wins beats every card that does not" is not a number
+ * anybody can hold an opinion about, so the class step is derived from the deck
+ * (`trickBand` — one clear of the widest `-rank - value` can be) rather than
+ * being a weight for tools/tune.mjs to take a fraction of. A fraction of it
+ * would not be a different strategy, it would be a broken sort. What is left
+ * inside a class is exactly the old ranking, which is what makes "the cheapest
+ * card that wins" fall out rather than being written as a second rule.
+ */
+
+/**
+ * One clear of the widest the `-rank - value` ranking below can be.
+ *
+ * The SPREAD, not the top: the cheapest card the deck can offer is
+ * `-topRank - topValue` and the dearest is `-0 - lowValue`, so a negative card
+ * value widens the ranking at the attractive end and the band has to cover it
+ * (see `perilOf`). The lowest rank is taken as zero rather than swept for,
+ * because `rankOrder` is an index into the pack's own ladder and starts there.
+ */
+function trickBand(ctx) {
+  const { topRank, topValue, lowValue } = perilOf(ctx);
+  return topRank + topValue - lowValue + 1;
+}
+
+/**
+ * A seat that promised NOTHING and has not broken it yet.
+ *
+ * `bidOf` is null at a pack that takes no bid, so this is false all game at
+ * Hearts and every clause built on it is dead code there rather than a branch
+ * Hearts has to be reasoned about.
+ */
+function isLiveNil(ctx, seat) {
+  return seat !== null && bidOf(ctx, seat) === 0 && tricksTakenBy(ctx, seat) === 0;
+}
+
+function scorePlayCard(ctx, move) {
+  const ladder = rankLadderOf(ctx.pack);
+  const card = ctx.cardById(move.cards[0]);
+  // Play low, and shed anything the pack charges you for holding. The second
+  // clause used to be `card.tags?.includes('penalty')` — Hearts' own tag name,
+  // hardcoded into the template, and worth exactly −5 whether the card was a
+  // two of hearts or the queen of spades. The pack's scoring config already
+  // says what each card costs, so it says it here too.
+  const base = -rankOrder(card, ladder) - cardValue(card, ctx.pack.scoring || {});
+
+  // LEADING IS A DIFFERENT QUESTION and this deliberately does not answer it.
+  // There is no trick to read, and what to open with is a judgement about the
+  // whole hand — the evaluator's job at `medium`, and out of scope here.
+  if (ctx.countIn('trick') === 0) return base;
+
+  const taking = trickLeaderSoFar(ctx);
+  const actor = move.actor ?? ctx.turn.seat;
+  // Nobody is winning an empty trick, and a seat plays into a trick once, so
+  // the second clause is a guard rather than a case.
+  if (taking.seat === null || taking.seat === actor) return base;
+
+  const trump = trickTrumpOf(ctx);
+  const shelf = trumpShelf(ctx, trump);
+  const isTrump = trump !== null && card.suit === trump;
+  // The SAME number line trick resolution uses (`trickLeaderSoFar`), so "this
+  // card wins" here and "this card won" there can never disagree.
+  const wins = rankOrder(card, ladder) + (isTrump ? shelf : 0) > taking.rank;
+  // A ruff is a trump spent on a trick that was NOT led in trumps. Following a
+  // trump lead with a trump is not a ruff and is not what the rules below mean.
+  const ruffs = isTrump && ctx.var('led') !== trump;
+  const band = trickBand(ctx);
+
+  // A SEAT THAT PROMISED NOTHING MAY NOT TAKE THIS TRICK, whatever else is
+  // true. Playing low was already most of a nil's game; what it missed is the
+  // void hand, where the lowest card left is a trump and wins.
+  if (isLiveNil(ctx, actor)) return base - (wins ? band : 0);
+
+  const partnerWinning = arePartners(ctx.pack, ctx.seats, actor, taking.seat);
+  // A NIL PARTNER WINNING IS A NIL DYING. The trick is the partner's promise
+  // being broken in front of you, so the duck rule below is suspended: take it
+  // off them if the hand allows — but never with a trump. Ruffing a partner's
+  // trick to save a nil spends a trump and a bag on a trick nobody wanted, and
+  // the seats still to play may yet take it off them for nothing (#161).
+  const savingNil = partnerWinning && isLiveNil(ctx, taking.seat);
+
+  if (partnerWinning && !savingNil) {
+    // THE TRICK IS ALREADY YOURS. The side is credited with it either way, so
+    // every card that takes it back off your own partner spends a winner to buy
+    // nothing — and a trump spends one that could have taken a trick the side
+    // has no other way of reaching.
+    return base - (wins ? band : 0) - (ruffs ? band : 0);
+  }
+  if (savingNil && ruffs) return base - band;
+
+  // WINNING IS ONLY WORTH SOMETHING WHERE THE TRICKS ARE THE PRIZE, and that
+  // is the one line that keeps this out of Hearts. A pack whose points are the
+  // PENALTY (`scoring.gameOver.winner`, read once by `prizeSign`) wants the
+  // exact opposite of "take it if you can", and the old ranking — lowest card,
+  // cheapest card — is already the right answer there.
+  if (prizeSign(ctx) !== 1) return base;
+  return base + (wins ? band : 0);
 }
 
 function seatsForTrick(ctx, leader, count) {
@@ -1489,9 +1784,14 @@ function seatsForTrick(ctx, leader, count) {
  * Split out of resolveTrick because a half-played trick has an answer too, and
  * `evaluateState` needs it: the whole question a trick-taking bot is asking is
  * "am I about to be handed this pile". `{ seat: null }` for an empty trick.
+ *
+ * `cards` IS A PREFIX OF THE TRICK, and defaults to the whole of it. The trick
+ * zone is in play order, so dropping its last card is the position one card
+ * back — which is what `evaluateContract` asks for when it wants to know what
+ * the move it is judging actually CHANGED (#161).
  */
-function trickLeaderSoFar(ctx) {
-  const trickCards = ctx.cardIdsIn('trick');
+function trickLeaderSoFar(ctx, cards = null) {
+  const trickCards = cards ?? ctx.cardIdsIn('trick');
   if (!trickCards.length) return { seat: null, rank: -1 };
   const leader = ctx.var('leader');
   const led = ctx.var('led');
@@ -1568,8 +1868,46 @@ function placeCard(ctx, move) {
     ctx.setVar('leader', seat);
   }
 
+  // THE MOMENT THE HAND CHANGES SHAPE, said out loud.
+  //
+  // This used to be the bare `setVar` and nothing else, which made breaking the
+  // one rule in the genre that the felt never mentioned: a player discovered it
+  // by noticing that leading a spade was suddenly allowed (#151). Emitted on the
+  // false->true transition only — the tenth spade of a hand breaks nothing — so
+  // the event is genuinely "once per hand" and the banner it wins is the banner
+  // for the thing that actually happened.
+  //
+  // `cards`, not a bare `cardId`: the top-level `cards` array is the only shape
+  // the view filter knows how to strip (src/engine/view.js's `eventsFor`), and
+  // the card that breaks a suit is sometimes the fourth card of a trick — by the
+  // time a joiner is handed the event, it has been swept into a `won` pile they
+  // may not see. An id parked anywhere else would sail past the filter and out
+  // to a seat that is not allowed to have it.
+  //
+  // `rank`/`suit` ride alongside it because `describeEvent` is handed the event
+  // and a voice, never a card lookup, and "Spades are broken" without the card
+  // that broke them is half a sentence. They are safe to send where the id is
+  // not, and provably so rather than by judgement: the card was moved into
+  // `trick` — `visibility: 'all'` — four lines above this, so at the instant
+  // this fires every seat can already see it. The id is filtered anyway, on the
+  // principle that the filter is the thing that should be deciding.
   const broken = breakingSelectorAndVar(ctx);
-  if (broken && selectorMatches(card, broken.selector)) ctx.setVar(broken.varName, true);
+  if (broken && selectorMatches(card, broken.selector) && !ctx.var(broken.varName)) {
+    ctx.setVar(broken.varName, true);
+    ctx.emit('broken', {
+      seat,
+      cards: [cardId],
+      // WHAT MAY NOW BE LED, which is not always the suit of the card that did
+      // it: in Hearts the queen of spades breaks hearts. This is the fact the
+      // sentence and the marker are both about, so it is the one on the event.
+      suit: brokenLeadSuit(ctx.rules) || card.suit || null,
+      // And what broke it, for the second half of the sentence. `describeEvent`
+      // is handed the event and a voice, never a card lookup.
+      card: { rank: card.rank ?? null, suit: card.suit ?? null },
+      selector: broken.selector,
+      varName: broken.varName,
+    });
+  }
 }
 
 function applyPlayCard(ctx, move) {
@@ -1695,8 +2033,13 @@ const trickTaking = {
   // var without the `__` prefix, which is the view layer's way of saying "this
   // one is everybody's" — and it has to be, because the seats bidding after you
   // are entitled to hear what you said.
+  //
+  // WHETHER THE SUIT IS BROKEN is one of those facts, and for a year it was not
+  // here: this line read `rules.broken?.varName`, and no manifest has a
+  // `rules.broken` — the declaration is `rules.breaking.var` (schema/), which is
+  // what `breakingRule` reads. The optional chaining made the mistake silent.
   publicVars: (rules) => ['leader', 'led', 'trickNumber', 'passDirection', 'trumpSuit',
-    ...(rules.broken?.varName ? [rules.broken.varName] : [])],
+    ...(breakingRule(rules)?.varName ? [breakingRule(rules).varName] : [])],
 
   defaultZones(rules, seats) {   // eslint-disable-line no-unused-vars
     return [
@@ -2284,8 +2627,8 @@ const trickTaking = {
    * @returns chips the felt draws in order, or null for a pack with no contract
    */
   contractChips(ctx, seat) {
-    if (ctx.rules.trump !== 'chosen') return null;
     const chips = [];
+    if (ctx.rules.trump !== 'chosen') return brokenChips(ctx, chips);
     const bidding = ctx.turn.phase === 'bid';
     const holder = contractSeatOf(ctx);
     const trump = trumpSuitOf(ctx);
@@ -2304,7 +2647,7 @@ const trickTaking = {
         suit: holder === null ? null : (ctx.playerVar(holder, 'bidTrump') ?? null),
         aria: standing > 0 ? `High bid ${standing}` : 'No bid yet',
       });
-      return chips;
+      return brokenChips(ctx, chips);
     }
 
     if (trump) {
@@ -2334,7 +2677,7 @@ const trickTaking = {
         aria: meld.points > 0 ? `Your meld: ${meld.points}` : 'You declared no meld',
       });
     }
-    return chips.length ? chips : null;
+    return brokenChips(ctx, chips);
   },
 
   /**
@@ -2379,6 +2722,31 @@ const trickTaking = {
         .join(', ');
       return { text: `You meld ${ev.points}: ${named}.`, tone: 'good' };
     }
+    /**
+     * THE ONE RULE THE FELT NEVER MENTIONED (#151).
+     *
+     * `priority: BROKEN_PRIORITY` because the card that breaks a suit is very
+     * often the fourth card of a trick, and the trick has its own celebration
+     * — see `TRICK_BANNER_PRIORITY` in src/ui/celebrations.js. "Fig takes the
+     * trick" is the smaller of the two things that just happened: the trick is
+     * one of thirteen and the break governs every lead for the rest of the hand.
+     *
+     * The suit named is the one that may now be LED (`brokenLeadSuit`), which is
+     * not always the suit of the card: in Hearts the queen of spades breaks
+     * hearts. Neutral in tone on purpose — breaking is a change in the shape of
+     * the hand rather than a gain or a loss, and it is as often the player's own
+     * doing as anyone's.
+     */
+    if (ev.type === 'broken') {
+      if (!ev.suit) return null;
+      const who = ev.seat === viewerSeat ? 'you' : name(ev.seat);
+      const card = shortCardName(ev.card?.rank, ev.card?.suit);
+      return {
+        text: `${suitLabel(ev.suit)} are broken${card ? ` — ${who} played the ${card}` : ''}`,
+        tone: 'neutral',
+        priority: BROKEN_PRIORITY,
+      };
+    }
     return null;
   },
 
@@ -2389,6 +2757,16 @@ const trickTaking = {
       ? `Everyone plays one card; the highest ${trump.replace(/s$/, '')} takes the trick, or the highest card of the suit that was led if no ${trump.replace(/s$/, '')} was played.`
       : 'Everyone plays one card; the highest card of the suit that was led takes the trick.'];
     if (rules.followSuit === 'must') out.push('Follow the suit that was led if you can.');
+    // BREAKING, on the page that is supposed to explain the game. The rule was
+    // enforced from the day the template shipped and written down nowhere: a
+    // player who tried to lead a spade was refused, and the rules page had no
+    // sentence to send them to (#151).
+    const unlocked = brokenLeadSuit(rules);
+    if (unlocked && breakingRule(rules)) {
+      out.push(`You may not LEAD ${unlocked} until the suit is broken — until somebody, unable to `
+        + 'follow what was led, has had to throw one in. After that anybody may lead it, and the '
+        + 'felt says so the moment it happens.');
+    }
     if (rules.followSuit === 'must-beat') {
       out.push('Follow the suit that was led, and play higher than the card that is winning if you hold one. '
         + 'If you are out of that suit you must trump instead — and over-trump if somebody already has.');
@@ -2443,15 +2821,10 @@ const trickTaking = {
     // played, so `evaluateState` declines the whole phase (see below) and this
     // is the entire judgement.
     if (move.type === 'bid') return scoreBid(ctx, move, w);
-    const card = ctx.cardById(move.cards[0]);
-    // Play low, and shed anything the pack charges you for holding. The second
-    // clause used to be `card.tags?.includes('penalty')` — Hearts' own tag name,
-    // hardcoded into the template, and worth exactly −5 whether the card was a
-    // two of hearts or the queen of spades. The pack's scoring config already
-    // says what each card costs, so it says it here too.
-    let score = -rankOrder(card, rankLadderOf(ctx.pack));
-    score -= cardValue(card, ctx.pack.scoring || {});
-    return score;
+    // A CARD IS WORTH WHAT THE TRICK ON THE TABLE MAKES IT WORTH — see
+    // `scorePlayCard`, which is where the partner, the trump and the nil live
+    // (#161). It used to be two lines here and they read nothing but the card.
+    return scorePlayCard(ctx, move);
   },
 
   /**

@@ -28,7 +28,12 @@ import { loadPackFromDisk } from "../tools/pack-test.mjs";
 // speaks at a pack whose RULES reach the code that reads it. Hearts takes no
 // bid, so its ranking cannot possibly move when a contract weight is perturbed;
 // Team Spades is where those live (#105).
-const TABLES = [["milestones", 3], ["hearts", 4], ["wildfire", 3], ["team-spades", 4], ["thirteen", 4], ["pinochle", 4]];
+const TABLES = [["milestones", 3], ["hearts", 4], ["wildfire", 3], ["team-spades", 4], ["thirteen", 4], ["pinochle", 4],
+  // Stockpile joined the list when sequencing grew an evaluator and a weights
+  // bag of its own (#160). Its table is the one where the rival term is a fact
+  // rather than an inference — every seat's stock top is face up — so a weight
+  // that reads the opposition has somewhere to be exercised.
+  ["stockpile", 4]];
 
 async function dealt(packId, seats, seed) {
   const pack = await loadPackFromDisk(packId);
@@ -128,7 +133,15 @@ test("every weight a template declares is one its hooks actually read", async ()
         const weights = { ...template.weights, [key]: template.weights[key] * factor + (factor === 0 ? -5 : 0) };
         const state = await dealt(packId, seats, `weights:read:${packId}:${key}`);
         spreadContracts(state);
-        walk(state, 200, (live, seat) => {
+        // FOUR HUNDRED MOVES, NOT TWO. A weight that only speaks in a position
+        // the walk has to reach is hostage to the deal, and this one is: fixing
+        // Thirteen's deal to honour `state.direction` (#156) re-dealt the seeded
+        // game, and the first position offering `climbing.CHOP_COST` an
+        // out-of-shape bomb moved from inside 200 moves to step 229. The weight
+        // is read; the walk was short. The probe stops the moment a weight
+        // moves, so the longer budget is only ever spent on the ones that have
+        // not been proven yet.
+        walk(state, 400, (live, seat) => {
           if (probe.moved) return;
           for (const difficulty of ["easy", "medium"]) {
             if (ranking(live, seat, { difficulty, weights }) !== ranking(live, seat, { difficulty })) probe.moved = true;

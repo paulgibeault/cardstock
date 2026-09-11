@@ -89,6 +89,26 @@ export function bannerBand(rects, height) {
 }
 
 /**
+ * WHAT A TRICK'S OWN CELEBRATION IS WORTH, on the same scale `describeEvent`
+ * uses (src/templates/CONTRACT.md, "Saying which event ENDED the move").
+ *
+ * A trick is narrated by `celebrateTrick` rather than through `eventText`, so
+ * for a long time it was outside the priority system entirely and the table
+ * expressed "a trick beats everything" by simply not calling `celebrateAction`
+ * at all when one had fired. That is right for almost everything — a Draw 2 and
+ * a gathered trick in one move is two celebrations and reads as neither — and
+ * wrong for exactly the events that are BIGGER than the trick they arrived
+ * inside. Spades breaking is the case that found it (#151): the card that
+ * breaks a suit is very often the fourth card of a trick, so the one banner
+ * that mattered was the one guaranteed to be suppressed.
+ *
+ * So the rule is a number instead of a special case. A describer that means to
+ * outrank the trick says a priority above this; everything at or below it is
+ * suppressed exactly as before, which is every event in every other pack.
+ */
+export const TRICK_BANNER_PRIORITY = 1;
+
+/**
  * @param me          the seat lens (src/players/seats.js); everything is worded
  *                    from the point of view of the seat it names
  * @param seatLabel   (seat) => the name to put in a sentence
@@ -394,12 +414,18 @@ export function createCelebrations({
    * with a number; ties fall to the first, which is the order events were
    * emitted in and the behaviour every other pack keeps.
    */
-  function celebrateAction(session, state, events) {
+  function celebrateAction(session, state, events, { floor = -1 } = {}) {
     let ev = null;
     let said = null;
     for (const candidate of events) {
       const text = eventText(state, candidate);
       if (!text) continue;
+      // `floor` is what the banner is ALREADY saying, on the same scale: the
+      // table passes TRICK_BANNER_PRIORITY when a trick has just been
+      // celebrated, so only an event that means to outrank a trick gets to
+      // overwrite it. The default of -1 is "the banner is free", which lets
+      // priority 0 — every event that says nothing about priority — through.
+      if ((text.priority || 0) <= floor) continue;
       if (said && (text.priority || 0) <= (said.priority || 0)) continue;
       ev = candidate;
       said = text;
