@@ -15,7 +15,7 @@
 import { makeCardRenderer } from './cardStyles/index.js';
 import { fetchPackIndex, fetchPackManifest, fetchPack } from './packSource.js';
 import { safeAccent } from './css.js';
-import { listMatchSummaries, readStats, lastPlayedPack, clearMatch, recordForfeit, loadSettings, saveSettings } from '../arcade/storage.js';
+import { listMatchSummaries, readStats, lastPlayedPack, clearMatch, recordForfeit, loadSettings, saveSettings, dailyStatus } from '../arcade/storage.js';
 import { buildSeating } from '../players/roster.js';
 import { confirmAction, closeConfirm } from './confirm.js';
 import { showRules } from './panels.js';
@@ -72,6 +72,129 @@ function ribbonText(summary) {
   const when = relativeTime(summary.savedAt);
   const moves = `${summary.moves} ${summary.moves === 1 ? 'move' : 'moves'}`;
   return when ? `In progress · ${moves} · ${when}` : `In progress · ${moves}`;
+}
+
+/* ------------------------------------------------------------------ *
+ * The daily run
+ * ------------------------------------------------------------------ */
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/** "Sep 10" — the date on the control, short enough to sit beside the label. */
+function shortDate(dateStr) {
+  const [, month, day] = String(dateStr).split('-');
+  const name = MONTHS[Number(month) - 1];
+  return name ? `${name} ${Number(day)}` : String(dateStr);
+}
+
+/** What today's run has come to, in the one line the tile has room for. */
+function dailyStateText(status) {
+  const streak = status.streak > 1 ? ` · ${status.streak}-day streak` : '';
+  if (status.finished) {
+    const how = status.hands > 0
+      ? ` in ${status.hands} ${status.hands === 1 ? 'hand' : 'hands'}` : '';
+    return `${shortDate(status.date)} · ${status.won ? `won${how}` : 'lost'}${streak}`;
+  }
+  if (status.inProgress) {
+    const moves = status.inProgress.moves;
+    return `${shortDate(status.date)} · ${moves} ${moves === 1 ? 'move' : 'moves'} in${streak}`;
+  }
+  return `${shortDate(status.date)}${streak}`;
+}
+
+/**
+ * The line a player copies out: "Milestones daily 2026-09-10 — won in 7 hands".
+ *
+ * PLAIN TEXT, AND NO CODE. `shareEncode` exists for a payload somebody else has
+ * to decode — a puzzle to hand over, a table to join — and there is nothing here
+ * to decode: the date IS the whole of the state, and whoever reads this line can
+ * open their own daily and get the same ten contracts. A base64 blob after the
+ * sentence would be noise the reader has no use for.
+ */
+function dailyShareLine(manifestName, status) {
+  const how = status.won
+    ? (status.hands > 0 ? `won in ${status.hands} ${status.hands === 1 ? 'hand' : 'hands'}` : 'won')
+    : 'lost';
+  const streak = status.streak > 1 ? ` · ${status.streak}-day streak` : '';
+  return `${manifestName} daily ${status.date} — ${how}${streak}`;
+}
+
+/**
+ * Copy `text`, through the async clipboard when the browser has one and through
+ * a throwaway textarea when it does not.
+ *
+ * The fallback is not superstition: `navigator.clipboard` is absent on an
+ * insecure origin, which is exactly how this game is served on a phone pointed
+ * at a laptop's dev server, and it rejects when the document is not focused.
+ */
+async function copyToClipboard(text) {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    // fall through to the old way
+  }
+  try {
+    const pad = document.createElement('textarea');
+    pad.value = text;
+    pad.setAttribute('readonly', '');
+    pad.style.position = 'fixed';
+    pad.style.opacity = '0';
+    document.body.appendChild(pad);
+    pad.select();
+    const ok = document.execCommand('copy');
+    pad.remove();
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The daily-run control, for a pack whose manifest declares `daily: true`.
+ *
+ * GATED BY THE MANIFEST so the lobby stays pack-agnostic: it knows there is
+ * such a thing as a daily run and nothing whatsoever about ladders, seeds or
+ * contracts. A finished day is a STATEMENT rather than a dead button — there is
+ * no second attempt, so offering something to press would be offering a door
+ * that does not open.
+ */
+function buildDailyControl(manifest) {
+  const status = dailyStatus(manifest.id);
+  if (!status) return [];
+  const state = dailyStateText(status);
+
+  if (!status.finished) {
+    const open = document.createElement('button');
+    open.className = 'tile__daily';
+    open.type = 'button';
+    open.appendChild(line('tile__daily-label', status.inProgress ? 'Back to today\'s run' : 'Daily run'));
+    open.appendChild(line('tile__daily-state', state));
+    open.setAttribute('aria-label', status.inProgress
+      ? `Back to today's ${manifest.name} daily run, ${state}`
+      : `Play today's ${manifest.name} daily run, ${state}`);
+    open.addEventListener('click', () => openTable(manifest.id, { daily: true }));
+    return [open];
+  }
+
+  const done = document.createElement('div');
+  done.className = 'tile__daily tile__daily--done';
+  done.appendChild(line('tile__daily-label', 'Today\'s run'));
+  done.appendChild(line('tile__daily-state', state));
+
+  const share = document.createElement('button');
+  share.className = 'tile__daily-share';
+  share.type = 'button';
+  share.textContent = 'Copy result';
+  share.setAttribute('aria-label', `Copy your ${manifest.name} daily result`);
+  share.addEventListener('click', async () => {
+    const ok = await copyToClipboard(dailyShareLine(manifest.name, status));
+    Arcade.ui.toast(ok ? 'Result copied.' : 'Could not copy the result.',
+      { kind: ok ? 'info' : 'error', duration: 2500 });
+  });
+  return [done, share];
 }
 
 function recordText(packId) {
@@ -186,6 +309,14 @@ function buildTile(manifest, summary, { featured }) {
     openTable(manifest.id, setup);
   });
   tile.appendChild(open);
+
+  // TODAY'S RUN, for a pack that declares one. Above "How to play" because on
+  // the packs that have it, it is the second reason somebody opened the lobby —
+  // and it is its own door rather than an option on the new-game sheet: the
+  // whole offer is that there is nothing to choose.
+  if (manifest.daily && genre.playable) {
+    for (const node of buildDailyControl(manifest)) tile.appendChild(node);
+  }
 
   // "How to play" before you commit to a game, which is when the question is
   // actually asked. The pack is loaded on demand — the lobby holds manifests
