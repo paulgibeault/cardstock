@@ -17,7 +17,7 @@ import assert from "node:assert";
 import fs from "node:fs";
 import path from "node:path";
 import { ROOT } from "../tools/stage.mjs";
-import { PACE_LEVELS, DEFAULT_PACE, paceLevel, nextPace } from "../src/ui/pace.js";
+import { PACE_LEVELS, DEFAULT_PACE, paceLevel, nextSummaryPace } from "../src/ui/pace.js";
 import { roundBeatPlan, SHOW_STEP_MS, MIN_HOLD_MS } from "../src/ui/roundBeat.js";
 import { SETTINGS_DEFAULTS } from "../src/arcade/storage.js";
 
@@ -84,17 +84,83 @@ test("an unknown saved value falls back to the shipped default", () => {
   assert.strictEqual(paceLevel('manual').id, 'manual');
 });
 
-test("the summary's control cycles every rung and comes back round", () => {
-  const seen = [];
-  let id = 'manual';
-  for (let i = 0; i < PACE_LEVELS.length; i++) {
-    seen.push(id);
-    id = nextPace(id);
+/* ------------------------------------------------------------------ *
+ * The one control that changes a rung mid-match (#174)
+ * ------------------------------------------------------------------ */
+
+// THE CONTROL USED TO DELETE ITSELF IN ONE TAP, and it deleted itself for the
+// whole match. The cycle walked PACE_LEVELS in order, the shipped rung is
+// `quick`, so the first tap any player ever made landed on `instant` — whose
+// 0ms auto-advance closed the sheet the control was sitting on, on the next
+// tick. After that `plan.instant` was true forever, `runRoundBeat` took the
+// `dismissRoundSummary` early return, and there was no second summary to tap.
+//
+// The rungs the cycle walks are the fix, so they are what these pin. The
+// walk is derived from the list rather than spelled out, so a fifth rung is a
+// failure here rather than a rung the control silently never offers.
+const CYCLEABLE = PACE_LEVELS.filter((l) => !l.instant).map((l) => l.id);
+
+/** Every rung one lap of the control reaches, starting from `from`. */
+const lap = (from) => {
+  const out = [];
+  let id = from;
+  for (let i = 0; i < CYCLEABLE.length; i++) {
+    id = nextSummaryPace(id);
+    out.push(id);
   }
-  assert.deepStrictEqual(seen, PACE_LEVELS.map((l) => l.id));
-  assert.strictEqual(id, 'manual', "the cycle must wrap, or the last rung is a trap");
-  assert.strictEqual(nextPace('nonsense'), 'instant',
+  return out;
+};
+
+test("the summary's cycle offers every rung that keeps a sheet, and only those", () => {
+  const reached = lap(DEFAULT_PACE);
+  assert.ok(!reached.includes('instant'),
+    "the summary's own control offered Instant, the rung that shows no summary — "
+    + "the tap that picks it is the last tap that can ever reach this control");
+  assert.deepStrictEqual([...reached].sort(), [...CYCLEABLE].sort(),
+    "a rung that still shows a sheet became unreachable mid-match; the new-game "
+    + "sheet is only open between matches, so this control is the only other door");
+});
+
+test("one tap from the shipped default lands on Relaxed", () => {
+  assert.strictEqual(nextSummaryPace(DEFAULT_PACE), 'relaxed',
+    "the first tap a player ever makes on this control has to reach Relaxed: it "
+    + "is a tap made BECAUSE they are not ready to deal yet, and three taps "
+    + "through Instant and Manual was the old route");
+});
+
+// THE PROPERTY THAT MAKES THE CONTROL NON-SELF-DELETING, stated as a property
+// rather than as the four ids: a tap must never shorten the window the player
+// has to make the next one. Changing a rung's `autoMs` is what would break it.
+test("no rung the cycle can reach waits less than the shipped default does", () => {
+  const floor = paceLevel(DEFAULT_PACE).autoMs;
+  for (const id of lap(DEFAULT_PACE)) {
+    const level = paceLevel(id);
+    assert.ok(level.autoMs === null || level.autoMs >= floor,
+      `${id} deals itself after ${level.autoMs}ms, short of the default's ${floor}ms — `
+      + 'a tap on this control must never leave less time to make the next one');
+  }
+});
+
+test("the cycle wraps, and a nonsense stored id cycles on from the default", () => {
+  const reached = lap(DEFAULT_PACE);
+  assert.strictEqual(reached[reached.length - 1], DEFAULT_PACE,
+    "one lap must come back to where it started, or the last rung is a trap");
+  assert.deepStrictEqual(reached, ['relaxed', 'manual', 'quick'],
+    "the walk has to run toward MORE time, Quick to Relaxed to Manual; running it "
+    + "the other way is how the first tap used to reach the rung with no sheet");
+  assert.strictEqual(nextSummaryPace('glacial'), nextSummaryPace(DEFAULT_PACE),
     "a stale value cycles on from the default rather than sticking");
+});
+
+// The rung was taken off the CYCLE, not out of the list. Between matches there
+// is no sheet for it to close, so the new-game sheet can still offer it.
+test("Instant is still a rung, so the new-game sheet can still offer it", () => {
+  assert.ok(PACE_LEVELS.some((l) => l.id === 'instant'),
+    "deleting the rung instead of leaving it off the cycle takes away the one way "
+    + "to play with no sheet between hands at all");
+  assert.strictEqual(PACE_LEVELS.length, CYCLEABLE.length + 1,
+    "exactly one rung is off the cycle; a second one would be a rung that can "
+    + "only ever be chosen between matches, without anyone having decided that");
 });
 
 /* ------------------------------------------------------------------ *
@@ -212,6 +278,14 @@ test("the auto-advance goes through the one door that deals", () => {
     "a timer that schedules a bot directly re-arms the table before the deal is on it");
   assert.match(arm[0], /if \(ms == null\) return/,
     "Manual must arm no timer at all, rather than one with a null delay");
+  // A DELAY THAT IS NOT A WAIT CANNOT BE A COUNTDOWN (#174). `instant` never
+  // opens a sheet — runRoundBeat dismisses through the door before
+  // showRoundSummary is called — so a 0 arriving here can only be a bug, and
+  // the bug it was is a summary that closed itself on the tick after the tap
+  // that opened the pace control.
+  assert.match(arm[0], /if \(!\(ms > 0\)\) return/,
+    "a zero, negative or NaN delay must arm nothing; setTimeout(…, 0) here is a "
+    + "sheet dismissing itself on the next tick, under the tap that just changed it");
   // The tap has to beat the clock, and the clock must not fire behind it.
   const door = src.match(/function dismissRoundSummary\(message\) \{[\s\S]*?\n\}/);
   assert.ok(door, "dismissRoundSummary is the door; it must still be here");
@@ -278,6 +352,9 @@ test("the panel offers the cycling control and refuses to swallow End match", ()
     "the table must wire the control, or it is a button that does nothing");
   assert.match(table, /function cyclePace\(\)[\s\S]*?saveSettings\(/,
     "cycling must persist immediately — the point is changing it the moment you feel it");
+  assert.match(table, /nextSummaryPace\(currentPace\(\)\.id\)/,
+    "the summary's control must walk the summary's own cycle; the full list runs "
+    + "through Instant, which is the rung that closes the sheet it is tapped on");
 });
 
 // No infinite animations, ever (cardstock#24). The ring is a countdown to a
