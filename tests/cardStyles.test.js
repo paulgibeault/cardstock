@@ -446,34 +446,114 @@ function blank(svg) {
  * which a muted card identical to a live one passes perfectly. The playtest
  * finding was the opposite failure: at #fdfdfa -> #daddd9 (1.35:1) a thirteen-
  * card fan with half of it unplayable read as one fan, and the only strong cue
- * was the 4px lift. 1.6 is below the 1.77:1 the stock moves today and well
- * above the 1.35 it used to, so this goes red if anybody walks it back.
+ * was the 4px lift.
+ *
+ * PER STYLE, because a contrast ratio is not a percentage: the same pull toward
+ * the grey stock moves white paper 1.77:1 and Wildfire's dark red 1.47:1, and
+ * asking the dark red for 1.77 would mean asking the white for something that
+ * washes the whole card out. Each floor sits above what that style's WORST
+ * sample card did BEFORE #153 and at or below what it does now, so walking the
+ * change back turns that style red:
+ *
+ *   classic     1.345 -> 1.770   floor 1.70
+ *   rankrun     1.345 -> 1.770   floor 1.70
+ *   sequencing  1.343 -> 1.564   floor 1.50   (worst: the slate action cards)
+ *   shedding    1.291 -> 1.468   floor 1.40   (worst: the dark red body)
+ *
+ * THE WILD IS NOT IN THAT SWEEP, and the reason is not that it is inconvenient.
+ * A wild belongs to no colour, so shedding gives it a near-black body
+ * (`WILD_BODY = '#26262b'`), and a near-black has nowhere to go under a
+ * multiplicative darkening: it moves 1.10:1 today and 1.17:1 after this change.
+ * No honest floor covers both that and a white card. What actually greys on a
+ * muted wild is its PAPER — the white rosette panel, which goes through
+ * dullPaper like every other paper — and that is asserted on its own below, at
+ * the full step.
  */
-const MIN_MUTE_STEP = 1.6;
+const MIN_MUTE_STEP = {
+  classic: 1.7,
+  rankrun: 1.7,
+  sequencing: 1.5,
+  shedding: 1.4,
+  // vanilla carries no colour in its markup — its blank is `class=
+  // "card-face__bg"` and the paper comes from the stylesheet — so it cannot be
+  // measured off an SVG. The test below reads it out of table.css instead, and
+  // holds it to the same number.
+  vanilla: null,
+};
+/** What the stylesheet-driven style is held to, since it has no inline fill. */
+const VANILLA_MUTE_STEP = 1.7;
+
+/** A wild belongs to no suit, so its body is a near-black — see above. */
+const isWild = (card) => card.rank === "wild" || card.rank === "wild-draw4"
+  || (Array.isArray(card.tags) && card.tags.includes("wild"));
 
 test("a muted card is printed on visibly darker stock than a live one", () => {
+  let checked = 0;
+  for (const styleId of STYLE_IDS) {
+    assert.ok(styleId in MIN_MUTE_STEP,
+      `${styleId} has no muting floor — a new style needs one measured for it`);
+    const floor = MIN_MUTE_STEP[styleId];
+    if (floor === null) continue;
+    const renderer = makeCardRenderer({ ui: { cardStyle: styleId } });
+    for (const card of SAMPLE_CARDS) {
+      if (isWild(card)) continue;
+      const live = blank(renderer.face(card));
+      const muted = blank(renderer.face(card, true));
+      const what = `${styleId} ${JSON.stringify(card)}`;
+      assert.ok(live && muted, `${what} drew no card blank`);
+      checked += 1;
+      const step = contrast(live.fill, muted.fill);
+      assert.ok(step >= floor,
+        `${what}: ${live.fill} -> ${muted.fill} is only ${step.toFixed(3)}:1, needs ${floor}`);
+      // Darker, not lighter: the paper recedes and never advances.
+      assert.ok(luminance(muted.fill) < luminance(live.fill), `${what} muted to a LIGHTER paper`);
+      // The edge goes with it, so the card's boundary in a fan does not stay
+      // put while its middle recedes.
+      assert.ok(luminance(muted.stroke) < luminance(live.stroke), `${what}: the edge did not follow`);
+    }
+  }
+  // An empty sweep is a failure, not a pass.
+  assert.ok(checked >= STYLE_IDS.length * 4, `only ${checked} faces were measured`);
+});
+
+test("a muted wild greys on its paper, which is the part of it that can", () => {
+  // The body of a wild is a near-black by design and cannot darken usefully
+  // (see MIN_MUTE_STEP). Its white rosette panel is its paper, and that takes
+  // the full dullPaper step — which is what makes a muted wild read as muted
+  // in a fan even though the sweep above steps over it.
+  const PANEL = "#fdfdfa";
+  const renderer = makeCardRenderer({ ui: { cardStyle: "shedding" } });
+  for (const card of [{ rank: "wild", tags: ["wild"] }, { rank: "wild-draw4" }]) {
+    const what = JSON.stringify(card);
+    const live = renderer.face(card);
+    const muted = renderer.face(card, true);
+    assert.ok(live.includes(PANEL), `a live wild ${what} no longer draws its white panel`);
+    assert.ok(!muted.includes(PANEL), `a muted wild ${what} kept its white panel`);
+    assert.ok(muted.includes(dullPaper(PANEL)),
+      `a muted wild ${what} does not print its panel on dullPaper(${PANEL})`);
+  }
+  assert.ok(contrast(PANEL, dullPaper(PANEL)) >= VANILLA_MUTE_STEP,
+    `the wild's panel only moves ${contrast(PANEL, dullPaper(PANEL)).toFixed(3)}:1`);
+});
+
+test("the ink deepens as the paper greys, on every style", () => {
+  // The two move in OPPOSITE directions, which is the whole design (see the
+  // header of src/ui/cardStyles/shared.js): fading them together is what
+  // `opacity: 0.78` did, and it is the thing the split exists to prevent.
   for (const [styleId, card] of [
     ["sequencing", { rank: "12", color: "yellow" }],
     ["sequencing", { rank: "7", color: "green" }],
     ["rankrun", { rank: "6" }],
     ["rankrun", { rank: "11" }],
     ["shedding", { rank: "9", color: "yellow" }],
+    ["shedding", { rank: "3", color: "blue" }],
     ["classic", { rank: "A", suit: "hearts" }],
     ["classic", { rank: "10", suit: "spades" }],
   ]) {
     const renderer = makeCardRenderer({ ui: { cardStyle: styleId } });
-    const live = blank(renderer.face(card));
-    const muted = blank(renderer.face(card, true));
     const what = `${styleId} ${JSON.stringify(card)}`;
-    assert.ok(live && muted, `${what} drew no card blank`);
-    const step = contrast(live.fill, muted.fill);
-    assert.ok(step >= MIN_MUTE_STEP,
-      `${what}: ${live.fill} -> ${muted.fill} is only ${step.toFixed(2)}:1, needs ${MIN_MUTE_STEP}`);
-    // Darker, not lighter: the paper recedes and never advances.
-    assert.ok(luminance(muted.fill) < luminance(live.fill), `${what} muted to a LIGHTER paper`);
-    // And the two move in opposite directions, which is the whole design (see
-    // the header of src/ui/cardStyles/shared.js): ink deepens as paper greys.
     const head = { live: headline(renderer.face(card)), muted: headline(renderer.face(card, true)) };
+    assert.ok(head.live && head.muted, `${what} drew no headline`);
     assert.ok(luminance(head.muted.ink) < luminance(head.live.ink),
       `${what}: the ink faded with the paper (${head.live.ink} -> ${head.muted.ink})`);
   }
@@ -515,10 +595,10 @@ test("the vanilla stylesheet's muted palette is dullPaper/dullInk of its live on
     assert.strictEqual(muted, dull(live),
       `${mutedSel} is ${muted}; ${dull.name}(${live}) is ${dull(live)}`);
   }
-  // And the same floor the drawn styles are held to.
+  // And the same floor the drawn styles are held to (see MIN_MUTE_STEP).
   const step = contrast(decl(".card-face__bg", "fill"), decl(".card-face--muted .card-face__bg", "fill"));
-  assert.ok(step >= MIN_MUTE_STEP,
-    `vanilla's muted paper is only ${step.toFixed(2)}:1 off its live one, needs ${MIN_MUTE_STEP}`);
+  assert.ok(step >= VANILLA_MUTE_STEP,
+    `vanilla's muted paper is only ${step.toFixed(3)}:1 off its live one, needs ${VANILLA_MUTE_STEP}`);
 });
 
 test("a white corner index is legible on the colour band behind it", () => {
