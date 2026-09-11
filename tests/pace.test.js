@@ -18,7 +18,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { ROOT } from "../tools/stage.mjs";
 import { PACE_LEVELS, DEFAULT_PACE, paceLevel, nextSummaryPace } from "../src/ui/pace.js";
-import { roundBeatPlan, SHOW_STEP_MS, MIN_HOLD_MS } from "../src/ui/roundBeat.js";
+import {
+  roundBeatPlan, SHOW_STEP_MS, MIN_HOLD_MS, trickRevealPlan, READ_AFTER_LANDING_MS,
+} from "../src/ui/roundBeat.js";
 import { SETTINGS_DEFAULTS } from "../src/arcade/storage.js";
 
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), "utf8");
@@ -227,6 +229,96 @@ test("the summary still opens last, at every rung that opens one", () => {
         `${id}: summary at ${plan.summaryAt} must follow a step at ${step.at}`);
     }
   }
+});
+
+/* ------------------------------------------------------------------ *
+ * The rung inside the TRICK hold (issue #176)
+ * ------------------------------------------------------------------ *
+ *
+ * One dial, two beats. The rung already said how long the table waits between
+ * hands; it now also says how long a completed trick stays whole on the felt.
+ * The term is a scale on the READING time only — the flight-measured floor is a
+ * fact about whether the fourth card has arrived, not a taste.
+ */
+
+const trickEnd = [{ type: 'trickWon', seat: 1, points: 0, cards: ['h-2', 'h-9', 'h-K', 'h-A'] }];
+const trickHold = (pace, flightMs = 420, opts = {}) =>
+  trickRevealPlan(trickEnd, { flightMs, pace, ...opts }).holdMs;
+
+test("every rung says how long a trick is read for, and only Manual leaves it open", () => {
+  for (const level of PACE_LEVELS) {
+    assert.ok('trickReadScale' in level,
+      `${level.id}: a rung with no trick term is a rung the felt cannot pace a trick at`);
+    assert.ok(level.trickReadScale === null || level.trickReadScale >= 0,
+      `${level.id}: ${level.trickReadScale} is neither "wait for me" nor a multiplier`);
+  }
+  assert.deepStrictEqual(
+    PACE_LEVELS.filter((l) => l.trickReadScale === null).map((l) => l.id), ['manual'],
+    'exactly one rung may hold a trick until a person ends it, and it is the one '
+    + 'whose `autoMs` already means the same thing between hands');
+  // The ladder, same as `autoMs`: every rung after Manual reads for less time
+  // than the one before it, which is the whole of how the row explains itself.
+  const reads = PACE_LEVELS.map((l) => (l.trickReadScale == null ? Infinity : l.trickReadScale));
+  for (let i = 1; i < reads.length; i++) {
+    assert.ok(reads[i] < reads[i - 1],
+      `${PACE_LEVELS[i].id} reads for ${reads[i]}×, no less than ${PACE_LEVELS[i - 1].id}'s`);
+  }
+});
+
+// THE SHIPPED RUNG IS A SCALE OF 1 ON PURPOSE. Written as a duration it would be
+// a second copy of READ_AFTER_LANDING_MS, kept in step by hand across two files;
+// written as 1 it cannot drift, and "the default hold is the number it always
+// was" stops being something to remember.
+test("the shipped rung's trick hold is today's number, structurally", () => {
+  assert.strictEqual(paceLevel(DEFAULT_PACE).trickReadScale, 1);
+  assert.strictEqual(trickHold(DEFAULT_PACE), Math.max(700, 420 + READ_AFTER_LANDING_MS));
+  assert.strictEqual(trickHold(DEFAULT_PACE), 920);
+});
+
+// #176 records the six seconds as decided against, and the reasoning is worth
+// keeping executable: a hand is READ once and thirteen tricks are WATCHED, so
+// the sheet's number applied per trick is 78 seconds of pure waiting per hand.
+test("no rung reads a trick for anything like the score sheet's wait", () => {
+  for (const level of PACE_LEVELS) {
+    if (level.autoMs == null) continue;
+    const read = READ_AFTER_LANDING_MS * (level.trickReadScale ?? 0);
+    assert.ok(read <= level.autoMs / 2,
+      `${level.id} reads a trick for ${read}ms against ${level.autoMs}ms for a whole `
+      + 'score sheet; thirteen tricks a hand is what makes that the wrong trade');
+  }
+  assert.ok(13 * trickHold('relaxed') < 13 * 1600,
+    'the slowest rung must still keep a hand of tricks under about twenty seconds');
+});
+
+test("Instant keeps no reading time, and Manual keeps no clock", () => {
+  assert.strictEqual(paceLevel('instant').trickReadScale, 0);
+  assert.strictEqual(trickHold('instant', 420), 420,
+    'Instant is the flight and nothing more — the card still has to land');
+  assert.strictEqual(trickHold('manual', 420), null,
+    'Manual means the four cards wait for a tap, the way its sheet waits for one');
+});
+
+// The tolerance `paceLevel` already has, asked about the new term: a saved rung
+// from an older build has to land on a trick hold rather than on NaN.
+test("an unknown saved rung paces a trick at the default", () => {
+  assert.strictEqual(trickHold('glacial'), trickHold(DEFAULT_PACE));
+  assert.strictEqual(trickHold(undefined), trickHold(DEFAULT_PACE));
+});
+
+// THE ONE PLACE THE FELT READS THE RUNG FOR A TRICK. table.js cannot be imported
+// (it touches `document` at import time), so this is a grep: a plan built
+// without a pace is a plan at the shipped rung, and the dial would silently
+// govern hands only.
+test("the felt builds its trick plan with the player's rung and its own shared flag", () => {
+  const table = read("src/ui/table.js");
+  const call = table.match(/trickRevealPlan\(events, \{[\s\S]*?\}\) : null/);
+  assert.ok(call, "afterMove must be the one place a trick reveal is planned");
+  assert.match(call[0], /pace: currentPace\(\)\.id/,
+    "without the rung the trick hold is the default for everybody, whatever dial "
+    + "the player set");
+  assert.match(call[0], /shared: !!session\?\.shared/,
+    "without the shared flag an indefinite hold gates one device's queue while "
+    + "three other players keep playing");
 });
 
 test("an unknown rung runs the default schedule rather than no schedule", () => {

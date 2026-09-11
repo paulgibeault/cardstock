@@ -23,7 +23,10 @@
 // THE PACE PREFERENCE IS A TERM IN THIS ARITHMETIC (issue #150), and it is here
 // rather than in the renderer for the reason everything else is: "does Instant
 // actually skip the sheet, and does Relaxed actually stretch the count" are
-// questions about numbers, and a number is a thing a test can ask for.
+// questions about numbers, and a number is a thing a test can ask for. The same
+// goes for the trick hold the rung now governs (#176) and for the ceiling a
+// shared table puts on it: "does this table ever wait forever with three other
+// people at it" has to be answerable without a browser.
 
 import { paceLevel, DEFAULT_PACE } from './pace.js';
 
@@ -55,27 +58,97 @@ export const MIN_TRICK_HOLD_MS = 900;
  * itself watching the card arrive: at the default 420ms flight the first
  * measurement of this fix showed four cards on the felt for 283ms, most of the
  * hold having gone on the flight.
+ *
+ * AND IT IS THE HALF NO RUNG SCALES (#176). A pace preference is an answer to
+ * "how long do I want to look at this"; the floor is an answer to "has it
+ * arrived yet", which is a fact about the animation rather than a taste. The
+ * rung moves READ_AFTER_LANDING_MS and leaves this alone — the one exception
+ * being `instant`, which asks for no looking time at all and therefore has
+ * nothing for a floor to hold up.
  */
 export const MIN_TRICK_REVEAL_MS = 700;
 
-/** How long all four cards stay whole once the last of them has landed. */
+/**
+ * How long all four cards stay whole once the last of them has landed, at the
+ * SHIPPED rung. Every other rung is this number times its own `trickReadScale`
+ * (src/ui/pace.js, #176) — the floor above is not scaled by anything.
+ */
 export const READ_AFTER_LANDING_MS = 500;
+
+/**
+ * THE LONGEST A SHARED TABLE WILL HOLD A TRICK, whatever the rung says.
+ *
+ * The trick hold is purely local and that is what makes a per-device pause safe
+ * at all: `takeTrickPose` poses a throwaway fork the engine has never heard of,
+ * and the live state has already advanced past it. Nobody else is waiting.
+ *
+ * An INDEFINITE hold is where that stops being true. Three other players keep
+ * playing into a device whose local queue is gated on a tap that may never come,
+ * and a backlog has to drain somewhere — so Manual's open gate becomes a beat
+ * when the table is shared, and every other rung is capped by the same line
+ * rather than by a branch that only Manual takes.
+ *
+ * TWO SECONDS, and the number is chosen so that it takes NOTHING away from any
+ * rung that names a duration: the longest of those is Relaxed at the 700ms
+ * flight ceiling, which is 1700ms. So the cap only ever converts the one
+ * indefinite rung, and it never cuts into the flight-measured floor. It is also
+ * about as long as the slowest bot persona already sits thinking before a card
+ * (src/players/roster.js, `tempoMs` up to 1900) — one move's worth of lag is a
+ * wait this table's players are already used to absorbing.
+ */
+export const SHARED_TRICK_HOLD_MS = 2000;
 
 /**
  * How long the felt holds the four cards of a completed trick, or null when
  * this move did not complete one.
+ *
+ * `holdMs` IS NULL FOR A HOLD WITH NO END — the Manual rung, where the four
+ * cards stay until the player taps the felt or presses a key (src/ui/table.js's
+ * runTrickReveal arms no timer at all for it). A plan is still returned: there
+ * IS a beat, it simply has no clock on it.
  *
  * `posed` is false when the felt could not reconstruct that position — the
  * multiplayer path, where the host applied the move before this device heard
  * about it and there is no pre-move copy to advance (the same degradation
  * `narrate` describes below). There is nothing to hold then, so nothing is
  * held: the gather happens as it always did.
+ *
+ * `shared` is a DIFFERENT multiplayer question and the one `posed` does not
+ * cover: a LOCAL move at a shared table poses like any other, so it is the case
+ * SHARED_TRICK_HOLD_MS exists for.
+ *
+ * @param pace the player's rung (src/ui/pace.js). It scales the reading time on
+ *             top of the floor, and at the two ends it replaces the arithmetic:
+ *             Manual waits for a person, Instant waits only for the card.
  */
-export function trickRevealPlan(events, { flightMs = 0, posed = true } = {}) {
+export function trickRevealPlan(events, {
+  flightMs = 0, posed = true, pace = DEFAULT_PACE, shared = false,
+} = {}) {
   if (!posed) return null;
   const trick = (events || []).find((e) => e.type === 'trickWon');
   if (!trick) return null;
-  return { trick, holdMs: Math.max(MIN_TRICK_REVEAL_MS, flightMs + READ_AFTER_LANDING_MS) };
+
+  const read = paceLevel(pace).trickReadScale;
+  // THE FLOOR GOES WITH THE READING TIME, and Instant is the rung that has
+  // neither. A hold of exactly the flight is still a hold: `runTrickReveal`
+  // renders the posed position and flies the fourth card onto it, so this is
+  // the card ARRIVING and nothing after it.
+  //
+  // WHY NOT SIMPLY RETURN NULL AT THIS RUNG, which would be less code: no plan
+  // means no pose, and `afterMove` then renders the live state and runs
+  // `celebrateTrick` on the same frame — the gather starts at 140ms while the
+  // played card is still 280ms from landing. That is the pre-#123 felt, where
+  // the deciding card was never once a rendered card. Instant is allowed to
+  // skip the reading; it is not allowed to sweep a card out of the air.
+  const natural = read == null ? null
+    : read === 0 ? flightMs
+      : Math.max(MIN_TRICK_REVEAL_MS, flightMs + Math.round(READ_AFTER_LANDING_MS * read));
+
+  if (!shared) return { trick, holdMs: natural };
+  return {
+    trick,
+    holdMs: natural == null ? SHARED_TRICK_HOLD_MS : Math.min(SHARED_TRICK_HOLD_MS, natural),
+  };
 }
 
 /**

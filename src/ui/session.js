@@ -126,6 +126,17 @@ export function createSession({
     // placement applied and its consequences deliberately not run
     // (`template.poseMove`). Never logged, saved or published.
     trickPoseState: null,
+    // THE WAY OUT OF THAT HOLD, for a tap (#176). `runTrickReveal` is handed a
+    // `resume` and both of its call sites pass a different one, so the felt's
+    // tap handler cannot close over it — it has to be able to ASK the session
+    // what is currently being held, and this is that answer.
+    //
+    // A LIVE HANDLE, NOT A RECORD OF ONE. It is nulled the instant it runs and
+    // by `stopSession` below, and the closure itself refuses to run unless the
+    // session still points at it — so a tap arriving after the hold ended, after
+    // a second trick armed its own, or after the table closed finds nothing to
+    // fire. At the Manual rung it is the ONLY way out: no timer is armed.
+    trickResume: null,
 
     // Which collapsed seat the player has PICKED to open, or null to let the
     // plate follow whoever is playing. The opponent row is rebuilt wholesale on
@@ -223,6 +234,10 @@ export function stopSession(session) {
   session.beatTimers = [];
   if (session.revealTimer) session.revealTimer.cancel();
   session.revealTimer = null;
+  // AND THE HOLD'S OTHER END WITH IT (#176). Cancelling the timer is only half
+  // of stopping a trick hold now that a tap can end one: a resume left on a
+  // stopped session is a closure over a finished match waiting for a finger.
+  session.trickResume = null;
   if (session.advanceTimer) session.advanceTimer.cancel();
   session.advanceTimer = null;
   if (session.nudgeTimer) session.nudgeTimer.cancel();

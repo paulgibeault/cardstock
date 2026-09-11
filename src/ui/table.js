@@ -3044,7 +3044,18 @@ function statusTextFor(state, acting) {
   // that are about to be swept and a hand that cannot be played from. It says
   // who is taking them instead, which is the question the beat exists to
   // answer.
-  if (session?.trickBeat) return `${seatPossessive(session.trickBeat.seat)} trick.`;
+  //
+  // AND WHAT ENDS IT, AT THE RUNG WHERE NOTHING ELSE WILL (#176). A hold with a
+  // clock on it needs no instructions — it is over before the sentence has been
+  // read. The Manual rung's hold has no clock, and "North's trick." over a table
+  // that will never move again on its own reads as a frozen game rather than as
+  // a beat. `waits` is the plan's own `holdMs == null`, carried here by
+  // runTrickReveal, so the felt promises a tap exactly when a tap is the only
+  // thing there is. The same sentence goes to #log, which is the announced half.
+  if (session?.trickBeat) {
+    const whose = `${seatPossessive(session.trickBeat.seat)} trick.`;
+    return session.trickBeat.waits ? `${whose} Tap to go on.` : whose;
+  }
   if (state.turn.phase === 'bid') {
     // The bid goes round the table one seat at a time, so "whose turn" is
     // already the right sentence — what this adds is WHICH KIND of turn, which
@@ -3975,24 +3986,80 @@ function takeTrickPose(move) {
  * the posed position, so the copy that lands is the card the player then reads
  * — and everything the sweep is (the gather flight, the banner, the seat pulse,
  * the next turn, a round ending underneath it) waits behind `resume`.
+ *
+ * TWO THINGS CAN END IT, AND ONLY ONE OF THEM IS A CLOCK (#176). A tap on the
+ * felt or a key press runs the same `resume` immediately, and at the Manual rung
+ * (`reveal.holdMs == null`) it is the only thing that ever will — no timer is
+ * armed at all, exactly as `armAutoAdvance` arms none for that rung's sheet.
  */
 function runTrickReveal(poseState, move, from, reveal, resume) {
-  session.trickBeat = { seat: reveal.trick.seat };
+  // `waits` is what the felt SAYS about itself: a hold with no clock on it
+  // reads as a frozen table unless the bar tells the player what moves it.
+  session.trickBeat = { seat: reveal.trick.seat, waits: reveal.holdMs == null };
   session.trickPoseState = poseState;
   render(poseState);
   animateMove(poseState, move, from);
 
   const myEpoch = epoch;
-  // HELD ON THE SESSION (#150), not merely epoch-checked. The epoch guard stops
-  // a timer that has already fired from doing damage; a handle is what lets
-  // `stopSession` stop it firing at all.
-  session.revealTimer = Arcade.session.setTimeout(() => {
-    if (myEpoch !== epoch || !session) return;
+  // ONE WAY OUT, TAKEN ONCE, whichever end it is asked from.
+  //
+  // The epoch guard is the one this function has always carried — a hold whose
+  // table has been closed, replaced or re-dealt must not resume into it. What is
+  // new is the identity check: the session points at the resume for the hold
+  // that is CURRENTLY running, so a stale closure (a tap landing after the timer
+  // fired, a second tap, a tap arriving after the next trick armed its own) sees
+  // that it is no longer the one being held and does nothing.
+  const release = () => {
+    if (myEpoch !== epoch || !session || session.trickResume !== release) return;
+    session.trickResume = null;
+    // The tap is beating a clock that is still running. Nothing else cancels it
+    // at this point — `stopSession` is for a table going away, not for a beat
+    // ending early — so a hold ended by hand would otherwise fire a second time
+    // into the next position.
+    if (session.revealTimer) session.revealTimer.cancel();
     session.revealTimer = null;
     session.trickBeat = null;
     session.trickPoseState = null;
     resume();
+  };
+  // BEFORE THE TIMER IS ARMED, because for the Manual rung there is no timer:
+  // the hold is over the moment this is reachable and not a moment before.
+  session.trickResume = release;
+
+  if (reveal.holdMs == null) {
+    // THE LIVE REGION CARRIES THE INSTRUCTION, not just the status bar (#176).
+    // #status-text is not announced — it is a label that changes — and a hold
+    // that only a sighted pointer user can discover is a hold a screen-reader
+    // player is stuck in. #log is `role="status"`, it is the surface every other
+    // beat on this felt speaks through, and it has room for the whole sentence
+    // where the bar's 122px slot ellipsises.
+    el.log.textContent =
+      `${seatPossessive(reveal.trick.seat)} trick. Tap the table or press Enter to go on.`;
+    return;
+  }
+
+  // HELD ON THE SESSION (#150), not merely epoch-checked. The epoch guard stops
+  // a timer that has already fired from doing damage; a handle is what lets
+  // `stopSession` stop it firing at all — and now also what a tap cancels.
+  session.revealTimer = Arcade.session.setTimeout(() => {
+    if (myEpoch !== epoch || !session) return;
+    session.revealTimer = null;
+    release();
   }, reveal.holdMs);
+}
+
+/**
+ * End a trick hold early, if one is running. True when there was one.
+ *
+ * The felt's tap handler and the keyboard both come through here rather than
+ * reaching for `session.trickResume` themselves, so "what a tap during a trick
+ * beat does" is one function rather than two that can drift.
+ */
+function endTrickHold() {
+  const resume = session?.trickResume;
+  if (!resume) return false;
+  resume();
+  return true;
 }
 
 /**
@@ -4384,6 +4451,15 @@ function afterMove(state, move, from, message, { publish = true } = {}) {
   const reveal = trick ? trickRevealPlan(events, {
     flightMs: flightDurationMs(settings?.botDelayMs),
     posed: !!trickPose,
+    // Read HERE, on the move that completed the trick, for the same reason the
+    // round beat reads it when the round ends: a rung changed on the last sheet
+    // is the rung this beat runs at.
+    pace: currentPace().id,
+    // OTHER PEOPLE ARE AT THIS TABLE, so the hold gets a ceiling whatever the
+    // rung says (SHARED_TRICK_HOLD_MS). `posed` already covers the remote path;
+    // this covers a LOCAL move made at a shared table, which poses like any
+    // other and is the only way an indefinite gate could ever be reached here.
+    shared: !!session?.shared,
   }) : null;
   const plan = roundOver ? roundBeatPlan(events, {
     flightMs: flightDurationMs(settings?.botDelayMs),
@@ -5357,13 +5433,54 @@ export function initTable({ onExit }) {
     if (liveState()) render(liveState());
   }, true);
 
+  // A TAP ON THE FELT ENDS A COMPLETED TRICK'S HOLD (#176).
+  //
+  // ON THE FELT, NOT ON THE SCREEN. #status-bar is outside #table, so the Lobby
+  // button and the score chip are exempt by construction — they are not on the
+  // felt and a tap on them is a player going somewhere, not a player saying
+  // "yes, I saw it". What IS inside #table is the chrome standing on it, and
+  // every item below already knows what a tap on it means: the help mark and its
+  // sheet, the opponent row (a seat plate, the view toggle), the out-of-turn
+  // announcement and emote bars, and the rail's own two buttons. `closest`
+  // rather than a comparison to `target`, the way the round panel does it, so a
+  // tap landing on a label inside one of them still counts as that control's.
+  //
+  // NOTHING ELSE ON THE FELT WANTS THIS TAP. `render` builds its UI model with
+  // `acts: false` for the whole beat (the `humanActs` line reads `trickBeat`),
+  // so no card, pile or meld chip has a handler armed on it — this cannot
+  // swallow a move, because during the hold there is no move to swallow.
+  el.table.addEventListener('click', (event) => {
+    if (!session?.trickBeat) return;
+    if (event.target.closest?.(
+      '#help-button, #help-sheet, .opponent-row, #announce-bar, #emote-bar, #hand-sort, #action-button',
+    )) return;
+    endTrickHold();
+  });
+
   // The plate is anchored to a seat's rect, so anything that moves that rect
   // has to move the plate with it — the row scrolling under it most of all.
   el.opponentsTop.addEventListener('scroll', placeOpenPlate, { passive: true });
   window.addEventListener('resize', placeOpenPlate, { passive: true });
 
   window.addEventListener('keydown', (event) => {
-    if (event.key !== 'Escape' || !session) return;
+    if (!session) return;
+    // THE SAME DOOR, WITHOUT A POINTER (#176). At the Manual rung the trick hold
+    // is indefinite, so a hold only a tap could end would strand anyone playing
+    // this from a keyboard or a screen reader in a table that never moves again.
+    // Enter and Space, because that is what "activate" already means everywhere
+    // on this screen and it is what the felt's own sentence promises.
+    //
+    // NOT WHEN THE KEY IS AIMED AT A CONTROL. Focus sitting on Lobby and a press
+    // of Enter is a player leaving; this must not read it as "go on".
+    if (session.trickBeat && (event.key === 'Enter' || event.key === ' ')
+        && !event.target?.closest?.('button, a[href], input, select, textarea')) {
+      // Space scrolls the page otherwise, which on a short felt moves the very
+      // cards the hold exists to show — but only swallow the key if there was
+      // actually a hold to end, which is what `endTrickHold` comes back with.
+      if (endTrickHold()) event.preventDefault();
+      return;
+    }
+    if (event.key !== 'Escape') return;
     // The sheet is the innermost thing open, so it is the first thing closed.
     if (helpOpen()) {
       setHelpOpen(false);

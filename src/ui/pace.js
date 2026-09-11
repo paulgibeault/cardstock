@@ -24,6 +24,13 @@
 // ORDERED LEAST AUTOMATIC TO MOST, which is the whole of how the segmented row
 // explains itself: the left end never moves without you, the right end never
 // waits.
+//
+// ONE DIAL, TWO BEATS (issue #176). The same rung now also says how long a
+// COMPLETED TRICK stays whole on the felt, and it is the same dial rather than a
+// second one on purpose: four hand rungs times four trick rungs is sixteen
+// combinations and most of them are incoherent — Instant hands with Relaxed
+// tricks is not a preference anybody holds. What a rung means is "how much of
+// this game do I want to watch", and that answer is one answer.
 
 /**
  * `autoMs` is how long the summary stays up before it deals itself, and `null`
@@ -36,6 +43,23 @@
  * something arithmetically different: not "hold the summary for no time" but
  * "there is no transition" — no hold on the ending, no show steps, no sheet.
  * The result goes to #log as one line and the deal begins.
+ *
+ * `trickReadScale` is the same preference ONE MOVE SMALLER (issue #176). It
+ * multiplies the time a completed trick stays whole on the felt once the fourth
+ * card has landed (src/ui/roundBeat.js's READ_AFTER_LANDING_MS) — the READ time
+ * and only that. The other half of the trick hold is a floor measured against
+ * the card flight, it exists so the fourth card has ARRIVED before the winner
+ * gathers, and no rung touches it: that is not a preference anybody holds.
+ *
+ * Two of its values are not multiplications. `null` is the rung that waits for
+ * you, exactly as `autoMs` is between hands: the four cards stay whole until the
+ * player taps the felt or presses a key. `0` keeps no reading time AND no floor
+ * — the card still has to land, so the hold is the flight and nothing more.
+ *
+ * WHY THIS IS A SCALE ON THE READ AND NOT A DURATION PER RUNG: `quick` is the
+ * shipped rung, and "the default trick hold is exactly the number it has always
+ * been" is then a structural fact (scale 1) rather than a number kept in step by
+ * hand in two files.
  */
 export const PACE_LEVELS = Object.freeze([
   Object.freeze({
@@ -43,32 +67,55 @@ export const PACE_LEVELS = Object.freeze([
     label: 'Manual',
     autoMs: null,
     stepScale: 1,
+    // A BEHAVIOUR CHANGE FOR ANYONE ALREADY STANDING HERE, and it is worth
+    // saying plainly: Manual used to mean "the SHEET waits for you" and a
+    // completed trick still swept itself after ~920ms. It now means the trick
+    // waits too, indefinitely, until a tap or a key ends it. That is safe
+    // because the tap exists (src/ui/table.js's runTrickReveal wires it before
+    // arming anything) and because a shared table caps this rung like every
+    // other one — see SHARED_TRICK_HOLD_MS.
+    trickReadScale: null,
     instant: false,
-    description: 'The score sheet waits for you. Nothing is dealt until you say so.',
+    description: 'The table waits for you: a finished trick and the score sheet both stay until you say so.',
   }),
   Object.freeze({
     id: 'relaxed',
     label: 'Relaxed',
     autoMs: 6000,
     stepScale: 1.4,
+    // TWICE THE READING TIME, AND DELIBERATELY NOWHERE NEAR `autoMs`. 6000ms is
+    // what a four-seat SCORE SHEET is worth; a trick is four cards and the
+    // question "who took that?", and thirteen of those at six seconds each is 78
+    // seconds per hand of pure waiting (#176 records this as decided against).
+    // Doubling 500ms to a full second is the step from a glance to a read — long
+    // enough to look from the card that was led to the card that beat it and say
+    // so out loud — and costs about six and a half seconds over a whole hand.
+    trickReadScale: 2,
     instant: false,
-    description: 'A long look at the score, and the counting slows down to match.',
+    description: 'A long look at the score, a longer look at each trick, and the counting slows to match.',
   }),
   Object.freeze({
     id: 'quick',
     label: 'Quick',
     autoMs: 2500,
     stepScale: 1,
+    // TODAY'S NUMBER, EXACTLY. The shipped rung must not make a thirteen-trick
+    // hand one millisecond longer than it already is (#176's acceptance).
+    trickReadScale: 1,
     instant: false,
-    description: 'Long enough to read what happened, then the next hand comes.',
+    description: 'Long enough to read what happened, then the next trick — and the next hand — comes.',
   }),
   Object.freeze({
     id: 'instant',
     label: 'Instant',
     autoMs: 0,
     stepScale: 0,
+    // NO READING TIME AND NO FLOOR — but still not nothing. See trickRevealPlan:
+    // the hold becomes the flight, because the one thing this rung may not do is
+    // start the gather while the fourth card is still in the air.
+    trickReadScale: 0,
     instant: true,
-    description: 'No sheet between hands — the result goes to the log and the deal starts.',
+    description: 'No sheet between hands, and no pause on a trick beyond the card arriving.',
   }),
 ]);
 

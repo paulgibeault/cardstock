@@ -20,11 +20,18 @@
 
 import { test } from "node:test";
 import assert from "node:assert";
+import fs from "node:fs";
+import path from "node:path";
+import { ROOT } from "../tools/stage.mjs";
 
 import {
   roundBeatPlan, showSteps, MIN_HOLD_MS, MIN_TRICK_HOLD_MS, SHOW_STEP_MS,
-  trickRevealPlan, MIN_TRICK_REVEAL_MS, READ_AFTER_LANDING_MS,
+  trickRevealPlan, MIN_TRICK_REVEAL_MS, READ_AFTER_LANDING_MS, SHARED_TRICK_HOLD_MS,
 } from "../src/ui/roundBeat.js";
+import { PACE_LEVELS, DEFAULT_PACE } from "../src/ui/pace.js";
+import { FLIGHT_MIN_MS, FLIGHT_MS, FLIGHT_MAX_MS } from "../src/ui/flight.js";
+
+const read = (rel) => fs.readFileSync(path.join(ROOT, rel), "utf8");
 
 /** A cribbage show as `theShow` emits it: pone, dealer, then the crib. */
 const cribbageShow = [
@@ -222,6 +229,234 @@ test("without a pose there is nothing to hold", () => {
   const trick = [{ type: 'trickWon', seat: 1, points: 0, cards: [] }];
   assert.equal(trickRevealPlan(trick, { flightMs: 420, posed: false }), null);
   assert.ok(trickRevealPlan(trick, { flightMs: 420, posed: true }));
+});
+
+/* ------------------------------------------------------------------ *
+ * THE HOLD TRACKS THE PACE RUNG (issue #176)
+ * ------------------------------------------------------------------ *
+ *
+ * The rung scales the READING time and leaves the flight-measured floor alone,
+ * which is the distinction the module's own prose is about: "has the fourth card
+ * arrived yet" is a fact, "how long do I want to look at it" is a preference.
+ *
+ * Every number below is checked at the two ends of the flight scale as well as
+ * at the default, because the floor and the read swap which of them is binding
+ * somewhere in between — a test written only at 420ms would pass on arithmetic
+ * that ignored one of them entirely.
+ */
+
+/** One completed trick's event window. */
+const gathered = [{ type: 'trickWon', seat: 2, points: 0, cards: ['h-2', 'h-9', 'h-K', 'h-A'] }];
+
+/** The hold this repo shipped before the rung was a term in it. */
+const shippedHold = (flightMs) => Math.max(MIN_TRICK_REVEAL_MS, flightMs + READ_AFTER_LANDING_MS);
+
+const holdAt = (pace, flightMs, opts = {}) =>
+  trickRevealPlan(gathered, { flightMs, pace, ...opts }).holdMs;
+
+// THE ACCEPTANCE CRITERION THAT PROTECTS EVERYONE WHO NEVER TOUCHES THE DIAL.
+// Adding a rung term is only safe if the shipped rung is arithmetically where it
+// was, so this pins the number rather than the formula: 920ms at the default
+// flight, which is what the felt was measured doing for #123.
+test("the shipped rung holds a trick for exactly the number it always has", () => {
+  for (const flightMs of [FLIGHT_MIN_MS, 300, FLIGHT_MS, 520, FLIGHT_MAX_MS]) {
+    assert.strictEqual(holdAt(DEFAULT_PACE, flightMs), shippedHold(flightMs),
+      `at a ${flightMs}ms flight the default rung changed the hold`);
+  }
+  assert.strictEqual(holdAt(DEFAULT_PACE, 420), 920);
+  assert.strictEqual(holdAt(DEFAULT_PACE, 700), 1200);
+  // And a call with no rung at all is the shipped rung, so nothing that has not
+  // yet learned to pass one has quietly changed pace.
+  assert.strictEqual(trickRevealPlan(gathered, { flightMs: 420 }).holdMs, 920);
+});
+
+// THE FLOOR IS NOT A PREFERENCE. It exists so the fourth card has LANDED before
+// the winner gathers, and a rung that shortened it would be a preference for
+// reading a card that is still in the air.
+test("the floor and the reading time both survive at every rung that reads", () => {
+  for (const level of PACE_LEVELS) {
+    if (level.trickReadScale == null || level.trickReadScale === 0) continue;
+    const wants = READ_AFTER_LANDING_MS * level.trickReadScale;
+    // 0 AND 120 ARE WHERE THE FLOOR IS LOAD-BEARING, and they are below what
+    // `flightDurationMs` can produce today — it clamps at FLIGHT_MIN_MS, so at
+    // every flight a player can actually set, the reading time alone already
+    // clears 700ms. The floor is the arithmetic's OWN guarantee rather than a
+    // side effect of that clamp, which is why it is checked where it bites: a
+    // rung that quietly replaced it would otherwise only surface the day
+    // somebody widened the flight range or turned the animation off.
+    for (const flightMs of [0, 120, FLIGHT_MIN_MS, FLIGHT_MS, FLIGHT_MAX_MS]) {
+      const holdMs = holdAt(level.id, flightMs);
+      assert.ok(holdMs >= MIN_TRICK_REVEAL_MS,
+        `${level.id} at ${flightMs}ms holds ${holdMs}ms, below the ${MIN_TRICK_REVEAL_MS}ms floor`);
+      assert.ok(holdMs - flightMs >= wants,
+        `${level.id} at a ${flightMs}ms flight leaves ${holdMs - flightMs}ms to read, `
+        + `short of the ${wants}ms the rung asked for`);
+    }
+  }
+  // The shipped rung IS the floor at a flight of nothing, which is the one
+  // place the two halves of the formula can be told apart.
+  assert.strictEqual(holdAt(DEFAULT_PACE, 0), MIN_TRICK_REVEAL_MS);
+});
+
+// A LONGER LOOK, NOT THE SHEET'S SIX SECONDS. #176 records the six as decided
+// against: thirteen tricks of it is 78 seconds per hand of pure waiting.
+test("Relaxed lengthens the trick without reaching for the score sheet's number", () => {
+  const relaxed = holdAt('relaxed', 420);
+  assert.ok(relaxed > holdAt(DEFAULT_PACE, 420),
+    'Relaxed must actually be longer than Quick, or the rung says nothing here');
+  assert.strictEqual(relaxed, 1420);
+  assert.ok(relaxed * 13 < 30_000,
+    `thirteen tricks at Relaxed costs ${relaxed * 13}ms; a rung a player might ` +
+    'sit on all match cannot turn a hand into a minute of waiting');
+});
+
+// THE ONE RUNG THAT WAITS FOR A PERSON. `holdMs: null` is how the renderer is
+// told to arm no timer at all — the same shape `autoMs: null` has between hands.
+test("Manual is the only rung whose trick hold has no end of its own", () => {
+  const open = PACE_LEVELS.filter((l) => trickRevealPlan(gathered, { flightMs: 420, pace: l.id }).holdMs == null);
+  assert.deepStrictEqual(open.map((l) => l.id), ['manual'],
+    'exactly one rung may hold a trick indefinitely, and it has to be the one '
+    + 'whose whole meaning everywhere else in this module is "waits for you"');
+  // A plan is still returned: there IS a beat, it simply has no clock on it.
+  const plan = trickRevealPlan(gathered, { flightMs: 420, pace: 'manual' });
+  assert.ok(plan, 'Manual must still pose the trick; a null plan is no hold at all');
+  assert.strictEqual(plan.trick.seat, 2);
+});
+
+// INSTANT SKIPS THE READING, NOT THE ARRIVAL. Returning no plan would be less
+// code and would put the gather flight on the felt at 140ms while the played
+// card is still 280ms from landing — the pre-#123 felt, where the deciding card
+// was never once a rendered card.
+test("Instant never leaves a card in the air when the gather starts", () => {
+  for (const flightMs of [FLIGHT_MIN_MS, FLIGHT_MS, FLIGHT_MAX_MS]) {
+    const plan = trickRevealPlan(gathered, { flightMs, pace: 'instant' });
+    assert.ok(plan, 'Instant must still hold the pose, or the sweep starts mid-flight');
+    assert.strictEqual(plan.holdMs, flightMs,
+      'Instant is the flight and nothing more: no reading time, and no floor to hold it up');
+  }
+  assert.ok(holdAt('instant', 420) < MIN_TRICK_REVEAL_MS,
+    'Instant is the one rung the floor does not apply to; it asked for no reading time');
+});
+
+// THE ACCEPTANCE CRITERION, STATED AS THE THING A PLAYER FEELS. A hand is
+// thirteen of these, so a millisecond added at the default rung is thirteen.
+test("thirteen tricks at the shipped rung is no more waiting than it was", () => {
+  const before = 13 * shippedHold(FLIGHT_MS);
+  const after = 13 * holdAt(DEFAULT_PACE, FLIGHT_MS);
+  assert.ok(after <= before, `a hand went from ${before}ms of holds to ${after}ms`);
+  assert.strictEqual(after, 11_960);
+});
+
+/* ------------------------------------------------------------------ *
+ * A SHARED TABLE NEVER HOLDS INDEFINITELY (issue #176)
+ * ------------------------------------------------------------------ */
+
+// `posed: false` already covers the REMOTE path — the host applied the move
+// before this device heard about it, so there is no pose and no hold. The case
+// the cap exists for is a LOCAL move at a shared table, which poses like any
+// other and would otherwise gate this device's queue on a tap while three other
+// players keep going.
+test("a shared table's trick hold is finite at every rung, Manual included", () => {
+  for (const level of PACE_LEVELS) {
+    for (const flightMs of [FLIGHT_MIN_MS, FLIGHT_MS, FLIGHT_MAX_MS]) {
+      const holdMs = trickRevealPlan(gathered, { flightMs, pace: level.id, shared: true }).holdMs;
+      assert.ok(typeof holdMs === 'number' && Number.isFinite(holdMs),
+        `${level.id}: a shared table held a trick for ${holdMs} — one device's local `
+        + 'queue would stall while the other three players kept playing');
+      assert.ok(holdMs <= SHARED_TRICK_HOLD_MS,
+        `${level.id} at ${flightMs}ms holds ${holdMs}ms, past the ${SHARED_TRICK_HOLD_MS}ms cap`);
+    }
+  }
+  assert.strictEqual(
+    trickRevealPlan(gathered, { flightMs: 420, pace: 'manual', shared: true }).holdMs,
+    SHARED_TRICK_HOLD_MS, "Manual's open gate becomes the cap, not a shorter rung's number");
+});
+
+// THE CAP IS A CEILING, NOT A SECOND RUNG. It was chosen above the longest hold
+// any rung asks for, so a shared table plays at the pace the player picked —
+// the only thing it takes away is the indefinite gate.
+test("the cap takes nothing away from a rung that named a duration", () => {
+  for (const level of PACE_LEVELS) {
+    for (const flightMs of [FLIGHT_MIN_MS, FLIGHT_MS, FLIGHT_MAX_MS]) {
+      const solo = trickRevealPlan(gathered, { flightMs, pace: level.id }).holdMs;
+      if (solo == null) continue;
+      assert.strictEqual(trickRevealPlan(gathered, { flightMs, pace: level.id, shared: true }).holdMs, solo,
+        `${level.id} at ${flightMs}ms plays differently at a shared table; the cap is `
+        + 'meant to convert Manual, not to re-pace every other rung');
+    }
+  }
+  // And it can never cut into the floor: the slowest flight plus the longest
+  // reading time any rung asks for still fits underneath it.
+  assert.ok(SHARED_TRICK_HOLD_MS >= FLIGHT_MAX_MS + READ_AFTER_LANDING_MS,
+    'a cap below flight + read would sweep a card the player has not seen land');
+});
+
+// A remote move has no pose, so it has no hold — with or without the cap.
+test("the cap does not invent a hold on the path that never had one", () => {
+  assert.strictEqual(trickRevealPlan(gathered, { flightMs: 420, posed: false, shared: true }), null);
+  assert.strictEqual(trickRevealPlan([], { flightMs: 420, shared: true }), null);
+});
+
+/* ------------------------------------------------------------------ *
+ * The felt's half, which no Node test can call
+ * ------------------------------------------------------------------ */
+
+// PART GREP, FOR THE REASON tests/pace.test.js GIVES: src/ui/table.js touches
+// `document` at import time, so the wiring that makes an indefinite hold safe
+// cannot be imported and called. It can be read.
+//
+// The three things that make the tap correct rather than merely present: the
+// felt carries it, it cancels the clock it is beating, and it runs the held
+// resume EXACTLY ONCE — the same resume the timer would have run, which is the
+// whole reason it is held on the session at all (both call sites of
+// runTrickReveal pass a different function).
+test("the felt ends a trick hold on a tap: once, through the held resume", () => {
+  const table = read("src/ui/table.js");
+  const reveal = table.match(/function runTrickReveal\([\s\S]*?\n\}/);
+  assert.ok(reveal, "runTrickReveal must exist — it is the whole of the trick beat");
+
+  assert.match(reveal[0], /session\.trickResume = release/,
+    "the resume must be held where the tap handler can reach it: runTrickReveal "
+    + "is handed a different `resume` by each of its two call sites, so a handler "
+    + "cannot close over the right one");
+  assert.match(reveal[0], /session\.trickResume !== release/,
+    "the hold must be released exactly once — a tap landing on the frame the "
+    + "timer fires would otherwise resume the move twice");
+  assert.match(reveal[0], /session\.trickResume = null/,
+    "and cleared the moment it runs, or a later tap fires into the position after it");
+  assert.match(reveal[0], /session\.revealTimer\.cancel\(\)/,
+    "a tap must cancel the clock it is beating; a timer left armed fires into "
+    + "the next position");
+  assert.match(reveal[0], /myEpoch !== epoch/,
+    "and the epoch guard stays: a hold whose table has been closed or re-dealt "
+    + "must not resume into it");
+  assert.match(reveal[0], /reveal\.holdMs == null/,
+    "the indefinite rung must arm no timer at all, rather than one with a null delay");
+
+  const end = table.match(/function endTrickHold\(\) \{[\s\S]*?\n\}/);
+  assert.ok(end, "one function for what ends a hold, so the tap and the key cannot drift");
+  assert.match(end[0], /session\?\.trickResume/);
+
+  // ON THE FELT, NOT ON THE SCREEN: #status-bar is outside #table, so Lobby and
+  // the score chip are exempt by construction, and the chrome standing on the
+  // felt opts out by name the way the round panel's controls do.
+  assert.match(table, /el\.table\.addEventListener\('click'/,
+    "the felt itself must carry the tap, or it swallows the whole screen's controls");
+  assert.match(table, /closest\?\.\(\s*\n?\s*'#help-button[^']*'/,
+    "the controls standing on the felt must opt out of tap-to-advance");
+  assert.match(table, /event\.key === 'Enter' \|\| event\.key === ' '/,
+    "an indefinite hold that only a pointer can end strands anyone playing this "
+    + "from a keyboard or a screen reader");
+  assert.match(table, /waits: reveal\.holdMs == null/,
+    "the felt has to SAY that a tap is what continues, or a hold with no clock "
+    + "on it reads as a frozen table");
+
+  const session = read("src/ui/session.js");
+  assert.match(session, /trickResume:/, "the session must own the handle");
+  assert.match(session.split('export function stopSession')[1], /trickResume = null/,
+    "stopSession must drop it too — cancelling the timer is only half of stopping "
+    + "a hold that a tap can also end, and a resume left on a stopped session is a "
+    + "closure over a finished match waiting for a finger");
 });
 
 // The round beat's own arithmetic is unchanged by any of this: a reveal is a
