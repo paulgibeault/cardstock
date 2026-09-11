@@ -19,11 +19,16 @@ import { line } from './dom.js';
 
 const el = {
   roundOverlay: document.getElementById('round-overlay'),
+  roundPanel: document.getElementById('round-panel'),
   roundTitle: document.getElementById('round-title'),
   roundScores: document.getElementById('round-scores'),
   roundContinue: document.getElementById('round-continue'),
   roundTarget: document.getElementById('round-target'),
   roundEndMatch: document.getElementById('round-end-match'),
+  roundRing: document.getElementById('round-ring'),
+  roundRingFill: document.querySelector('#round-ring .deal-ring__fill'),
+  roundRingTrack: document.querySelector('#round-ring .deal-ring__track'),
+  roundPace: document.getElementById('round-pace'),
 
   scoreOverlay: document.getElementById('scoreboard-overlay'),
   scoreTotals: document.getElementById('scoreboard-totals'),
@@ -152,7 +157,7 @@ function sideNameCell(className, members, seating) {
  * reason was nowhere on this sheet — least of all for the human, whose own bid
  * was not shown anywhere at all (#123, item 28).
  */
-export function showRoundSummary(state, ev, seating, contract = null) {
+export function showRoundSummary(state, ev, seating, contract = null, pace = null) {
   el.roundTitle.textContent = `Round ${ev.round} over`;
   el.roundScores.replaceChildren();
   // A COLUMN WITH NOTHING TO SAY SAYS NOTHING (#124, item 43): a pack that pegs
@@ -185,6 +190,101 @@ export function showRoundSummary(state, ev, seating, contract = null) {
   el.roundTarget.textContent = targetSentence(state, ev);
   el.roundTarget.hidden = !el.roundTarget.textContent;
   el.roundOverlay.hidden = false;
+  // AFTER THE UNHIDE, and it has to be: the ring's geometry is measured off the
+  // button, and a button inside `display: none` measures zero.
+  paintRoundPace(pace);
+}
+
+/* ------------------------------------------------------------------ *
+ * The pace of the sheet (#150)
+ * ------------------------------------------------------------------ */
+
+/** The button's own corner radius (src/ui/table.css `#round-continue`). */
+const DEAL_RADIUS = 8;
+
+/**
+ * Show or hide the ring — BY ATTRIBUTE, and that is not a style choice.
+ *
+ * `hidden` is an IDL property of HTMLElement. `#round-ring` is an `<svg>`, and
+ * SVGElement does not have one: `ring.hidden = false` quietly defines a
+ * JavaScript expando on the object and leaves the ATTRIBUTE exactly where it
+ * was, so `.deal-ring[hidden] { display: none }` went on applying. The ring
+ * never appeared once, while every value the code could read said it should —
+ * `ring.hidden` was false, the dash array was right, the animation was
+ * running, and `getComputedStyle(...).display` was `none`.
+ */
+function showRing(on) {
+  if (on) el.roundRing.removeAttribute('hidden');
+  else el.roundRing.setAttribute('hidden', '');
+}
+
+/**
+ * Draw the pace: the rung's name on its cycling control, and the countdown as
+ * an outline filling in around the Deal button.
+ *
+ * THE TIMER IS NOT HERE. src/ui/table.js owns it, because the only thing
+ * allowed to deal the next hand is `dismissRoundSummary` — the single door that
+ * also re-arms the bots — and a panel that could fire it would be a second one.
+ * This function draws a duration; it never measures one.
+ *
+ * @param pace `{ label, autoMs, animate }`, or null to leave the sheet bare:
+ *             `autoMs` null is the Manual rung (no ring at all), and `animate`
+ *             false is reduced motion or a power saver, where the outline is
+ *             drawn whole and still, and the timer still fires.
+ */
+export function paintRoundPace(pace) {
+  el.roundPace.hidden = !pace;
+  if (!pace) {
+    showRing(false);
+    return;
+  }
+  el.roundPace.textContent = `Pace · ${pace.label} ▸`;
+  el.roundPace.setAttribute('aria-label', `Pace: ${pace.label}. Tap to change.`);
+
+  if (pace.autoMs == null) {
+    showRing(false);
+    return;
+  }
+  // MEASURED WITHOUT THE TRANSFORM, and that is the whole reason this is
+  // `offsetWidth` and not `getBoundingClientRect()`. This runs on the frame the
+  // overlay is unhidden, and the panel's entrance (`settle-in`, src/ui/table.css)
+  // starts at `scale(0.96)`: a client rect read then is 96% of the button, while
+  // the svg's own layout box — which the path is drawn in, and which a transform
+  // does not touch — is full size. The dash array came out 4% short of the real
+  // perimeter, so the ring reached the end of its countdown with a ~15px gap
+  // still open at the top-left. `offsetWidth` is the border-box in layout pixels,
+  // which is the box the path lives in.
+  const bw = el.roundContinue.offsetWidth;
+  const bh = el.roundContinue.offsetHeight;
+  // A zero-sized button is a sheet that is not on screen; drawing an outline
+  // for it would bake a NaN into the dash array and leave a ring that never
+  // fills once it is.
+  if (!(bw > 0 && bh > 0)) {
+    showRing(false);
+    return;
+  }
+  // The svg is inset 2px inside the button (src/ui/table.css says why), so its
+  // own box is 4px smaller in each dimension and a 2px stroke centred on that
+  // edge lies wholly on the button's own surface.
+  const w = bw - 4;
+  const h = bh - 4;
+  const r = Math.min(DEAL_RADIUS - 2, w / 2, h / 2);
+  const len = 2 * (w - 2 * r) + 2 * (h - 2 * r) + 2 * Math.PI * r;
+  for (const rect of [el.roundRingTrack, el.roundRingFill]) {
+    rect.setAttribute('rx', String(r));
+    rect.setAttribute('ry', String(r));
+  }
+  el.roundRing.style.setProperty('--deal-ring-len', String(len));
+  el.roundRing.style.setProperty('--deal-ring-ms', `${pace.autoMs}ms`);
+  showRing(true);
+  // RESTARTED, NOT RESUMED. Cycling the rung on the sheet restarts the
+  // countdown (src/ui/table.js does the same to the timer), and an animation
+  // whose class is already on the element would otherwise carry on from
+  // wherever the last rung had got to. Removing the class, forcing a reflow and
+  // putting it back is the one reliable way to re-run a CSS animation.
+  el.roundRing.classList.remove('deal-ring--running', 'deal-ring--static');
+  void el.roundRing.getBoundingClientRect();
+  el.roundRing.classList.add(pace.animate ? 'deal-ring--running' : 'deal-ring--static');
 }
 
 /**
@@ -204,6 +304,12 @@ function targetSentence(state, ev) {
 
 export function hideRoundSummary() {
   el.roundOverlay.hidden = true;
+  // The ring stops being a countdown the moment the sheet stops being on
+  // screen. Left running, its animation would still be ticking inside a hidden
+  // overlay — the exact battery shape cardstock#24 exists to forbid — and would
+  // be halfway filled when the next round opened the sheet again.
+  el.roundRing.classList.remove('deal-ring--running', 'deal-ring--static');
+  showRing(false);
 }
 
 /* ------------------------------------------------------------------ *
@@ -495,11 +601,32 @@ export function hideRules() {
  * Wire the panels' buttons once. Every callback belongs to the table, which
  * owns the match — these overlays only ask.
  */
-export function initPanels({ onContinueRound, onPlayAgain, onLobby, onCloseScoreboard, onEndMatch, onRules }) {
+export function initPanels({
+  onContinueRound, onPlayAgain, onLobby, onCloseScoreboard, onEndMatch, onRules, onCyclePace,
+}) {
   el.rulesClose.addEventListener('click', () => hideRules());
   el.scoreRules.addEventListener('click', () => onRules?.());
   el.roundContinue.addEventListener('click', () => onContinueRound());
   el.roundEndMatch.addEventListener('click', () => onEndMatch());
+  el.roundPace.addEventListener('click', () => onCyclePace?.());
+  // THE WHOLE SHEET DEALS (#150). A player who has read the score reaches for
+  // what they are looking at, not for the one word at the bottom of it — so the
+  // panel is the target and the button is merely where the target says so.
+  //
+  // TWO THINGS OPT OUT, and they are the two things on this panel that mean
+  // something else. "End match" leaves the game, and swallowing that tap into a
+  // deal is the worst possible misread of it; the pace control is a tap you
+  // make BECAUSE you do not want to deal yet. Both are found with `closest`
+  // rather than compared to `target`, because the tap can land on a text node
+  // inside either. The Deal button opts out too and for a duller reason: it has
+  // a listener of its own one line up, and letting this one see the same click
+  // would call the door twice. It is idempotent — `dismissRoundSummary` checks
+  // `roundSummaryOpen` — but a second call that only survives on a guard is not
+  // a design.
+  el.roundPanel.addEventListener('click', (event) => {
+    if (event.target.closest('#round-end-match, #round-pace, #round-continue')) return;
+    onContinueRound();
+  });
   el.playAgainButton.addEventListener('click', () => onPlayAgain());
   el.gameOverLobbyButton.addEventListener('click', () => onLobby());
   el.scoreClose.addEventListener('click', () => {

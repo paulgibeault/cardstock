@@ -24,6 +24,7 @@
 // back; src/ui/lobby.js is what writes it, so backing out changes nothing.
 
 import { SKILL_LEVELS, skillLevel } from './difficulty.js';
+import { PACE_LEVELS, paceLevel } from './pace.js';
 import { loadSettings } from '../arcade/storage.js';
 
 const el = {
@@ -108,8 +109,8 @@ function offeredVariants(manifest) {
  * Ask for this game's setup.
  *
  * @param manifest the pack's manifest (the lobby holds these; no deck needed).
- * @returns { variants: string[], seats: number, difficulty: string } or null if
- *          the player backed out.
+ * @returns { variants: string[], seats: number, difficulty: string,
+ *            pace: string } or null if the player backed out.
  */
 export function askNewGame(manifest) {
   const players = manifest.players || {};
@@ -205,6 +206,40 @@ export function askNewGame(manifest) {
   el.body.appendChild(skillDesc);
   paintSkill();
 
+  // THE FOURTH ROW, and the same shape as the third for the same reason: four
+  // named rungs is a choice you make by looking at it, and the thing it
+  // replaces — a millisecond count in a text field — is a question nobody has
+  // an answer to. Like the difficulty above it this is a PREFERENCE rather than
+  // an input to the deal: it never reaches the reducer, so changing it mid-match
+  // (which the round summary's own control does) costs the replay nothing.
+  el.body.appendChild(heading('Between hands'));
+  let pace = paceLevel(loadSettings().pace).id;
+  const paces = document.createElement('div');
+  paces.className = 'new-game__skills';
+  const paceDesc = document.createElement('span');
+  paceDesc.className = 'new-game__seat-count';
+  const paintPace = () => {
+    paceDesc.textContent = paceLevel(pace).description;
+    for (const btn of paces.querySelectorAll('.new-game__pace')) {
+      btn.setAttribute('aria-pressed', String(btn.dataset.pace === pace));
+    }
+  };
+  for (const level of PACE_LEVELS) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'new-game__skill new-game__pace';
+    btn.dataset.pace = level.id;
+    btn.textContent = level.label;
+    btn.addEventListener('click', () => {
+      pace = level.id;
+      paintPace();
+    });
+    paces.appendChild(btn);
+  }
+  el.body.appendChild(paces);
+  el.body.appendChild(paceDesc);
+  paintPace();
+
   el.overlay.hidden = false;
   el.deal.focus({ preventScroll: true });
 
@@ -214,6 +249,7 @@ export function askNewGame(manifest) {
       seats,
       variants: [...boxes.entries()].filter(([, box]) => box.checked).map(([id]) => id),
       difficulty,
+      pace,
     });
     el.cancel.onclick = () => close(null);
   });

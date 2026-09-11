@@ -647,6 +647,41 @@ const PROGRESS_CAP = 12;
 const OUT_WORTH = 1;
 
 /**
+ * WHAT A WILD IS WORTH TO A POSITION, and the one term `PROGRESS_CAP` must not
+ * be allowed to clamp.
+ *
+ * `scoreDiscard` has always known the answer — `WILD_KEEP = 100`, never the
+ * discard — and `evaluateState` used to contradict it in both of its branches.
+ * Before the lay-down a wild's keep value went through
+ * `min(keep, PROGRESS_CAP) × PROGRESS_WORTH` = 6, against 3 for the card slot
+ * and 3.75 of deadwood it sheds (25 × DEADWOOD_WORTH), so throwing a wild
+ * graded +0.75 — better than holding a well-connected natural. After the
+ * lay-down it was worse still: a held wild counted OUT_WORTH = 1 against the
+ * same 6.75, so `medium` and `hard` discarded every wild they drew. The cheap
+ * scorer said keep and the position scorer said throw, and the position scorer
+ * is the one that decides a `medium` turn.
+ *
+ * SO IT IS PRICED ONCE, HERE, OUTSIDE THE CAP, and the wild is left out of the
+ * deadwood sum entirely — the 25 points are what a wild costs you when somebody
+ * else goes out, and a wild is the card that goes out. The cap stays where it
+ * is for naturals, which is what it was for: `keepValue` returns hand-shape
+ * sums that a big hand can run away with.
+ *
+ * THE FLOOR IT HAS TO CLEAR is the best discard any natural can offer, because
+ * "never the discard" is the claim. That is 3 (the card slot) + 3.75 (the
+ * dearest card in the deck) = 6.75, less whatever the card was worth keeping.
+ * Ten clears it with room and does not swamp LAID_DOWN_WORTH = 40, so a seat
+ * still lays down rather than sitting on a fistful of wilds. Going out is
+ * unaffected in either direction: a hit that empties the hand ENDS the round
+ * inside `applyMove`, and src/engine/bot.js bands every round-ending move above
+ * everything the evaluator scored, so the last wild still goes down to go out.
+ *
+ * Swept by tools/tune.mjs at two seats over whole matches — the only bar that
+ * means anything for a ladder (#92) — see IMPLEMENTATION_NOTES.md.
+ */
+const WILD_HOLD = 10;
+
+/**
  * THE TURN YOU HAVE NOT SPENT YET, and the term one ply of lookahead does not
  * work without.
  *
@@ -686,7 +721,12 @@ export function evaluateState(ctx, seat, w = WEIGHTS) {
   const reach = meldReach(ctx, seat);
   let score = publicStanding(ctx, seat, w);
   if (ctx.turn.seat === seat && ctx.turn.phase !== 'draw') score += w.CARD_IN_HAND;
-  for (const id of handIds) score -= cardValue(ctx.cardById(id), scoring) * w.DEADWOOD_WORTH;
+  // A wild is not deadwood — see WILD_HOLD, which is where it is priced instead.
+  for (const id of handIds) {
+    const card = ctx.cardById(id);
+    if (isWildCard(ctx, card)) score += w.WILD_HOLD;
+    else score -= cardValue(card, scoring) * w.DEADWOOD_WORTH;
+  }
 
   // WHAT IS LYING FACE UP, which after a discard is the card this seat just
   // handed the table. Priced exactly as scoreDiscard prices it, because it is
@@ -717,7 +757,12 @@ export function evaluateState(ctx, seat, w = WEIGHTS) {
     const shape = handShape(ctx, handIds);
     const wants = contractWants(ctx, seat, w);
     for (const id of handIds) {
-      const keep = keepValue(ctx, ctx.cardById(id), shape, wants, id);
+      const card = ctx.cardById(id);
+      // Already counted at WILD_HOLD above, and counted there precisely so it
+      // does not come through the cap — `keepValue` says 100 and the cap says
+      // 12, and the clamped answer was the bug.
+      if (isWildCard(ctx, card)) continue;
+      const keep = keepValue(ctx, card, shape, wants, id);
       score += Math.min(keep, w.PROGRESS_CAP) * w.PROGRESS_WORTH;
     }
   }
@@ -762,5 +807,6 @@ export const WEIGHTS = Object.freeze({
   PROGRESS_WORTH,
   PROGRESS_CAP,
   OUT_WORTH,
+  WILD_HOLD,
   RIVAL_SHARE,
 });

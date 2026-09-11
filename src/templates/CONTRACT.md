@@ -675,6 +675,7 @@ The vocabulary in use today:
 | `trickWon` | trick-taking | `{seat, cards, points, trickNumber}` |
 | `cardsPassed` | trick-taking | `{direction}` |
 | `bidMade` | trick-taking | `{seat, bid, blind}` |
+| `broken` | trick-taking | `{seat, cards, suit, card: {rank, suit}, selector, varName}` — once a hand, on the false→true flip of `rules.breaking.var`. `suit` is what may now be LED (not always the suit of the card: in Hearts the queen of spades breaks hearts) |
 | `skipped` | shedding effects | `{by, seat}` |
 | `reversed` | shedding effects | `{by, direction}` |
 | `penalty` | shedding effects | `{by, seat, drew, asked}` |
@@ -692,7 +693,7 @@ The vocabulary in use today:
 | `pegPlay` | cribbage | `{seat, count, points, parts}` |
 | `go` | cribbage | `{seat, closes?}` |
 | `pegged` | cribbage | `{seat, points, reason, total}` |
-| `showScored` | cribbage | `{seat, isCrib, points, parts, cards}` |
+| `showScored` | cribbage | `{seat, isCrib, points, parts, cards}` — each part is `{kind, points, n, at}`, where `at` are POSITIONS in `[...cards, starter]` rather than card ids, so the show card can light a combination's cards without an id crossing the view filter |
 
 An event may carry `say: {text, tone}` to name its own banner sentence; that is
 the cheapest seam for an effect the platform has never heard of.

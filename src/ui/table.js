@@ -74,7 +74,8 @@ import { suggestMove } from './hint.js';
 import { schedule } from './clock.js';
 import { line, svgNode, clearSvgCache } from './dom.js';
 import { promptChoice, closeChoiceDialog } from './choiceDialog.js';
-import { createCelebrations } from './celebrations.js';
+import { createCelebrations, TRICK_BANNER_PRIORITY } from './celebrations.js';
+import { showCardModel, renderShowCard } from './showCard.js';
 import { createContractLadder } from './contractLadder.js';
 import { createContractStrip } from './contractStrip.js';
 import {
@@ -106,15 +107,17 @@ import {
   classifyHandGesture, SORT_LABELS,
 } from './handOrder.js';
 import {
-  initPanels, showRoundSummary, hideRoundSummary,
+  initPanels, showRoundSummary, hideRoundSummary, paintRoundPace,
   showScoreboard, showGameOver, hideAllPanels, showRules, awaitFinalLook,
 } from './panels.js';
 import { packRules } from './rules.js';
 import { roundBeatPlan, trickRevealPlan } from './roundBeat.js';
+import { paceLevel, nextPace } from './pace.js';
 import {
-  rememberPack, loadSettings, saveMatch, loadMatch, clearMatch, recordForfeit,
-  loadHandPrefs, saveHandPrefs,
+  rememberPack, loadSettings, saveSettings, saveMatch, loadMatch, clearMatch, recordForfeit,
+  loadHandPrefs, saveHandPrefs, recordDailyResult,
 } from '../arcade/storage.js';
+import { dailyRunFor, applyDailyLadder } from '../engine/dailyLadder.js';
 import {
   playDeal, playCardPlayed, playDraw, playShuffle, playInvalid, playWin, playAnnouncement,
 } from '../arcade/audio.js';
@@ -198,6 +201,7 @@ const el = {
   handSort: document.getElementById('hand-sort'),
   log: document.getElementById('log'),
   eventBanner: document.getElementById('event-banner'),
+  showCard: document.getElementById('show-card'),
 };
 
 // ONE OPEN MATCH, ONE OBJECT (src/ui/session.js). Everything a match owns —
@@ -3586,10 +3590,38 @@ let gestures = null;
 let zones = null;
 let record = null;
 
-function hideBanner() { if (moments) moments.hideBanner(session); }
-function showBanner(text, tone) { if (moments) moments.showBanner(session, text, tone); }
+// THE BANNER AND THE SHOW CARD ARE ONE SLOT. The card replaces the banner for
+// a scoring step (#152) and they must never be on the felt together — so every
+// door that puts one up or takes one down goes through here and clears the
+// other. That is also the card's whole teardown story: it is torn down exactly
+// where the banner would have been, which is every path that already called
+// `hideBanner` (leaving the table, a new deal, a closed session).
+function hideBanner() {
+  hideShowCard();
+  if (moments) moments.hideBanner(session);
+}
+function showBanner(text, tone) {
+  hideShowCard();
+  if (moments) moments.showBanner(session, text, tone);
+}
+
+/** Put one scoring step's card on the felt, over the middle. */
+function showShowCard(model) {
+  if (!el.showCard) return;
+  const node = renderShowCard(model, { art });
+  if (!node) return;
+  if (moments) moments.hideBanner(session);
+  el.showCard.replaceChildren(node);
+  el.showCard.hidden = false;
+}
+
+function hideShowCard() {
+  if (!el.showCard) return;
+  el.showCard.hidden = true;
+  el.showCard.replaceChildren();
+}
 function celebrateTrick(state, ev) { if (moments) moments.celebrateTrick(session, state, ev); }
-function celebrateAction(state, events) { return moments ? moments.celebrateAction(session, state, events) : null; }
+function celebrateAction(state, events, opts) { return moments ? moments.celebrateAction(session, state, events, opts) : null; }
 function animatePenaltyDraw(state, seat, count, delay) { if (moments) moments.animatePenaltyDraw(state, seat, count, delay); }
 
 /**
@@ -3610,6 +3642,14 @@ async function endMatchFromSummary() {
   if (!liveState()) return;
   const state = liveState();
   const myEpoch = epoch;
+  // BEFORE THE QUESTION IS ASKED, not after it is answered (#150). The sheet
+  // deals itself now, and a confirm dialog is a pause of the player's own
+  // length — so a countdown left running would have dealt the next hand out
+  // from under "are you sure?", and the answer would have arrived at a match
+  // that had moved on. If they keep playing, it is re-armed below.
+  const held = paceLevel(currentPace().id);
+  cancelRoundBeat();
+  paintRoundPace({ ...paceView(held), autoMs: null });
   // AHEAD IS A SIDE'S QUESTION. Walking away while your partner is carrying the
   // score is not walking away from a loss, and the sentence has to say so.
   const totals = sideScores(state.pack, state.seats, state.scores);
@@ -3621,12 +3661,33 @@ async function endMatchFromSummary() {
     + (ahead ? '' : ' It counts as a forfeit.'),
     { okLabel: 'End match', cancelLabel: 'Keep playing' },
   );
-  if (!ok || myEpoch !== epoch || liveState() !== state) return;
+  if (!ok || myEpoch !== epoch || liveState() !== state) {
+    // "Keep playing" puts the countdown back exactly as it was, restarted —
+    // the player has just spent an unknown amount of time in a dialog.
+    if (myEpoch === epoch && session?.roundSummaryOpen) {
+      paintRoundPace(paceView(held));
+      armAutoAdvance(held.autoMs);
+    }
+    return;
+  }
 
   cancelBotTurn();
   cancelAnnouncementBeats();
-  clearMatch(state.pack.id);
-  recordForfeit(state.pack.id, session.seating);
+  // The sheet was counting down to a deal when the player asked to leave.
+  cancelRoundBeat();
+  // WALKING OUT OF THE DAILY IS THIS DAY'S RESULT, not a forfeit against the
+  // pack's own record: there is one run per day and no second attempt, so
+  // abandoning it is losing it, and the streak has to end. The pack's casual
+  // record is left alone for the reason src/arcade/storage.js gives — the
+  // daily's ladder is not the ladder that record is about.
+  clearMatch(state.pack.id, { slot: session.daily ? 'daily' : 'match' });
+  if (session.daily) {
+    recordDailyResult(state.pack.id, session.daily.date, {
+      won: false, hands: state.roundNumber,
+    });
+  } else {
+    recordForfeit(state.pack.id, session.seating);
+  }
   session.roundSummaryOpen = false;
   session.roundBeat = false;
   session.roundFinalState = null;
@@ -3634,13 +3695,24 @@ async function endMatchFromSummary() {
   exitToLobby();
 }
 
-function dismissRoundSummary() {
+/**
+ * @param message what #log says as the deal lands. The default names the new
+ *   round; the Instant rung (#150) passes the round's RESULT instead, because
+ *   at that rung there is no sheet and this line is the only place the score
+ *   change is ever said — and it has to be this one line, since the render
+ *   below would overwrite anything written just before it.
+ */
+function dismissRoundSummary(message) {
   // The SESSION says whether we are between rounds; the panel merely shows it.
   // This used to branch on `!el.roundOverlay.hidden` (panels.isRoundSummaryOpen),
   // which made a DOM attribute the only record of a game-state fact — and one
   // that any other code path hiding the overlay would silently erase.
   if (!session || !session.roundSummaryOpen || !liveState()) return;
   session.roundSummaryOpen = false;
+  // A TAP BEATS THE CLOCK, and the clock must not fire behind it. This is also
+  // what makes the door idempotent under the panel's two listeners: the second
+  // call finds `roundSummaryOpen` false and returns above.
+  cancelRoundBeat();
   // THIS IS WHERE THE NEXT HAND BECOMES VISIBLE. The engine dealt it inside the
   // round-ending move; until this line the felt has been showing where the
   // round ended (runRoundBeat), which is why the render below is the first
@@ -3650,7 +3722,7 @@ function dismissRoundSummary() {
   hideRoundSummary();
   session.dealAnimation = true;
   playDeal(liveState().seats);
-  render(liveState(), `Round ${liveState().roundNumber}.`);
+  render(liveState(), message || `Round ${liveState().roundNumber}.`);
   scheduleNextTurn();
 }
 
@@ -3683,7 +3755,13 @@ function persistMatch() {
   // the lobby tile a "Start over" that dealt a private hand beside a table
   // other people were still sitting at.
   if (session?.shared) return;
-  const ok = saveMatch(state, { hints: session.hintsTaken });
+  // A DAILY RUN GOES IN ITS OWN SLOT. Writing it to `match.<packId>` would
+  // silently overwrite whatever casual game was waiting on the lobby tile —
+  // the same mistake one shared slot per device made about two hosted tables.
+  const ok = saveMatch(state, {
+    hints: session.hintsTaken,
+    slot: session.daily ? 'daily' : 'match',
+  });
   if (ok !== false || saveFailureReported) return;
   saveFailureReported = true;
   reportTableError('This game could not be saved — it may not be here when you come back.');
@@ -3873,8 +3951,12 @@ function runTrickReveal(poseState, move, from, reveal, resume) {
   animateMove(poseState, move, from);
 
   const myEpoch = epoch;
-  Arcade.session.setTimeout(() => {
+  // HELD ON THE SESSION (#150), not merely epoch-checked. The epoch guard stops
+  // a timer that has already fired from doing damage; a handle is what lets
+  // `stopSession` stop it firing at all.
+  session.revealTimer = Arcade.session.setTimeout(() => {
     if (myEpoch !== epoch || !session) return;
+    session.revealTimer = null;
     session.trickBeat = null;
     session.trickPoseState = null;
     resume();
@@ -3939,10 +4021,48 @@ function playShowStep(finalState, step) {
   );
   const text = said?.text
     || `${seatPossessive(step.seat)} ${step.isCrib ? 'crib' : 'hand'} is worth ${step.points}.`;
-  showBanner(text, said?.tone || (step.points ? 'good' : 'neutral'));
+  // THE CARD INSTEAD OF THE BANNER (#152), and the sentence still in the log —
+  // which is the live region a screen reader hears, so nothing is lost by the
+  // card being decorative. The banner is a fallback rather than a second
+  // surface: a remote client's step has no card ids on it (cribbage.js's
+  // `partsOf` explains why), and a card with no cards on it is a caption in a
+  // box. `showCardFaces` returning empty is the test for that.
+  const model = showCardFor(finalState, step);
+  if (model) showShowCard(model);
+  else showBanner(text, said?.tone || (step.points ? 'good' : 'neutral'));
   el.log.textContent = text;
   pulseSeat(step.seat, step.points ? 'good' : 'neutral');
   spotlightZone(step.isCrib ? 'show' : `play.${step.seat}`);
+}
+
+/**
+ * One step of a show as a show card, or null when the felt cannot draw one.
+ *
+ * THE STARTER IS READ OFF THE POSITION, not off the event. It is a shared zone
+ * with `visibility: 'all'` and it is right there in the ending fork, so putting
+ * its id on the wire would be a second copy of a public fact, travelling
+ * outside the one field the view filter knows how to check (src/engine/view.js).
+ * The ending fork is also the only state that still HAS it by now: the engine
+ * crossed the round boundary inside this same move and the live state is
+ * already holding the next deal's cut.
+ *
+ * The positions in `step.parts` are relative to `[...step.cards, starter]`,
+ * which is the order `theShow` scored them in and the order drawn here.
+ */
+function showCardFor(finalState, step) {
+  if (!Array.isArray(step.cards) || !step.cards.length) return null;
+  const starterId = finalState.zones.has('starter') ? finalState.zones.cards('starter')[0] : null;
+  const ids = starterId ? [...step.cards, starterId] : step.cards.slice();
+  const cards = ids.map((id) => cardById(finalState, id) ?? null);
+  if (!cards.some(Boolean)) return null;
+  return showCardModel({
+    whose: seatPossessive(step.seat),
+    isCrib: step.isCrib,
+    points: step.points,
+    parts: step.parts,
+    cards,
+    starterAt: starterId ? ids.length - 1 : null,
+  });
 }
 
 /**
@@ -3990,8 +4110,125 @@ function roundContractLines(finalState) {
  *                   and totals from, and the one the next deal is already in
  * @param finalState what the felt is showing: where the round ended
  */
-function runRoundBeat(state, plan, finalState) {
+/* ------------------------------------------------------------------ *
+ * How fast the table moves between hands (#150)
+ * ------------------------------------------------------------------ */
+
+/**
+ * The player's rung, read LIVE.
+ *
+ * `settings` is a snapshot refreshed by `rerenderTable`, and the one control
+ * that changes this — the summary's own "Pace · Quick ▸" — writes storage and
+ * updates the snapshot in the same breath (`cyclePace`). Falling back to a
+ * fresh read keeps the very first hand of a session honest, before any render
+ * has happened.
+ */
+function currentPace() {
+  return paceLevel(settings ? settings.pace : loadSettings().pace);
+}
+
+/**
+ * What `paintRoundPace` needs to draw: a name, a duration, and whether the
+ * duration may be animated.
+ *
+ * REDUCED MOTION AND THE POWER SAVER TAKE THE ANIMATION, NOT THE TIMER. A
+ * player who has asked for less movement has not asked the table to stop
+ * dealing — they have asked for the countdown to be a mark rather than a
+ * moving one. The sheet still deals itself at exactly the same moment.
+ */
+function paceView(level) {
+  return {
+    label: level.label,
+    autoMs: level.autoMs,
+    animate: motionAllowed() && !powerSaving(),
+  };
+}
+
+/**
+ * Deal the next hand by ourselves, once the sheet has been up for its rung.
+ *
+ * THROUGH `dismissRoundSummary` AND NOTHING ELSE. That function is the single
+ * door: it clears `roundSummaryOpen`, paints the deal, and only then calls
+ * `scheduleNextTurn`. A timer that reached for `scheduleNextTurn` directly
+ * would let a bot play its first card into a felt still showing the last hand.
+ */
+function armAutoAdvance(ms) {
+  if (ms == null) return;
   const myEpoch = epoch;
+  if (session.advanceTimer) session.advanceTimer.cancel();
+  session.advanceTimer = Arcade.session.setTimeout(() => {
+    if (myEpoch !== epoch || !session) return;
+    session.advanceTimer = null;
+    dismissRoundSummary();
+  }, ms);
+}
+
+/** Everything a round ending has in flight, stopped. Safe with no session. */
+function cancelRoundBeat() {
+  if (!session) return;
+  for (const timer of session.beatTimers) timer.cancel();
+  session.beatTimers = [];
+  if (session.advanceTimer) session.advanceTimer.cancel();
+  session.advanceTimer = null;
+}
+
+/** A beat timer that cancels with the session rather than only checking its epoch. */
+function beatTimer(fn, at) {
+  const myEpoch = epoch;
+  const handle = Arcade.session.setTimeout(() => {
+    if (myEpoch !== epoch || !session) return;
+    session.beatTimers = session.beatTimers.filter((t) => t !== handle);
+    fn();
+  }, at);
+  session.beatTimers.push(handle);
+  return handle;
+}
+
+/**
+ * The round's result as ONE SENTENCE, for the rung that shows no sheet.
+ *
+ * Instant is not "the summary, faster" — it is the summary traded away, and a
+ * round whose score went nowhere at all would be a rule change rather than a
+ * pace. So the totals still arrive, in #log, which is the live region a screen
+ * reader hears and the one surface on this felt that is a record rather than a
+ * moment.
+ *
+ * PER SIDE, like the sheet it stands in for (#125): a partnership pack banks a
+ * side's whole result on one seat, so a per-seat list would read as one partner
+ * carrying the team and the other scoring nothing all match.
+ *
+ * IT ENDS WITH THE NEW ROUND because it IS the deal's message: `#log` carries
+ * one sentence, and `dismissRoundSummary`'s own "Round 4." would otherwise
+ * overwrite this one in the same frame it was written.
+ */
+function roundResultLine(state, ev) {
+  const sides = sidesOf(state.pack, state.seats);
+  const totals = sideScores(state.pack, state.seats, ev.totals || []);
+  const parts = sides.map((members, i) => {
+    const who = members.map((seat) => seatLabel(seat)).join(' & ');
+    return `${who} ${totals[i] ?? 0}`;
+  });
+  return `Round ${ev.round} over — ${parts.join(', ')}. Round ${state.roundNumber}.`;
+}
+
+function cyclePace() {
+  const level = paceLevel(nextPace(currentPace().id));
+  const stored = loadSettings();
+  saveSettings({ ...stored, pace: level.id });
+  // The snapshot too, so the NEXT round reads the new rung without waiting for
+  // a settings event to come back round through main.js.
+  if (settings) settings.pace = level.id;
+  paintRoundPace(paceView(level));
+  // RESTARTED, NOT RESUMED, and the ring is redrawn to match: a player who
+  // reaches for this at 2.4s of a 2.5s countdown is asking for more time, and
+  // handing them a tenth of a second of Relaxed would be the opposite.
+  if (session?.advanceTimer) { session.advanceTimer.cancel(); session.advanceTimer = null; }
+  if (session?.roundSummaryOpen) armAutoAdvance(level.autoMs);
+}
+
+function runRoundBeat(state, plan, finalState) {
+  // Nothing from a previous ending may still be in flight under this one.
+  cancelRoundBeat();
   // WHO WON THE HAND, on the table rather than only on the sheet. A shedding
   // pack names the seat that went out (`ctx.endRound(winner)`, still on the
   // fork because the round boundary was not run over it); a trick-taking round
@@ -4001,15 +4238,33 @@ function runRoundBeat(state, plan, finalState) {
     pulseSeat(finalState.roundWinner, 'good');
   }
   for (const step of plan.steps) {
-    Arcade.session.setTimeout(() => {
-      if (myEpoch !== epoch || !session?.roundBeat) return;
+    beatTimer(() => {
+      if (!session.roundBeat) return;
       playShowStep(finalState, step);
     }, step.at);
   }
-  Arcade.session.setTimeout(() => {
-    if (myEpoch !== epoch) return;
+  beatTimer(() => {
+    // THE LAST SHOW CARD COMES DOWN WITH THE SHEET GOING UP (#152). The banner
+    // this card replaced dismissed itself after 2200ms, so the sheet always
+    // opened onto a clear felt; a card sits until something takes it away, and
+    // the crib's — the last step of the beat — was still there UNDER the
+    // summary panel. The cards are the detail and the panel is the tally: they
+    // are never both the answer at once.
+    hideShowCard();
     session.roundSummaryOpen = true;
-    showRoundSummary(state, plan.roundOver, session.seating, roundContractLines(finalState));
+    // THE RUNG THAT SHOWS NO SHEET (#150). Instant does not open the summary
+    // and then race it away — it never opens one. `roundSummaryOpen` is still
+    // set first, because `dismissRoundSummary` is the door and the door checks
+    // that flag; what is skipped is the panel, not the transition through it.
+    if (plan.instant) {
+      dismissRoundSummary(roundResultLine(state, plan.roundOver));
+      return;
+    }
+    showRoundSummary(
+      state, plan.roundOver, session.seating, roundContractLines(finalState),
+      paceView(paceLevel(plan.pace)),
+    );
+    armAutoAdvance(plan.autoAdvanceMs);
   }, plan.summaryAt);
 }
 
@@ -4086,6 +4341,9 @@ function afterMove(state, move, from, message, { publish = true } = {}) {
     // No snapshot means no ending to pose or repaint, so the reveal degrades to
     // the plain hold — the multiplayer path (afterRemoteMove).
     narrate: !!finalState,
+    // The rung is read HERE, when the round ends, so a pace changed on the last
+    // sheet is the pace this one runs at.
+    pace: currentPace().id,
   }) : null;
   // What the felt paints. The LIVE state everywhere else: it is what is saved,
   // what the summary reads, and what the next deal is already in.
@@ -4138,11 +4396,19 @@ function afterMove(state, move, from, message, { publish = true } = {}) {
     // here would be the same card arriving twice.
     if (!reveal) animateMove(shown, move, from);
     if (trick) celebrateTrick(shown, trick);
-    // After the card has been seen to land, and only when a trick is not already
-    // holding the felt — two celebrations at once is neither. A show is the same
-    // rule again: its own steps are the narration, and the first `showScored`
-    // banner firing here would say pone's count over the last pegging card.
-    const action = (trick || plan?.steps.length) ? null : celebrateAction(shown, events);
+    // After the card has been seen to land. A show's own steps are the
+    // narration, so nothing competes with them — the first `showScored` banner
+    // firing here would say pone's count over the last pegging card.
+    //
+    // A GATHERED TRICK NO LONGER SILENCES THIS OUTRIGHT; it raises the bar.
+    // "Two celebrations at once is neither" is still the rule and
+    // TRICK_BANNER_PRIORITY is still where almost everything falls under it,
+    // but the card that breaks a suit is very often the fourth card of a trick,
+    // and suppressing that banner suppressed the only time the felt ever
+    // mentioned the rule (#151). See celebrations.js for the scale.
+    const action = plan?.steps.length
+      ? null
+      : celebrateAction(shown, events, { floor: trick ? TRICK_BANNER_PRIORITY : -1 });
     // The action is the better sentence: "Rook played." says less than nothing
     // next to "You draw 4 and lose your turn", and the log is the live region a
     // screen reader hears.
@@ -4474,6 +4740,7 @@ function performAnnouncement(state, move, myEpoch = epoch) {
   const plan = roundOver ? roundBeatPlan(state.events, {
     flightMs: flightDurationMs(settings?.botDelayMs),
     narrate: !!finalState,
+    pace: currentPace().id,
   }) : null;
   if (plan) {
     session.roundBeat = true;
@@ -4538,7 +4805,7 @@ function scheduleAnnouncementBeats() { if (bots) bots.scheduleAnnouncementBeats(
  * roll could survive into a match that had not been dealt when it was made.
  */
 function adoptMatch(pack, state, message, {
-  dealing = false, seats = null, seating = null, shared = false, hints = 0,
+  dealing = false, seats = null, seating = null, shared = false, hints = 0, daily = null,
 } = {}) {
   epoch += 1;
   stopSession(session);
@@ -4574,6 +4841,11 @@ function adoptMatch(pack, state, message, {
     // this function persists the match before it returns and a count set
     // after that write is a count the next reload has already lost.
     hintsTaken: hints,
+    // `{ date, seed }` when this is a daily run, null when it is an ordinary
+    // game. It decides which slot the match is written to and which record its
+    // ending goes into — both of which happen before the first render, so it
+    // has to arrive WITH the session rather than be set on it afterwards.
+    daily,
   });
   // Set on the NEW session, not before it exists: a fresh deal staggers its
   // cards in, a resumed match must not (the cards have been there all along).
@@ -4795,7 +5067,7 @@ export function rebaseSeats(localDeviceId) {
   return rebased;
 }
 
-function startGame(pack, seats) {
+function startGame(pack, seats, { seed, daily = null } = {}) {
   cancelBotTurn();
   cancelAnnouncementBeats();
   const seatCount = seatsFor(pack, seats);
@@ -4803,10 +5075,45 @@ function startGame(pack, seats) {
   // the match from the first write, which is what makes the log replayable
   // (src/engine/replay.js) rather than merely re-runnable — and, since the
   // seating is derived from it, what rotates the opponents per game.
-  const state = createState({ pack, seats: seatCount, seed: Date.now() });
+  //
+  // A DAILY RUN HANDS ITS OWN SEED IN, and that is the whole of what makes the
+  // day shared: `milestones|2026-09-10` deals the same cards and seats the same
+  // opponents on every device, because both are derived from it.
+  const state = createState({ pack, seats: seatCount, seed: seed ?? Date.now() });
   pack.template.setup(makeCtx(state));
   playDeal(seatCount);
-  adoptMatch(state.pack, state, `Playing ${pack.manifest.name}.`, { dealing: true });
+  adoptMatch(state.pack, state, daily
+    ? `${pack.manifest.name} daily — ${daily.date}.`
+    : `Playing ${pack.manifest.name}.`, { dealing: true, daily });
+}
+
+/**
+ * The day's run for `pack`, with the pack rewritten to play it.
+ *
+ * The ladder is DERIVED, never stored: everything about the day comes back out
+ * of `<packId>|<YYYY-MM-DD>`, so a resume re-derives it from the seed the save
+ * already carries rather than trusting ten contracts that were written to disk
+ * (src/engine/dailyLadder.js says why that matters). The pack object is the
+ * private clone `fetchPack` just handed us, so rewriting its rules affects this
+ * table and nothing else.
+ */
+function openDailyRun(pack) {
+  const run = dailyRunFor(pack);
+  applyDailyLadder(pack, run.ladder);
+  return { date: run.date, seed: run.seed };
+}
+
+/**
+ * How many chairs a daily run is played at.
+ *
+ * FIXED PER PACK, and read from the manifest rather than from the table's own
+ * default seat count: a daily everybody gets the same of cannot depend on a
+ * default that moves, and the seating is derived from the seed, so the seat
+ * count is the other half of "the same table everywhere".
+ */
+function dailySeats(pack) {
+  const players = pack.manifest.players || {};
+  return seatsFor(pack, players.best ?? players.min);
 }
 
 /**
@@ -4816,22 +5123,38 @@ function startGame(pack, seats) {
  * Every entry to the table goes through here — a lobby tap, a `?pack=` deep
  * link, and a save import (`onStateReplaced` is a fresh boot by contract, §3).
  */
-export async function openTable(packId, { variants, seats } = {}) {
+export async function openTable(packId, { variants, seats, daily = false } = {}) {
   const myToken = ++openToken;
   cancelBotTurn();
   cancelAnnouncementBeats();
   closeChoiceDialog();
 
   el.statusText.textContent = 'Dealing…';
+  // WHICH OF THE PACK'S TWO SOLO GAMES THIS IS. A casual save and today's daily
+  // sit in different slots (src/arcade/storage.js), so opening one never
+  // disturbs the other — the whole point of the second key.
+  const slot = daily ? 'daily' : 'match';
 
   // A stored match pins the variant set: the same pack loaded with different
   // variants is a different rule set, and replaying a log against it diverges.
   // A stored match wins over anything the caller asked for: its log was
   // recorded under ITS rule set and seating, and replaying it under another is
   // divergence, not a preference.
-  const stored = loadMatch(packId);
+  let stored = loadMatch(packId, { slot });
   const pack = await fetchPack(packId, stored ? stored.variants : variants);
   if (myToken !== openToken) return; // the player left before the pack landed
+
+  // TODAY'S LADDER, BEFORE ANYTHING IS DEALT OR REPLAYED. A stored daily has to
+  // be replayed under the rules its log was recorded against, which for a daily
+  // means the ladder its seed names — so the pack is rewritten first.
+  const run = daily ? openDailyRun(pack) : null;
+  if (run && stored && stored.seed !== run.seed) {
+    // Yesterday's unfinished run. A daily is not a game to come back to a week
+    // later — the puzzle it was is gone — so the slot is dropped and today's is
+    // dealt instead. Nothing is recorded: an abandoned daily was never a result.
+    clearMatch(packId, { slot });
+    stored = null;
+  }
 
   rememberPack(packId);
   // The variant's name ALONE, and only in the launcher's title bar. At a table
@@ -4839,7 +5162,12 @@ export async function openTable(packId, { variants, seats } = {}) {
   // it twice — once in the launcher bar, once in our own — cost the status bar
   // the room it needed to stay on one line. The lobby restores the wordmark
   // (src/main.js).
-  Arcade.ui.setTitle(pack.manifest.name);
+  //
+  // A DAILY SAYS WHICH DAY, and this bar is where it says it: the felt has no
+  // room for a second name — which is what the paragraph above is about — and a
+  // ladder being unfamiliar is not a label. This is the surface that answers
+  // "what am I looking at", so it is the one that carries the date.
+  Arcade.ui.setTitle(run ? `${pack.manifest.name} — daily ${run.date}` : pack.manifest.name);
   hideAllPanels();
 
   if (stored) {
@@ -4854,7 +5182,10 @@ export async function openTable(packId, { variants, seats } = {}) {
       if (rulesMoved) throw new Error(`pack version changed: ${stored.packVersion} → ${pack.manifest.version}`);
       const state = rehydrateMatch(pack, stored);
       if (!state.gameOver) {
-        adoptMatch(pack, state, `Resumed ${pack.manifest.name}.`, { hints: Number(stored.hints) || 0 });
+        adoptMatch(pack, state, run
+          ? `Back on the ${pack.manifest.name} daily — ${run.date}.`
+          : `Resumed ${pack.manifest.name}.`,
+        { hints: Number(stored.hints) || 0, daily: run });
         return;
       }
     } catch (err) {
@@ -4864,9 +5195,9 @@ export async function openTable(packId, { variants, seats } = {}) {
       console.warn('[cardstock] could not replay the stored match, starting fresh', err);
       if (rulesMoved) reportTableError(`${pack.manifest.name}'s rules have changed — dealing a fresh game.`);
     }
-    clearMatch(packId);
+    clearMatch(packId, { slot });
   }
-  startGame(pack, seats);
+  startGame(pack, run ? dailySeats(pack) : seats, run ? { seed: run.seed, daily: run } : {});
 }
 
 /**
@@ -5045,6 +5376,9 @@ export function initTable({ onExit }) {
     // The record is written on the way out of a match, so the timers stop
     // first — a bot turn landing after the books are closed would reopen it.
     onConclude: () => { cancelBotTurn(); cancelAnnouncementBeats(); },
+    // Which books this match's ending goes into. Asked at conclusion time,
+    // like `seating` above, because this object outlives any one match.
+    daily: () => session?.daily || null,
   });
 
   ladder = createContractLadder({
@@ -5118,6 +5452,7 @@ export function initTable({ onExit }) {
     onEndMatch: () => endMatchFromSummary(),
     onRules: () => livePack() && showRules(packRules(livePack())),
     onCloseScoreboard: () => {},
+    onCyclePace: () => cyclePace(),
   });
 
   // The fan's spacing is the one thing that depends on how much room the row
