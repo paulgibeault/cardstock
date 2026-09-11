@@ -90,16 +90,37 @@ test("a template with evaluateState ranks positions, not moves", async () => {
 
 test("a template with no evaluateState is ranked exactly as it always was", async () => {
   // The other half of the same claim: the lookahead must not touch a template
-  // that did not ask for it. Stockpile's sequencing template offers no hook.
+  // that did not ask for it.
+  //
+  // THIS USED TO POINT AT STOCKPILE, and sequencing grew a hook (#160) — every
+  // template in the repo now has one, which is a nice problem and leaves this
+  // with nothing shipped to test. So the template WITHOUT the hook is made
+  // here, by taking it away, and the claim is stated against the fallback
+  // itself rather than against `rankWithoutLookahead` (which would be the same
+  // sentence twice): with no hook, every move comes back at exactly its
+  // `botHeuristic` score, in the order the template enumerated them.
   const state = await dealt("stockpile", 4, "lookahead:stockpile");
-  assert.strictEqual(state.pack.template.evaluateState, undefined,
-    "sequencing has grown an evaluateState — pick another template for this test");
+  const template = state.pack.template;
+  assert.strictEqual(typeof template.evaluateState, "function",
+    "sequencing has lost its evaluateState — there is nothing here to take away");
+  let checked = 0;
   walk(state, 60, (live, seat) => {
-    assert.deepStrictEqual(
-      rankMoves(live, seat).map((r) => [r.move, r.score]),
-      rankWithoutLookahead(live, seat).map((r) => [r.move, r.score]),
-    );
+    const ctx = makeCtx(live);
+    // `rankMoves` sorts, stably, so equal scores keep enumeration order —
+    // which is the other half of the claim and is what this reproduces.
+    const cheap = enumerateLegalMoves(live, seat)
+      .map((move) => [move, template.botHeuristic(ctx, move, template.weights)])
+      .sort((a, b) => b[1] - a[1]);
+    const hook = template.evaluateState;
+    delete template.evaluateState;
+    try {
+      assert.deepStrictEqual(rankMoves(live, seat).map((r) => [r.move, r.score]), cheap);
+    } finally {
+      template.evaluateState = hook;
+    }
+    checked++;
   });
+  assert.ok(checked > 20, `only ${checked} positions checked`);
 });
 
 test("the lookahead cannot see through the back of a card", async () => {
