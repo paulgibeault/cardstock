@@ -28,7 +28,7 @@
 import { rankLadderOf, rankOrder } from '../engine/cards.js';
 import { selectorMatches } from '../engine/selectors.js';
 import { cardValue } from '../engine/scoring.js';
-import { scoreHand, scorePlay } from './cribbage-score.js';
+import { scoreHand, scorePlay, namedParts, scoredParts } from './cribbage-score.js';
 
 /* ------------------------------------------------------------------ *
  * What a position is worth (see `evaluateState` at the foot of this file)
@@ -170,11 +170,29 @@ function playAddr(ctx, seat) {
  * show that is its own move rather than the tail of the last card, which is a
  * bigger change than this issue is buying.
  */
-function partsOf(breakdown) {
+/**
+ * `scored` is the cards the breakdown was computed over, in order, as ids — the
+ * hand (or crib) followed by the starter. When it is given, each part also
+ * carries `at`: WHERE in that list its cards are, as positions rather than
+ * names.
+ *
+ * That is the whole of what the show card needs to light up the two cards of a
+ * pair (#152), and it is allowed out where the ids are not, for the reason the
+ * paragraphs above give: a position is not a card. It says "the first and the
+ * fourth of the five you are looking at", which is meaningless to anybody who
+ * cannot already see them and exactly right for the seat that can. The
+ * positions survive the redeal too, because they never named anything that got
+ * reshuffled.
+ */
+function partsOf(breakdown, scored) {
+  const order = Array.isArray(scored) ? scored : null;
   return (breakdown || []).map((part) => ({
     kind: part.kind,
     points: part.points,
     n: part.cards.length,
+    ...(order
+      ? { at: part.cards.map((id) => order.indexOf(id)).filter((i) => i >= 0) }
+      : {}),
   }));
 }
 
@@ -182,41 +200,12 @@ function partsOf(breakdown) {
  * Saying what scored
  * ------------------------------------------------------------------ */
 
-/**
- * WHAT ONE PART OF A SCORE IS CALLED OUT LOUD.
- *
- * Every scoring event in this template carried its breakdown from the day it
- * shipped and the felt said only the total, so a fifteen, a pair and a run all
- * read "Nell pegs 2" — three completely different things to have happen to you
- * (#124, item 41). These are the words a cribbage player uses; they are the
- * whole reason the game has a vocabulary at all.
- *
- * `n` is the number of CARDS in the part (`partsOf`), which is what separates a
- * pair from a pair royal and sizes a run.
- */
-function partPhrase(part) {
-  const n = part?.n ?? 0;
-  switch (part?.kind) {
-    case 'fifteen': return 'fifteen';
-    case 'thirty-one': return 'thirty-one';
-    // Three of a kind is a pair royal and four is a double pair royal — six and
-    // twelve holes. Calling either of them "a pair" undersells the hand badly.
-    case 'pair': return n >= 4 ? 'double pair royal' : n === 3 ? 'pair royal' : 'a pair';
-    case 'run': return `a run of ${n}`;
-    case 'flush': return `a flush of ${n}`;
-    // The one this pack puts in its own tagline and had never once printed.
-    case 'nobs': return 'his nobs';
-    default: return null;
-  }
-}
-
-/** The breakdown as one clause: "fifteen, fifteen and a pair". */
-function namedParts(parts) {
-  const words = (parts || []).map(partPhrase).filter(Boolean);
-  if (!words.length) return '';
-  if (words.length === 1) return words[0];
-  return `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`;
-}
+// `partPhrase` and `namedParts` USED TO LIVE HERE and now live beside the
+// scorer that produces the breakdown they name (src/templates/cribbage-score.js).
+// The show card (src/ui/showCard.js) prints one label per combination and this
+// template prints the same labels in a sentence; two copies of "double pair
+// royal" is how the felt ends up calling the same six points two different
+// things depending on which surface you read it on.
 
 /**
  * MOVE A PEG, AND STOP THE GAME IF IT WENT OUT.
@@ -455,9 +444,23 @@ function theShow(ctx) {
   for (const seat of order) {
     const cards = ctx.cardsIn(playAddr(ctx, seat));
     const { total, breakdown } = scoreHand(cards, starterCard, { valueOf, orderOf, isNobs });
+    // `.slice()`, AND IT IS NOT A TIDINESS NOTE. `ctx.cardIdsIn` hands back the
+    // zone's LIVE array (src/engine/context.js), and the round boundary runs
+    // inside this very move — so the ids this event carried were emptied out
+    // from under it before anything read them, and `showScored.cards` arrived
+    // at the felt as `[]` on every table including a local one. Nothing
+    // noticed, because the only consumer was a spotlight that works off zone
+    // ADDRESSES; the show card (#152) is the first thing that needed the cards
+    // themselves. `trickWon` a few hundred lines up in trick-taking.js copies
+    // for the same reason and always has.
+    const shown = ctx.cardIdsIn(playAddr(ctx, seat)).slice();
     ctx.emit('showScored', {
-      seat, isCrib: false, points: total, parts: partsOf(breakdown),
-      cards: ctx.cardIdsIn(playAddr(ctx, seat)),
+      seat, isCrib: false, points: total,
+      // `[...shown, starter]` is the order `scoreHand` saw them in, and
+      // therefore the one the positions in `parts` are relative to. The felt
+      // draws the same list: the four cards and the cut.
+      parts: partsOf(breakdown, starter ? [...shown, starter] : shown),
+      cards: shown,
     });
     if (!peg(ctx, seat, total, 'show')) return;
   }
@@ -467,9 +470,11 @@ function theShow(ctx) {
   ctx.moveCards(ctx.cardIdsIn('crib').slice(), 'crib', 'show');
   const cribCards = ctx.cardsIn('show');
   const crib = scoreHand(cribCards, starterCard, { valueOf, orderOf, isNobs, isCrib: true });
+  const cribShown = ctx.cardIdsIn('show').slice();
   ctx.emit('showScored', {
-    seat: dealer, isCrib: true, points: crib.total, parts: partsOf(crib.breakdown),
-    cards: ctx.cardIdsIn('show'),
+    seat: dealer, isCrib: true, points: crib.total,
+    parts: partsOf(crib.breakdown, starter ? [...cribShown, starter] : cribShown),
+    cards: cribShown,
   });
   if (!peg(ctx, dealer, crib.total, 'crib')) return;
 
@@ -894,7 +899,11 @@ const cribbage = {
       //
       // `seatVerb`, not `${seatLabel(seat)} pegs`: "You" takes the bare verb.
       // Same irregularity as `seatPossessive` below, one part of speech over.
-      const what = namedParts(ev.parts);
+      // `scoredParts`, not `namedParts`: the pegging half of the game has no
+      // card to draw (#152), so the sentence carries the split — "fifteen for 2
+      // and a pair for 2" — and the one-part case stays the plain phrase
+      // because the total beside it already says the number.
+      const what = scoredParts(ev.parts);
       return {
         text: `${seatLabel(ev.seat)} ${seatVerb(ev.seat, 'peg')} ${ev.points}`
           + `${what ? ` — ${what}` : ''} — the count is ${ev.count}.`,

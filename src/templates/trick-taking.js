@@ -92,6 +92,69 @@ function suitLabel(suit) {
   return name ? name[0].toUpperCase() + name.slice(1) : name;
 }
 
+/**
+ * A card named the short way — "7♠" — for a banner that must not wrap.
+ *
+ * Four characters rather than an import: `SUIT_GLYPH` also exists in
+ * src/ui/cardStyles/shared.js and this file must not reach into src/ui. A
+ * template is loaded by tools/simulate.mjs and tools/pack-test.mjs with no
+ * document in the room, and the day somebody puts a DOM read behind that import
+ * the whole headless toolchain goes with it. Null for a deck whose cards have no
+ * suit, which is every shedding pack and no trick-taking one.
+ */
+const SUIT_GLYPH = { clubs: '♣', diamonds: '♦', hearts: '♥', spades: '♠' };
+
+/**
+ * The break outranks the trick it arrived inside.
+ *
+ * Above `TRICK_BANNER_PRIORITY` (src/ui/celebrations.js), which is the rung the
+ * table gives a trick's own celebration — the two numbers have to be read
+ * together and tests/actionEvents.test.js pins the comparison rather than
+ * either value. See `describeEvent` for why the break is the bigger moment.
+ */
+const BROKEN_PRIORITY = 2;
+
+/**
+ * THE BANNER IS GONE IN TWO SECONDS AND THE RULE LASTS THE HAND.
+ *
+ * A sentence that has already scrolled away is no help to a player deciding, on
+ * trick nine, whether they may lead a spade — so the break also leaves a mark
+ * (#151). It goes on the contract strip rather than in a new widget because that
+ * strip is already the felt's answer to "what is in force right now", it is
+ * already styled for both themes, and a second row of chrome saying one word
+ * would cost every trick pack the height.
+ *
+ * READ OFF THE VAR, not off the event, which is what makes it persistent for
+ * free: the var is set by `placeCard`, cleared by `setup` at the next deal, and
+ * public (`publicVars`), so the mark survives a reload, a rejoin and a replay
+ * without anything remembering that a banner once fired. There is nothing here
+ * to clear at the round boundary because there is nothing here that is state.
+ *
+ * Appended to whatever the auction already put on the strip: no pack today both
+ * bids for trump and breaks a suit, but "one chip or the other" would be a rule
+ * with no reason behind it.
+ */
+function brokenChips(ctx, chips) {
+  const breaking = breakingSelectorAndVar(ctx);
+  const suit = breaking ? brokenLeadSuit(ctx.rules) : null;
+  if (suit && ctx.var(breaking.varName)) {
+    chips.push({
+      key: 'broken',
+      label: suitLabel(suit),
+      value: 'Broken',
+      suit,
+      aria: `${suitLabel(suit)} are broken — they may be led`,
+    });
+  }
+  return chips.length ? chips : null;
+}
+
+function shortCardName(rank, suit) {
+  const glyph = SUIT_GLYPH[suit];
+  if (rank == null || !glyph) return null;
+  return `${rank}${glyph}`;
+}
+
 /* ------------------------------------------------------------------ *
  * FOLLOW, AND BEAT IF YOU CAN — `followSuit: 'must-beat'`
  * ------------------------------------------------------------------ *
@@ -172,12 +235,46 @@ function applyConstraint(ctx, pool, selector, active) {
   return filtered.length ? filtered : pool;
 }
 
-function breakingSelectorAndVar(ctx) {
-  const breaking = ctx.rules.breaking;
+/**
+ * The breaking rule read off `rules` alone.
+ *
+ * Split out of `breakingSelectorAndVar` because `publicVars` is handed the
+ * rules and never a ctx — and because it was reading `rules.broken?.varName`,
+ * a shape no manifest has ever declared (the schema's key is `breaking.var`).
+ * That silent `undefined` meant `spadesBroken` and `heartsBroken` were never in
+ * the public set, so a joiner at a shared table held a view in which the suit
+ * had never been broken: their own lead constraint stayed on for the whole hand
+ * and the host's legal-move list disagreed with it. Pinned by
+ * tests/actionEvents.test.js.
+ */
+function breakingRule(rules) {
+  const breaking = rules?.breaking;
   if (!breaking) return null;
   const m = /^(.+)\s+played$/.exec(breaking.when);
   if (!m) return null;
   return { selector: m[1].trim(), varName: breaking.var };
+}
+
+function breakingSelectorAndVar(ctx) {
+  return breakingRule(ctx.rules);
+}
+
+/**
+ * WHICH SUIT THE BREAK SETS FREE — the lead constraint's suit, not the
+ * breaking selector's.
+ *
+ * They are the same thing in Spades and deliberately different in Hearts, where
+ * the queen of spades breaks hearts: `breaking.when` is `tag:penalty played` and
+ * what it unlocks is `suit:hearts`. The felt is announcing what may now be LED,
+ * so it asks the lead constraint.
+ */
+function brokenLeadSuit(rules) {
+  for (const [selector, rule] of Object.entries(rules?.leadConstraints || {})) {
+    if (rule !== 'untilBroken') continue;
+    const m = /^suit:(.+)$/.exec(selector);
+    if (m) return m[1];
+  }
+  return null;
 }
 
 // Returns the ids in `hand` that are legal to play right now, applying first-lead,
@@ -1771,8 +1868,46 @@ function placeCard(ctx, move) {
     ctx.setVar('leader', seat);
   }
 
+  // THE MOMENT THE HAND CHANGES SHAPE, said out loud.
+  //
+  // This used to be the bare `setVar` and nothing else, which made breaking the
+  // one rule in the genre that the felt never mentioned: a player discovered it
+  // by noticing that leading a spade was suddenly allowed (#151). Emitted on the
+  // false->true transition only — the tenth spade of a hand breaks nothing — so
+  // the event is genuinely "once per hand" and the banner it wins is the banner
+  // for the thing that actually happened.
+  //
+  // `cards`, not a bare `cardId`: the top-level `cards` array is the only shape
+  // the view filter knows how to strip (src/engine/view.js's `eventsFor`), and
+  // the card that breaks a suit is sometimes the fourth card of a trick — by the
+  // time a joiner is handed the event, it has been swept into a `won` pile they
+  // may not see. An id parked anywhere else would sail past the filter and out
+  // to a seat that is not allowed to have it.
+  //
+  // `rank`/`suit` ride alongside it because `describeEvent` is handed the event
+  // and a voice, never a card lookup, and "Spades are broken" without the card
+  // that broke them is half a sentence. They are safe to send where the id is
+  // not, and provably so rather than by judgement: the card was moved into
+  // `trick` — `visibility: 'all'` — four lines above this, so at the instant
+  // this fires every seat can already see it. The id is filtered anyway, on the
+  // principle that the filter is the thing that should be deciding.
   const broken = breakingSelectorAndVar(ctx);
-  if (broken && selectorMatches(card, broken.selector)) ctx.setVar(broken.varName, true);
+  if (broken && selectorMatches(card, broken.selector) && !ctx.var(broken.varName)) {
+    ctx.setVar(broken.varName, true);
+    ctx.emit('broken', {
+      seat,
+      cards: [cardId],
+      // WHAT MAY NOW BE LED, which is not always the suit of the card that did
+      // it: in Hearts the queen of spades breaks hearts. This is the fact the
+      // sentence and the marker are both about, so it is the one on the event.
+      suit: brokenLeadSuit(ctx.rules) || card.suit || null,
+      // And what broke it, for the second half of the sentence. `describeEvent`
+      // is handed the event and a voice, never a card lookup.
+      card: { rank: card.rank ?? null, suit: card.suit ?? null },
+      selector: broken.selector,
+      varName: broken.varName,
+    });
+  }
 }
 
 function applyPlayCard(ctx, move) {
@@ -1898,8 +2033,13 @@ const trickTaking = {
   // var without the `__` prefix, which is the view layer's way of saying "this
   // one is everybody's" — and it has to be, because the seats bidding after you
   // are entitled to hear what you said.
+  //
+  // WHETHER THE SUIT IS BROKEN is one of those facts, and for a year it was not
+  // here: this line read `rules.broken?.varName`, and no manifest has a
+  // `rules.broken` — the declaration is `rules.breaking.var` (schema/), which is
+  // what `breakingRule` reads. The optional chaining made the mistake silent.
   publicVars: (rules) => ['leader', 'led', 'trickNumber', 'passDirection', 'trumpSuit',
-    ...(rules.broken?.varName ? [rules.broken.varName] : [])],
+    ...(breakingRule(rules)?.varName ? [breakingRule(rules).varName] : [])],
 
   defaultZones(rules, seats) {   // eslint-disable-line no-unused-vars
     return [
@@ -2487,8 +2627,8 @@ const trickTaking = {
    * @returns chips the felt draws in order, or null for a pack with no contract
    */
   contractChips(ctx, seat) {
-    if (ctx.rules.trump !== 'chosen') return null;
     const chips = [];
+    if (ctx.rules.trump !== 'chosen') return brokenChips(ctx, chips);
     const bidding = ctx.turn.phase === 'bid';
     const holder = contractSeatOf(ctx);
     const trump = trumpSuitOf(ctx);
@@ -2507,7 +2647,7 @@ const trickTaking = {
         suit: holder === null ? null : (ctx.playerVar(holder, 'bidTrump') ?? null),
         aria: standing > 0 ? `High bid ${standing}` : 'No bid yet',
       });
-      return chips;
+      return brokenChips(ctx, chips);
     }
 
     if (trump) {
@@ -2537,7 +2677,7 @@ const trickTaking = {
         aria: meld.points > 0 ? `Your meld: ${meld.points}` : 'You declared no meld',
       });
     }
-    return chips.length ? chips : null;
+    return brokenChips(ctx, chips);
   },
 
   /**
@@ -2582,6 +2722,31 @@ const trickTaking = {
         .join(', ');
       return { text: `You meld ${ev.points}: ${named}.`, tone: 'good' };
     }
+    /**
+     * THE ONE RULE THE FELT NEVER MENTIONED (#151).
+     *
+     * `priority: BROKEN_PRIORITY` because the card that breaks a suit is very
+     * often the fourth card of a trick, and the trick has its own celebration
+     * — see `TRICK_BANNER_PRIORITY` in src/ui/celebrations.js. "Fig takes the
+     * trick" is the smaller of the two things that just happened: the trick is
+     * one of thirteen and the break governs every lead for the rest of the hand.
+     *
+     * The suit named is the one that may now be LED (`brokenLeadSuit`), which is
+     * not always the suit of the card: in Hearts the queen of spades breaks
+     * hearts. Neutral in tone on purpose — breaking is a change in the shape of
+     * the hand rather than a gain or a loss, and it is as often the player's own
+     * doing as anyone's.
+     */
+    if (ev.type === 'broken') {
+      if (!ev.suit) return null;
+      const who = ev.seat === viewerSeat ? 'you' : name(ev.seat);
+      const card = shortCardName(ev.card?.rank, ev.card?.suit);
+      return {
+        text: `${suitLabel(ev.suit)} are broken${card ? ` — ${who} played the ${card}` : ''}`,
+        tone: 'neutral',
+        priority: BROKEN_PRIORITY,
+      };
+    }
     return null;
   },
 
@@ -2592,6 +2757,16 @@ const trickTaking = {
       ? `Everyone plays one card; the highest ${trump.replace(/s$/, '')} takes the trick, or the highest card of the suit that was led if no ${trump.replace(/s$/, '')} was played.`
       : 'Everyone plays one card; the highest card of the suit that was led takes the trick.'];
     if (rules.followSuit === 'must') out.push('Follow the suit that was led if you can.');
+    // BREAKING, on the page that is supposed to explain the game. The rule was
+    // enforced from the day the template shipped and written down nowhere: a
+    // player who tried to lead a spade was refused, and the rules page had no
+    // sentence to send them to (#151).
+    const unlocked = brokenLeadSuit(rules);
+    if (unlocked && breakingRule(rules)) {
+      out.push(`You may not LEAD ${unlocked} until the suit is broken — until somebody, unable to `
+        + 'follow what was led, has had to throw one in. After that anybody may lead it, and the '
+        + 'felt says so the moment it happens.');
+    }
     if (rules.followSuit === 'must-beat') {
       out.push('Follow the suit that was led, and play higher than the card that is winning if you hold one. '
         + 'If you are out of that suit you must trump instead — and over-trump if somebody already has.');
