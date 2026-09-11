@@ -40,8 +40,52 @@ import { agrees } from './describe.js';
  */
 export const BANNER_HOLD_MS = 2200;
 
+/**
+ * HOW LONG THE PILL TAKES TO ARRIVE, AND HOW LONG IT TAKES TO LEAVE.
+ *
+ * Derived rather than chosen, because `banner-in` already answers it: its
+ * entrance frames finish at 18% and its exit begins at 82%, so each movement is
+ * 0.18 of the hold. A banner whose middle is a PERSON'S OWN PAUSE (`showBanner`
+ * with `held`, #180) is built from those same two movements at the same speed —
+ * `banner-enter` and `banner-leave` in table.css — rather than from a second set
+ * of numbers that would read as a different banner.
+ *
+ * Handed to the stylesheet as `--banner-fade`; the CSS fallback is pinned to
+ * this constant by tests/eventBanner.test.js, exactly as the hold is.
+ */
+export const BANNER_FADE_MS = Math.round(BANNER_HOLD_MS * 0.18);
+
 /** Clearance kept between the pill and whatever is above and below it. */
 const BANNER_CLEARANCE = 6;
+
+/**
+ * The way out of a trick hold that has no clock on it, said in the live region.
+ *
+ * The status bar says the same thing in its 122px slot ("Nell's trick. Tap to
+ * go on."); this is the announced copy, which has room to name both inputs
+ * because the hold takes either.
+ */
+export const TRICK_TAP_HINT = 'Tap the table or press Enter to go on.';
+
+/**
+ * WHAT `#log` SAYS WHILE AN OPEN-ENDED TRICK HOLD IS WAITING (#180).
+ *
+ * TWO FACTS, ONE WRITE. `#log` is `role="status"` and the announced surface, and
+ * both halves of this beat now want it: the hold's own branch has to say how to
+ * end a pause with no clock on it — the accessibility net for a gate a sighted
+ * pointer user discovers by tapping — and the announcement wants to name the
+ * winner while the four cards are still whole. Two writes in the same frame is
+ * one sentence announced and one lost, and the one at risk was the instruction.
+ *
+ * JOINED WITH A FULL STOP rather than a dash, because half the narrations this
+ * receives already contain an em dash ("Trick is yours — 3 of your 5") and a
+ * sentence with two of them parses as neither. Any stop the narration already
+ * ends with is dropped so the join cannot double it.
+ */
+export function trickHoldLine(trickText) {
+  const said = String(trickText ?? '').trim().replace(/[.!?]+$/, '');
+  return said ? `${said}. ${TRICK_TAP_HINT}` : TRICK_TAP_HINT;
+}
 
 /**
  * WHERE THE PILL'S CENTRE GOES, in viewport pixels — the reserved band.
@@ -189,7 +233,13 @@ export function createCelebrations({
 
   function hideBanner(session) {
     if (session?.bannerTimer) session.bannerTimer.cancel();
-    if (session) session.bannerTimer = null;
+    if (session) {
+      session.bannerTimer = null;
+      // A HELD PILL HAS NO CLOCK OF ITS OWN (#180), so every door that takes a
+      // banner down must also take away the claim on it — otherwise the next
+      // `releaseBanner` would fade out whatever the felt is saying by then.
+      session.bannerHeld = false;
+    }
     el.eventBanner.hidden = true;
   }
 
@@ -254,19 +304,43 @@ export function createCelebrations({
    * carries the same sentence — so it is aria-hidden and free to be theatrical.
    * `tone` is 'good' | 'bad' | 'neutral': winning a clean trick sparkles, eating
    * the queen of spades stings, a bot's trick just gets noted.
+   *
+   * `held` IS A PILL WITH NO CLOCK ON IT (#180), for the one beat whose length
+   * is a person rather than a number: the Manual rung's trick hold, which ends
+   * on a tap. Every rung that names a duration holds for less than
+   * BANNER_HOLD_MS — Relaxed at the slowest flight is the longest of them and it
+   * is half a second short — so an ordinary banner still outlasts the beat it
+   * belongs to. An indefinite one does not, and a sentence that dismissed itself
+   * two seconds into an open-ended pause would leave the player back where the
+   * bug started, looking at an unexplained trick.
+   *
+   * IT IS A HELD STATE, NOT A LONGER ANIMATION AND NOT A LOOP (cardstock#24).
+   * The pill runs `banner-enter` — the same arrival, at the same speed — and
+   * then nothing at all runs: a static box sitting on the resting transform
+   * through `animation-fill-mode: both`. `releaseBanner` is the other end.
    */
-  function showBanner(session, text, tone) {
+  function showBanner(session, text, tone, { held = false } = {}) {
     if (session.bannerTimer) session.bannerTimer.cancel();
+    session.bannerTimer = null;
+    session.bannerHeld = false;
     el.eventBanner.textContent = text;
+    // Assigning the whole class string is also what clears `--held` and `--out`
+    // from the pill this one replaces.
     el.eventBanner.className = `event-banner event-banner--${tone}`;
     // The hold is ONE number (BANNER_HOLD_MS) spent twice: the timer below and
     // the entrance animation's duration, which used to be a `2.2s` literal in
-    // table.css that nothing tied to this one.
+    // table.css that nothing tied to this one. The fade is the same deal.
     el.eventBanner.style.setProperty('--banner-hold', `${BANNER_HOLD_MS}ms`);
+    el.eventBanner.style.setProperty('--banner-fade', `${BANNER_FADE_MS}ms`);
     el.eventBanner.hidden = false;
     // Measuring forces the same style flush `void offsetWidth` used to, so this
     // is also what restarts the entrance animation on back-to-back banners.
     placeBanner();
+    if (held) {
+      el.eventBanner.classList.add('event-banner--held');
+      session.bannerHeld = true;
+      return;
+    }
     el.eventBanner.classList.add('event-banner--in');
     const myEpoch = currentEpoch();
     session.bannerTimer = Arcade.session.setTimeout(() => {
@@ -277,13 +351,53 @@ export function createCelebrations({
   }
 
   /**
-   * A trick resolving: gather its cards to the winner's seat, say what it cost,
-   * and celebrate — or wince. The engine already moved the cards (they left the
-   * trick zone before this render), so the gather flies COPIES from where the
-   * trick was to where it went, the same clone-and-animate deal every card
-   * flight uses.
+   * A HELD PILL COMES DOWN WITH THE THING IT WAS HELD FOR (#180).
+   *
+   * Called from the one place that knows the hold is over — `runTrickReveal`'s
+   * `release`, whichever end asked for it — so the sentence and the four cards
+   * leave the felt together: the exit runs over the top of the gather instead of
+   * the whole celebration arriving as the cards do.
+   *
+   * A no-op unless the banner currently on the felt is the held one. If a louder
+   * event has since raised its own pill (#151's floor), that pill owns its own
+   * clock and this must not reach round and cut it short.
    */
-  function celebrateTrick(session, state, ev) {
+  function releaseBanner(session) {
+    if (!session?.bannerHeld) return;
+    session.bannerHeld = false;
+    if (el.eventBanner.hidden) return;
+    el.eventBanner.classList.remove('event-banner--held');
+    el.eventBanner.classList.add('event-banner--out');
+    if (session.bannerTimer) session.bannerTimer.cancel();
+    const myEpoch = currentEpoch();
+    session.bannerTimer = Arcade.session.setTimeout(() => {
+      session.bannerTimer = null;
+      if (myEpoch !== currentEpoch()) return;
+      el.eventBanner.hidden = true;
+    }, BANNER_FADE_MS);
+  }
+
+  /**
+   * A TRICK RESOLVING IS TWO MOMENTS, NOT ONE (#180) — and they no longer happen
+   * at the same instant, because the beat between them is now long enough to
+   * notice.
+   *
+   * THE ANNOUNCEMENT is what the table SAYS: the banner naming the winner, the
+   * live region, the trick cue, the pulse on the seat that took it. It belongs
+   * at the START of the hold, while the four cards are whole and the player is
+   * looking at them — that is the one beat that exists to be read, and before
+   * #180 it was the one beat with nothing on it to read.
+   *
+   * THE GATHER is what the table DOES: copies flying to the winner's seat. It
+   * stays behind the hold's `resume`, because the sweep is exactly what a tap is
+   * asking for.
+   *
+   * `celebrateTrick` is still both in one breath, and it is still the whole
+   * story on every path with no hold to split: the multiplayer path where the
+   * felt could not pose the trick, and the Instant rung, whose hold is the
+   * card's own flight and has no reading time to announce into.
+   */
+  function announceTrick(session, state, ev, { held = false } = {}) {
     const mine = me.holds(ev.seat);
     // WHICH WAY IS UP IS THE PACK'S (src/ui/scoreDirection.js). `bad` used to be
     // `mine && ev.points > 0` for every pack alike, which is Hearts' reading
@@ -295,28 +409,44 @@ export function createCelebrations({
     const said = trickNarration({ state, ev, mine, seatLabel });
     const bad = said.bad;
 
+    showBanner(session, said.text, said.tone, { held });
+    playTrickTaken({ bad });
+    pulseSeat(ev.seat, bad ? 'bad' : 'good');
+    // The live region is the CALLER'S, deliberately: an open-ended hold has a
+    // second fact to fit in the same write (`trickHoldLine`), and two writes in
+    // one frame is one sentence announced and one lost.
+    return said;
+  }
+
+  /**
+   * The sweep. The engine already moved the cards (they left the trick zone
+   * before this render), so this flies COPIES from where the trick was to where
+   * it went, the same clone-and-animate deal every card flight uses.
+   */
+  function gatherTrick(state, ev) {
     const from = zoneRect('trick');
     // One measurement, several copies, the last of them 550ms behind the first
     // — see animatePenaltyDraw above for why that no longer scatters them
     // across two plates.
     const to = from ? cardSizedRect(seatRect(ev.seat), from.width * 0.6) : null;
-    if (from && to && motionAllowed()) {
-      const myEpoch = currentEpoch();
-      ev.cards.forEach((cardId, i) => {
-        const card = cardById(state, cardId);
-        if (!card) return;
-        Arcade.session.setTimeout(() => {
-          if (myEpoch !== currentEpoch()) return;
-          flyCard(art().face(card), from, to, { fade: true, duration: 320 });
-        }, 140 + i * 70);
-      });
-    }
+    if (!from || !to || !motionAllowed()) return;
+    const myEpoch = currentEpoch();
+    ev.cards.forEach((cardId, i) => {
+      const card = cardById(state, cardId);
+      if (!card) return;
+      Arcade.session.setTimeout(() => {
+        if (myEpoch !== currentEpoch()) return;
+        flyCard(art().face(card), from, to, { fade: true, duration: 320 });
+      }, 140 + i * 70);
+    });
+  }
 
-    showBanner(session, said.text, said.tone);
+  /** Both halves, in one breath — the paths with no hold to split them over. */
+  function celebrateTrick(session, state, ev) {
+    const said = announceTrick(session, state, ev);
     el.log.textContent = said.text;
-    playTrickTaken({ bad });
-
-    pulseSeat(ev.seat, bad ? 'bad' : 'good');
+    gatherTrick(state, ev);
+    return said;
   }
 
   /* ------------------------------------------------------------------ *
@@ -489,5 +619,9 @@ export function createCelebrations({
     el.table.classList.add('table--flash');
   }
 
-  return { hideBanner, showBanner, celebrateTrick, celebrateAction, animatePenaltyDraw };
+  return {
+    hideBanner, showBanner, releaseBanner,
+    announceTrick, gatherTrick, celebrateTrick,
+    celebrateAction, animatePenaltyDraw,
+  };
 }

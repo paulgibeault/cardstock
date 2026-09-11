@@ -113,6 +113,11 @@ export const SHARED_TRICK_HOLD_MS = 2000;
  * `narrate` describes below). There is nothing to hold then, so nothing is
  * held: the gather happens as it always did.
  *
+ * `reads` IS WHETHER THE HOLD CONTAINS READING TIME (#180) — true at every rung
+ * whose hold is more than the card arriving, and false at Instant, whose hold is
+ * the flight alone. src/ui/table.js announces the winner at the TOP of a hold
+ * that reads and with the gather at the one that does not.
+ *
  * `shared` is a DIFFERENT multiplayer question and the one `posed` does not
  * cover: a LOCAL move at a shared table poses like any other, so it is the case
  * SHARED_TRICK_HOLD_MS exists for.
@@ -144,9 +149,21 @@ export function trickRevealPlan(events, {
     : read === 0 ? flightMs
       : Math.max(MIN_TRICK_REVEAL_MS, flightMs + Math.round(READ_AFTER_LANDING_MS * read));
 
-  if (!shared) return { trick, holdMs: natural };
+  // IS THERE A BEAT TO READ THE TRICK ON, or only a card arriving? (#180)
+  //
+  // The table says who won at the TOP of a hold rather than after it, because
+  // the whole point of the hold is that the player is looking at four whole
+  // cards and wants to know what just happened to them. Instant is the one rung
+  // where that is wrong: its hold is the flight and nothing else, so an
+  // announcement at the top would name the winner — and sound the trick cue —
+  // while the deciding card is still in the air. At that rung the announcement
+  // stays where it has always been, with the gather.
+  const reads = read == null || read > 0;
+
+  if (!shared) return { trick, holdMs: natural, reads };
   return {
     trick,
+    reads,
     holdMs: natural == null ? SHARED_TRICK_HOLD_MS : Math.min(SHARED_TRICK_HOLD_MS, natural),
   };
 }

@@ -187,6 +187,13 @@ export function createSession({
     // one is cancelled by stopSession below.
     botTimer: null,
     bannerTimer: null,
+    // THE ONE BANNER WITH NO TIMER (#180). A trick held at a rung that waits for
+    // a person keeps its pill up for the whole hold, so there is nothing armed
+    // to take it down and something has to remember that it is standing —
+    // `releaseBanner` brings it down with the cards, and every other door that
+    // clears the felt (`hideBanner`, `stopSession`) drops the claim so a later
+    // release cannot cut short whatever the banner is saying by then.
+    bannerHeld: false,
     announceTimers: [],
     // THE ROUND ENDING'S OWN TIMERS (#150). `runRoundBeat` used to fire these
     // straight at `Arcade.session.setTimeout` and keep no handle: the only
@@ -228,6 +235,7 @@ export function stopSession(session) {
   session.botTimer = null;
   if (session.bannerTimer) session.bannerTimer.cancel();
   session.bannerTimer = null;
+  session.bannerHeld = false;
   for (const timer of session.announceTimers) timer.cancel();
   session.announceTimers = [];
   for (const timer of session.beatTimers) timer.cancel();

@@ -74,7 +74,7 @@ import { suggestMove } from './hint.js';
 import { schedule } from './clock.js';
 import { line, svgNode, clearSvgCache } from './dom.js';
 import { promptChoice, closeChoiceDialog } from './choiceDialog.js';
-import { createCelebrations, TRICK_BANNER_PRIORITY } from './celebrations.js';
+import { createCelebrations, TRICK_BANNER_PRIORITY, trickHoldLine } from './celebrations.js';
 import { showCardModel, renderShowCard } from './showCard.js';
 import { createContractLadder } from './contractLadder.js';
 import { createContractStrip } from './contractStrip.js';
@@ -3730,7 +3730,12 @@ function hideShowCard() {
   el.showCard.hidden = true;
   el.showCard.replaceChildren();
 }
-function celebrateTrick(state, ev) { if (moments) moments.celebrateTrick(session, state, ev); }
+function celebrateTrick(state, ev) { return moments ? moments.celebrateTrick(session, state, ev) : null; }
+// THE TWO HALVES OF THAT, for the beat that now has room between them (#180):
+// what the table SAYS when the hold opens, and what it DOES when the hold ends.
+function announceTrick(state, ev, opts) { return moments ? moments.announceTrick(session, state, ev, opts) : null; }
+function gatherTrick(state, ev) { if (moments) moments.gatherTrick(state, ev); }
+function releaseBanner() { if (moments) moments.releaseBanner(session); }
 function celebrateAction(state, events, opts) { return moments ? moments.celebrateAction(session, state, events, opts) : null; }
 function animatePenaltyDraw(state, seat, count, delay) { if (moments) moments.animatePenaltyDraw(state, seat, count, delay); }
 
@@ -4051,21 +4056,36 @@ function takeTrickPose(move) {
  *
  * The fourth card lands on a trick that KEEPS it — `animateMove` flies it onto
  * the posed position, so the copy that lands is the card the player then reads
- * — and everything the sweep is (the gather flight, the banner, the seat pulse,
- * the next turn, a round ending underneath it) waits behind `resume`.
+ * — and everything the SWEEP is (the gather flight, the next turn, a round
+ * ending underneath it) waits behind `resume`.
+ *
+ * WHAT NO LONGER WAITS IS THE ANNOUNCEMENT (#180). The banner naming the winner,
+ * the live region, the trick cue and the seat pulse run at the TOP of the hold,
+ * while the four cards are whole and the player is looking at them — `announce`
+ * is that half, handed in by `afterMove` so this function owns WHEN and the
+ * caller owns what. It used to run with the gather, which was defensible while
+ * the hold was a fixed ~920ms and became the main thing wrong with the beat as
+ * soon as the hold waited for a tap: the player sat in front of four cards with
+ * nothing saying who had won them, tapped, and the answer flashed past as the
+ * cards flew away.
  *
  * TWO THINGS CAN END IT, AND ONLY ONE OF THEM IS A CLOCK (#176). A tap on the
  * felt or a key press runs the same `resume` immediately, and at the Manual rung
  * (`reveal.holdMs == null`) it is the only thing that ever will — no timer is
  * armed at all, exactly as `armAutoAdvance` arms none for that rung's sheet.
  */
-function runTrickReveal(poseState, move, from, reveal, resume) {
+function runTrickReveal(poseState, move, from, reveal, resume, announce) {
   // `waits` is what the felt SAYS about itself: a hold with no clock on it
   // reads as a frozen table unless the bar tells the player what moves it.
   session.trickBeat = { seat: reveal.trick.seat, waits: reveal.holdMs == null };
   session.trickPoseState = poseState;
   render(poseState);
   animateMove(poseState, move, from);
+
+  // AFTER the render and the flight, so the banner is measured against the felt
+  // it is about — `placeBanner` looks for the highest card in the middle, and on
+  // this frame that is the posed trick the sentence must not cover.
+  const said = announce ? announce() : null;
 
   const myEpoch = epoch;
   // ONE WAY OUT, TAKEN ONCE, whichever end it is asked from.
@@ -4087,6 +4107,11 @@ function runTrickReveal(poseState, move, from, reveal, resume) {
     session.revealTimer = null;
     session.trickBeat = null;
     session.trickPoseState = null;
+    // AND THE SENTENCE COMES DOWN WITH THE CARDS (#180). A held pill has no
+    // clock of its own; this is the clock. A no-op at every rung whose banner
+    // was given an ordinary lifetime, and a no-op if a louder event has since
+    // raised its own — see releaseBanner.
+    releaseBanner();
     resume();
   };
   // BEFORE THE TIMER IS ARMED, because for the Manual rung there is no timer:
@@ -4100,10 +4125,22 @@ function runTrickReveal(poseState, move, from, reveal, resume) {
     // player is stuck in. #log is `role="status"`, it is the surface every other
     // beat on this felt speaks through, and it has room for the whole sentence
     // where the bar's 122px slot ellipsises.
-    el.log.textContent =
-      `${seatPossessive(reveal.trick.seat)} trick. Tap the table or press Enter to go on.`;
+    //
+    // AND IT CARRIES THE ANNOUNCEMENT IN THE SAME WRITE (#180). The announcement
+    // half wants this surface too, and two writes in one frame is one sentence
+    // announced and one lost — the one at risk being the instruction, which is
+    // the whole accessibility net for a pause with no end on it. `trickHoldLine`
+    // is the join; the bare possessive is the fallback for a hold that somehow
+    // had no narration to announce.
+    el.log.textContent = trickHoldLine(
+      said ? said.text : `${seatPossessive(reveal.trick.seat)} trick`,
+    );
     return;
   }
+
+  // A TIMED HOLD SAYS ITS HALF NOW TOO. `settle` may still overwrite this with
+  // a louder action's sentence when the hold ends, exactly as it always has.
+  if (said) el.log.textContent = said.text;
 
   // HELD ON THE SESSION (#150), not merely epoch-checked. The epoch guard stops
   // a timer that has already fired from doing damage; a handle is what lets
@@ -4541,6 +4578,28 @@ function afterMove(state, move, from, message, { publish = true } = {}) {
   // what the summary reads, and what the next deal is already in.
   const shown = (plan && finalState) ? posedForShow(finalState, plan) : state;
 
+  // WHAT THE TABLE SAYS ABOUT THE TRICK, AND WHEN (#180).
+  //
+  // `announce` is non-null exactly when there is a hold with reading time in it
+  // to say it on, and `runTrickReveal` then runs it as the hold OPENS. Note that
+  // a `reveal` at all implies `trickPose` — `trickRevealPlan` is handed
+  // `posed: !!trickPose` and returns null without one — so `announce` being set
+  // is also the guarantee that the reveal path below is the one taken.
+  //
+  // THE PATHS WITH NO SUCH HOLD ARE UNTOUCHED, and that is what `closeTrick`
+  // below is for: the multiplayer path where the felt could not pose the trick,
+  // and the Instant rung, whose hold is the fourth card's flight and has no
+  // reading time in it. Both still announce and gather in one breath.
+  const announce = (trick && reveal?.reads)
+    ? () => announceTrick(shown, trick, { held: reveal.holdMs == null })
+    : null;
+  // What a resume still owes the trick.
+  const closeTrick = (st) => {
+    if (!trick) return;
+    if (announce) gatherTrick(st, trick);
+    else celebrateTrick(st, trick);
+  };
+
   if (state.gameOver) {
     // Recorded before the render, so the panel that is eventually built can
     // show the updated record — this game's counters are ours to display (§4:
@@ -4552,14 +4611,23 @@ function afterMove(state, move, from, message, { publish = true } = {}) {
     // whole: the card that ends a match is the card that won it. The match is
     // over either way, so nothing here races the hold — `offerFinalLook` waits
     // for the player anyway.
+    //
+    // AND IT SPLITS LIKE EVERY OTHER TRICK (#180). This resume is a different
+    // one, but the HOLD is the same hold: the same four cards, held the same
+    // length by the same rung, with the same player looking at them. The trick
+    // that ends a match is if anything the one most worth naming while it is
+    // still on the felt, and a last trick that announced itself differently
+    // from the twelve before it would read as the table losing its place. What
+    // is special about this path is what comes AFTER the gather — the win cue
+    // and the final look — and both of those still wait for the hold.
     const finish = () => {
       render(state, message);
       if (!reveal) animateMove(state, move, from);
-      if (trick) celebrateTrick(state, trick);
+      closeTrick(state);
       playWin();
       offerFinalLook(state, move, ending);
     };
-    if (reveal && trickPose) runTrickReveal(trickPose, move, from, reveal, finish);
+    if (reveal && trickPose) runTrickReveal(trickPose, move, from, reveal, finish, announce);
     else finish();
     return;
   }
@@ -4587,7 +4655,7 @@ function afterMove(state, move, from, message, { publish = true } = {}) {
     // The played card has already flown onto the posed trick; flying it again
     // here would be the same card arriving twice.
     if (!reveal) animateMove(shown, move, from);
-    if (trick) celebrateTrick(shown, trick);
+    closeTrick(shown);
     // After the card has been seen to land. A show's own steps are the
     // narration, so nothing competes with them — the first `showScored` banner
     // firing here would say pone's count over the last pegging card.
@@ -4624,7 +4692,7 @@ function afterMove(state, move, from, message, { publish = true } = {}) {
     // No bot is scheduled and nothing is announced until `settle` runs: the
     // beat is a pause in the game, not a pause the game plays through.
     cancelAnnouncementBeats();
-    runTrickReveal(trickPose, move, from, reveal, settle);
+    runTrickReveal(trickPose, move, from, reveal, settle, announce);
     return;
   }
   settle();
