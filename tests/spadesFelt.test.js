@@ -23,7 +23,7 @@ import { test } from "node:test";
 import assert from "node:assert";
 import { createState } from "../src/engine/state.js";
 import { makeCtx } from "../src/engine/context.js";
-import { zoneBadge, describeZone, zoneAriaLabel } from "../src/ui/describe.js";
+import { zoneBadge, describeZone, zoneAriaLabel, hiddenPileChip } from "../src/ui/describe.js";
 import { loadPackFromDisk } from "../tools/pack-test.mjs";
 
 function put(state, address, cardIds) {
@@ -117,9 +117,21 @@ test("one trick is a trick, not 1 tricks", async () => {
 
 // A PILE WITH CARDS IN IT INTRODUCES ITSELF; AN EMPTY ONE CANNOT (describe.js).
 // "0 tricks" on a dashed rectangle says less than the word does.
-test("an empty won pile keeps its name", async () => {
+//
+// ...ON THE FELT. A seat PLATE has no dashed rectangle, so the word arrived on
+// its own there and four Spades seats wore the bare claim "Won" before a card
+// was played (#148, round 6). Both halves are pinned together, because the
+// tempting fix is to take the name off `zoneBadge` and that is #122 undone.
+test("an empty won pile keeps its name on the felt and says nothing on a plate", async () => {
   const { state } = await table();
   assert.deepEqual(zoneBadge(state, wonInst(state)), { text: "Won", kind: "name" });
+  assert.equal(hiddenPileChip(state, wonInst(state)), null,
+    'a seat that has taken no tricks still wore the bare word "Won"');
+
+  // And the moment there is something to report, the chip is back — in tricks,
+  // not cards, which is the other half of item 29.
+  const { state: three } = await table({ tricks: [3, 0, 0, 0] });
+  assert.deepEqual(hiddenPileChip(three, wonInst(three)), { text: "Won 3 tricks" });
 });
 
 // The pile is still a pile of cards and the inspector still says how many —
@@ -203,4 +215,90 @@ test("a points auction is told what it has to beat", async () => {
   assert.deepEqual(ask.context[0], { seat: 0, value: "250" });
   assert.deepEqual(ask.context[1], { seat: 1, value: "—" }, "a pass is not a nil");
   assert.deepEqual(ask.context.at(-1), { label: "To beat", value: "250" });
+});
+
+/* ------------------------------------------------------------------ *
+ * #148 — the two numbers a partner needs, as one mark
+ * ------------------------------------------------------------------ *
+ *
+ * Round 6: what a seat BID and how many they have TAKEN both existed on the
+ * felt and neither was readable at a glance — 0.7rem digits with 0.48rem words
+ * under them, in a row with Cards and Bags. The template's side of the fix is
+ * the payload below; what the platform draws from it is
+ * tests/counterTrack.test.js, and how it looks is on the felt.
+ */
+
+const pipsOf = (pack, state, seat) => counterOf(pack, state, seat, "pips");
+
+test("the pip row carries the bid and the tricks, and says both in words", async () => {
+  const { pack, state } = await table({ bids: [3, 4, 0, 2], tricks: [2, 0, 0, 0] });
+
+  const made = pipsOf(pack, state, 0);
+  assert.equal(made.bid, 3);
+  assert.equal(made.taken, 2);
+  assert.equal(made.nil, false);
+  assert.equal(made.aria, "bid 3 tricks, 2 taken");
+  // It is the MINIMIZED face's counter; the open plate keeps the digits.
+  assert.ok(made.minimizedOnly);
+  assert.ok(counterOf(pack, state, 0, "bid").openOnly);
+  assert.ok(counterOf(pack, state, 0, "tricks").openOnly);
+
+  // A seat that has not spoken has no promise to draw, and the fallback text
+  // is the template's own bid badge rather than a blank.
+  const fresh = await table({ bids: [undefined, undefined, undefined, undefined] });
+  const unbid = pipsOf(fresh.pack, fresh.state, 0);
+  assert.equal(unbid.bid, null);
+  assert.equal(unbid.text, "—");
+  assert.equal(unbid.aria, "has not bid yet");
+});
+
+test("a nil is a nil on the pips, and a broken one says so", async () => {
+  const { pack, state } = await table({ bids: [0, 4, 3, 2] });
+  const clean = pipsOf(pack, state, 0);
+  assert.equal(clean.nil, true);
+  assert.equal(clean.text, "nil");
+  assert.equal(clean.aria, "bid nil, none taken");
+
+  const broken = await table({ bids: [0, 4, 3, 2], tricks: [1, 0, 0, 0] });
+  assert.equal(pipsOf(broken.pack, broken.state, 0).aria,
+    "bid nil, and has taken 1 — the nil is broken");
+});
+
+test("the overtricks are counted on the row as well as in the bags", async () => {
+  // Seat 1 promised four and has five: one of them is a bag, and the row draws
+  // it as one (src/ui/counterTrack.js) because this payload says so.
+  const { pack, state } = await table({ bids: [3, 4, 2, 2], tricks: [0, 5, 0, 0] });
+  const over = pipsOf(pack, state, 1);
+  assert.equal(over.bid, 4);
+  assert.equal(over.taken, 5);
+  assert.equal(over.aria, "bid 4 tricks, 5 taken, 1 over");
+});
+
+// A POINTS AUCTION IS NOT A ROW OF CIRCLES, and it is not a row of dashes
+// either: `bidBadge` prints "—" both for a seat that has not spoken and for one
+// that has passed, so three of Pinochle's four faces wore the same mark all
+// hand and only one of them meant "out of it".
+test("Pinochle keeps its digits, and a pass gives the face back", async () => {
+  const pack = await loadPackFromDisk("pinochle");
+  const state = createState({ pack, seats: 4, seed: "pinochle-plate" });
+  pack.template.setup(makeCtx(state));
+  state.playerVars[0].bid = 250;
+  state.playerVars[1].bid = 0;
+
+  assert.equal(counterOf(pack, state, 0, "pips"), undefined,
+    "a bid of 250 cannot be drawn as 250 circles");
+  const holder = counterOf(pack, state, 0, "bid");
+  assert.equal(holder.text, "250");
+  assert.ok(!holder.openOnly, "the seat holding the contract must wear its bid on the face");
+
+  const passed = counterOf(pack, state, 1, "bid");
+  assert.equal(passed.text, "—");
+  assert.ok(passed.openOnly, "a passed seat still wears a dash on every minimized face");
+  assert.equal(passed.aria, "passed", "the plate still says which kind of dash it is");
+
+  // A seat that has not spoken YET is a different thing and keeps its dash:
+  // during the auction that is the useful fact.
+  const quiet = counterOf(pack, state, 2, "bid");
+  assert.ok(!quiet.openOnly);
+  assert.equal(quiet.aria, "has not bid yet");
 });

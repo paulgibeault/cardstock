@@ -169,3 +169,85 @@ test("the fade is a mask on the two edge classes and nothing else", () => {
   assert.doesNotMatch(block[1], /animation/,
     "the scroll affordance must not animate — no infinite animations (cardstock#24)");
 });
+
+/* ------------------------------------------------------------------ *
+ * #148 — the drawn counter, and the plate that stopped claiming things
+ * ------------------------------------------------------------------ *
+ *
+ * Both halves live in `src/ui/table.js`, which no Node test can import (it
+ * resolves its element table on its first line), so both halves are source
+ * gates on the call sites. The behaviour itself is pinned where it is pure:
+ * tests/counterTrack.test.js for the row, tests/zoneBadge.test.js and
+ * tests/spadesFelt.test.js for the chip.
+ */
+
+test("the seat row actually draws the pip row it asks templates for", () => {
+  const table = code(read("src/ui/table.js"));
+  // Named in the import, or the branch below is a ReferenceError at boot.
+  assert.match(table, /import \{[^}]*renderCounterPips[^}]*\} from '\.\/counterTrack\.js';/,
+    "the pip renderer is not imported — the counter loop cannot be drawing one");
+  // The BRANCH, as a whole statement: matching `counterPips(` alone also
+  // matches the import, so deleting the call would leave this green.
+  assert.match(table, /\n\s*if \(counterPips\(counter\)\) \{\n\s*head\.appendChild\(renderCounterPips\(counter\)\);/,
+    "the counter loop no longer draws a pip counter as pips — Spades' faces are "
+    + "back to a bid digit and a trick digit (#148)");
+});
+
+test("the row honours openOnly, and the round summary asks past it", () => {
+  const table = code(read("src/ui/table.js"));
+  // The filter itself. Without it a minimized Spades face wears the bid digit,
+  // the trick digit AND the pip row that says both of them.
+  assert.match(table, /\n\s*\? list\.filter\(\(counter\) => !counter\.openOnly\)/,
+    "seatCountersFor no longer drops openOnly counters from a minimized face");
+  assert.match(table, /\n\s*: list\.filter\(\(counter\) => !counter\.minimizedOnly\);/,
+    "seatCountersFor no longer drops minimizedOnly counters from an open seat");
+  // ...and the one caller that wants neither face. `roundContractLines` reads
+  // the bid and the trick count off this list to write "Bid 4, took 5"; asking
+  // for the minimized face would hand it a list with both of them filtered out
+  // and the sheet would lose the line without erroring.
+  assert.match(table, /const counters = seatCountersFor\(finalState, seat, \{ all: true \}\);/,
+    "the round summary is reading a FACE's counters — a Spades bid and its "
+    + "trick count are openOnly, so its rows would quietly disappear");
+  assert.match(table, /\n\s*if \(all\) return list;/,
+    "`all` no longer returns the template's whole declaration");
+});
+
+test("an empty hidden pile draws no chip, and no empty strip either", () => {
+  const table = code(read("src/ui/table.js"));
+  assert.match(table, /\n\s*const chip = hiddenPileChip\(state, inst, pts\);\n\s*if \(!chip\) continue;/,
+    "buildSeatBody is back to printing a pile's bare name on the plate — a Spades "
+    + "seat that has taken nothing reads as having Won something (#148)");
+  // The strip is not nothing: `.seat__zones` carries a top margin, so appending
+  // an empty one makes every plate taller before the first trick than after it,
+  // and the seat row's fit ladder is measured on that height.
+  assert.match(table, /\n\s*if \(strip\.childElementCount\) into\.appendChild\(strip\);/,
+    "an empty pile strip is still being appended");
+});
+
+test("the pip row is painted in both themes and never animates", () => {
+  const css = read("src/ui/table.css");
+  // Every tone, and the ring an unfilled pip is drawn as: fill is the signal,
+  // colour is the reinforcement, so a row read without hue still says a number.
+  for (const cls of ["taken", "bag", "broken"]) {
+    assert.match(css, new RegExp(`\\.seat__pip--${cls} \\{[^}]*background:`),
+      `the ${cls} pip has no fill of its own`);
+  }
+  assert.match(css, /\.seat__pip \{[^}]*border: 1px solid var\(--pip-edge\);/,
+    "an unfilled pip has no ring, so an unmade trick is invisible rather than empty");
+  // BOTH THEMES, not one plus a tint: the tokens are defined in each palette.
+  const dark = /:root,\n\[data-theme="dark"\] \{([\s\S]*?)\n\}/.exec(css);
+  const light = /\[data-theme="light"\] \{([\s\S]*?)\n\}/.exec(css);
+  assert.ok(dark && light, "the two palettes are no longer where this gate looks");
+  for (const [name, block] of [["dark", dark[1]], ["light", light[1]]]) {
+    for (const token of ["--pip-edge", "--pip-bag"]) {
+      assert.match(block, new RegExp(`${token}:`), `${token} is undefined in the ${name} palette`);
+    }
+  }
+  // Battery contract (cardstock#24): a pip fills once and then sits still.
+  const block = /\.seat__pip \{([^}]*)\}/.exec(css);
+  assert.ok(block, "no .seat__pip block in src/ui/table.css");
+  assert.doesNotMatch(block[1], /animation/,
+    "a pip must not animate — no infinite animations (cardstock#24)");
+  assert.match(css, /\.seat__pips\[data-dense="true"\] \{[^}]*--pip-size:/,
+    "the dense row no longer shrinks its circles, so a bid of thirteen runs off the seat");
+});
