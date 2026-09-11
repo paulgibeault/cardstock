@@ -154,6 +154,11 @@ test("the stylesheet takes its position from the measurement, not from 34%", () 
   assert.match(source, /setProperty\('--banner-top'/,
     "nothing sets --banner-top, so the pill is wherever CSS last left it");
   assert.match(source, /bannerBand\(rects,/, "showBanner no longer measures the felt");
+  // The floor is the highest CARD in the middle, not the box nominally holding
+  // it: a trick is a fan of rotated copies and cribbage's sequence lives in
+  // #table-zones, so both stick out above #center-piles' own rect.
+  assert.match(source, /feltMiddle\.querySelectorAll\('\.card-face'\)/,
+    "the banner's floor is back to a container's rect rather than the cards in it");
 });
 
 test("the hold is one number, spent by both the timer and the animation", () => {

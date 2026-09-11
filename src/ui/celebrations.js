@@ -52,10 +52,12 @@ const BANNER_CLEARANCE = 6;
  * and the hand is sacred, so this only ever looks UP.
  *
  * Four boxes, all measured by the caller: `seats` is the opponent row (the
- * ceiling), `piles` is the centre piles (the floor, because that is the first
- * thing below with a rank corner on it), `middle` is the felt's middle (the
- * anchor for the fallback), and `hand` stands in as the floor for a pack whose
- * middle is empty. A missing box is a box that is not on this felt.
+ * ceiling), `piles` is the band the cards in the middle actually occupy (the
+ * floor, because that is the first thing below with a rank corner on it — see
+ * placeBanner, which measures the CARDS rather than the box nominally holding
+ * them), `middle` is the felt's middle (the anchor for the fallback), and
+ * `hand` stands in as the floor for a pack whose middle is empty. A missing
+ * box is a box that is not on this felt.
  *
  * `fits: false` means the band could not hold the pill at the height it was
  * measured at with clearance on both sides; the caller shrinks it to one line
@@ -188,10 +190,27 @@ export function createCelebrations({
       const r = node ? node.getBoundingClientRect() : null;
       return r && r.height > 0 ? { top: r.top, bottom: r.bottom, height: r.height } : null;
     };
+    // THE FLOOR IS THE HIGHEST CARD, not the box that nominally holds them.
+    // Cards in the middle are posed: a trick is a fan of rotated copies and a
+    // cribbage sequence lives in #table-zones rather than #center-piles, so
+    // both routinely stick out above `#center-piles`'s own rect. Measuring the
+    // box left six banners on five packs grazing a rank corner that was
+    // technically outside the pile it belonged to.
+    const pilesBox = box(el.centerPiles);
+    let cardTop = Infinity;
+    for (const face of el.feltMiddle ? el.feltMiddle.querySelectorAll('.card-face') : []) {
+      const r = face.getBoundingClientRect();
+      if (r.height > 0) cardTop = Math.min(cardTop, r.top);
+    }
+    const top = Number.isFinite(cardTop)
+      ? Math.min(cardTop, pilesBox ? pilesBox.top : cardTop)
+      : (pilesBox ? pilesBox.top : null);
+    const bottom = pilesBox ? Math.max(pilesBox.bottom, top) : top;
+    const floor = top === null ? null : { top, bottom, height: Math.max(1, bottom - top) };
     const rects = {
       seats: box(el.opponentsTop),
       middle: box(el.feltMiddle),
-      piles: box(el.centerPiles),
+      piles: floor,
       hand: box(el.handRow),
     };
     banner.classList.remove('event-banner--tight');
