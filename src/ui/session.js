@@ -137,6 +137,11 @@ export function createSession({
     // a second trick armed its own, or after the table closed finds nothing to
     // fire. At the Manual rung it is the ONLY way out: no timer is armed.
     trickResume: null,
+    // WHEN THAT HOLD OPENED, on `performance.now()`'s clock, so the input that
+    // opened it cannot be the input that ends it. `inputEndsTrickHold` at the
+    // foot of this file is the whole of why this is here; null whenever
+    // `trickResume` is.
+    trickHoldAt: null,
 
     // Which collapsed seat the player has PICKED to open, or null to let the
     // plate follow whoever is playing. The opponent row is rebuilt wholesale on
@@ -246,6 +251,7 @@ export function stopSession(session) {
   // of stopping a trick hold now that a tap can end one: a resume left on a
   // stopped session is a closure over a finished match waiting for a finger.
   session.trickResume = null;
+  session.trickHoldAt = null;
   if (session.advanceTimer) session.advanceTimer.cancel();
   session.advanceTimer = null;
   if (session.nudgeTimer) session.nudgeTimer.cancel();
@@ -256,6 +262,54 @@ export function stopSession(session) {
   session.peek = null;
   session.pendingRender = null;
   session.selection = null;
+}
+
+/* ------------------------------------------------------------------ *
+ * The trick hold's other end — which input is allowed to close it
+ * ------------------------------------------------------------------ */
+
+/**
+ * May an input stamped `inputAt` end the trick hold that opened at `openedAt`?
+ *
+ * THE GESTURE THAT OPENS A HOLD IS NOT THE GESTURE THAT ENDS IT (#176).
+ *
+ * As shipped, the hold worked for every trick a BOT completed and was skipped
+ * whole whenever the player laid the fourth card themselves: four cards
+ * appeared and play resumed immediately to the next trick — the one beat the
+ * hold exists to give, missing at exactly the moment the player had just
+ * acted. The reason is that the tap which plays the fourth card is ALSO a tap
+ * on the felt. `#hand` is inside `#table`; the card's own handler runs the move
+ * and `runTrickReveal` with it before that click has finished bubbling; the
+ * felt's listener then finds a live `trickBeat` and ends the hold it has just
+ * watched open. One tap, two meanings, inside one dispatch. The keyboard has
+ * the same shape — a hand card is a `role="button"` div, not a `<button>`, so
+ * Enter on it plays the card and then reaches the window's Enter-ends-the-hold
+ * listener as an ordinary key press with nothing to tell it apart.
+ *
+ * SO ASK WHEN THE INPUT STARTED, not where it landed. `Event.timeStamp` is a
+ * DOMHighResTimeStamp on the same time origin as `performance.now()` in every
+ * browser this ships to, so this is an exact comparison and not a tolerance:
+ * the playing tap carries a stamp from before the hold existed, and a genuine
+ * second tap carries one from after it. `>` rather than `>=`, so an input
+ * stamped at the very moment the hold opened reads as the one that opened it.
+ *
+ * NOT AN EXEMPTION FOR `#hand-row`, which is the fix this looks like and which
+ * would cover only the tap. A card DRAGGED onto the play zone commits on
+ * pointerup and raises its click on `#table-play`, which is not in the hand at
+ * all; the rail's own gestures commit from elsewhere again. Every one of them
+ * is nonetheless an input from before the hold, so the moment answers all of
+ * them at once and needs no list to maintain.
+ *
+ * IT FAILS OPEN. An unreadable stamp says yes. At the Manual rung
+ * `runTrickReveal` arms no timer whatsoever, so an input is the ONLY way out of
+ * the hold, and a predicate that refused an event it could not read would be a
+ * table that never moves again. The cost of guessing wrong in this direction is
+ * the bug above — one trick swept a beat early; the cost in the other is a dead
+ * game, and the two are not comparable.
+ */
+export function inputEndsTrickHold(openedAt, inputAt) {
+  if (!Number.isFinite(openedAt) || !Number.isFinite(inputAt)) return true;
+  return inputAt > openedAt;
 }
 
 /* ------------------------------------------------------------------ *

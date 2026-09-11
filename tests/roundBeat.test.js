@@ -486,7 +486,7 @@ test("the felt ends a trick hold on a tap: once, through the held resume", () =>
   assert.match(reveal[0], /reveal\.holdMs == null/,
     "the indefinite rung must arm no timer at all, rather than one with a null delay");
 
-  const end = table.match(/function endTrickHold\(\) \{[\s\S]*?\n\}/);
+  const end = table.match(/function endTrickHold\(\w*\) \{[\s\S]*?\n\}/);
   assert.ok(end, "one function for what ends a hold, so the tap and the key cannot drift");
   assert.match(end[0], /session\?\.trickResume/);
 
@@ -510,6 +510,56 @@ test("the felt ends a trick hold on a tap: once, through the held resume", () =>
     "stopSession must drop it too — cancelling the timer is only half of stopping "
     + "a hold that a tap can also end, and a resume left on a stopped session is a "
     + "closure over a finished match waiting for a finger");
+});
+
+// THE OTHER END OF THE SAME TAP (#176), reported as: "this works when I am not
+// the last to lay down a card. When I am the last one to lay the card play
+// immediately resumes to the next hand."
+//
+// `#hand` is inside `#table`, so the tap that plays the fourth card is also a
+// tap on the felt, and `runTrickReveal` has already opened the hold by the time
+// that click reaches the felt's listener — the gesture opened the hold and then
+// closed it. Enter on a hand card does the same: the card is a `role="button"`
+// div, which the window listener's `button, a[href], ...` opt-out does not
+// match. The rule that tells the two apart is a comparison of two numbers and
+// lives in src/ui/session.js, where tests/session.test.js calls it directly.
+// What can only be grepped is that the felt actually ASKS.
+test("neither input path can end the hold its own gesture opened", () => {
+  const table = read("src/ui/table.js");
+
+  // IMPORTED, not re-derived. A `>` written inline here is the same rule with
+  // no test on it, and this is a rule whose two failure modes are "the beat
+  // never happens" and "the table never moves again".
+  const imported = table.match(/import \{[\s\S]*?\} from '\.\/session\.js';/);
+  assert.ok(imported, "table.js must still take its Node-clean decisions from session.js");
+  assert.match(imported[0], /\binputEndsTrickHold\b/,
+    "the decision must come from src/ui/session.js, where a Node test can reach "
+    + "it — a copy of it inlined here is a rule with no test on it");
+
+  const reveal = table.match(/function runTrickReveal\([\s\S]*?\n\}/);
+  assert.match(reveal[0], /session\.trickHoldAt = performance\.now\(\)/,
+    "the hold must stamp WHEN it opened, on performance.now() — that is the time "
+    + "origin Event.timeStamp is measured against, and a stamp from any other "
+    + "clock makes the comparison meaningless");
+
+  const end = table.match(/function endTrickHold\(event\) \{[\s\S]*?\n\}/);
+  assert.ok(end, "endTrickHold must take the input, or it cannot ask about it");
+  assert.match(end[0], /inputEndsTrickHold\(session\.trickHoldAt, event\?\.timeStamp\)/,
+    "one place asks, so the tap and the key cannot disagree about it");
+
+  // BOTH DOORS, because a fix applied to only one of them leaves the other
+  // sweeping the trick the player just completed.
+  const felt = table.match(/el\.table\.addEventListener\('click',[\s\S]*?\n  \}\);/);
+  assert.ok(felt, "the felt's tap listener is not where this test thinks it is");
+  assert.match(felt[0], /endTrickHold\(event\)/,
+    "the felt's tap must hand its event over: the tap that plays the fourth card "
+    + "arrives here in the same dispatch that opened the hold");
+
+  const keys = table.match(/event\.key === 'Enter' \|\| event\.key === ' '[\s\S]*?preventDefault\(\);/);
+  assert.ok(keys, "the keyboard door is not where this test thinks it is");
+  assert.match(keys[0], /endTrickHold\(event\)/,
+    "and so must the key: Enter on a hand card plays it and then reaches the "
+    + "window listener, because a card is a role=button div and not a <button>");
 });
 
 // The round beat's own arithmetic is unchanged by any of this: a reveal is a

@@ -68,6 +68,10 @@ import {
   // The opponent row's pure decisions live over there so a Node test can reach
   // them — see the section header at the foot of session.js.
   normalizeSeatView, nextSeatView, seatToggleOffered, seatToShow,
+  // And for the same reason: "is this input a NEW gesture, or the one that
+  // opened the hold?" is a question about two numbers, and the answer to it is
+  // the whole of why a human-played fourth card no longer sweeps itself (#176).
+  inputEndsTrickHold,
 } from './session.js';
 import { createBotDriver, botVerb } from './botDriver.js';
 import { suggestMove } from './hint.js';
@@ -4073,11 +4077,24 @@ function takeTrickPose(move) {
  * felt or a key press runs the same `resume` immediately, and at the Manual rung
  * (`reveal.holdMs == null`) it is the only thing that ever will — no timer is
  * armed at all, exactly as `armAutoAdvance` arms none for that rung's sheet.
+ *
+ * BUT NOT THE TAP THAT OPENED IT. The player's own fourth card is played by a
+ * tap on a card inside `#table`, and this whole function runs before that click
+ * has finished bubbling to the felt — so the hold was opening and closing on one
+ * gesture, and the beat was missing for exactly the tricks the player finished.
+ * The moment the hold opens is stamped below and `endTrickHold` compares every
+ * input against it; `inputEndsTrickHold` in src/ui/session.js is the rule and
+ * the long version of this paragraph.
  */
 function runTrickReveal(poseState, move, from, reveal, resume, announce) {
   // `waits` is what the felt SAYS about itself: a hold with no clock on it
   // reads as a frozen table unless the bar tells the player what moves it.
   session.trickBeat = { seat: reveal.trick.seat, waits: reveal.holdMs == null };
+  // STAMPED FIRST, and on `performance.now()` rather than the session clock,
+  // because that is the origin `Event.timeStamp` is measured against. Before the
+  // render and the flight so that nothing between here and the input handlers
+  // can land inside the hold's own opening.
+  session.trickHoldAt = performance.now();
   session.trickPoseState = poseState;
   render(poseState);
   animateMove(poseState, move, from);
@@ -4099,6 +4116,7 @@ function runTrickReveal(poseState, move, from, reveal, resume, announce) {
   const release = () => {
     if (myEpoch !== epoch || !session || session.trickResume !== release) return;
     session.trickResume = null;
+    session.trickHoldAt = null;
     // The tap is beating a clock that is still running. Nothing else cancels it
     // at this point — `stopSession` is for a table going away, not for a beat
     // ending early — so a hold ended by hand would otherwise fire a second time
@@ -4153,15 +4171,24 @@ function runTrickReveal(poseState, move, from, reveal, resume, announce) {
 }
 
 /**
- * End a trick hold early, if one is running. True when there was one.
+ * End a trick hold early, if `event` is an input that is allowed to. True when
+ * there was a hold AND this input ended it.
  *
  * The felt's tap handler and the keyboard both come through here rather than
  * reaching for `session.trickResume` themselves, so "what a tap during a trick
  * beat does" is one function rather than two that can drift.
+ *
+ * AND THE INPUT ITSELF IS PART OF THE QUESTION (#176). A tap that plays the
+ * fourth card is also a tap on the felt, and the hold is opened inside that same
+ * dispatch — so without this the player's own last card opened a hold and swept
+ * it away in one gesture, and the beat existed only for tricks the bots ended.
+ * `inputEndsTrickHold` in src/ui/session.js is the rule, with the full account
+ * of why it is a moment rather than a list of exempt elements.
  */
-function endTrickHold() {
+function endTrickHold(event) {
   const resume = session?.trickResume;
   if (!resume) return false;
+  if (!inputEndsTrickHold(session.trickHoldAt, event?.timeStamp)) return false;
   resume();
   return true;
 }
@@ -5589,7 +5616,12 @@ export function initTable({ onExit }) {
     if (event.target.closest?.(
       '#help-button, #help-sheet, .opponent-row, #announce-bar, #emote-bar, #hand-sort, #action-button',
     )) return;
-    endTrickHold();
+    // AND NOT THE TAP THAT OPENED THIS HOLD. `#hand` is inside `#table`, so the
+    // tap that plays the fourth card arrives here too — after the card's own
+    // handler has already run the move and opened the beat, in the same dispatch
+    // — and this listener was ending the hold it had just watched open. The
+    // player only ever saw the beat on tricks a bot finished. See endTrickHold.
+    endTrickHold(event);
   });
 
   // The plate is anchored to a seat's rect, so anything that moves that rect
@@ -5609,10 +5641,15 @@ export function initTable({ onExit }) {
     // of Enter is a player leaving; this must not read it as "go on".
     if (session.trickBeat && (event.key === 'Enter' || event.key === ' ')
         && !event.target?.closest?.('button, a[href], input, select, textarea')) {
+      // AND NOT THE KEY PRESS THAT OPENED IT, for the reason the felt's click
+      // gives: a hand card is a `role="button"` div and not a `<button>`, so it
+      // does not match the opt-out above — Enter on the card that ends a trick
+      // plays it, opens the hold, and then arrives here as an ordinary key.
+      //
       // Space scrolls the page otherwise, which on a short felt moves the very
       // cards the hold exists to show — but only swallow the key if there was
       // actually a hold to end, which is what `endTrickHold` comes back with.
-      if (endTrickHold()) event.preventDefault();
+      if (endTrickHold(event)) event.preventDefault();
       return;
     }
     if (event.key !== 'Escape') return;
