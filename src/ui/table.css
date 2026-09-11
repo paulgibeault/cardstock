@@ -3398,7 +3398,14 @@ body.is-dragging .card-face { cursor: grabbing; }
 #event-banner {
   position: fixed;
   left: 50%;
-  top: 34%;
+  /* A RESERVED BAND, MEASURED — not a percentage of the window. `top: 34%` is
+     a number about the phone rather than about the table: on Thirteen at
+     375x812 it put the pill at 276px and the combination pile begins at 277px,
+     so the sentence covered the cards it was describing (#149). showBanner
+     measures the opponent row, the centre piles and the felt's middle and sets
+     `--banner-top` to the one strip that holds no rank corner; the percentage
+     survives only as the value before the first measurement. */
+  top: var(--banner-top, 34%);
   transform: translate(-50%, -50%);
   /* ABOVE THE CARDS IN FLIGHT (#fly-layer, one below), and it used to be under
      them. The gather that follows a trick flies four copies scaled up through
@@ -3413,7 +3420,22 @@ body.is-dragging .card-face { cursor: grabbing; }
   border-radius: 999px;
   font-weight: 700;
   font-size: 1rem;
-  white-space: nowrap;
+  /* IT WRAPS NOW. `white-space: nowrap` meant a long sentence ("… played four
+     consecutive pairs") grew sideways across the whole felt to stay on one
+     line, which is the other half of the same bug. ~28ch of text plus the
+     pill's own padding, never wider than the window.
+
+     `width: max-content` is not decoration. An absolutely positioned box with
+     `left: 50%` and no `right` shrink-to-fits into the room between 50% and the
+     right edge — HALF the window — so as soon as the text was allowed to wrap
+     it wrapped at 187px on a phone and "Nell played a pair" became three lines.
+     max-content asks for the sentence's own width and lets max-width be the
+     only thing that shortens it. */
+  width: max-content;
+  max-width: min(28ch + 2.6rem, calc(100vw - 2rem));
+  line-height: 1.25;
+  text-align: center;
+  overflow-wrap: break-word;
   pointer-events: none;
   background: var(--panel-bg);
   color: var(--panel-text);
@@ -3421,6 +3443,20 @@ body.is-dragging .card-face { cursor: grabbing; }
   box-shadow: 0 8px 24px var(--panel-shadow);
 }
 #event-banner[hidden] { display: none; }
+
+/* NO BAND WIDE ENOUGH FOR THE SENTENCE AS IT WRAPPED — Hearts at 375x812
+   leaves 37px between the opponent row and the trick. One line, a step
+   smaller, ellipsised: a truncated sentence is recoverable (#log carries it
+   whole, and it is the live region), and a covered rank is not. Applied by
+   showBanner, which then re-measures; see bannerBand in celebrations.js. */
+#event-banner.event-banner--tight {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 0.82rem;
+  padding: 0.3rem 0.95rem;
+  max-width: min(34ch, calc(100vw - 1.5rem));
+}
 
 /* The id selector above sets the neutral coat; the tones must out-rank it. */
 #event-banner.event-banner--good {
@@ -3431,9 +3467,13 @@ body.is-dragging .card-face { cursor: grabbing; }
 #event-banner.event-banner--bad { background: #8c2740; color: #fff; }
 #event-banner.event-banner--neutral { opacity: 0.92; }
 
-.event-banner--in { animation: banner-in 2.2s cubic-bezier(0.2, 0.9, 0.3, 1) both; }
+/* ONE SOURCE FOR THE HOLD. `--banner-hold` is set by showBanner from
+   BANNER_HOLD_MS (src/ui/celebrations.js) — the entrance and the timer that
+   hides the pill are the same number, and the fallback below is pinned to that
+   constant by tests/eventBanner.test.js so the pair cannot drift. */
+.event-banner--in { animation: banner-in var(--banner-hold, 2200ms) cubic-bezier(0.2, 0.9, 0.3, 1) both; }
 .event-banner--bad.event-banner--in {
-  animation: banner-in 2.2s cubic-bezier(0.2, 0.9, 0.3, 1) both,
+  animation: banner-in var(--banner-hold, 2200ms) cubic-bezier(0.2, 0.9, 0.3, 1) both,
              banner-shake 0.5s ease-in-out 0.15s;
 }
 
@@ -3916,18 +3956,22 @@ body.is-dragging .card-face { cursor: grabbing; }
  * stylesheet rather than in its markup, its output is pinned by tests, and it
  * is deliberately the renderer that shipped before the style registry existed.
  * So it gets the same two colours by the route it already themes itself with.
- * Every value below is dullPaper()/dullInk() of the live one, computed once. */
-.card-face--muted .card-face__bg { fill: #daddd9; stroke: #c5c7c3; }
+ * Every value below is dullPaper()/dullInk() of the live one, computed once —
+ * and pinned to those functions by tests/cardStyles.test.js, because the one
+ * failure mode of copying a computed colour into a stylesheet is the day the
+ * function moves and the copy does not. (It had: the neutral index was still
+ * dullInk of a #3f3f46 that the live rule stopped using.) */
+.card-face--muted .card-face__bg { fill: #bec2bd; stroke: #b0b4af; }
 .card-face--muted.card-face--red .card-face__corner,
-.card-face--muted.card-face--red .card-face__pip { fill: #901616; }
+.card-face--muted.card-face--red .card-face__pip { fill: #7a1212; }
 .card-face--muted.card-face--black .card-face__corner,
-.card-face--muted.card-face--black .card-face__pip { fill: #0d0d0d; }
+.card-face--muted.card-face--black .card-face__pip { fill: #0b0b0b; }
 .card-face--muted.card-face--neutral .card-face__corner,
-.card-face--muted.card-face--neutral .card-face__pip { fill: #313137; }
-.card-face--muted.card-face--painted.card-face--red .card-face__bg { fill: #962c22; }
-.card-face--muted.card-face--painted.card-face--yellow .card-face__bg { fill: #b08a22; }
-.card-face--muted.card-face--painted.card-face--green .card-face__bg { fill: #1e884b; }
-.card-face--muted.card-face--painted.card-face--blue .card-face__bg { fill: #255789; }
+.card-face--muted.card-face--neutral .card-face__pip { fill: #2d2d2d; }
+.card-face--muted.card-face--painted.card-face--red .card-face__bg { fill: #7f261c; }
+.card-face--muted.card-face--painted.card-face--yellow .card-face__bg { fill: #94751d; }
+.card-face--muted.card-face--painted.card-face--green .card-face__bg { fill: #1a733f; }
+.card-face--muted.card-face--painted.card-face--blue .card-face__bg { fill: #1f4974; }
 .card-face--red .card-face__corner,
 .card-face--red .card-face__pip { fill: #b91c1c; }
 .card-face--black .card-face__corner,
