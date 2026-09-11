@@ -19,6 +19,8 @@ import { makeCtx } from '../src/engine/context.js';
 import { applyMove } from '../src/engine/movePipeline.js';
 import { chooseBotMove, DIFFICULTIES } from '../src/engine/bot.js';
 import { createRng } from '../src/engine/rng.js';
+import { dailyRunFor, applyDailyLadder } from '../src/engine/dailyLadder.js';
+import { dailyDateStr } from '../src/engine/arcade-rng.js';
 import { createSeatTable } from '../src/players/seats.js';
 import { createTableHost } from '../src/match/host.js';
 import { createTableClient } from '../src/match/client.js';
@@ -184,8 +186,29 @@ function playMatch(pack, seats, seed, { choose = chooseBotMove } = {}) {
   return { outcome: 'complete', moves, rounds, winner: state.winner, totals: state.scores.slice() };
 }
 
-async function simulatePack(packId, games, { seats, variants, difficulty = null } = {}) {
+/**
+ * `--daily=<YYYY-MM-DD>`: swap the pack's shipped ladder for that day's
+ * generated one before a single hand is dealt.
+ *
+ * A GENERATED LADDER IS A RULE CHANGE, and rule changes are exactly what this
+ * tool exists to hunt deadlocks in — the same argument the header makes about
+ * variants. Every day is ten contracts nobody reviewed, so the bar is the one
+ * the fixed ladder already meets: whole matches END.
+ *
+ * The GAMES are still seeded per game (`daily:<date>:<pack>:<i>`) rather than
+ * all being the day's one real deal: what is under test is whether the LADDER
+ * is completable, and a hundred deals of it says far more about that than the
+ * single hand a player will actually be dealt.
+ */
+function dailyPack(pack, date) {
+  const run = dailyRunFor(pack, date);
+  applyDailyLadder(pack, run.ladder);
+  return run;
+}
+
+async function simulatePack(packId, games, { seats, variants, difficulty = null, daily = null } = {}) {
   const pack = await loadPackFromDisk(packId, variants);
+  const run = daily ? dailyPack(pack, daily) : null;
   const seatCount = seats ?? pack.manifest.players.best ?? pack.manifest.players.min;
   let completed = 0;
   let stalled = 0;
@@ -197,9 +220,10 @@ async function simulatePack(packId, games, { seats, variants, difficulty = null 
     // Seeded per game so a `--difficulty` run is as reproducible as the default
     // one; `chooseBotMove` only consults it at `hard`.
     const rng = createRng(`bot:${packId}:${i}`);
-    const result = playOne(pack, seatCount, `sim:${packId}:${i}`, difficulty ? {
-      choose: (state, seat) => chooseBotMove(state, seat, { difficulty, random: rng.next }),
-    } : undefined);
+    const result = playOne(pack, seatCount, `${run ? `daily:${run.date}` : 'sim'}:${packId}:${i}`,
+      difficulty ? {
+        choose: (state, seat) => chooseBotMove(state, seat, { difficulty, random: rng.next }),
+      } : undefined);
     totalMoves += result.moves;
     if (result.outcome === 'complete') completed++;
     else {
@@ -209,8 +233,10 @@ async function simulatePack(packId, games, { seats, variants, difficulty = null 
     }
   }
 
-  const label = variants?.length ? `${packId} + ${variants.join(', ')}` : packId;
+  const label = run ? `${packId} daily ${run.date}`
+    : (variants?.length ? `${packId} + ${variants.join(', ')}` : packId);
   console.log(`\n=== ${label} (${seatCount} seats, ${games} games) ===`);
+  if (run) console.log(`  ladder: ${run.ladder.contracts.map((c) => c.join('+')).join(' | ')}`);
   console.log(`  completed: ${completed}  stalled: ${stalled}  errored: ${errored}`);
   console.log(`  avg moves/game: ${(totalMoves / games).toFixed(1)}`);
   if (stallReasons.size) {
@@ -229,8 +255,9 @@ async function simulatePack(packId, games, { seats, variants, difficulty = null 
  * more than half of two-seat matches never got past rung six (#92). Same
  * shape of report as simulatePack so the same test can read it.
  */
-async function simulateMatches(packId, games, { seats, variants, difficulty = null } = {}) {
+async function simulateMatches(packId, games, { seats, variants, difficulty = null, daily = null } = {}) {
   const pack = await loadPackFromDisk(packId, variants);
+  const run = daily ? dailyPack(pack, daily) : null;
   const seatCount = seats ?? pack.manifest.players.best ?? pack.manifest.players.min;
   let completed = 0;
   let stalled = 0;
@@ -239,9 +266,10 @@ async function simulateMatches(packId, games, { seats, variants, difficulty = nu
   const stallReasons = new Map();
   for (let i = 0; i < games; i++) {
     const rng = createRng(`bot:${packId}:${i}`);
-    const result = playMatch(pack, seatCount, `sim:${packId}:${i}`, difficulty ? {
-      choose: (state, seat) => chooseBotMove(state, seat, { difficulty, random: rng.next }),
-    } : undefined);
+    const result = playMatch(pack, seatCount, `${run ? `daily:${run.date}` : 'sim'}:${packId}:${i}`,
+      difficulty ? {
+        choose: (state, seat) => chooseBotMove(state, seat, { difficulty, random: rng.next }),
+      } : undefined);
     rounds += result.rounds.length;
     if (result.outcome === 'complete') completed++;
     else {
@@ -250,7 +278,8 @@ async function simulateMatches(packId, games, { seats, variants, difficulty = nu
       stallReasons.set(result.reason, (stallReasons.get(result.reason) || 0) + 1);
     }
   }
-  console.log(`\n=== ${packId} (${seatCount} seats, ${games} matches) ===`);
+  console.log(`\n=== ${run ? `${packId} daily ${run.date}` : packId} (${seatCount} seats, ${games} matches) ===`);
+  if (run) console.log(`  ladder: ${run.ladder.contracts.map((c) => c.join('+')).join(' | ')}`);
   console.log(`  completed: ${completed}  stalled: ${stalled}  errored: ${errored}`);
   console.log(`  avg rounds/match: ${(rounds / games).toFixed(1)}`);
   if (stallReasons.size) {
@@ -790,12 +819,43 @@ async function main() {
   // run carried past round one, where that pack's runs and colour group are.
   const match = args.includes('--match');
 
+  // `--daily[=<YYYY-MM-DD>]` plays the pack's GENERATED ladder for that date
+  // instead of the one its manifest ships — `--daily` alone means today. With
+  // `--daily-days=N` it walks N consecutive days, which is the completion bar
+  // for #162: a generator that can emit an unfinishable ladder has to be caught
+  // over a run of days, not on the one the author happened to look at.
+  const dailyArg = args.find((a) => a === '--daily' || a.startsWith('--daily='));
+  const dailyFrom = dailyArg === undefined ? null
+    : (dailyArg === '--daily' ? dailyDateStr() : dailyArg.split('=')[1]);
+  if (dailyFrom !== null && !/^\d{4}-\d{2}-\d{2}$/.test(dailyFrom)) {
+    console.error(`--daily wants a YYYY-MM-DD date, got "${dailyFrom}"`);
+    process.exit(2);
+  }
+  const dailyDaysArg = args.find((a) => a.startsWith('--daily-days='));
+  const dailyDays = dailyDaysArg ? Number(dailyDaysArg.split('=')[1]) : 1;
+  if (!Number.isInteger(dailyDays) || dailyDays < 1) {
+    console.error('--daily-days wants a positive whole number');
+    process.exit(2);
+  }
+  const dailyDates = () => {
+    const [y, m, d] = dailyFrom.split('-').map(Number);
+    const at = new Date(Date.UTC(y, m - 1, d));
+    const p = (n) => (n < 10 ? '0' : '') + n;
+    const out = [];
+    for (let i = 0; i < dailyDays; i++) {
+      out.push(`${at.getUTCFullYear()}-${p(at.getUTCMonth() + 1)}-${p(at.getUTCDate())}`);
+      at.setUTCDate(at.getUTCDate() + 1);
+    }
+    return out;
+  };
+
   const run = protocol ? simulateProtocolPack : (match ? simulateMatches : simulatePack);
 
   if (packIds.length === 0) {
     console.error('Usage: simulate.mjs <pack-id> [<pack-id>...] | --all [--games=N] [--protocol]\n'
       + '                          [--difficulty=easy|medium|hard] [--vs=hard,easy] [--seats=N]\n'
-      + '                          [--budget-moves=N] [--rollout-depth=N|inf] [--confidence=N] [--match]');
+      + '                          [--budget-moves=N] [--rollout-depth=N|inf] [--confidence=N] [--match]\n'
+      + '                          [--daily[=YYYY-MM-DD]] [--daily-days=N]');
     process.exit(2);
   }
 
@@ -805,6 +865,19 @@ async function main() {
       if (contenders) {
         await tournamentPack(packId, games,
           { seats, contenders, budgetMoves, depth, confidence, match });
+        continue;
+      }
+      if (dailyFrom) {
+        // One report per day, and a summary line at the end: twenty days is
+        // twenty ladders, and the number that matters is whether ANY of them
+        // failed to finish.
+        let badDays = 0;
+        for (const date of dailyDates()) {
+          const { stalled, errored } = await run(packId, games, { seats, difficulty, daily: date });
+          if (stalled > 0 || errored > 0) { anyBad = true; badDays++; }
+        }
+        console.log(`\n=== ${packId} daily: ${dailyDays} ${dailyDays === 1 ? 'day' : 'days'} `
+          + `x ${games} ${match ? 'matches' : 'games'} — ${badDays} bad ${badDays === 1 ? 'day' : 'days'} ===`);
         continue;
       }
       const sets = variantSets === 'each'
