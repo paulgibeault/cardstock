@@ -2666,6 +2666,161 @@ against the felt's edge for the whole game. If it wants a floor later, the
 place to put one is a `--stage-card-w` that this rule and the 660px block both
 read.
 
+## The card a bot may not throw away, and the pile it may not build (#160)
+
+Round six of the playtest reported three bot behaviours and they were one
+thing: the move scorers. `easy` ranks by `botHeuristic` alone, a `hard` rollout
+plays every chair with it, `medium` ranks by `evaluateState`, and the Hint
+button ranks with the same code as all three — so a wrong opinion in a scorer
+is a wrong opinion everywhere, the felt's own advice to a human included.
+
+**Shedding: the eight was always the first card played.** `botHeuristic` read
+`1 + value × 0.01 + (effect ? 0.5 : 0)`, which rates an eight at 2.00 against a
+natural's 1.10 at best — an eight has both the biggest value in the deck and an
+effect. `evaluateState` agreed by another route: 50 points of deadwood at
+`DEADWOOD_WORTH` = 0.05 is 2.5 against a `WILD_WORTH` of 1.5, so the position
+that had just thrown its eight away graded above the one still holding it. A
+wild now scores 0 in the move scorer — above the holding moves, below every
+natural, which all score at least 1 — and is out of the deadwood sum
+altogether. That term prices what you are caught holding when somebody else
+goes out, and a wild is the one card you are never caught holding: it plays on
+anything, so it goes down on the turn you need it. What it costs is the round
+you lose with nothing to play, which is what `EXIT_WORTH` and `WILD_WORTH`
+already say.
+
+**Contract rummy: the cheap scorer and the position scorer disagreed.**
+`scoreDiscard` has always said `WILD_KEEP` = 100, never the discard.
+`evaluateState` contradicted it in both branches. Before the lay-down a wild's
+keep value came through `min(keep, PROGRESS_CAP) × PROGRESS_WORTH` = 6, against
+3 for the card slot and 3.75 of deadwood shed — so throwing one graded +0.75,
+better than holding a well-connected natural. After the lay-down a held wild
+counted `OUT_WORTH` = 1 against the same 6.75. One term instead: `WILD_HOLD` =
+10, outside the cap, with the wild left out of the deadwood sum. The floor it
+has to clear is the best discard any natural can offer (3 + 3.75), and the
+ceiling it must not swamp is `LAID_DOWN_WORTH` = 40, so a seat still lays down
+rather than sitting on a fistful of wilds. Going out is untouched in either
+direction: a hit that empties the hand ends the round inside `applyMove`, and
+`src/engine/bot.js` bands every round-ending move above anything the evaluator
+scored, so the last wild still goes down to go out.
+
+**Stockpile had no bot to speak of.** `botHeuristic` was five flat numbers —
+pass −2, discard −1, stock 3, discard pile 2, hand 1. Every discard scored the
+same, so the first card in hand order went onto pile 1 whatever it was, wilds
+included; every build play scored the same, so the pile was whichever the
+enumerator offered first. That is how a seat comes to lay the eleven that
+brings a pile to exactly the twelve sitting face up on the human's stock. There
+was no `evaluateState`, so `medium` was `easy`; and the manifest names no
+scoring, so a finished `hard` rollout came back worth zero for every candidate
+and `hard` fell back to enumeration order. Three difficulties, one bot.
+
+The pile is part of the answer now. Every stock top at this table is dealt face
+up, so "this play leaves a pile wanting the rank somebody else is waiting for"
+is a fact rather than a guess; discards stack into descending runs; a wild is
+never the discard. `evaluateState` grades the race — the stock, then the build
+piles that would take its top card, then what is in hand that could bring one
+to it, then the shape of the four discard piles — and reads nothing that is not
+face up for all four seats, which is what makes the rival term honest.
+`matchStanding` answers with the height of the stock, which *is* the race, so a
+finished rollout has a spread again.
+
+**The Stockpile stalls were the bot as well.** Completion there has been
+floored rather than gated since the `1000-sims-zero-stalls` note above,
+diagnosed as the rules-level dead end tracked at #20: `draw` and `recycled`
+both exhausted, every hand empty, no stock or discard top matching any build
+pile. Replaying `tools/simulate.mjs`'s own 300 seeds and dumping the position
+at the move cap says that diagnosis was right about 20 of main's 24 stalls —
+and that the seats were walking into it. Every stalled hand had its four stocks
+barely touched — the emptiest of the ninety-six still held 14 of the 30 it was
+dealt and 88 of them held 23 or more — with the whole circulating pool, about
+forty cards, sitting on the build piles: four seats each playing every card
+they legally could, and nothing left to complete a pile with.
+
+So a hand card is spent only when it is going somewhere — onto a pile still
+below my own stock top, or onto the last slot of a pile, which sweeps twelve
+cards back into the draw — and otherwise ranks with burying, and the turn ends
+with the card kept. Stock and discard-pile plays are never withheld: one is the
+race and the other frees a card that was already out of circulation. `BURY_COST`
+is the same fact told to the evaluator, since without it burying rated zero
+against −`OPEN_PILE` for opening a fresh pile and it buried by preference;
+`SEQUENCE_WORTH` went to 2.5 to stay above it, because a card laid one below
+the card it covers is not buried at all.
+
+**The numbers**, same seeds either side, `tools/simulate.mjs` verbatim:
+
+| bar | before | after |
+|---|---|---|
+| crazy-eights, 300 games, 4 seats | 300/300, 33.5 moves | 300/300, 28.6 moves |
+| crazy-eights, medium vs easy, 200 rounds | 58.0% | 60.5% |
+| crazy-eights, hard vs easy, 200 rounds | 59.0% | 57.5% |
+| crazy-eights, hard vs easy, 600 rounds | 59.0% | 60.0% |
+| wildfire, 300 games, 4 seats | 300/300, 56.4 moves | 300/300, 48.0 moves |
+| wildfire, medium vs easy, 200 rounds | 54.3% | 54.5% |
+| wildfire, hard vs easy, 200 rounds | 50.0% | 55.6% |
+| milestones, 2-seat match completion, 100 | 100/100 | 100/100 |
+| milestones, medium vs easy, 300 matches | 48.0% | 48.3% |
+| milestones, hard vs easy, 100 matches | 47.0% | 49.0% |
+| stockpile, 300 games, 4 seats | 276/300, 24 stalls | 290/300, 10 stalls |
+| stockpile, medium vs easy, 200 matches | 43.0% | 66.0% |
+| stockpile, hard vs easy, 200 matches | 43.0% | 64.5% |
+
+Read plainly: Stockpile gained a difficulty ladder where it had none — both
+`medium` and `hard` were losing to `easy` and now beat it by twenty points and
+more — and its stall rate halved, with every one of the ten survivors the #20
+dead end and none of them a live-lock (main had four of those). The shedding
+packs move a little, in the direction the change predicts and mostly inside the
+noise of 200 rounds; the one number that clearly moves is Wildfire's `hard`,
+which gains five and a half points, because a wild-draw-four held is a turn
+bought later rather than four cards given away now. Crazy Eights' `hard` is
+the reminder of how wide that noise is: it reads 1.5 points DOWN over 200
+rounds and 1.0 up over 600 of the same seed family, which is what a standard
+error of 3.5 points looks like. Two hundred rounds cannot see a change this
+size; the 600-round row is the one to quote. Milestones is flat, which
+is the #92 reading unchanged: with a heuristic that converges, neither search
+layer beats `easy` at matches. What did change there is the round score — the
+`medium` seat now finishes a match holding more points (242 against 228) while
+`easy` holds fewer — and that is the expected cost of holding a 25-point wild
+for the turn it is worth. The match is the bar this pack is decided by, and on
+it nothing moved.
+
+`tools/tune.mjs` swept both new weight sets at `medium` on whole matches, the
+`tune:` seed family the `sim:` runs above never touch: Stockpile's nine weights
+perturbed ±50% one at a time over 40 matches each, and Milestones' `WILD_HOLD`
+over 80. Nothing was accepted at two standard errors, and nothing came close —
+every one of Stockpile's eighteen candidates *lost* to the shipped set, the
+best of them at 45.0% ± 7.9, and halving `WILD_IN_HAND` costs fifteen points;
+`WILD_HOLD` at 15 loses at 36.3% ± 5.4 and at 5 is a coin flip at 51.2% ± 5.6.
+So the shipped set is what the table above measures, and the table — a seed
+family the search never saw — is itself the held-out run.
+
+**On the felt**, where this is a ring on a card. Twenty Crazy Eights deals a
+side, phone viewport, stopping on the turns where the hand holds both a
+playable eight and a playable natural and clicking Hint: five such turns before
+the change and the ring was on the eight in five of them ("Steady would play
+the 8 of Hearts and call Clubs", with the 9 of Spades sitting playable beside
+it); five after, and the ring was on the eight in none.
+
+**The gates.** `tests/botWilds.test.js` makes each claim twice — against a
+position built to have exactly one wrong answer in it, and as a property of
+seeded play at the difficulties that rank deterministically. Two existing gates
+had to move with it: `tests/lookahead.test.js` kept Stockpile as "the template
+with no `evaluateState`" and there is no longer one in the repo, so it makes
+that template by taking the hook away and states the claim against the fallback
+itself; and `tests/rollouts.test.js` asked whether `hard` differed from
+`medium` by reading only the top move, which made it a coin toss on how often a
+sample overturns the favourite — six positions in 113 at Wildfire. It compares
+whole rankings now, scores included, and the exception it used to carve out for
+Stockpile is gone, because a `matchStanding` is exactly what that exception
+said was missing.
+
+**Not done, and why.** Stockpile does not meet the issue's "300 games, 0
+stalls". Ten of three hundred remain and all ten are the same rules-level dead
+end #20 is open for: the pool is genuinely gone and the manifest has no way to
+say "recycle the personal discard piles". No bot can play its way out of a
+position with no legal move in it, and the vocabulary change that would fix it
+is a manifest-and-engine decision, not a scorer's. The bot's share of the
+problem — the four live-locked seeds, and the walk into the dead end — is what
+this pass took.
+
 ## Next steps
 
 Multiplayer (Phase 8), per-pack UI polish (per-pack `theme.css`, custom

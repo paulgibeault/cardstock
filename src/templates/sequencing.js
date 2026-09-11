@@ -146,7 +146,20 @@ const DISCARD_BURIES = 1;
 const DISCARD_DUPLICATE = 1.5;
 /** Enough that it loses to every natural discard, and is only ever forced. */
 const DISCARD_WILD = 5;
-/** Below every discard, above `pass`: a hand card spent past your own stock. */
+/**
+ * A hand card spent on a pile that is going nowhere this seat needs.
+ *
+ * Priced at exactly what burying a card costs (DISCARD_BASE − DISCARD_BURIES),
+ * because it is the same event: a card leaves circulation and does nothing on
+ * its way out. The two tie and the tie breaks on enumeration order, which is
+ * fine — what the number has to do is lose to the discards that are worth
+ * something (a pile this card continues, a pile that is empty) and beat the
+ * two that are worse than doing nothing (covering a rank the pile already
+ * holds, and throwing the wild). The full order, worst first:
+ *
+ *   pass −10 · wild discard −6 · duplicate −2.5 · {wasted play, burying} −2
+ *   · open pile −1 · sequence 0 · every play 0.7 … 6.6
+ */
 const WASTED_HAND_PLAY = -2;
 
 /** Would one more card fill this pile and sweep it back into circulation? */
@@ -173,7 +186,8 @@ function scorePlayMove(ctx, move) {
   // BELOW my own stock top (every rank between here and there is a rank I have
   // to put down anyway), or onto the last slot of a pile, which sweeps twelve
   // cards back into the draw and is how the deck keeps breathing. Anything
-  // else goes below the discards, and the turn ends with the card kept.
+  // else drops below the discards worth making, and the turn ends with the
+  // card kept instead.
   // Stock and discard-pile plays are never withheld: one is the race and the
   // other frees a card that was already out of circulation.
   if (kind === 'hand' && !completesPile(ctx, move.to) && mine !== null && wants > mine) {
