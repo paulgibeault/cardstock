@@ -202,11 +202,23 @@ test("an ordinary play gets no reveal", () => {
   assert.equal(trickRevealPlan(undefined), null);
 });
 
+// THE RUNG IS NAMED HERE BECAUSE THE NUMBER BELONGS TO A RUNG. These two tests
+// predate the pace term (#176) and left the argument off, which read as "the
+// arithmetic" while the shipped rung happened to be `quick`. It is `manual`
+// now, whose hold is null — the four cards wait for a person — so the formula's
+// two halves have to be asked of a rung that names a duration. What each test
+// was protecting is untouched: the floor, and the reading time behind the
+// flight. That a bare call means the SHIPPED rung is its own test further down.
 test("a gathered trick is held, and the plan names the seat taking it", () => {
-  const plan = trickRevealPlan([{ type: 'trickWon', seat: 2, points: 0, cards: ['h-2', 'h-9', 'h-K', 'h-A'] }],
-    { flightMs: 0 });
+  const won = [{ type: 'trickWon', seat: 2, points: 0, cards: ['h-2', 'h-9', 'h-K', 'h-A'] }];
+  const plan = trickRevealPlan(won, { flightMs: 0, pace: 'quick' });
   assert.equal(plan.trick.seat, 2);
   assert.equal(plan.holdMs, MIN_TRICK_REVEAL_MS);
+  // The seat half is rung-independent, and has to be: every rung poses, so
+  // every rung has a winner to name in the bar.
+  for (const pace of ['manual', 'relaxed', 'quick', 'instant']) {
+    assert.equal(trickRevealPlan(won, { flightMs: 0, pace }).trick.seat, 2);
+  }
 });
 
 // THE FLIGHT IS INSIDE THE HOLD, and this is the assertion that says so. A flat
@@ -216,7 +228,7 @@ test("a gathered trick is held, and the plan names the seat taking it", () => {
 test("the reading time survives a slow flight", () => {
   const trick = [{ type: 'trickWon', seat: 0, points: 3, cards: [] }];
   for (const flightMs of [0, 260, 420, 700, 1200]) {
-    const plan = trickRevealPlan(trick, { flightMs });
+    const plan = trickRevealPlan(trick, { flightMs, pace: 'quick' });
     assert.ok(plan.holdMs - flightMs >= READ_AFTER_LANDING_MS,
       `at a ${flightMs}ms flight the hold leaves only ${plan.holdMs - flightMs}ms to read four cards`);
   }
@@ -254,20 +266,36 @@ const shippedHold = (flightMs) => Math.max(MIN_TRICK_REVEAL_MS, flightMs + READ_
 const holdAt = (pace, flightMs, opts = {}) =>
   trickRevealPlan(gathered, { flightMs, pace, ...opts }).holdMs;
 
-// THE ACCEPTANCE CRITERION THAT PROTECTS EVERYONE WHO NEVER TOUCHES THE DIAL.
-// Adding a rung term is only safe if the shipped rung is arithmetically where it
-// was, so this pins the number rather than the formula: 920ms at the default
-// flight, which is what the felt was measured doing for #123.
-test("the shipped rung holds a trick for exactly the number it always has", () => {
+// THE RUNG THAT REPRODUCES THE HISTORICAL NUMBER IS `quick`, AND IT IS NOT THE
+// DEFAULT. It was for a few hours on 2026-09-11, which is why this test was
+// written against DEFAULT_PACE; "today's 920ms" and "the rung this repo ships"
+// are two ideas and this file now keeps them apart. Adding a rung term was only
+// safe if the rung the acceptance criterion was written about is arithmetically
+// where it was, so this pins the number rather than the formula: 920ms at the
+// default flight, which is what the felt was measured doing for #123.
+test("the brisk rung holds a trick for exactly the number it always has", () => {
   for (const flightMs of [FLIGHT_MIN_MS, 300, FLIGHT_MS, 520, FLIGHT_MAX_MS]) {
-    assert.strictEqual(holdAt(DEFAULT_PACE, flightMs), shippedHold(flightMs),
-      `at a ${flightMs}ms flight the default rung changed the hold`);
+    assert.strictEqual(holdAt('quick', flightMs), shippedHold(flightMs),
+      `at a ${flightMs}ms flight the Quick rung changed the hold`);
   }
-  assert.strictEqual(holdAt(DEFAULT_PACE, 420), 920);
-  assert.strictEqual(holdAt(DEFAULT_PACE, 700), 1200);
-  // And a call with no rung at all is the shipped rung, so nothing that has not
-  // yet learned to pass one has quietly changed pace.
-  assert.strictEqual(trickRevealPlan(gathered, { flightMs: 420 }).holdMs, 920);
+  assert.strictEqual(holdAt('quick', 420), 920);
+  assert.strictEqual(holdAt('quick', 700), 1200);
+});
+
+// AND A CALL WITH NO RUNG AT ALL IS THE SHIPPED RUNG, which is a different
+// promise and now a louder one. It used to mean "a caller that has not learned
+// to pass a pace still gets 920ms"; the shipped rung is `manual`, so it now
+// means such a caller gets a hold with no clock on it. That is the right
+// default for the same reason it is the right default anywhere — the argument
+// is in src/arcade/storage.js — but it is worth its own line, because the cost
+// of forgetting the argument at a call site went from invisible to a felt that
+// stops until it is tapped.
+test("a trick plan built with no rung is a plan at the shipped rung", () => {
+  assert.strictEqual(
+    trickRevealPlan(gathered, { flightMs: 420 }).holdMs, holdAt(DEFAULT_PACE, 420));
+  assert.strictEqual(trickRevealPlan(gathered, { flightMs: 420 }).holdMs, null,
+    'the shipped rung holds a completed trick until a person ends it; a number here '
+    + 'means the default moved and every caller that omits a pace moved with it');
 });
 
 // THE FLOOR IS NOT A PREFERENCE. It exists so the fourth card has LANDED before
@@ -293,16 +321,18 @@ test("the floor and the reading time both survive at every rung that reads", () 
         + `short of the ${wants}ms the rung asked for`);
     }
   }
-  // The shipped rung IS the floor at a flight of nothing, which is the one
-  // place the two halves of the formula can be told apart.
-  assert.strictEqual(holdAt(DEFAULT_PACE, 0), MIN_TRICK_REVEAL_MS);
+  // Quick IS the floor at a flight of nothing, which is the one place the two
+  // halves of the formula can be told apart. (Asked of Quick rather than of
+  // DEFAULT_PACE: the default is `manual`, whose hold is null, and null tells
+  // the floor and the read apart by removing both.)
+  assert.strictEqual(holdAt('quick', 0), MIN_TRICK_REVEAL_MS);
 });
 
 // A LONGER LOOK, NOT THE SHEET'S SIX SECONDS. #176 records the six as decided
 // against: thirteen tricks of it is 78 seconds per hand of pure waiting.
 test("Relaxed lengthens the trick without reaching for the score sheet's number", () => {
   const relaxed = holdAt('relaxed', 420);
-  assert.ok(relaxed > holdAt(DEFAULT_PACE, 420),
+  assert.ok(relaxed > holdAt('quick', 420),
     'Relaxed must actually be longer than Quick, or the rung says nothing here');
   assert.strictEqual(relaxed, 1420);
   assert.ok(relaxed * 13 < 30_000,
@@ -317,6 +347,13 @@ test("Manual is the only rung whose trick hold has no end of its own", () => {
   assert.deepStrictEqual(open.map((l) => l.id), ['manual'],
     'exactly one rung may hold a trick indefinitely, and it has to be the one '
     + 'whose whole meaning everywhere else in this module is "waits for you"');
+  // AND IT IS THE RUNG THIS REPO SHIPS, since 2026-09-11. That is not an
+  // arithmetic fact and it cannot be derived from anything above it, which is
+  // why it is asserted: the indefinite hold is what a player who has never
+  // opened the settings gets on their very first trick.
+  assert.strictEqual(open[0].id, DEFAULT_PACE,
+    'the shipped rung is the one that waits for a person at both beats (#176, and '
+    + "src/arcade/storage.js's `pace` for the evidence that moved it)");
   // A plan is still returned: there IS a beat, it simply has no clock on it.
   const plan = trickRevealPlan(gathered, { flightMs: 420, pace: 'manual' });
   assert.ok(plan, 'Manual must still pose the trick; a null plan is no hold at all');
@@ -339,12 +376,28 @@ test("Instant never leaves a card in the air when the gather starts", () => {
 });
 
 // THE ACCEPTANCE CRITERION, STATED AS THE THING A PLAYER FEELS. A hand is
-// thirteen of these, so a millisecond added at the default rung is thirteen.
-test("thirteen tricks at the shipped rung is no more waiting than it was", () => {
+// thirteen of these, so a millisecond added to a rung is thirteen.
+//
+// ASKED OF `quick` RATHER THAN OF THE DEFAULT, and the swap is the honest
+// reading of the criterion rather than a dodge around it. #176 wrote it as "a
+// thirteen-trick hand at the default rung takes no longer than it does today",
+// which was a promise about ARITHMETIC drifting under a player who never
+// touched anything. The default moving to `manual` is not arithmetic drifting —
+// it is a decision, taken on Paul's own playtest and recorded in
+// src/arcade/storage.js — so the criterion follows the rung it was about. What
+// it protects is that the rung a player reaches for when they want the table to
+// run itself still runs it at exactly the old speed.
+test("thirteen tricks at the brisk rung is no more waiting than it was", () => {
   const before = 13 * shippedHold(FLIGHT_MS);
-  const after = 13 * holdAt(DEFAULT_PACE, FLIGHT_MS);
+  const after = 13 * holdAt('quick', FLIGHT_MS);
   assert.ok(after <= before, `a hand went from ${before}ms of holds to ${after}ms`);
   assert.strictEqual(after, 11_960);
+  // AND WHAT THE DEFAULT COSTS INSTEAD, which is not milliseconds: thirteen
+  // holds with no clock on them is thirteen taps, plus the one on the sheet.
+  // Nobody has to be told what a default that never moves costs in time; they
+  // do have to be told how many times it asks.
+  assert.strictEqual(holdAt(DEFAULT_PACE, FLIGHT_MS), null,
+    'the shipped rung asks for an input per trick rather than a duration per trick');
 });
 
 /* ------------------------------------------------------------------ *

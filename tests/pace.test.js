@@ -69,13 +69,25 @@ test("only Manual never advances, and only Instant skips the transition", () => 
   assert.deepStrictEqual(PACE_LEVELS.filter((l) => l.instant).map((l) => l.id), ['instant']);
 });
 
+// WHAT THIS HAS ALWAYS BEEN PROTECTING is not the id `quick`. It is that a
+// player who never opens the settings still gets the one surface where a
+// round's damage is spelled out, and gets long enough to read it. `instant` is
+// the rung that trades the sheet away, and it has to be CHOSEN rather than
+// arrived at.
+//
+// THE ARITHMETIC HALF USED TO BE `autoMs >= 2000`, which was the only way a
+// rung could be long enough while the default was `quick`. The default is
+// `manual` now and its `autoMs` is null — not a shorter read but an unbounded
+// one — so the property is written as the two ways a rung can satisfy it
+// rather than as the one the old default happened to use.
 test("the shipped default is a rung that still shows the sheet", () => {
   assert.strictEqual(SETTINGS_DEFAULTS.pace, DEFAULT_PACE);
-  assert.strictEqual(paceLevel(DEFAULT_PACE).id, 'quick');
-  assert.strictEqual(paceLevel(DEFAULT_PACE).instant, false,
+  const level = paceLevel(DEFAULT_PACE);
+  assert.strictEqual(level.instant, false,
     "the default must not be the rung that trades the score sheet away");
-  assert.ok(paceLevel(DEFAULT_PACE).autoMs >= 2000,
-    "the default has to be long enough to read a four-seat score sheet");
+  assert.ok(level.autoMs === null || level.autoMs >= 2000,
+    `the default deals itself after ${level.autoMs}ms, short of a four-seat score `
+    + "sheet's read — a default rung either waits for the player or waits long enough");
 });
 
 // A saved setting is a string on disk and can be anything — an older build, a
@@ -123,33 +135,66 @@ test("the summary's cycle offers every rung that keeps a sheet, and only those",
     + "sheet is only open between matches, so this control is the only other door");
 });
 
-test("one tap from the shipped default lands on Relaxed", () => {
-  assert.strictEqual(nextSummaryPace(DEFAULT_PACE), 'relaxed',
-    "the first tap a player ever makes on this control has to reach Relaxed: it "
-    + "is a tap made BECAUSE they are not ready to deal yet, and three taps "
-    + "through Instant and Manual was the old route");
+// #174'S GUARANTEE, RESTATED FOR A DEFAULT THAT NEVER DEALS. The principle was
+// "a tap on this control always hands the player MORE time", and while the
+// default was `quick` that read straight off: the first tap anybody ever made
+// landed on Relaxed, and this test was called "one tap from the shipped default
+// lands on Relaxed". From `manual` there is no more time to hand out — that
+// rung never deals at all — so the first tap is now the cycle's single wrap,
+// downward, to Quick.
+//
+// THAT IS NOT THE BUG #174 FIXED, and the difference is the whole point. The
+// bug was a first tap landing on the rung that shows NO SHEET, which deleted
+// the control along with the sheet it lives on. A first tap that lands on the
+// shortest wait which STILL SHOWS ONE is the table starting to move, which is
+// the only thing a tap from Manual can be asking for.
+test("one tap from the shipped default is the step out of the rung with no clock", () => {
+  assert.strictEqual(paceLevel(DEFAULT_PACE).autoMs, null,
+    "this test is about the wrap out of a default that has no clock on it; if the "
+    + "default deals itself again, #174's 'every tap hands out more time' applies "
+    + "and the line below should be asserting Relaxed instead");
+  assert.strictEqual(nextSummaryPace(DEFAULT_PACE), 'quick',
+    "from the rung that never deals, the only move round the cycle is down — and it "
+    + "has to be the shortest wait that still shows a sheet");
+  assert.strictEqual(paceLevel(nextSummaryPace(DEFAULT_PACE)).instant, false,
+    "the first tap any player ever makes must not land on the rung that deletes this "
+    + "control by closing the sheet it sits on; that is exactly #174's bug");
 });
 
+// THE SHORTEST WAIT A RUNG THAT STILL SHOWS A SHEET MAY LEAVE. Named rather
+// than derived from the list, because a floor read out of the same list it is
+// checked against is a gate agreeing with itself about nothing.
+const BRISKEST_SHEET_MS = 2500;
+
 // THE PROPERTY THAT MAKES THE CONTROL NON-SELF-DELETING, stated as a property
-// rather than as the four ids: a tap must never shorten the window the player
-// has to make the next one. Changing a rung's `autoMs` is what would break it.
-test("no rung the cycle can reach waits less than the shipped default does", () => {
-  const floor = paceLevel(DEFAULT_PACE).autoMs;
+// rather than as the four ids: a tap must never leave the player less time to
+// make the next one than the briskest rung on the cycle already gives them.
+//
+// IT USED TO BE PINNED AGAINST THE DEFAULT'S OWN `autoMs`, which worked exactly
+// as long as the default named a duration. With `manual` shipped that floor is
+// null and the comparison passes for every rung without asking anything. The
+// floor that was always doing the work is the shortest wait that still shows a
+// sheet, so it is named directly. Changing a rung's `autoMs` is what breaks it.
+test("no rung the cycle can reach waits less than the briskest sheet does", () => {
   for (const id of lap(DEFAULT_PACE)) {
     const level = paceLevel(id);
-    assert.ok(level.autoMs === null || level.autoMs >= floor,
-      `${id} deals itself after ${level.autoMs}ms, short of the default's ${floor}ms — `
-      + 'a tap on this control must never leave less time to make the next one');
+    assert.ok(level.autoMs === null || level.autoMs >= BRISKEST_SHEET_MS,
+      `${id} deals itself after ${level.autoMs}ms, short of the ${BRISKEST_SHEET_MS}ms `
+      + 'floor — a tap on this control must never leave less time to make the next one');
   }
+  assert.ok(lap(DEFAULT_PACE).some((id) => paceLevel(id).autoMs === BRISKEST_SHEET_MS),
+    `no rung on the cycle sits at ${BRISKEST_SHEET_MS}ms any more: either a rung's wait `
+    + 'moved, or this floor is a number nothing is holding up and the check above is free');
 });
 
 test("the cycle wraps, and a nonsense stored id cycles on from the default", () => {
   const reached = lap(DEFAULT_PACE);
   assert.strictEqual(reached[reached.length - 1], DEFAULT_PACE,
     "one lap must come back to where it started, or the last rung is a trap");
-  assert.deepStrictEqual(reached, ['relaxed', 'manual', 'quick'],
-    "the walk has to run toward MORE time, Quick to Relaxed to Manual; running it "
-    + "the other way is how the first tap used to reach the rung with no sheet");
+  assert.deepStrictEqual(reached, ['quick', 'relaxed', 'manual'],
+    "the walk has to run toward MORE time — Quick to Relaxed to Manual — with one "
+    + "wrap out of Manual, which is where every player now starts; running it the "
+    + "other way is how the first tap used to reach the rung with no sheet");
   assert.strictEqual(nextSummaryPace('glacial'), nextSummaryPace(DEFAULT_PACE),
     "a stale value cycles on from the default rather than sticking");
 });
@@ -265,14 +310,58 @@ test("every rung says how long a trick is read for, and only Manual leaves it op
   }
 });
 
-// THE SHIPPED RUNG IS A SCALE OF 1 ON PURPOSE. Written as a duration it would be
-// a second copy of READ_AFTER_LANDING_MS, kept in step by hand across two files;
-// written as 1 it cannot drift, and "the default hold is the number it always
-// was" stops being something to remember.
-test("the shipped rung's trick hold is today's number, structurally", () => {
-  assert.strictEqual(paceLevel(DEFAULT_PACE).trickReadScale, 1);
-  assert.strictEqual(trickHold(DEFAULT_PACE), Math.max(700, 420 + READ_AFTER_LANDING_MS));
-  assert.strictEqual(trickHold(DEFAULT_PACE), 920);
+// `quick` IS A SCALE OF 1 ON PURPOSE. Written as a duration it would be a second
+// copy of READ_AFTER_LANDING_MS, kept in step by hand across two files; written
+// as 1 it cannot drift, and "this rung's hold is the number it always was" stops
+// being something to remember.
+//
+// AND `quick` IS NOT THE DEFAULT ANY MORE. This test said DEFAULT_PACE when it
+// was written, because on 2026-09-11 the two were the same rung for a few hours;
+// they are two different ideas and they are two assertions now. This one is
+// about the historical number. The one below is about which rung ships.
+test("the brisk rung's trick hold is today's number, structurally", () => {
+  assert.strictEqual(paceLevel('quick').trickReadScale, 1);
+  assert.strictEqual(trickHold('quick'), Math.max(700, 420 + READ_AFTER_LANDING_MS));
+  assert.strictEqual(trickHold('quick'), 920);
+});
+
+// THE DEFAULT IS A DECISION, AND THIS IS THE WHOLE OF IT IN ONE PLACE.
+//
+// `quick` shipped from #150 until 2026-09-11, on a round-6 reading that was
+// one-directional: nobody asked for a longer wait between hands and several
+// asked for none. #176 recorded that as needing NEW EVIDENCE to reverse rather
+// than symmetry with the trick beat, and the new evidence is Paul playing the
+// merged build with the trick tap in it. Round 6 wanted a way OUT of a wait, not
+// a clock; the tap is the way out, so the clock is no longer the price of it.
+//
+// SO THE SHIPPED RUNG IS THE ONE THAT WAITS FOR A PERSON AT BOTH BEATS, and the
+// cost is thirteen taps a hand plus one. None of this is arithmetic that could
+// drift — it is four facts about WHICH RUNG SHIPS, which is exactly why it is
+// pinned: a default flipped back by a one-word edit passes every other test in
+// this file about the rungs themselves.
+test("the shipped default waits for a person at both beats, and one tap leaves it", () => {
+  assert.strictEqual(DEFAULT_PACE, 'manual',
+    'the shipped rung was flipped from `quick` to `manual` on 2026-09-11, on Paul\'s '
+    + 'own playtest of the merged build; flipping it back is a decision, not an edit, '
+    + 'and src/arcade/storage.js carries both sides of it');
+  assert.strictEqual(SETTINGS_DEFAULTS.pace, 'manual',
+    'the value on disk and the module default must be the same rung, or a fresh save '
+    + 'plays at one while every unreadable value falls back to the other');
+  assert.strictEqual(paceLevel(DEFAULT_PACE).autoMs, null,
+    'no score sheet may deal itself at the shipped rung');
+  assert.strictEqual(trickHold(DEFAULT_PACE), null,
+    'no completed trick may be swept at the shipped rung: the four cards wait for a '
+    + 'tap on the felt or for Enter/Space (src/ui/table.js, runTrickReveal)');
+  // THE WAY OUT, which is what makes a table with no clock in it safe to ship:
+  // the control #174 fixed, on the sheet the player is already looking at.
+  assert.strictEqual(nextSummaryPace(DEFAULT_PACE), 'quick',
+    'a default that never moves on its own needs the one mid-match door out of it to '
+    + 'work on the very first tap; #174 is that door');
+  // And the felt promises the tap at exactly the rung that needs it promised —
+  // otherwise a first trick with no clock on it is a game that looks frozen.
+  assert.match(read("src/ui/table.js"), /trickBeat\.waits \? `\$\{whose\} Tap to go on\.`/,
+    'the status bar must offer the tap whenever the hold has no clock, which at the '
+    + 'shipped rung is every trick of every hand');
 });
 
 // #176 records the six seconds as decided against, and the reasoning is worth
@@ -303,12 +392,20 @@ test("Instant keeps no reading time, and Manual keeps no clock", () => {
 test("an unknown saved rung paces a trick at the default", () => {
   assert.strictEqual(trickHold('glacial'), trickHold(DEFAULT_PACE));
   assert.strictEqual(trickHold(undefined), trickHold(DEFAULT_PACE));
+  // BOTH OF THOSE ARE `null === null` NOW, which a function that returned
+  // nothing at all would also pass. The substance is that the fallback resolves
+  // to the shipped RUNG, which is what the two lines above were standing in for
+  // while the default named a number.
+  assert.strictEqual(paceLevel('glacial').id, DEFAULT_PACE);
+  assert.strictEqual(paceLevel(undefined).id, DEFAULT_PACE);
 });
 
 // THE ONE PLACE THE FELT READS THE RUNG FOR A TRICK. table.js cannot be imported
 // (it touches `document` at import time), so this is a grep: a plan built
 // without a pace is a plan at the shipped rung, and the dial would silently
-// govern hands only.
+// govern hands only. That matters more since the shipped rung became `manual` —
+// dropping the argument no longer means "everybody gets 920ms", it means
+// everybody's tricks wait for a tap whatever they set the dial to.
 test("the felt builds its trick plan with the player's rung and its own shared flag", () => {
   const table = read("src/ui/table.js");
   const call = table.match(/trickRevealPlan\(events, \{[\s\S]*?\}\) : null/);
@@ -325,6 +422,13 @@ test("an unknown rung runs the default schedule rather than no schedule", () => 
   const plan = roundBeatPlan(showEnd, { flightMs: 420, pace: 'glacial' });
   assert.strictEqual(plan.pace, DEFAULT_PACE);
   assert.strictEqual(plan.autoAdvanceMs, paceLevel(DEFAULT_PACE).autoMs);
+  // "RATHER THAN NO SCHEDULE" is the half the two lines above stopped checking
+  // when the default's `autoAdvanceMs` became null: a plan that had collapsed to
+  // Instant also carries no wait. The beat itself has to still be there.
+  assert.strictEqual(plan.instant, false,
+    'an unreadable saved rung must not collapse the beat to no sheet at all');
+  assert.strictEqual(plan.steps.length, 3,
+    'a cribbage show still owes its three steps at the fallback rung');
 });
 
 /* ------------------------------------------------------------------ *
