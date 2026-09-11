@@ -133,7 +133,15 @@ test("every weight a template declares is one its hooks actually read", async ()
         const weights = { ...template.weights, [key]: template.weights[key] * factor + (factor === 0 ? -5 : 0) };
         const state = await dealt(packId, seats, `weights:read:${packId}:${key}`);
         spreadContracts(state);
-        walk(state, 200, (live, seat) => {
+        // FOUR HUNDRED MOVES, NOT TWO. A weight that only speaks in a position
+        // the walk has to reach is hostage to the deal, and this one is: fixing
+        // Thirteen's deal to honour `state.direction` (#156) re-dealt the seeded
+        // game, and the first position offering `climbing.CHOP_COST` an
+        // out-of-shape bomb moved from inside 200 moves to step 229. The weight
+        // is read; the walk was short. The probe stops the moment a weight
+        // moves, so the longer budget is only ever spent on the ones that have
+        // not been proven yet.
+        walk(state, 400, (live, seat) => {
           if (probe.moved) return;
           for (const difficulty of ["easy", "medium"]) {
             if (ranking(live, seat, { difficulty, weights }) !== ranking(live, seat, { difficulty })) probe.moved = true;

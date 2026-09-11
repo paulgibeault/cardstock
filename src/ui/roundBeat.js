@@ -19,6 +19,13 @@
 // `roundOver` carrying `over: true` is the match ending, which `offerFinalLook`
 // already holds correctly (issue #120 is explicit that it is reused, not
 // changed), and there is no redeal underneath it to hide.
+//
+// THE PACE PREFERENCE IS A TERM IN THIS ARITHMETIC (issue #150), and it is here
+// rather than in the renderer for the reason everything else is: "does Instant
+// actually skip the sheet, and does Relaxed actually stretch the count" are
+// questions about numbers, and a number is a thing a test can ask for.
+
+import { paceLevel, DEFAULT_PACE } from './pace.js';
 
 /** The floor on the hold, and the number `offerFinalLook` has always used. */
 export const MIN_HOLD_MS = 700;
@@ -133,26 +140,59 @@ export function showSteps(events) {
  *                 module before this device heard about it and there is no
  *                 pre-move snapshot to pose. The hold still applies; the
  *                 step-by-step reveal, which has to repaint the felt, does not.
+ * @param pace     the player's rung (src/ui/pace.js). It stretches the show and
+ *                 decides whether the sheet deals itself — and at `instant` it
+ *                 removes the beat entirely.
  * @returns null when this move did not end a round with the match still going;
- *          otherwise { roundOver, gathered, holdMs, steps, summaryAt } where
- *          every step carries the `at` it runs on and `summaryAt` is strictly
- *          after all of them.
+ *          otherwise { roundOver, gathered, holdMs, steps, summaryAt, pace,
+ *          stepMs, autoAdvanceMs, instant } where every step carries the `at`
+ *          it runs on and `summaryAt` is strictly after all of them.
  */
-export function roundBeatPlan(events, { flightMs = 0, stepMs = SHOW_STEP_MS, narrate = true } = {}) {
+export function roundBeatPlan(events, {
+  flightMs = 0, stepMs = SHOW_STEP_MS, narrate = true, pace = DEFAULT_PACE,
+} = {}) {
   const roundOver = (events || []).find((e) => e.type === 'roundOver' && !e.over);
   if (!roundOver) return null;
 
+  const level = paceLevel(pace);
   const gathered = (events || []).some((e) => e.type === 'trickWon');
-  const holdMs = gathered
-    ? Math.max(MIN_TRICK_HOLD_MS, flightMs + 640)
-    : Math.max(MIN_HOLD_MS, flightMs + 280);
 
-  const steps = (narrate ? showSteps(events) : [])
-    .map((step, i) => ({ ...step, at: holdMs + i * stepMs }));
+  // THE HOLD IS NOT SCALED BY THE PACE, and that is deliberate. It is measured
+  // against the FLIGHT — it exists so the last card has landed before anything
+  // asks to be read — and the flight is already the player's own speed setting
+  // (flightDurationMs). A pace rung that shortened it would be a preference for
+  // reading a card that is still in the air. The pace is about the pause
+  // BETWEEN hands, and `instant` is the one rung that says there is not one.
+  const holdMs = level.instant ? 0 : (gathered
+    ? Math.max(MIN_TRICK_HOLD_MS, flightMs + 640)
+    : Math.max(MIN_HOLD_MS, flightMs + 280));
+
+  // A show is the part of a round ending that is READ rather than watched, so
+  // it is the part a pace rung stretches. `instant` scales it to nothing, which
+  // drops the steps altogether — there is no such thing as a step you are given
+  // no time to read.
+  const scaled = Math.round(stepMs * level.stepScale);
+  const steps = (narrate && !level.instant ? showSteps(events) : [])
+    .map((step, i) => ({ ...step, at: holdMs + i * scaled }));
   // THE SUMMARY IS ALWAYS LAST, and this is the line that says so. It is the
   // acknowledgement — its Continue is what deals the next hand — so anything it
   // covers has to have been readable first.
-  const summaryAt = steps.length ? steps[steps.length - 1].at + stepMs : holdMs;
+  const summaryAt = steps.length ? steps[steps.length - 1].at + scaled : holdMs;
 
-  return { roundOver, gathered, holdMs, steps, summaryAt };
+  return {
+    roundOver,
+    gathered,
+    holdMs,
+    steps,
+    summaryAt,
+    pace: level.id,
+    stepMs: scaled,
+    // How long the sheet stands before it deals itself, or null for the rung
+    // that never does. The renderer arms one timer off this and nothing else,
+    // so "Manual never advances" is this being null.
+    autoAdvanceMs: level.autoMs,
+    // No sheet at all: the result is a line in #log and the deal is the next
+    // thing on the felt (src/ui/table.js's runRoundBeat).
+    instant: level.instant,
+  };
 }

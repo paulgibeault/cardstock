@@ -140,15 +140,33 @@ function vocabularyOf(ctx) {
 }
 
 /**
- * A card no sequence may contain — Thirteen's 2, which sits at the TOP of the
- * ladder and so has no neighbour above it and no business inside a run
- * (`rules.runExcludes: ["rank:2"]`). Applies to consecutive pairs too: `A-A
- * K-K Q-Q` is a bomb and `2-2 A-A K-K` is not a combination at all.
+ * A card a sequence may not contain — Thirteen's 2, which sits at the TOP of
+ * the ladder and so has no neighbour above it and no business inside a run
+ * (`rules.runExcludes: ["rank:2"]`).
+ *
+ * ONE EXCLUSION PER SEQUENCE SHAPE, because the two shapes disagree at exactly
+ * one table and that table is a house rule people actually play (#158). "A 2
+ * can end a run" is `Q-K-A-2`; it is NOT `2-2 A-A K-K`, which would make the
+ * highest pair in the game bomb-eligible, and it is not a licence to redefine
+ * the dragon (see `instantWinShape`). One key could not say that: dropping the
+ * 2 from `runExcludes` to buy the run silently bought the strip and the dragon
+ * as well. So `rules.runExcludes` governs runs, `rules.stripExcludes` governs
+ * consecutive pairs, and a pack that plays the ordinary rule declares the same
+ * list in both.
+ *
+ * @param kind 'run', 'consecutive-pairs', or null for "excluded from ANY
+ *             sequence shape", which is the conservative reading the dragon is
+ *             measured against.
  */
-function outOfSequence(ctx, card) {
-  const excludes = ctx.rules.runExcludes;
-  if (!excludes?.length) return false;
-  return excludes.some((selector) => selectorMatches(card, selector));
+function outOfSequence(ctx, card, kind = null) {
+  const lists = kind === 'run' ? [ctx.rules.runExcludes]
+    : kind === 'consecutive-pairs' ? [ctx.rules.stripExcludes]
+      : [ctx.rules.runExcludes, ctx.rules.stripExcludes];
+  for (const excludes of lists) {
+    if (!excludes?.length) continue;
+    if (excludes.some((selector) => selectorMatches(card, selector))) return true;
+  }
+  return false;
 }
 
 /**
@@ -183,14 +201,15 @@ function classify(ctx, cardIds) {
     return { kind, size: n, top, cards: cardIds.slice() };
   }
 
-  if (cards.some((card) => outOfSequence(ctx, card))) return null;
   const indices = [...byRank.keys()].map((rank) => rankIndexOf(ladder, rank));
   if (indices.some((i) => i < 0)) return null;
   const window = rankWindow(indices);
   if (!window.ok) return null;
 
-  // Distinct consecutive ranks, one card each: a run.
+  // Distinct consecutive ranks, one card each: a run. The exclusion is asked
+  // per SHAPE, so it is asked inside each branch rather than once above them.
   if (byRank.size === n) {
+    if (cards.some((card) => outOfSequence(ctx, card, 'run'))) return null;
     const run = vocab.get('run');
     if (run && n >= run.min) return { kind: 'run', size: n, top, cards: cardIds.slice() };
     return null;
@@ -198,6 +217,7 @@ function classify(ctx, cardIds) {
 
   // Distinct consecutive ranks, exactly two cards each: consecutive pairs.
   if (byRank.size * 2 === n && [...byRank.values()].every((group) => group.length === 2)) {
+    if (cards.some((card) => outOfSequence(ctx, card, 'consecutive-pairs'))) return null;
     const strip = vocab.get('consecutive-pairs');
     const pairs = byRank.size;
     if (strip && pairs >= strip.min) {
@@ -421,16 +441,64 @@ function advance(ctx, from) {
 function dealHands(ctx) {
   const per = ctx.rules.deal;
   const ids = ctx.rng.shuffle([...ctx.pack.cardsById.keys()]);
+  const first = ctx.openingSeat();
   let at = 0;
   for (let i = 0; i < per; i++) {
+    let seat = first;
     for (let n = 0; n < ctx.seats; n++) {
       if (at >= ids.length) return;
       const id = ids[at++];
-      const addr = ctx.zoneAddr('hand', ctx.nextSeat(ctx.openingSeat(), n));
+      const addr = ctx.zoneAddr('hand', seat);
       ctx.zone(addr).cards.push(id);
       ctx.state.cardLocation.set(id, addr);
+      // `nextSeat(from, dir)` — a STEP COUNT was being passed as the direction
+      // (`nextSeat(first, n)`), which happened to visit every seat exactly once
+      // and so dealt a correct but CLOCKWISE hand at a counter-clockwise table.
+      // Stepping one seat at a time is the same walk `advance` does, so the
+      // deal and the turn order cannot disagree.
+      seat = ctx.nextSeat(seat);
     }
   }
+}
+
+/**
+ * The card whose holder opens hand one, or null for a table with no such rule.
+ *
+ * `rules.firstLead.card` is either a literal card id ("spades-3") or the
+ * selector `"lowest"`.
+ *
+ * WHY "lowest" HAD TO EXIST (#156). The literal form is the rule everybody
+ * describes — "the 3♠ leads" — and it is only correct at a FULL table. Thirteen
+ * deals a flat thirteen and leaves the remainder out of play (D-11), so at two
+ * seats HALF the deck is never dealt and at three seats a quarter of it: the 3♠
+ * is missing from 50.7% of two-seat deals and 25.8% of three-seat ones, over
+ * 400 seeded deals each, which is the population figure and not a surprise.
+ * Every one of those hands fell through to `ctx.openingSeat()`, which is seat 0,
+ * which is the human. The player was handed the opening lead by a bug, in the
+ * game whose first rule is that the lowest card leads.
+ *
+ * So the rule is written as what it means: the minimum on the pack's own TOTAL
+ * order (`cardOrder`, suit included, so there is exactly one) among the cards
+ * actually dealt. At four seats that IS the 3♠ and nothing changes. The literal
+ * form keeps working for a pack that really does mean one nominated card.
+ */
+function firstLeadCard(ctx) {
+  const want = ctx.rules.firstLead?.card;
+  if (!want) return null;
+  if (want !== 'lowest') return want;
+  const ladder = rankLadderOf(ctx.pack);
+  let lowest = null;
+  let at = Infinity;
+  for (let seat = 0; seat < ctx.seats; seat++) {
+    for (const id of ctx.cardIdsIn(ctx.zoneAddr('hand', seat))) {
+      const order = cardOrder(ctx.cardById(id), ladder);
+      if (order < at) {
+        at = order;
+        lowest = id;
+      }
+    }
+  }
+  return lowest;
 }
 
 /**
@@ -478,15 +546,18 @@ function beginHand(ctx, opening) {
 
   let leader = opening;
   if (leader === null || leader === undefined) {
-    const firstLead = ctx.rules.firstLead;
-    const holder = firstLead?.card ? seatHolding(ctx, firstLead.card) : null;
+    const card = firstLeadCard(ctx);
+    const holder = card ? seatHolding(ctx, card) : null;
     if (holder !== null) {
       leader = holder;
       // THE OPENING LEAD MUST CONTAIN IT, held as a var rather than
       // re-derived, because it is true exactly once per match and stops being
       // true the moment that lead is played.
-      if (firstLead.mustInclude) ctx.setPlayerVar(leader, '__mustInclude', firstLead.card);
+      if (ctx.rules.firstLead.mustInclude) ctx.setPlayerVar(leader, '__mustInclude', card);
     } else {
+      // Only reachable for a LITERAL `firstLead.card` the deal left out of
+      // play; `"lowest"` is resolved against the dealt cards and always names
+      // a seat at a table that has been dealt to.
       leader = ctx.openingSeat();
     }
   }
@@ -581,7 +652,7 @@ function candidateSets(ctx, seat, { kind = null, size = null } = {}) {
     }
   }
 
-  const sequential = (at) => byRank.get(at).filter((e) => !outOfSequence(ctx, e.card));
+  const sequential = (at, shape) => byRank.get(at).filter((e) => !outOfSequence(ctx, e.card, shape));
 
   // Runs: windows of consecutive ladder positions the hand can fill.
   const run = vocab.get('run');
@@ -590,7 +661,7 @@ function candidateSets(ctx, seat, { kind = null, size = null } = {}) {
       const cardsSoFar = [];
       for (let j = i; j < positions.length; j++) {
         if (j > i && positions[j] !== positions[j - 1] + 1) break;
-        const here = sequential(positions[j]);
+        const here = sequential(positions[j], 'run');
         if (!here.length) break;
         const length = j - i + 1;
         if (length >= run.min && wants('run', length)) {
@@ -609,7 +680,7 @@ function candidateSets(ctx, seat, { kind = null, size = null } = {}) {
       const cardsSoFar = [];
       for (let j = i; j < positions.length; j++) {
         if (j > i && positions[j] !== positions[j - 1] + 1) break;
-        const here = sequential(positions[j]);
+        const here = sequential(positions[j], 'consecutive-pairs');
         if (here.length < 2) break;
         const pairs = j - i + 1;
         if (pairs >= strip.min && wants('consecutive-pairs', pairs)) {
@@ -662,6 +733,19 @@ function isBombShape(ctx, kind, size) {
  * whatever is left as pairs, triples and singles. Any fixed order is a
  * heuristic; this one is the order a player actually reads their hand in.
  */
+/**
+ * Per ladder position: how many cards the hand holds there, and how many of
+ * them each SEQUENCE SHAPE may use.
+ *
+ *   total  every card of that rank — what a pair, a triple or a quad counts
+ *   run    the ones `rules.runExcludes` lets into a run
+ *   strip  the ones `rules.stripExcludes` lets into consecutive pairs
+ *   seq    the ones BOTH allow, which is what the dragon is measured against
+ *
+ * Three counters rather than one because the two exclusions can differ (#158's
+ * "a 2 can end a run"), and one number could not have told the strip walk that
+ * the run walk was allowed a card it is not.
+ */
 function rankCounts(ctx, cardIds) {
   const ladder = rankLadderOf(ctx.pack);
   const counts = new Map();
@@ -670,14 +754,32 @@ function rankCounts(ctx, cardIds) {
     if (!card) continue;
     const at = rankIndexOf(ladder, card.rank);
     if (at < 0) continue;
-    if (!counts.has(at)) counts.set(at, { total: 0, seq: 0 });
+    if (!counts.has(at)) counts.set(at, { total: 0, run: 0, strip: 0, seq: 0 });
     const entry = counts.get(at);
     entry.total += 1;
-    // A card no sequence may contain (Thirteen's 2) counts toward a quad and a
-    // pair and toward nothing that runs.
-    if (!outOfSequence(ctx, card)) entry.seq += 1;
+    // A card no run may contain (Thirteen's 2) counts toward a quad and a pair
+    // and toward nothing that runs.
+    const inRun = !outOfSequence(ctx, card, 'run');
+    const inStrip = !outOfSequence(ctx, card, 'consecutive-pairs');
+    if (inRun) entry.run += 1;
+    if (inStrip) entry.strip += 1;
+    if (inRun && inStrip) entry.seq += 1;
   }
   return counts;
+}
+
+/**
+ * Spend `k` cards of one rank, `field` being the sequence counter the shape
+ * that spent them was drawing from (null for a flat pair/triple/quad).
+ *
+ * The other counters fall to whatever is left, which is the "spend the cards a
+ * sequence could not have used first" rule: a quad of 2s costs the hand no run
+ * material, because none of those four cards was ever run material.
+ */
+function takeFrom(entry, k, field = null) {
+  entry.total = Math.max(0, entry.total - k);
+  if (field) entry[field] = Math.max(0, entry[field] - k);
+  for (const name of ['run', 'strip', 'seq']) entry[name] = Math.min(entry[name], entry.total);
 }
 
 /**
@@ -711,33 +813,22 @@ function handShape(ctx, cardIds) {
   let plays = 0;
   let bombs = 0;
 
-  // Same-rank cards spend the ones a sequence could not have used first.
-  const takeFlat = (entry, k) => {
-    const fromSeq = Math.max(0, k - (entry.total - entry.seq));
-    entry.total -= k;
-    entry.seq -= fromSeq;
-  };
-
   if (vocab.has('quad')) {
     for (const entry of counts.values()) {
       if (entry.total < 4) continue;
       plays += 1;
       if (isBombShape(ctx, 'quad', 4)) bombs += 1;
-      takeFlat(entry, 4);
+      takeFrom(entry, 4);
     }
   }
 
   const strip = vocab.get('consecutive-pairs');
   if (strip) {
-    for (const window of windows(counts, 2, (e) => e.seq)) {
+    for (const window of windows(counts, 2, (e) => e.strip)) {
       if (window.length < strip.min) continue;
       plays += 1;
       if (isBombShape(ctx, 'consecutive-pairs', window.length)) bombs += 1;
-      for (const at of window) {
-        const entry = counts.get(at);
-        entry.total -= 2;
-        entry.seq -= 2;
-      }
+      for (const at of window) takeFrom(counts.get(at), 2, 'strip');
     }
   }
 
@@ -746,15 +837,11 @@ function handShape(ctx, cardIds) {
     // Repeated, because a rank the hand holds three of can sit in three runs.
     for (let pass = 0; pass < 4; pass++) {
       let laid = false;
-      for (const window of windows(counts, 1, (e) => e.seq)) {
+      for (const window of windows(counts, 1, (e) => e.run)) {
         if (window.length < run.min) continue;
         plays += 1;
         laid = true;
-        for (const at of window) {
-          const entry = counts.get(at);
-          entry.total -= 1;
-          entry.seq -= 1;
-        }
+        for (const at of window) takeFrom(counts.get(at), 1, 'run');
       }
       if (!laid) break;
     }
@@ -806,7 +893,7 @@ function chopAssemblable(ctx, unseen) {
   for (const shape of bombShapes(ctx)) {
     if (shape.kind === 'consecutive-pairs') {
       const size = shape.size ?? 3;
-      if (windows(counts, 2, (e) => e.seq).some((w) => w.length >= size)) return true;
+      if (windows(counts, 2, (e) => e.strip).some((w) => w.length >= size)) return true;
       continue;
     }
     const size = shape.size ?? FIXED_SIZE[shape.kind] ?? 1;
@@ -868,8 +955,9 @@ function controlOf(ctx, seat) {
  *
  *   four 2s                 four of the top rank on the `rankLadder`
  *   six pairs               half a hand's worth of pairs (`deal` / 2)
- *   a 3-to-A dragon         one card of every rank a sequence may contain,
- *                           i.e. the ladder minus `runExcludes`
+ *   a 3-to-A dragon         one card of every rank EVERY sequence shape may
+ *                           contain, i.e. the ladder minus `runExcludes` AND
+ *                           minus `stripExcludes`
  *   five consecutive pairs  the longest strip the `bombs` ladder declares
  *   three consecutive       triples in as many consecutive ranks as a run
  *   triples                 needs (`combinations`' `run(3+)`)
@@ -877,6 +965,14 @@ function controlOf(ctx, seat) {
  * A pack with a different ladder and a different bomb list gets the same five
  * ideas measured against ITS table, which is the only way this belongs in a
  * template rather than in a Thirteen-shaped branch.
+ *
+ * THE DRAGON IS THE INTERSECTION, AND THAT IS THE EXPLICIT PART (#158). It used
+ * to read `runExcludes` alone, so switching on "a 2 can end a run" moved the
+ * dragon from 3-to-A (twelve ranks, twelve cards) to 3-to-2 (thirteen ranks,
+ * and therefore the entire thirteen-card hand) — a shape so much rarer that the
+ * house rule would have quietly turned the instant win off while the rules page
+ * went on offering it. Taking the ranks that no sequence shape excludes keeps
+ * the dragon at the traditional 3-to-A under both readings, and says so.
  */
 function instantWinShape(ctx, cardIds) {
   if (!ctx.rules.instantWins) return null;
@@ -897,6 +993,7 @@ function instantWinShape(ctx, cardIds) {
   if (vocab.has('pair') && pairs >= Math.floor((ctx.rules.deal ?? cardIds.length) / 2)) return 'six pairs';
 
   const run = vocab.get('run');
+  // No `kind`: a rank ANY sequence shape bars is barred from the dragon.
   const excluded = new Set();
   for (const card of ctx.pack.cardsById.values()) if (outOfSequence(ctx, card)) excluded.add(card.rank);
   const inSequence = ranks.filter((rank) => !excluded.has(rank)).length;
@@ -907,7 +1004,7 @@ function instantWinShape(ctx, cardIds) {
     const longest = Math.max(0, ...bombShapes(ctx)
       .filter((shape) => shape.kind === 'consecutive-pairs')
       .map((shape) => shape.size ?? strip.min));
-    if (longest && windows(counts, 2, (e) => e.seq).some((w) => w.length >= longest)) {
+    if (longest && windows(counts, 2, (e) => e.strip).some((w) => w.length >= longest)) {
       return `${longest} consecutive pairs`;
     }
   }
@@ -1087,6 +1184,13 @@ const climbing = {
   applyMove(ctx, move) {
     const seat = move.actor;
     if (move.type === 'pass') {
+      // WHAT `passed` MEANS DEPENDS ON THE RULE, and it is worth saying which.
+      // Under `passIsFinal` it is the roster of seats out of this trick, and
+      // `stillIn` reads it. Under the weak rule (#158's `pass-stays-in`) it is
+      // a LOG of the passes this trick and nothing gates on it — a seat can
+      // appear in it twice, which is a seat that passed twice and is still
+      // being asked. Either way it is cleared by `clearTrick`, and either way
+      // it is public: everybody at the table watched each of those passes.
       ctx.setVar('passed', [...passedSeats(ctx), seat]);
       ctx.emit('passed', { seat });
       advance(ctx, seat);
@@ -1312,8 +1416,22 @@ const climbing = {
     if (rules.matchShape === 'same-type-same-size') {
       out.push('A run only answers a run of the same length; a pair only answers a pair.');
     }
-    if (rules.passIsFinal) out.push('Once you pass you are out of that trick, so pass carefully.');
+    // BOTH READINGS GET A SENTENCE. `passIsFinal: false` used to print nothing
+    // at all, so the one table rule that changes what you may do on your next
+    // turn was the one rule the rules page did not mention (#158).
+    if (rules.passIsFinal === false) {
+      out.push('A pass only skips your turn: you are asked again when the play comes back round.');
+    } else {
+      out.push('Once you pass you are out of that trick, so pass carefully.');
+    }
     if (rules.bombs?.length) out.push('A bomb can be played out of shape to kill the highest cards.');
+    // The first lead is a rule about the very first turn of the match, and the
+    // felt refuses moves over it, so it says so rather than being discovered.
+    if (rules.firstLead?.card === 'lowest') {
+      out.push(rules.firstLead.mustInclude
+        ? 'The lowest card in play leads the first hand, and that lead has to contain it.'
+        : 'The lowest card in play leads the first hand.');
+    }
     if (rules.laterLead === 'trick-winner') {
       out.push('When everyone else passes, the last player to have played leads the next trick.');
     }
@@ -1326,6 +1444,12 @@ const climbing = {
     if (rules.instantWins) {
       out.push('Some hands win on the deal: four 2s, six pairs, a 3-to-A dragon, '
         + 'five consecutive pairs or three consecutive triples.');
+    }
+    // The house rule the exclusion split bought: a run may end on the top of the
+    // ladder while a strip of consecutive pairs still may not.
+    if (rules.stripExcludes?.length && !rules.runExcludes?.length) {
+      out.push('A run may end on a 2 — it still never wraps, and a 2 is still no part '
+        + 'of a strip of consecutive pairs.');
     }
     return out;
   },
