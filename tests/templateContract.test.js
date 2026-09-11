@@ -27,6 +27,7 @@ import { ROOT } from "../tools/stage.mjs";
 import { getTemplate, TEMPLATE_IDS } from "../src/templates/index.js";
 import { TEMPLATE_INFO } from "../src/templates/registry.js";
 import { INTERACTION_MODES } from "../src/ui/interaction.js";
+import { COUNTER_TRACK_KINDS, COUNTER_PIP_KINDS, counterPips } from "../src/ui/counterTrack.js";
 import { createState } from "../src/engine/state.js";
 import { makeCtx } from "../src/engine/context.js";
 import { loadPackFromDisk, listPackIds } from "../tools/pack-test.mjs";
@@ -185,8 +186,55 @@ test("seatCounters, where offered, is a usable list and its primary always shows
       // meaning two different quantities depending on whose turn it was.
       assert.ok(!counters[0].minimizedOnly,
         `${packId}: the primary counter is minimizedOnly, so an open seat shows a different quantity`);
+      // ...and `openOnly` is the same rule read the other way round (#148): a
+      // primary that vanishes when a seat minimizes leaves the badge in that
+      // slot meaning the NEXT counter along, which is the same bug with the
+      // seats swapped.
+      assert.ok(!counters[0].openOnly,
+        `${packId}: the primary counter is openOnly, so a minimized seat shows a different quantity`);
+      for (const counter of counters) {
+        assert.ok(!(counter.minimizedOnly && counter.openOnly),
+          `${packId}: "${counter.label}" is both minimizedOnly and openOnly, so it is never drawn`);
+      }
     }
   }
+});
+
+// THE DRAWN KINDS ARE THE PLATFORM'S CLOSED VOCABULARY, exactly like
+// INTERACTION_MODES: `src/ui/counterTrack.js` owns the list, the template names
+// one, and an unknown kind fails soft to the digit badge. What this pins is the
+// half that cannot fail soft — a template that names a drawn kind and then
+// ships it without the numbers it needs draws NOTHING, and an empty slot on a
+// seat plate looks like a game that has not started rather than like a bug.
+test("a counter that names a drawn kind carries what that kind needs", async () => {
+  let drawn = 0;
+  for (const packId of listPackIds()) {
+    const pack = await loadPackFromDisk(packId);
+    if (!pack.template.seatCounters) continue;
+    const state = createState({ pack, seats: 4, seed: `contract:${packId}` });
+    pack.template.setup(makeCtx(state));
+
+    for (let seat = 0; seat < state.seats; seat++) {
+      for (const counter of pack.template.seatCounters(makeCtx(state), seat)) {
+        if (COUNTER_TRACK_KINDS.includes(counter.kind)) {
+          drawn++;
+          assert.ok(Number.isFinite(counter.value) && Number.isFinite(counter.of) && counter.of > 0,
+            `${packId}: a "${counter.kind}" counter without a position and a road draws no track`);
+        }
+        if (COUNTER_PIP_KINDS.includes(counter.kind)) {
+          drawn++;
+          assert.ok(counterPips(counter),
+            `${packId}: a "${counter.kind}" counter the pip renderer refuses draws nothing at all`);
+          assert.ok(counter.bid === null || Number.isInteger(counter.bid),
+            `${packId}: a pip row's bid is neither a number nor null`);
+          assert.ok(Number.isInteger(counter.taken),
+            `${packId}: a pip row's taken count is not a number`);
+        }
+      }
+    }
+  }
+  // An empty sweep is a failure: both vocabularies are in use today.
+  assert.ok(drawn >= 2, `only ${drawn} drawn counters were examined — the sweep found nothing`);
 });
 
 test("a sequencing seat counts down its STOCK, which is the race, not its hand", async () => {
@@ -344,4 +392,96 @@ test("a template's weights are a frozen bag of finite numbers", () => {
     }
   }
   assert.ok(declared >= 4, `only ${declared} templates declare weights — the four with evaluateState should`);
+});
+
+/* ------------------------------------------------------------------ *
+ * #148 — the rest of the per-pack audit, asserted through the registry
+ * ------------------------------------------------------------------ */
+
+// THIRTEEN. A climbing trick is seats dropping out of it one at a time, and
+// until now the only thing that ever said who was out was a banner that had
+// already gone. `passed` is a PUBLIC table var, so this is not the leak the
+// bomb count would have been (src/templates/climbing.js).
+test("a climbing seat that has passed says so, and one that has gone out does not", async () => {
+  let checked = 0;
+  for (const packId of listPackIds()) {
+    const pack = await loadPackFromDisk(packId);
+    if (pack.template.id !== "climbing") continue;
+    const state = createState({ pack, seats: 4, seed: `passed:${packId}` });
+    pack.template.setup(makeCtx(state));
+    const mark = (seat) => pack.template.seatCounters(makeCtx(state), seat)
+      .find((c) => c.kind === "passed");
+
+    assert.strictEqual(mark(1), undefined, "nobody has passed yet and a seat is already marked");
+    state.vars.passed = [1];
+    checked++;
+    assert.ok(mark(1), "a seat that has passed wears no mark at all");
+    assert.strictEqual(mark(1).text, "pass");
+    assert.strictEqual(mark(2), undefined, "a seat still in the trick is marked as passed");
+
+    // GOING OUT IS NOT PASSING. An empty hand is the good ending in this genre
+    // and `stillIn` is false for it too — reaching for that helper here would
+    // mark the winner as having dropped out.
+    const ctx = makeCtx(state);
+    ctx.moveCards([...state.zones.cards("hand.1")], "hand.1", "pile");
+    assert.strictEqual(mark(1), undefined, "a seat that has gone out is marked as having passed");
+  }
+  assert.ok(checked, "no climbing pack was examined — the sweep found nothing");
+});
+
+// STOCKPILE. The stock is the race and stays the primary; the hand is the
+// second number and only on a face, where the fan of backs is not there to
+// count for itself.
+test("a sequencing seat's second counter is its hand, and only on a face", async () => {
+  let checked = 0;
+  for (const packId of listPackIds()) {
+    const pack = await loadPackFromDisk(packId);
+    if (pack.template.id !== "sequencing") continue;
+    const state = createState({ pack, seats: 4, seed: `hand2:${packId}` });
+    pack.template.setup(makeCtx(state));
+    const counters = pack.template.seatCounters(makeCtx(state), 1);
+    checked++;
+    assert.strictEqual(counters[1]?.kind, "hand", `${packId}: the second counter is not the hand`);
+    assert.strictEqual(counters[1].text, String(state.zones.count("hand.1")));
+    assert.ok(counters[1].minimizedOnly,
+      `${packId}: the hand count is drawn on an open seat, directly under a picture of the hand`);
+  }
+  assert.ok(checked, "no sequencing pack was examined");
+});
+
+// WILDFIRE. "Who is about to go out" is the only question an eight-handed
+// shedding row is scanned for, and at that width every face is an avatar with
+// one small digit on its corner. Same slot, same quantity, escalated kind —
+// never a second badge, because the row's width is what the tier ladder
+// measures.
+test("a shedding seat at the call count escalates its own count", async () => {
+  let checked = 0;
+  for (const packId of listPackIds()) {
+    const pack = await loadPackFromDisk(packId);
+    if (pack.template.id !== "shedding") continue;
+    const state = createState({ pack, seats: 4, seed: `call:${packId}` });
+    pack.template.setup(makeCtx(state));
+    const primary = (seat) => pack.template.seatCounters(makeCtx(state), seat)[0];
+
+    const full = primary(1);
+    assert.strictEqual(full.kind, "hand", `${packId}: a full hand is already being escalated`);
+    assert.strictEqual(full.text, String(state.zones.count("hand.1")));
+
+    const call = pack.rules.lastCardCall;
+    const keep = call ? (call.atHandCount ?? 1) : 1;
+    const ctx = makeCtx(state);
+    ctx.moveCards([...state.zones.cards("hand.1")].slice(keep), "hand.1", "discard");
+    const last = primary(1);
+    checked++;
+    assert.strictEqual(last.text, String(keep), `${packId}: the count is no longer the hand`);
+    assert.strictEqual(last.kind, call ? "lastcard" : "hand",
+      call
+        ? `${packId}: a seat on its last card is drawn like any other`
+        : `${packId}: a pack with no last-card call grew the mark anyway`);
+    if (call) {
+      assert.match(last.aria, /last/,
+        `${packId}: the mark is carried by colour alone — the spoken name never says it`);
+    }
+  }
+  assert.ok(checked >= 2, `only ${checked} shedding packs were examined`);
 });
