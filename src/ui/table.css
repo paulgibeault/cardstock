@@ -3142,24 +3142,32 @@ body.is-dragging .card-face { cursor: grabbing; }
    other corner) — out of the seat row's flow so it leans on nothing, above the
    felt at z-index 3 and far below the dialogs at 10.
 
-   32px of TARGET around 13px of ink, which is the minimum a thumb is owed
-   (§5); the ring is what makes it findable, and the low opacity is what keeps
-   it from competing with a card. It does not mirror with handedness: the
-   toggle has the right corner under both, and this is not a control anyone
-   reaches for mid-trick — a mark that swapped sides would land on top of it. */
+   ITS INK IS THE BAND ABOVE THE SEATS, AND ITS TARGET IS BIGGER THAN ITS INK.
+   That band is all the room this corner has: measured at 375x812 the seat row
+   starts 14px below the felt's top edge and a plate's own content 26px below
+   it, so a 32px disc in the corner sat on the first player's avatar and turn
+   chip — the one thing a mark in the corner may not do. The disc is therefore
+   1.4rem, the register the seat-view toggle already set opposite it, and the
+   tap target is grown by a pseudo-element UPWARDS and SIDEWAYS into the felt's
+   own edge rather than downwards into the row: 36x28 of target against the
+   toggle's own 22x18, and a plate's corner still answers its own taps.
+
+   It does not mirror with handedness: the toggle has the right corner under
+   both, and this is not a control anyone reaches for mid-trick — a mark that
+   swapped sides would land on top of it. */
 .table-help {
   position: absolute;
-  top: 0.5rem;
-  left: 0.6rem;
+  top: 0.25rem;
+  left: 0.5rem;
   z-index: 3;
-  width: 2rem;
-  height: 2rem;
+  width: 1.4rem;
+  height: 1.4rem;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 0;
   font: inherit;
-  font-size: 0.85rem;
+  font-size: 0.8rem;
   line-height: 1;
   border-radius: 50%;
   border: 1px solid var(--chip-border);
@@ -3167,6 +3175,17 @@ body.is-dragging .card-face { cursor: grabbing; }
   color: inherit;
   cursor: pointer;
   opacity: 0.7;
+}
+/* The target, and NOT a hair of it below the disc: the seat row's first plate
+   begins half a pixel under this box on a phone, and a target that reached
+   into it would take the taps that belong to a player. */
+.table-help::after {
+  content: "";
+  position: absolute;
+  top: -6px;
+  left: -7px;
+  right: -7px;
+  bottom: 0;
 }
 .table-help:hover { opacity: 1; border-color: var(--accent); color: var(--accent); }
 .table-help:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -3179,8 +3198,8 @@ body.is-dragging .card-face { cursor: grabbing; }
    opens, which is why it closes on the way there. */
 .help-sheet {
   position: absolute;
-  top: 2.8rem;
-  left: 0.6rem;
+  top: 2rem;
+  left: 0.5rem;
   z-index: 8;
   display: flex;
   flex-direction: column;

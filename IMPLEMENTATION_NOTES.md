@@ -2666,6 +2666,195 @@ against the felt's edge for the whole game. If it wants a floor later, the
 place to put one is a `--stage-card-w` that this rule and the 660px block both
 read.
 
+## Both controls at once, and a `?` on the felt (#154, #155)
+
+### What was wrong
+
+The hand rail's stack was the turn token, the Hint lamp, and ONE slot that the
+action button and the sort toggle took turns in: `renderRail` set
+`el.handSort.hidden = acting || hand < 2`. So for the whole of a Team Spades
+bid, a Hearts pass, a cribbage crib discard or a Thirteen combination with
+cards staged, the sort control was off the felt — which is precisely the phase
+a player spends arranging their hand to decide with. Measured on main at
+1280×860, all four: `#action-button` 80×23 in the slot, `#hand-sort` 0×0.
+
+The sharing was not decoration. Two written invariants stand behind it: the
+rail's WIDTH is what `layoutHand` subtracts from the fan's room, so a rail that
+grew would re-fan the hand under the player's finger (#13 in the inline axis),
+and the stack's HEIGHT has to be constant because these are controls under a
+thumb that is already reaching for them. One slot was how both were paid for.
+
+Two taps away, the same felt had nothing on it that said "how is this played?"
+— `packRules` lived behind the scoreboard's own panel — while "what should I
+do here?" sat in the rail as a lamp among the buttons that commit (#155).
+
+### What changed
+
+**The lamp bought the third rung.** The two questions the lamp and the rules
+answer are questions about the GAME rather than controls of it, so they left
+the rail together for a `?` mark in the felt's top-left corner and a two-line
+sheet under it. That frees the slot the lamp was standing in, and the stack was
+already three rungs tall with it there — so the sort toggle and the action
+button get a rung each at no cost at all. The rail is the same 5rem, the
+stack came out SHORTER (73px with the lamp, 69px with the sort pill in its
+place), and `#hand-row` and `#hand` are pixel-identical to main at both
+viewports. On a portrait phone the band stands the same three rungs in a row,
+with the action button still at the thumb's end of it.
+
+**Every rung keeps its slot now, including the action button.** It was the one
+thing in the stack toggled by `hidden`, which was right while one of the two
+was always standing in the slot and wrong the moment they each had one: the
+sort toggle would have stepped down into the empty rung every time a commit
+phase ended. It goes quiet by `visibility` like the token — off the screen and
+out of the tab order, still occupying its box. An empty button is nine pixels
+of padding, though, which measured as the stack standing 13px taller the
+instant a phase began, so `#action-button` carries a `min-height` derived from
+its own `line-height` and padding rather than from its label, and `renderRail`
+empties the label instead of leaving "Your crib" in the DOM for a reader that
+cannot see it is invisible.
+
+**The sort pill's floor goes 6.2em → 6.8em.** "Deal order" measures 75px
+against a floor of 69, so the pill was re-centring itself by 3px whenever the
+cycle came round to the long label. Nothing depended on that while the toggle
+only appeared between phases; it is 3px of movement beside a button that is
+now always there.
+
+**The help mark, and the band it has to live in.** Absolutely positioned at
+`top: .25rem; left: .5rem` with `z-index: 3` — the `.opponent-row__toggle`
+treatment exactly, in the corner that toggle does not have. It does NOT mirror
+with handedness: the toggle is pinned right under both, and this is not a
+control anyone reaches for mid-trick, so a mark that swapped sides would land
+on top of it. The sheet hangs off the mark at `z-index: 8` — above the felt,
+below the dialogs at 10, including the rules panel it opens.
+
+The size is the part the felt decided. A 2rem disc, which is what a thumb is
+owed, sat on the first seat plate: measured at 375×812 the seat row begins 14px
+under the felt's top edge and a plate's own ink (`.seat__head`, the avatar)
+26px under that, so a 32px disc in the corner covered the first player's
+avatar and turn chip — the one thing a mark in this corner may not do. The ink
+is therefore 1.4rem, the register the seat-view toggle already set opposite it,
+and the TARGET is grown past the ink by a pseudo-element that reaches UPWARDS
+and SIDEWAYS into the felt's own edge and not one pixel downwards: 36×28 of
+target (against the toggle's own 22×18) with `bottom: 0`, so the nearest
+plate's corner still answers its own taps — checked with `elementFromPoint`
+rather than argued from rects, because the pseudo-element is exactly the thing
+a `getBoundingClientRect()` does not describe.
+
+**Two lines, and neither of them a menu.** A `role="menu"` promises arrow-key
+navigation and a roving tabstop; two buttons in a popover that Tab already
+walks promise nothing they do not keep, so the mark is a plain disclosure
+(`aria-expanded`, `aria-controls`) over a `role="group"`. Focus goes to the
+first line on open and comes back to the mark on close — but only when it is
+still inside the sheet, so a close that fires because the player tapped a card
+does not steal the focus off that card. Escape closes it first, ahead of the
+seat plate the same handler dismisses.
+
+**The hint line is offered or explained, never simply missing.** `hintOffer`
+holds the five conditions the lamp was shown under — a view holds no position
+to rank, the game is over, it is not your turn, the answer is already on the
+felt, there is only one play — and each one now has a sentence instead of an
+invisible button. Somebody who has just opened a help sheet is looking for
+help; a control that has disappeared teaches them nothing. `showHint` itself is
+untouched, so the ranking, `session.hintsTaken` and the stats path are what
+they were, and the sheet closes BEFORE the hint runs, because what a hint
+produces is a ring round cards the sheet would otherwise be standing over.
+
+### How it was verified
+
+Two dev servers, main and this branch, driven by the same probe.
+
+**The bug, and its end.** Spades' bid, Thirteen with three staged, Hearts'
+pass with three staged and cribbage's crib, at 1280×860 and 375×812. On main
+`#hand-sort` is 0×0 in all eight; on the branch it is shown and clickable
+beside a shown `#action-button` in all eight. Cycling it through Deal order →
+By suit → By rank reorders the fan in every one of them with the staged cards
+still in the tray and `#hand-row` unmoved. (One click is not proof: `auto` is
+`sortOrder`, which on a standard deck already agrees with `suit` — it is the
+second click that reorders.)
+
+**Nothing moved.** At 1280×860 `#hand-row` is `30,689 1221×123` and the fan's
+step 69.52px on main and on the branch, in every scenario and at rest;
+`#hand` matches to the pixel (crazy-eights at rest, `412,689 368×123` both
+sides). At 375×812, `#hand-row` `22,580 332×188`, `#hand` `27,613 322×156`,
+step 43.24px, both sides. The rail is 80×0 beside the fan and 332×30 as a band,
+both sides. The stack is 69px at 1280 and 30px at 375 in EVERY state now —
+acting, refused and idle — where main was 73px acting against 72px idle.
+
+**Left handedness and the light theme.** Thirteen at both viewports under
+`data-handedness=left` × `data-theme=light|dark`: the rail flips to the fan's
+left with the stack's rungs in the same order, the band mirrors to the left
+edge, and the sheet stays on the felt. The mark holds the top-left corner in
+all four, which is the deliberate part.
+
+**The mark, over all nine packs, at 1280×860 and 375×812.** It is `22,68
+22×22` in all eighteen, present and hittable (`elementFromPoint` at its centre
+returns `#help-button`, not a seat) and overlapping neither a seat plate nor
+the hand anywhere; the nearest plate's own top-left corner still answers with
+the seat, which is the check the grown target has to pass. The sheet opens with
+focus on "How to play"; Escape closes it and returns focus to the mark; a tap
+on the felt closes it. "How to play" opens the rules panel with the pack's own
+title and 5–8 sections and closes the sheet behind it. "Hint" rings cards on
+the felt and writes the sentence to `#log` ("Steady would play the 8 of
+Diamonds and call Spades"), and asking again immediately finds the line
+disabled with "The hint is on the felt". Two kinds of exception, both of them
+the offer working: Team Spades and Pinochle during the auction ring nothing,
+because a bid has no card in it for a ring to go round and `#log` carries the
+whole answer — which is what the lamp did too — and Thirteen's opening lead
+finds the line already disabled with "There is only one play", which is a
+condition the lamp answered by vanishing.
+
+**From the keyboard alone.** Three Tabs from the top of the table reach the
+mark (Lobby → the score chip → the mark); Enter opens the sheet onto "How to
+play", Tab walks to "Hint", Escape closes it and hands focus back to the mark.
+A rung with nothing to say is `visibility: hidden`, so the empty action button
+is out of the tab order as well as off the screen — which is what `hidden` was
+doing for it before.
+
+**Still counted.** A hint taken from the sheet moves the persisted match's
+`hints` from 0 to 1 (`arcade.v1.cardstock.match.crazy-eights` and
+`…match.hearts`), so `session.hintsTaken` and the record path are untouched by
+the move out of the rail.
+
+**Gates.** `npm test` 852 pass / 0 fail (842 on main, +10 from the new gate);
+`node tools/pack-test.mjs --all` all nine packs 0 failed; `node --check` on
+`src/ui/table.js` and `src/ui/panels.js`; all nine packs boot clean at both
+viewports with no page or console errors (18/18).
+
+`tests/handRail.test.js` is a markup, stylesheet and source gate — there is no
+DOM in `npm test` — and it was verified by breaking: twelve deliberate breaks
+across the three files, each one expected to bite a named test, and all twelve
+did. `hidden` put back on a rung in the markup; `el.actionButton.hidden`
+written from `renderRail` again; the sort toggle's condition given `acting ||`
+back; a rung's `visibility: hidden` turned into `display: none`; the rail
+widened to 6.5rem; `#hint-button` re-mentioned in the sheet; the mark's
+`aria-controls` dropped; the mark moved to the toggle's corner; the mark grown
+back to the 2rem disc that sat on the first plate; its target given a `bottom`
+that reached down into the seat row; `showHint()` moved ahead of the close; and
+`movesFor` dropped from `hintOffer`. Every file restored from a scratch copy
+(never `git checkout`) and md5-checked against its original, and the gate went
+green again after each.
+
+### Not done
+
+The sort toggle is still a text pill rather than an icon, which is what the
+issue's preferred shape called for. An icon-only toggle beside the button in
+one slot needs the rail at 6.5rem to hold both at
+`ACTION_LABEL_MAX_CHARS = 11` — and the rail's width is the fan's room, so
+that is 24px off the hand at every desktop width and a 12px sideways shift of
+the fan, against an acceptance line that asks for those rects to be identical.
+The rung was free; the widening was not. If the icon is wanted later for its
+own sake, the sheet change is `.hand-rail__stack` back to a row and the same
+`min-width` argument on the pill.
+
+The regression gate is a new `tests/handRail.test.js` rather than extra cases
+inside `tests/interaction.test.js` and `tests/commitPrompt.test.js`, which is
+where #154 asked for it. Those two are about the UI MODEL — what `ui.action`
+says a phase offers — and the regression was never in the model: it was in
+`renderRail`'s one expression answering two questions, and in the markup and
+stylesheet that let a rung leave the stack. A gate that watches those three
+files is the gate that can fail when this comes back, and it keeps a
+merge-heavy branch out of two files other polish branches are also editing.
+
 ## Next steps
 
 Multiplayer (Phase 8), per-pack UI polish (per-pack `theme.css`, custom
