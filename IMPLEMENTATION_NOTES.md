@@ -2777,6 +2777,17 @@ the one more tables play. The strict rule is still the pack's own
 it was dealt under, which is pre-existing machinery (`src/engine/replay.js`
 records `activeVariants`) and was verified rather than assumed.
 
+**`tools/simulate.mjs --vs` was measuring the wrong pack.** `tournamentPack`
+has taken a `variants` option since it was written; `main` never passed one, so
+`--vs=hard,easy --variants=two-tops-runs` quietly played the pack's defaults.
+It went unnoticed because the tournament heading printed only the pack id, so
+two runs under different rules were indistinguishable on paper. Found the way
+these things are found: three runs at three rule sets came back byte-identical,
+down to the mean round score. The option is threaded through and the heading
+names the rule set like the other two printers' `label` does. Untested, because
+`tournamentPack` is not exported and a tournament is minutes rather than
+milliseconds — it is a dev tool, and this is written down rather than pinned.
+
 **`tools/pack-test.mjs` had to learn the difference between "no variants named"
 and "no variants".** Its per-variant pack memo keyed both on `''`, so
 `"variants": []` — the only way a rule test can pin the strict side of a
