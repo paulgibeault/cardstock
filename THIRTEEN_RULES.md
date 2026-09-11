@@ -85,7 +85,10 @@ Two rules about runs carry all the weight:
 
 * **A 2 may never appear in a run**, or in consecutive pairs. The ladder ends
   at the ace for sequence purposes. `Q-K-A` is a run; `K-A-2` is not, and
-  `A-2-3` is not (there is no wrap — the 3 is the bottom).
+  `A-2-3` is not (there is no wrap — the 3 is the bottom). The two halves of
+  that sentence are separate rules at a real table, and the pack now states
+  them separately (D-13): `rules.runExcludes` for runs, `rules.stripExcludes`
+  for consecutive pairs.
 * **A run only beats a run of the same length.** A five-card run does not beat
   a four-card run; it is simply not a legal answer to it.
 
@@ -132,8 +135,11 @@ consecutive pairs, `2-2 A-A K-K` is not a bomb at all.
 1. The leader plays any legal combination.
 2. In turn, each other player either **passes** or plays a strictly higher
    combination of the same shape and size — or a legal bomb (§1.4).
-3. **A pass is final for that trick.** Once you have passed you are out of it
-   and may not re-enter, even if the play comes back around below you.
+3. **A pass.** Two tables, two rules, and the pack ships the weaker one on by
+   default (D-12): a pass only skips your turn and you are asked again when
+   the play comes back round. Switch off "Passing keeps you in the trick" for
+   the strict rule, where a pass puts you out of that trick for good and you
+   may not re-enter even if the play comes back around below you.
 4. When everybody else has passed, the last player to have played takes the
    trick, clears the table, and leads the next one, free to lead anything.
 
@@ -142,9 +148,14 @@ whoever still has cards and has not passed.
 
 ### 1.6 The first lead, and later ones
 
-* **First hand of a match:** the holder of **3♠** leads, and the combination
-  they lead **must contain the 3♠** (see D-2). It may be the bare single, or
-  the 3♠ inside a pair, a run, anything legal.
+* **First hand of a match:** the holder of the **lowest card in play** leads,
+  and the combination they lead **must contain it** (see D-2). It may be the
+  bare single, or that card inside a pair, a run, anything legal. At a full
+  table the lowest card in play is the 3♠ and this is the rule everybody
+  states; short-handed the deal leaves a third or a half of the deck out of
+  play (D-11) and the 3♠ is frequently not among the cards dealt at all, so
+  the rule has to be written as what it means rather than as the card it
+  usually names. The manifest says `firstLead.card: "lowest"`.
 * **Later hands:** see D-3.
 
 ### 1.7 Winning
@@ -168,7 +179,7 @@ intent without offering a switch that changes nothing.
 | # | Question | Default here | Why |
 |---|---|---|---|
 | **D-1** | Turn direction | **counter-clockwise** | The traditional Vietnamese direction. Cosmetic for solo-vs-bots, but it is a real fact about the game and the seat ring should honour it. |
-| **D-2** | Must the first lead contain 3♠? | **yes** | Removes the whole first-lead decision from hand one and is the near-universal rule. Worth a variant for the casual "lead anything" table. |
+| **D-2** | Must the first lead contain the lowest card? | **yes** | Removes the whole first-lead decision from hand one and is the near-universal rule. Worth a variant for the casual "lead anything" table. The card is named as `"lowest"` rather than as `spades-3`, because at 2 and 3 seats (D-11) the 3♠ is often not dealt — half the deck is never dealt at two seats and a quarter of it at three, and the card is out of play in 50.7% and 25.8% of deals over 400 seeded deals each — and a nominated card that is out of play names no seat, so the lead fell to the rotating opening seat, which on hand one is the human. |
 | **D-3** | Who leads later hands | **the previous hand's winner** | The alternative — the holder of 3♠ leads every hand — is played, but rewards the deal rather than the play. |
 | **D-4** | Can you win by playing a 2? | **yes** | The "no ending on a pig" rule is a real house rule and a good variant, but it turns a won position into a trap in a way that needs the UI to warn about it. |
 | **D-5** | Pair/triple comparison | **by highest card, suit included** | `9♥9♦` beats `9♣9♠`. Follows from the total order (§1.2); the alternative (rank only, ties impossible in practice for triples) is a special case nobody needs. |
@@ -178,7 +189,8 @@ intent without offering a switch that changes nothing.
 | **D-9** | Scoring | **one point per card left, paid to the winner** | The simplest thing that is really played, and it maps onto the existing `scoring` block. See below. |
 | **D-10** | Pig/bomb penalties (*thúi heo*) | **off, deferred** | Being caught holding a 2 or an unspent bomb costs extra. Real, but it is a second scoring vocabulary; it should follow the first playable build, not lead it. |
 | **D-11** | Player counts other than 4 | **2 and 3 supported, 13 each, remainder out of play** | 3 players leaves 13 cards unseen, which is genuinely how it is played short-handed. Solo-vs-bots means 4 is what almost everybody will see. |
-| **D-12** | Passing out of a trick | **final** | §1.5.3. The "you may re-enter" rule exists and is much weaker; not worth a variant until somebody asks. |
+| **D-12** | Passing out of a trick | **you stay in, shipped as a variant that is ON** | §1.5.3. Somebody asked. The strict rule is still the pack's `rules.passIsFinal: true`; the variant `pass-stays-in` patches it to `false`, ships `default: true`, and is what a new table gets — a pass skips your turn and the play comes back round to you. The strict rule is one toggle away, and a resumed match keeps whichever it was dealt under. |
+| **D-13** | Can a 2 end a run? | **no, shipped as a variant that is OFF** | §1.3. `Q-K-A-2` is a widely played house rule; `2-2 A-A K-K` as a bomb-eligible strip is not, and neither is a 3-to-2 dragon. One exclusion list could not tell those apart, so the pack declares `runExcludes` and `stripExcludes` separately and the variant `two-tops-runs` empties only the first. The run still never wraps (`A-2-3` is not a run), the strip is untouched, and the instant-win dragon is measured against the ranks *both* lists allow, so it stays 3-to-A under either reading. |
 
 ### Scoring, concretely
 

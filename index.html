@@ -136,6 +136,45 @@
     <div id="party-strip" class="party-strip" hidden></div>
 
     <div id="table">
+      <!-- THE ONE MARK ON THE FELT THAT IS NOT A MOVE (#155).
+           The rules used to live behind the scoreboard, two taps in, and the
+           Hint lamp lived in the hand rail among the buttons that commit — so
+           a player who did not know what game they were looking at had nothing
+           on the felt to reach for, and a player who did had "what should I
+           do?" sitting next to "Pass". Both questions are about the game
+           rather than controls of it, and they are here together.
+
+           Tucked into the corner the way the seat-view toggle is (see
+           .opponent-row__toggle): out of the seat row's flow, above the felt
+           and below every dialog, far enough into the corner that it covers
+           neither a player nor the hand. The LEFT corner because the toggle
+           has the right one, and it stays there under both handednesses for
+           the same reason — this is not a control the thumb reaches for
+           mid-trick, and a mark that mirrored would land on top of the
+           toggle. -->
+      <button type="button" id="help-button" class="table-help"
+              aria-expanded="false" aria-controls="help-sheet" aria-label="Help">
+        <span aria-hidden="true">?</span>
+      </button>
+      <!-- Two things, and deliberately not a menu: a menu promises arrow-key
+           navigation and a roving tabstop, and two buttons in a popover that
+           Tab already walks promise nothing they do not keep. Escape and a tap
+           anywhere else close it, as everything else on this screen does. -->
+      <div id="help-sheet" class="help-sheet" role="group" aria-labelledby="help-button" hidden>
+        <button type="button" id="help-rules" class="help-sheet__item">
+          <span class="help-sheet__label">How to play</span>
+          <span class="help-sheet__note">The rules for this pack</span>
+        </button>
+        <!-- The hint is OFFERED OR EXPLAINED, never simply missing: a control
+             that vanishes teaches nobody why. Disabled with the reason on it
+             when the felt cannot answer — it is not your turn, the table holds
+             a view rather than the cards, there is only one play. -->
+        <button type="button" id="help-hint" class="help-sheet__item">
+          <span class="help-sheet__label">Hint</span>
+          <span id="help-hint-note" class="help-sheet__note">What a player at this level would do</span>
+        </button>
+      </div>
+
       <div class="opponent-row" id="opponents-top"></div>
 
       <!-- The contract in force: the standing high bid and who holds it during
@@ -250,16 +289,21 @@
            the player was reaching for; the felt is short enough that the room
            was worth more than the words.
 
-           The token and the Hint offer are ICONS. A chip either lit or not,
-           and a lamp: the seats already wear the same chip, so "whose turn"
-           is read the same way here as it is up there, and neither needs a
-           label to be read.
+           WHAT IS IN IT NOW IS PLAY, AND ONLY PLAY: the turn token, the fan's
+           sort toggle, the action button. The Hint offer left for the help
+           mark in the felt's corner (#155) — "what should I do?" is a question
+           about the game rather than a control of it, and it belongs beside
+           "how do I play this?" rather than among the buttons that commit.
+
+           The token is an ICON: a chip either lit or not, the same chip the
+           seats wear, so "whose turn" is read the same way here as it is up
+           there and it needs no label.
 
            WIDTH IS ALL THIS COSTS, and that is enforced rather than hoped
            for: the rail's own box is zero-height, so #hand-row is exactly as
            tall as the fan at every viewport, and layoutHand subtracts the
-           rail rather than the sort toggle it absorbed so the fan keeps the
-           room it had. -->
+           RAIL rather than whichever control happens to be standing in it, so
+           the fan keeps the room it had whatever the turn is doing. -->
       <div id="hand-row">
         <div class="hand" id="hand"></div>
         <!-- Two elements, because the rail owes the row a WIDTH and must never
@@ -272,24 +316,27 @@
                  below it never shuffles upward when the turn changes hands —
                  these are controls under a thumb that is already reaching. -->
             <span class="turn-token" aria-hidden="true"></span>
-            <!-- What a player at the chosen difficulty would do
-                 (src/ui/hint.js). Offered only while it is your turn and the
-                 felt holds the state a ranking needs — a joiner at a shared
-                 table holds a view, and gets no lamp rather than a guess — and
-                 it keeps its slot the same way the token does. -->
-            <button type="button" id="hint-button" aria-label="Hint">
-              <span aria-hidden="true">&#9788;</span>
-            </button>
-            <!-- The thumb slot: the one action that needs a button (passing,
-                 laying down) while there is one, and otherwise the fan's own
-                 sort toggle. They SHARE it rather than stacking, because a
-                 player with a meld staged is not reaching for "By suit" — and
-                 because one slot is one height, which is what keeps the two
-                 controls under the thumb from moving under it. -->
-            <button type="button" id="action-button" hidden></button>
             <!-- Arrange your own fan. Presentation only — src/ui/handOrder.js
-                 explains at length why this never reaches the engine. -->
-            <button type="button" id="hand-sort" class="hand-sort" hidden></button>
+                 explains at length why this never reaches the engine.
+
+                 IT HAS ITS OWN SLOT NOW, and the Hint lamp that used to stand
+                 here paid for it (#154, #155). The toggle and the action button
+                 shared one slot, so a bid, a pass, a crib discard or a staged
+                 combination took the sort control off the felt for the whole
+                 phase — exactly when a player is arranging their hand to decide
+                 (#154). The lamp moved to the help mark in the felt's corner,
+                 which freed the third slot the stack was already the height of:
+                 the rail is the same 5rem wide and the stack the same three
+                 rungs tall as it was with the lamp in it, so nothing the felt
+                 pays for changed. -->
+            <button type="button" id="hand-sort" class="hand-sort"></button>
+            <!-- The thumb slot: the one action that needs a button — passing,
+                 laying down, committing a bid. It is the LAST rung because it
+                 is the one the thumb is already reaching for, and it keeps its
+                 slot when there is no action the same way the token keeps its
+                 own: by class, never by `hidden`, so the column above it never
+                 shuffles under a finger mid-turn. -->
+            <button type="button" id="action-button"></button>
           </div>
         </div>
       </div>

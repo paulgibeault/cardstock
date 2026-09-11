@@ -320,9 +320,17 @@ export async function runPackTests(packId, { log = console.log } = {}) {
   //
   // Packs are loaded once per DISTINCT variant set rather than per test: a load
   // expands the whole deck, and most files name no variants at all.
+  //
+  // NAMING NO VARIANTS AND NAMING NONE ARE DIFFERENT REQUESTS, and the memo key
+  // has to be able to tell them apart. A test with no `variants` gets the
+  // pack's DEFAULTS (loadPack's `variants ?? defaultVariantIds`); `"variants":
+  // []` is the explicit "plain rules, no house rules at all", which is the only
+  // way to pin the strict side of a variant that ships `default: true`
+  // (Thirteen's `pass-stays-in`, #158). Both used to key on '', so the second
+  // one silently got whichever pack the first had cached.
   const packs = new Map();
   const packFor = async (variants) => {
-    const key = variants ? [...variants].sort().join(',') : '';
+    const key = variants ? `[${[...variants].sort().join(',')}]` : '(defaults)';
     if (!packs.has(key)) packs.set(key, await loadPackFromDisk(packId, variants));
     return packs.get(key);
   };
