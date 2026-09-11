@@ -2666,6 +2666,120 @@ against the felt's edge for the whole game. If it wants a floor later, the
 place to put one is a `--stage-card-w` that this rule and the 660px block both
 read.
 
+## The break said out loud, and the show drawn as a card (#151, #152)
+
+### What was wrong
+
+**Breaking was the one rule in the trick genre the felt never mentioned.**
+`placeCard` in `src/templates/trick-taking.js` flipped `spadesBroken` and
+emitted nothing, so a player discovered that spades were leadable by trying it.
+Measured rather than assumed: the same probe driven against main printed the
+word "broken" nowhere on `#table` across 63 moves of Team Spades and 60 of
+Hearts, and replaying those two saved logs shows the suit really did break —
+Team Spades at move 19 (twice across the run, once per hand), Hearts at move 10
+on the queen of spades. The felt's contract strip was not even on screen for
+Team Spades: `contractChips` returned null for any pack whose trump is not
+`chosen`.
+
+Two things fell out of the same reading. `publicVars` asked for
+`rules.broken?.varName` and no manifest has ever had a `rules.broken` — the
+schema's key is `rules.breaking.var` — so the optional chaining silently
+published nothing, and a joiner's view said the suit had never been broken for
+the whole hand while the host's legal-move list said otherwise. And the rules
+page, which explains everything else about a pack, had no sentence about
+breaking at all.
+
+**Cribbage's show is the scoring moment of the game and it was one sentence.**
+"Cass's hand is worth 12 — fifteen, fifteen, a pair and a run of 4", in the
+banner, over four cards the player then had to re-count to see where any of it
+came from. Everything needed to draw it was already on `showScored`: the
+combinations, their points, the cards. Except that `cards` was arriving EMPTY
+on every table including a local one — `ctx.cardIdsIn` hands back the zone's
+live array and the round boundary runs inside the same move — which nothing had
+noticed, because the only consumer was a spotlight that works off zone
+addresses.
+
+### What changed
+
+`placeCard` emits `broken` on the false→true transition only, with the id in
+`cards` (the one field `src/engine/view.js` filters) plus the rank and suit of
+the card that did it, so `describeEvent` needs no card lookup. The suit on the
+event is the one that may now be LED, which is not always the suit of the card:
+in Hearts the queen of spades breaks hearts, so it is read off the lead
+constraint (`brokenLeadSuit`) rather than off the card. `breakingRule(rules)`
+now answers for both `publicVars` and `breakingSelectorAndVar`.
+
+The banner sentence is "Spades are broken — Fig played the 7♠" at a priority
+above the trick's own celebration. That rung is now a number rather than a
+special case: `TRICK_BANNER_PRIORITY` in `src/ui/celebrations.js`, passed to
+`celebrateAction` as a `floor` by `afterMove`. The card that breaks a suit is
+very often the fourth card of a trick, which was precisely the case the old
+"a trick suppresses everything" rule threw away.
+
+The mark that outlives the banner is a "Spades / Broken" chip on the contract
+strip, **read off the var rather than off the event** — which is what makes it
+free: `setup` clears the var at the next deal, `publicVars` sends it to
+joiners, and the chip survives a reload with nothing remembering that a banner
+once fired. `contractChips` now returns that chip for a fixed-trump pack too.
+One sentence went on the rules page.
+
+For the show, `src/ui/showCard.js` is a pure model plus its renderer, in the
+split `src/ui/counterTrack.js` uses — `table.js` touches `document` at import
+and can never be loaded by a test, so a card that is arithmetic on a screen
+would otherwise be the kind nobody checks. `playShowStep` draws it instead of
+the banner and still puts the sentence in `#log`, which is the live region, so
+the card is `aria-hidden` exactly as `#event-banner` is; the two share one slot
+and `hideBanner`/`showBanner` clear each other, which is also the card's whole
+teardown story. It lives inside `#felt-middle` rather than fixed to the
+viewport: an overlay inset to the felt's middle cannot reach the fan at any
+viewport, and a fixed panel sized to its contents lands on it at 375×812. A
+hand worth nothing says `nineteen` — the traditional word, and the lowest score
+five cards cannot make.
+
+`partsOf` now also carries `at`: WHERE in the scored five each part's cards
+are, as positions rather than ids. Positions are what the highlight needs, they
+survive the redeal, and they are meaningless to anybody who cannot already see
+the cards — so they may go where an id may not. The pegging half has no card to
+draw, so its sentence carries the split instead: "fifteen for 2 and a pair for
+2". One part keeps the plain phrase, because the total beside it has already
+said the number.
+
+### How it was verified
+
+Identical probe, main (`127.0.0.1:4880`) then the branch, Team Spades at
+1280×860 dark: banner `null` / chip `null` / strip hidden, against "Spades are
+broken — Rook played the 2♠" and a 133×31 chip at (574, 225). Hearts says
+"Hearts are broken — Rook played the Q♠" — the suit that is freed, the card
+that freed it. Both themes and both viewports carry the chip
+(375×812: 133×31 at (121, 215)), `scrollHeight` equal to the viewport in every
+run. Driven past the end of the hand, the chip appears at trick 4 and is gone
+at trick 1 of the next deal; seeded from a saved log and reloaded, it comes
+back at `opacity: 1` with `aria-label` "Spades are broken — they may be led".
+
+Cribbage, driven through the show: three cards in the order the rules score
+them — "Cass's hand" 12 (fifteen 2, fifteen 2, a pair 2, a run of 4 6), "Your
+hand" 6, "Your crib" 16 (three fifteens, a pair, a run of 5 8) — each row
+listing exactly the parts of its `showScored` event and adding to the event's
+total. A 375×812 run dealt a zero hand and drew the nineteen card with no rows.
+The card is 274×248 at most at 1280×860 with the hand at y 795, and 188×183 at
+375×812 with the hand at y 720, so it clears the fan by 177px and 164px; no run
+scrolled. Main, the same probe: no card at all, and "Cass pegs 2 — a pair — the
+count is 4."
+
+Gates: `npm test` 862 pass / 0 fail (842 on main, +20 new), `node
+tools/pack-test.mjs --all` 137 passed / 0 failed across the nine packs,
+nine-pack headless boot 18/18 at both viewports. Every new test was proven to
+bite: 22 deliberate breaks, each one restored from a copy and re-run green —
+among them dropping the false→true guard, pointing `publicVars` back at
+`rules.broken`, dropping `BROKEN_PRIORITY` to the trick's rung, letting the
+chip ignore the var, re-deriving the card's total from its own rows, putting
+card ids back in `at`, and removing the `.slice()` that stopped
+`showScored.cards` emptying out from under the event.
+
+**Not done.** The show card's dwell is whatever `roundBeat.js` gives the step
+(#150 owns that timing); a card is more to read than a sentence and it may want
+a longer beat than the banner did.
+
 ## Next steps
 
 Multiplayer (Phase 8), per-pack UI polish (per-pack `theme.css`, custom

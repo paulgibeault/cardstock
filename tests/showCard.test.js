@@ -211,3 +211,48 @@ test("the positions are positions, not card ids", async () => {
   }
   assert.ok(makeCtx);
 });
+
+/* ------------------------------------------------------------------ *
+ * The half of the game with no card to draw
+ * ------------------------------------------------------------------ */
+
+// THE PLAY GETS THE SPLIT IN THE SENTENCE INSTEAD (#152). A show has a card
+// that can lay the arithmetic out; pegging has one banner and that is all, so
+// "Marlow pegs 4 — fifteen and a pair" left the four to be divided up by the
+// reader — the one sum a cribbage player is doing out loud anyway.
+//
+// ONE PART KEEPS THE PLAIN PHRASE, because the total in the same sentence has
+// already said what it is worth: "You peg 2 — a pair for 2 — the count is 8"
+// says two twice.
+test("a pegging score of several parts says what each one was worth", async () => {
+  const pack = await loadPackFromDisk("cribbage");
+  const voice = {
+    seatLabel: (seat) => (seat === 0 ? "You" : "Marlow"),
+    seatVerb: (seat, verb) => (seat === 0 ? verb : `${verb}s`),
+    seatPossessive: (seat) => (seat === 0 ? "Your" : "Marlow's"),
+    viewerSeat: 0,
+  };
+  const said = (parts, points, count = 15) => pack.template.describeEvent(
+    { type: "pegPlay", seat: 1, points, count, parts }, voice,
+  ).text;
+
+  assert.equal(
+    said([{ kind: "fifteen", points: 2, n: 2 }, { kind: "pair", points: 2, n: 2 }], 4),
+    "Marlow pegs 4 — fifteen for 2 and a pair for 2 — the count is 15.",
+  );
+  assert.equal(
+    said([{ kind: "fifteen", points: 2, n: 2 }, { kind: "pair", points: 2, n: 2 },
+      { kind: "run", points: 3, n: 3 }], 7),
+    "Marlow pegs 7 — fifteen for 2, a pair for 2 and a run of 3 for 3 — the count is 15.",
+  );
+  assert.equal(
+    said([{ kind: "pair", points: 2, n: 2 }], 2, 8),
+    "Marlow pegs 2 — a pair — the count is 8.",
+    "one part is the plain phrase: the total beside it has already said the number",
+  );
+  assert.equal(
+    said([{ kind: "moon-shot", points: 9, n: 1 }], 9, 12),
+    "Marlow pegs 9 — the count is 12.",
+    "a kind with no word for it is left off rather than printed raw",
+  );
+});

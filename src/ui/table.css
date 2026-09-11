@@ -3570,10 +3570,20 @@ body.is-dragging .card-face { cursor: grabbing; }
 /* THE COMBINATION UNDER THE FINGER, and only its cards. Lifted and ringed
    rather than dimming the others: dimming four cards to emphasise two is a
    bigger change to the picture than the question deserves, and the ring is the
-   accent the felt already uses for "this is the one". */
+   accent the felt already uses for "this is the one".
+
+   THE RING IS AN OUTLINE, not a drop-shadow. It was written
+   `drop-shadow(0 0 0 2px var(--accent))` — and `drop-shadow()` takes at most
+   three lengths (x, y, blur), so the fourth made the whole `filter` invalid
+   and the cascade dropped BOTH shadows in silence: the computed filter on a
+   lit face was `none` and the highlight was a 3px lift and nothing else. An
+   outline cannot fail that way, it follows the face's own corner radius, and
+   it costs no filter pass on five card faces. */
 .show-card__face--lit {
   transform: translateY(-0.2rem);
-  filter: drop-shadow(0 0 0 2px var(--accent)) drop-shadow(0 3px 6px var(--card-shadow));
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  filter: drop-shadow(0 3px 6px var(--card-shadow));
 }
 
 .show-card__parts {
