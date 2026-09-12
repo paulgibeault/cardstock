@@ -180,18 +180,56 @@ export const SETTINGS_DEFAULTS = {
   // for anyone who never touches it. An unknown value is read as the default by
   // `chooseBotMove` itself, which is what makes a hand-edited save harmless.
   botDifficulty: 'medium',
-  // HOW LONG THE TABLE WAITS BETWEEN HANDS: 'manual' | 'relaxed' | 'quick' |
+  // HOW LONG THE TABLE WAITS AT A BEAT: 'manual' | 'relaxed' | 'quick' |
   // 'instant' (src/ui/pace.js). A preference beside the two above and for the
   // same reason — it never reaches the reducer, so a replay does not have to
   // reproduce it, and a player who likes a brisk table likes it in every game.
   //
-  // `quick` is the default because the playtest complaint was one-directional:
-  // nobody asked for a longer wait and several people asked for none. The
-  // summary still SHOWS at quick — the score sheet is the only place a round's
-  // damage is ever spelled out — it just deals itself once it has been up long
-  // enough to read. `manual` is exactly the behaviour that shipped, one tap
-  // away on the sheet itself, for anyone who wants the pause back.
-  pace: 'quick',
+  // THREE BEATS SINCE #181, not one: the rung says how long the table waits
+  // between hands, how long a completed trick stays whole on the felt (#176),
+  // and how long one count of a show stands before the next replaces it. At
+  // `manual` all three of those are a person rather than a number, which is the
+  // whole of what the word means — Paul, playing the #176 branch: "The cribbage
+  // scoring should be tap-to-dismiss also. So three taps one per player and crib
+  // to continue."
+  //
+  // `manual` IS THE DEFAULT, AND `quick` WAS UNTIL 2026-09-11. This is a
+  // reversal of a decision that was written down as a decision, so all three
+  // halves of it are kept here rather than one of them replacing the others.
+  //
+  // WHAT WAS BELIEVED: `quick` was the default because the round-6 complaint
+  // was one-directional — nobody asked for a longer wait and several people
+  // asked for none. The summary still SHOWS at quick, it just deals itself once
+  // it has been up long enough to read, and `manual` was one tap away on the
+  // sheet itself for anyone who wanted the pause back. #176 went further and
+  // recorded the default as settled: a flip "would need new evidence, not
+  // symmetry with the trick beat".
+  //
+  // WHAT CHANGED IT: Paul played the merged build, with #176's trick tap in it,
+  // and that is the new evidence the note asked for. Round 6 reads differently
+  // from the other side of the tap. Those players were not asking for a clock;
+  // they were asking for a way OUT of a wait they had no way to end, and the
+  // tap is that way out. Once both beats end on a tap, dealing over the player
+  // stops being the price of not being stuck, and a table that moves while you
+  // are still looking at it is a table you watch rather than play.
+  //
+  // WHAT IS BELIEVED NOW: nothing moves until a person moves it, and every
+  // player who wants otherwise says so once. Every faster rung is still one tap
+  // away on the sheet itself — the control #174 fixed, which from here walks
+  // Quick → Relaxed → Manual → Quick — and the new-game sheet still offers all
+  // four, Instant included.
+  //
+  // WHAT THIS COSTS, PLAINLY, because it is one word here and three beats on
+  // the felt: `manual` also means `trickReadScale: null` and `stepScale: null`
+  // (src/ui/pace.js, #176 and #181), so a game at the defaults holds EVERY
+  // COMPLETED TRICK and EVERY COUNT OF A SHOW until a tap as well as every score
+  // sheet — thirteen taps in a trick-taking hand plus one, and four in a
+  // cribbage hand, where the shipped table used to run itself end to end. That
+  // is intended, it is the biggest behaviour change in the two issues together,
+  // and what keeps it a beat rather than a freeze is that all of those waits end
+  // on a tap anywhere on the felt or on Enter/Space and that the felt says "Tap
+  // to go on" for exactly the beats with no clock.
+  pace: 'manual',
   showLegalHints: true,
   // How each pack's hand is arranged, per pack: { mode, order: [cardId, ...] }.
   // PRESENTATION ONLY (src/ui/handOrder.js) — it never reaches the engine, and

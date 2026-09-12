@@ -68,13 +68,18 @@ import {
   // The opponent row's pure decisions live over there so a Node test can reach
   // them — see the section header at the foot of session.js.
   normalizeSeatView, nextSeatView, seatToggleOffered, seatToShow,
+  // And for the same reason: "is this input a NEW gesture, or the one that
+  // opened the beat?" is a question about two numbers, and the answer to it is
+  // the whole of why a human-played fourth card no longer sweeps itself (#176)
+  // and why one tap does not run a whole cribbage show off the felt (#181).
+  inputEndsHeldBeat,
 } from './session.js';
 import { createBotDriver, botVerb } from './botDriver.js';
 import { suggestMove } from './hint.js';
 import { schedule } from './clock.js';
 import { line, svgNode, clearSvgCache } from './dom.js';
 import { promptChoice, closeChoiceDialog } from './choiceDialog.js';
-import { createCelebrations, TRICK_BANNER_PRIORITY } from './celebrations.js';
+import { createCelebrations, TRICK_BANNER_PRIORITY, heldBeatLine } from './celebrations.js';
 import { showCardModel, renderShowCard } from './showCard.js';
 import { createContractLadder } from './contractLadder.js';
 import { createContractStrip } from './contractStrip.js';
@@ -111,7 +116,7 @@ import {
   showScoreboard, showGameOver, hideAllPanels, showRules, awaitFinalLook,
 } from './panels.js';
 import { packRules } from './rules.js';
-import { roundBeatPlan, trickRevealPlan } from './roundBeat.js';
+import { roundBeatPlan, trickRevealPlan, nextShowBeat } from './roundBeat.js';
 import { paceLevel, nextSummaryPace } from './pace.js';
 import { speedLevel, speedForDelay, nextSpeed } from './speed.js';
 import {
@@ -2925,13 +2930,15 @@ function renderStatusBar(state, acting) {
  * ------------------------------------------------------------------ */
 
 /**
- * The player's rung, read LIVE, exactly the way `currentPace` is.
+ * The player's rung, off the same snapshot the felt itself flies at.
  *
- * `settings` is the snapshot `rerenderTable` refreshes, and it is the snapshot
- * — not storage — that every consumer of this number already reads:
- * `flightDurationMs(settings?.botDelayMs)` at three call sites, and the bot
- * driver's `botDelayMs: () => settings.botDelayMs`. Falling back to a fresh
- * read keeps the first paint of a session honest, before any render has run.
+ * `settings` is the snapshot `initTable`, `rerenderTable` and — since #184 —
+ * `adoptMatch` refresh, and it is the snapshot, not storage, that every consumer
+ * of this number reads: `flightDurationMs(settings?.botDelayMs)` at five call
+ * sites, and the bot driver's `botDelayMs: () => settings.botDelayMs`. The chip
+ * has to agree with the cards, so it reads what they read. Falling back to a
+ * fresh read keeps the first paint of a session honest, before any render has
+ * run — that is the one instant the snapshot is still null.
  */
 function currentSpeed() {
   return speedForDelay(settings ? settings.botDelayMs : loadSettings().botDelayMs);
@@ -3103,14 +3110,35 @@ function statusTextFor(state, acting) {
   // left it on — cribbage's show leaves it on the last player, so the bar read
   // "Your turn" over a table where the player's hand was empty and nothing was
   // tappable. It is not a turn; it is the end of the hand.
-  if (session?.roundBeat) return 'Round over.';
+  //
+  // AND WHAT CONTINUES IT, WHEN THE COUNT IS WAITING FOR A PERSON (#181). The
+  // gate is the tell rather than the rung: `session.beatResume` is set during
+  // the round beat by exactly one thing, a count of a show that has no clock on
+  // it (runShowSequence), so this promises the tap at precisely the moments a
+  // tap is the only thing there is. Three motionless counts read as a hang
+  // otherwise — the same sentence the trick hold says below, for the same
+  // reason, and #log carries the whole of it.
+  if (session?.roundBeat) {
+    return session.beatResume ? 'Round over. Tap to go on.' : 'Round over.';
+  }
   // THE TRICK BEAT IS NOBODY'S TURN EITHER (#123). The posed position's `turn`
   // is still on whoever played the fourth card — the trick has not been
   // resolved on this copy — so the bar would read "Your turn" over four cards
   // that are about to be swept and a hand that cannot be played from. It says
   // who is taking them instead, which is the question the beat exists to
   // answer.
-  if (session?.trickBeat) return `${seatPossessive(session.trickBeat.seat)} trick.`;
+  //
+  // AND WHAT ENDS IT, AT THE RUNG WHERE NOTHING ELSE WILL (#176). A hold with a
+  // clock on it needs no instructions — it is over before the sentence has been
+  // read. The Manual rung's hold has no clock, and "North's trick." over a table
+  // that will never move again on its own reads as a frozen game rather than as
+  // a beat. `waits` is the plan's own `holdMs == null`, carried here by
+  // runTrickReveal, so the felt promises a tap exactly when a tap is the only
+  // thing there is. The same sentence goes to #log, which is the announced half.
+  if (session?.trickBeat) {
+    const whose = `${seatPossessive(session.trickBeat.seat)} trick.`;
+    return session.trickBeat.waits ? `${whose} Tap to go on.` : whose;
+  }
   if (state.turn.phase === 'bid') {
     // The bid goes round the table one seat at a time, so "whose turn" is
     // already the right sentence — what this adds is WHICH KIND of turn, which
@@ -3718,7 +3746,12 @@ function hideShowCard() {
   el.showCard.hidden = true;
   el.showCard.replaceChildren();
 }
-function celebrateTrick(state, ev) { if (moments) moments.celebrateTrick(session, state, ev); }
+function celebrateTrick(state, ev) { return moments ? moments.celebrateTrick(session, state, ev) : null; }
+// THE TWO HALVES OF THAT, for the beat that now has room between them (#180):
+// what the table SAYS when the hold opens, and what it DOES when the hold ends.
+function announceTrick(state, ev, opts) { return moments ? moments.announceTrick(session, state, ev, opts) : null; }
+function gatherTrick(state, ev) { if (moments) moments.gatherTrick(state, ev); }
+function releaseBanner() { if (moments) moments.releaseBanner(session); }
 function celebrateAction(state, events, opts) { return moments ? moments.celebrateAction(session, state, events, opts) : null; }
 function animatePenaltyDraw(state, seat, count, delay) { if (moments) moments.animatePenaltyDraw(state, seat, count, delay); }
 
@@ -4039,26 +4072,147 @@ function takeTrickPose(move) {
  *
  * The fourth card lands on a trick that KEEPS it — `animateMove` flies it onto
  * the posed position, so the copy that lands is the card the player then reads
- * — and everything the sweep is (the gather flight, the banner, the seat pulse,
- * the next turn, a round ending underneath it) waits behind `resume`.
+ * — and everything the SWEEP is (the gather flight, the next turn, a round
+ * ending underneath it) waits behind `resume`.
+ *
+ * WHAT NO LONGER WAITS IS THE ANNOUNCEMENT (#180). The banner naming the winner,
+ * the live region, the trick cue and the seat pulse run at the TOP of the hold,
+ * while the four cards are whole and the player is looking at them — `announce`
+ * is that half, handed in by `afterMove` so this function owns WHEN and the
+ * caller owns what. It used to run with the gather, which was defensible while
+ * the hold was a fixed ~920ms and became the main thing wrong with the beat as
+ * soon as the hold waited for a tap: the player sat in front of four cards with
+ * nothing saying who had won them, tapped, and the answer flashed past as the
+ * cards flew away.
+ *
+ * TWO THINGS CAN END IT, AND ONLY ONE OF THEM IS A CLOCK (#176). A tap on the
+ * felt or a key press runs the same `resume` immediately, and at the Manual rung
+ * (`reveal.holdMs == null`) it is the only thing that ever will — no timer is
+ * armed at all, exactly as `armAutoAdvance` arms none for that rung's sheet.
+ *
+ * BUT NOT THE TAP THAT OPENED IT. The player's own fourth card is played by a
+ * tap on a card inside `#table`, and this whole function runs before that click
+ * has finished bubbling to the felt — so the hold was opening and closing on one
+ * gesture, and the beat was missing for exactly the tricks the player finished.
+ * The moment the hold opens is stamped below and `endHeldBeat` compares every
+ * input against it; `inputEndsHeldBeat` in src/ui/session.js is the rule and
+ * the long version of this paragraph.
  */
-function runTrickReveal(poseState, move, from, reveal, resume) {
-  session.trickBeat = { seat: reveal.trick.seat };
+function runTrickReveal(poseState, move, from, reveal, resume, announce) {
+  // `waits` is what the felt SAYS about itself: a hold with no clock on it
+  // reads as a frozen table unless the bar tells the player what moves it.
+  session.trickBeat = { seat: reveal.trick.seat, waits: reveal.holdMs == null };
+  // STAMPED FIRST, and on `performance.now()` rather than the session clock,
+  // because that is the origin `Event.timeStamp` is measured against. Before the
+  // render and the flight so that nothing between here and the input handlers
+  // can land inside the hold's own opening.
+  session.beatOpenedAt = performance.now();
   session.trickPoseState = poseState;
   render(poseState);
   animateMove(poseState, move, from);
 
+  // AFTER the render and the flight, so the banner is measured against the felt
+  // it is about — `placeBanner` looks for the highest card in the middle, and on
+  // this frame that is the posed trick the sentence must not cover.
+  const said = announce ? announce() : null;
+
   const myEpoch = epoch;
-  // HELD ON THE SESSION (#150), not merely epoch-checked. The epoch guard stops
-  // a timer that has already fired from doing damage; a handle is what lets
-  // `stopSession` stop it firing at all.
-  session.revealTimer = Arcade.session.setTimeout(() => {
-    if (myEpoch !== epoch || !session) return;
+  // ONE WAY OUT, TAKEN ONCE, whichever end it is asked from.
+  //
+  // The epoch guard is the one this function has always carried — a hold whose
+  // table has been closed, replaced or re-dealt must not resume into it. What is
+  // new is the identity check: the session points at the resume for the hold
+  // that is CURRENTLY running, so a stale closure (a tap landing after the timer
+  // fired, a second tap, a tap arriving after the next trick armed its own) sees
+  // that it is no longer the one being held and does nothing.
+  const release = () => {
+    if (myEpoch !== epoch || !session || session.beatResume !== release) return;
+    session.beatResume = null;
+    session.beatOpenedAt = null;
+    // The tap is beating a clock that is still running. Nothing else cancels it
+    // at this point — `stopSession` is for a table going away, not for a beat
+    // ending early — so a hold ended by hand would otherwise fire a second time
+    // into the next position.
+    if (session.revealTimer) session.revealTimer.cancel();
     session.revealTimer = null;
     session.trickBeat = null;
     session.trickPoseState = null;
+    // AND THE SENTENCE COMES DOWN WITH THE CARDS (#180). A held pill has no
+    // clock of its own; this is the clock. A no-op at every rung whose banner
+    // was given an ordinary lifetime, and a no-op if a louder event has since
+    // raised its own — see releaseBanner.
+    releaseBanner();
     resume();
+  };
+  // BEFORE THE TIMER IS ARMED, because for the Manual rung there is no timer:
+  // the hold is over the moment this is reachable and not a moment before.
+  session.beatResume = release;
+
+  if (reveal.holdMs == null) {
+    // THE LIVE REGION CARRIES THE INSTRUCTION, not just the status bar (#176).
+    // #status-text is not announced — it is a label that changes — and a hold
+    // that only a sighted pointer user can discover is a hold a screen-reader
+    // player is stuck in. #log is `role="status"`, it is the surface every other
+    // beat on this felt speaks through, and it has room for the whole sentence
+    // where the bar's 122px slot ellipsises.
+    //
+    // AND IT CARRIES THE ANNOUNCEMENT IN THE SAME WRITE (#180). The announcement
+    // half wants this surface too, and two writes in one frame is one sentence
+    // announced and one lost — the one at risk being the instruction, which is
+    // the whole accessibility net for a pause with no end on it. `heldBeatLine`
+    // is the join; the bare possessive is the fallback for a hold that somehow
+    // had no narration to announce.
+    el.log.textContent = heldBeatLine(
+      said ? said.text : `${seatPossessive(reveal.trick.seat)} trick`,
+    );
+    return;
+  }
+
+  // A TIMED HOLD SAYS ITS HALF NOW TOO. `settle` may still overwrite this with
+  // a louder action's sentence when the hold ends, exactly as it always has.
+  if (said) el.log.textContent = said.text;
+
+  // HELD ON THE SESSION (#150), not merely epoch-checked. The epoch guard stops
+  // a timer that has already fired from doing damage; a handle is what lets
+  // `stopSession` stop it firing at all — and now also what a tap cancels.
+  session.revealTimer = Arcade.session.setTimeout(() => {
+    if (myEpoch !== epoch || !session) return;
+    session.revealTimer = null;
+    release();
   }, reveal.holdMs);
+}
+
+/**
+ * End the beat the felt is holding, if `event` is an input that is allowed to.
+ * True when there WAS such a beat and this input ended it.
+ *
+ * The felt's tap handler and the keyboard both come through here rather than
+ * reaching for `session.beatResume` themselves, so "what a tap during a held
+ * beat does" is one function rather than two that can drift.
+ *
+ * AND IT IS EVERY SUCH BEAT, NOT ONLY THE TRICK'S (#181). A completed trick's
+ * hold and each count of a cribbage show both wait for a person at the rung that
+ * waits, they are never on the felt at the same time, and what a tap means is
+ * identical for both: dismiss what is being read and put up whatever is next. So
+ * they share the handle, the stamp and this door — one gesture, one beat, at
+ * whichever of them is standing.
+ *
+ * AND THE INPUT ITSELF IS PART OF THE QUESTION (#176). A tap that plays the
+ * fourth card is also a tap on the felt, and the hold is opened inside that same
+ * dispatch — so without this the player's own last card opened a hold and swept
+ * it away in one gesture, and the beat existed only for tricks the bots ended.
+ * The show is the same shape stacked three deep: each count opens inside the
+ * dispatch of the tap that dismissed the one before it, so without the stamp one
+ * gesture would run the whole ending off the screen. `inputEndsHeldBeat` in
+ * src/ui/session.js is the rule, with the full account of why it is a moment
+ * rather than a list of exempt elements.
+ */
+function endHeldBeat(event) {
+  const resume = session?.beatResume;
+  if (!resume) return false;
+  if (!inputEndsHeldBeat(session.beatOpenedAt, event?.timeStamp)) return false;
+  resume();
+  return true;
 }
 
 /**
@@ -4102,8 +4256,15 @@ function spotlightZone(address) {
  * to it is rebuilt from the step rather than kept, because `describeEvent`
  * reads type/seat/isCrib/points and the step is those four things; the card ids
  * are for the spotlight and do not belong in a sentence.
+ *
+ * `waits` IS WHETHER THIS COUNT HAS A CLOCK ON IT (#181), and the only thing it
+ * changes is the live region: a count that stays until it is dismissed has to
+ * say so, for the same reason an open-ended trick hold does — #log is
+ * `role="status"` and the status bar is not announced, so a player who cannot
+ * see the felt would otherwise be sitting in a pause with no stated end. One
+ * write, both facts, through the same join the trick hold uses.
  */
-function playShowStep(finalState, step) {
+function playShowStep(finalState, step, { waits = false } = {}) {
   // The crib's step is the turn. Everything before it has been looking at the
   // pose (posedForShow); this render is the four cards coming face up.
   if (step.isCrib) {
@@ -4128,7 +4289,7 @@ function playShowStep(finalState, step) {
   const model = showCardFor(finalState, step);
   if (model) showShowCard(model);
   else showBanner(text, said?.tone || (step.points ? 'good' : 'neutral'));
-  el.log.textContent = text;
+  el.log.textContent = waits ? heldBeatLine(text) : text;
   pulseSeat(step.seat, step.points ? 'good' : 'neutral');
   spotlightZone(step.isCrib ? 'show' : `play.${step.seat}`);
 }
@@ -4217,16 +4378,43 @@ function roundContractLines(finalState) {
  * ------------------------------------------------------------------ */
 
 /**
- * The player's rung, read LIVE.
+ * The player's rung, read LIVE — and now actually live (#181).
  *
- * `settings` is a snapshot refreshed by `rerenderTable`, and the one control
- * that changes this — the summary's own "Pace · Quick ▸" — writes storage and
- * updates the snapshot in the same breath (`cyclePace`). Falling back to a
- * fresh read keeps the very first hand of a session honest, before any render
- * has happened.
+ * IT READ THE SNAPSHOT, AND THE SNAPSHOT IS NOT REFRESHED BY THE ONE SHEET THAT
+ * SETS THIS. `settings` is loaded by `initTable` at boot and again by
+ * `rerenderTable`, which runs on a resume or an SDK settings change — and the
+ * NEW-GAME SHEET is neither. So a player who opened the lobby, picked Quick and
+ * dealt got a table still running at whatever rung the tab booted on, for the
+ * whole match: `botDriver`'s `difficulty` already reads fresh for exactly this
+ * reason and says so in its own comment ("deal a Sharp game straight after a
+ * Steady one and the snapshot would still say Steady"), and the pace never got
+ * the same treatment (that one is #91).
+ *
+ * FOUND BY TRYING TO WATCH THE TIMED RUNG COUNT ITSELF. #181's acceptance is
+ * that Quick is paced exactly as it always was, and a browser at Quick sat there
+ * waiting for a tap — because the rung reaching the arithmetic was Manual, the
+ * rung the tab had booted on. The mid-match control was never affected, which is
+ * why this survived: `cyclePace` writes storage AND the snapshot in one breath,
+ * so the dial appeared to work everywhere it was watched.
+ *
+ * ONE READ PER ROUND ENDING is what this costs, which is one `JSON.parse` of a
+ * small object per hand — the same price `difficulty` pays per bot turn.
+ *
+ * AND IT STAYS A STORAGE READ NOW THAT THE ROOT CAUSE IS FIXED (#184), which is
+ * a decision rather than an oversight, so here is the reasoning. #184 refreshed
+ * the snapshot in `adoptMatch`, so `settings.pace` would now be as fresh as this
+ * is at every call site the felt has — the two really are the same value, and
+ * one of them is redundant. The redundant one is kept HERE, because the two are
+ * not the same KIND of correct: a value read at the instant it is used cannot
+ * go stale by construction, while a snapshot is only as fresh as the last
+ * person to remember the line that refreshes it, and this fault has now been
+ * found twice by watching a rung fail to do anything. Card speed cannot take
+ * that deal — five call sites on the flight path, several of them per trick —
+ * which is exactly why it has a snapshot and this has not. `difficulty` makes
+ * the same trade next door for the same reason.
  */
 function currentPace() {
-  return paceLevel(settings ? settings.pace : loadSettings().pace);
+  return paceLevel(loadSettings().pace);
 }
 
 /**
@@ -4278,11 +4466,24 @@ function armAutoAdvance(ms) {
   }, ms);
 }
 
-/** Everything a round ending has in flight, stopped. Safe with no session. */
+/**
+ * Everything a round ending has in flight, stopped. Safe with no session.
+ *
+ * A SHOW THAT WAITS IS "IN FLIGHT" TOO (#181), and it is the one part of an
+ * ending with no timer to cancel: at the rung that waits, a count sits behind
+ * `session.beatResume` and nothing but a person will ever come for it. A gate
+ * left open here outlives the ending it belongs to — the sheet's own tap would
+ * find a count's resume still standing and advance a beat of the hand before it.
+ * This is only ever reached with the felt's OTHER held beat already released:
+ * the trick hold's resume is what leads into a round ending, and it clears
+ * itself before `settle` runs.
+ */
 function cancelRoundBeat() {
   if (!session) return;
   for (const timer of session.beatTimers) timer.cancel();
   session.beatTimers = [];
+  session.beatResume = null;
+  session.beatOpenedAt = null;
   if (session.advanceTimer) session.advanceTimer.cancel();
   session.advanceTimer = null;
 }
@@ -4352,13 +4553,7 @@ function runRoundBeat(state, plan, finalState) {
   if (finalState.roundEnded && finalState.roundWinner != null) {
     pulseSeat(finalState.roundWinner, 'good');
   }
-  for (const step of plan.steps) {
-    beatTimer(() => {
-      if (!session.roundBeat) return;
-      playShowStep(finalState, step);
-    }, step.at);
-  }
-  beatTimer(() => {
+  const openSummary = () => {
     // THE LAST SHOW CARD COMES DOWN WITH THE SHEET GOING UP (#152). The banner
     // this card replaced dismissed itself after 2200ms, so the sheet always
     // opened onto a clear felt; a card sits until something takes it away, and
@@ -4380,7 +4575,89 @@ function runRoundBeat(state, plan, finalState) {
       paceView(paceLevel(plan.pace)),
     );
     armAutoAdvance(plan.autoAdvanceMs);
-  }, plan.summaryAt);
+  };
+
+  // A TIMELINE OR A SEQUENCE, AND THE PLAN SAYS WHICH (#181). `stepMs` is null
+  // at the rung where a count has no duration, exactly as `holdMs` is null at
+  // the rung where a trick hold has no end, and a show with steps to wait on is
+  // then run one tap at a time instead of armed all at once.
+  if (plan.stepMs == null && plan.steps.length) {
+    runShowSequence(plan, finalState, openSummary);
+    return;
+  }
+
+  for (const step of plan.steps) {
+    beatTimer(() => {
+      if (!session.roundBeat) return;
+      playShowStep(finalState, step);
+    }, step.at);
+  }
+  beatTimer(openSummary, plan.summaryAt);
+}
+
+/**
+ * The show as a SEQUENCE: one count, then a person, then the next (#181).
+ *
+ * WHY THIS IS NOT THE LOOP ABOVE WITH A NULL DELAY. A timeline is armed in one
+ * go and every beat of it knows when it runs; a sequence knows only what comes
+ * next, and what comes next is decided by a tap that may not come for a minute.
+ * So the steps are walked with a cursor over `nextShowBeat` (src/ui/roundBeat.js)
+ * — the plan's own statement of what follows what, which is all that is left of
+ * the ordering once the arithmetic is gone — and the sheet is what the cursor
+ * runs off the end into.
+ *
+ * THE FIRST COUNT STILL OPENS ON THE HOLD. There is nothing to dismiss until
+ * something is on the felt, so `steps[0].at` is a real number at every rung and
+ * this arms exactly one timer. Everything after it is a person: pone, then the
+ * dealer, then the crib, then the sheet, which is the four inputs a hand was
+ * asked to end in.
+ *
+ * AND EVERY ONE OF THEM STAMPS WHEN IT OPENED. Each count opens INSIDE the
+ * dispatch of the tap that dismissed the one before it — the felt's listener has
+ * not finished with that click when the next card is already up — so without the
+ * stamp the same gesture would keep finding a new gate and one tap would run the
+ * entire ending off the screen. `inputEndsHeldBeat` in src/ui/session.js is the
+ * rule; the identity check on `advance` is the other half, so a stale closure
+ * from a beat that is already over can never fire a second time.
+ */
+function runShowSequence(plan, finalState, openSummary) {
+  const myEpoch = epoch;
+  let dismissed = 0;
+
+  // THE BAR SAYS IT TOO, and it is repainted by hand because only the crib's
+  // count renders the felt (`playShowStep`). Without this the other two counts
+  // would leave "Round over." standing over a table that will not move again on
+  // its own — which is the same sentence as a hang — and the sheet would open
+  // under a bar still promising a tap that belongs to a count already gone.
+  const sayTheBar = () => renderStatusBar(feltState(), actingSeatsOf(feltState()));
+
+  const open = () => {
+    if (myEpoch !== epoch || !session || !session.roundBeat) return;
+    const step = nextShowBeat(plan, dismissed);
+    if (!step) {
+      openSummary();
+      sayTheBar();
+      return;
+    }
+    // ARMED BEFORE THE COUNT IS PAINTED, and the order is load-bearing twice
+    // over: the stamp has to predate anything that could let an input in, and
+    // the crib's step RENDERS — `statusTextFor` reads this gate to know whether
+    // to promise the tap, so a gate armed afterwards would paint one count of
+    // every hand with the bar saying nothing continues it.
+    session.beatOpenedAt = performance.now();
+    const advance = () => {
+      if (myEpoch !== epoch || !session || session.beatResume !== advance) return;
+      session.beatResume = null;
+      session.beatOpenedAt = null;
+      dismissed++;
+      open();
+    };
+    session.beatResume = advance;
+    playShowStep(finalState, step, { waits: true });
+    sayTheBar();
+  };
+
+  beatTimer(open, plan.steps[0].at);
 }
 
 /* ------------------------------------------------------------------ *
@@ -4450,6 +4727,15 @@ function afterMove(state, move, from, message, { publish = true } = {}) {
   const reveal = trick ? trickRevealPlan(events, {
     flightMs: flightDurationMs(settings?.botDelayMs),
     posed: !!trickPose,
+    // Read HERE, on the move that completed the trick, for the same reason the
+    // round beat reads it when the round ends: a rung changed on the last sheet
+    // is the rung this beat runs at.
+    pace: currentPace().id,
+    // OTHER PEOPLE ARE AT THIS TABLE, so the hold gets a ceiling whatever the
+    // rung says (SHARED_TRICK_HOLD_MS). `posed` already covers the remote path;
+    // this covers a LOCAL move made at a shared table, which poses like any
+    // other and is the only way an indefinite gate could ever be reached here.
+    shared: !!session?.shared,
   }) : null;
   const plan = roundOver ? roundBeatPlan(events, {
     flightMs: flightDurationMs(settings?.botDelayMs),
@@ -4459,10 +4745,37 @@ function afterMove(state, move, from, message, { publish = true } = {}) {
     // The rung is read HERE, when the round ends, so a pace changed on the last
     // sheet is the pace this one runs at.
     pace: currentPace().id,
+    // AND THE SAME CEILING ON THE SAME GROUNDS (#181). `narrate` above already
+    // covers a REMOTE move, which walks no steps at all; this covers a LOCAL
+    // move at a shared table, which counts its show like any other and is the
+    // only way a count with no clock on it could ever gate this device's queue.
+    shared: !!session?.shared,
   }) : null;
   // What the felt paints. The LIVE state everywhere else: it is what is saved,
   // what the summary reads, and what the next deal is already in.
   const shown = (plan && finalState) ? posedForShow(finalState, plan) : state;
+
+  // WHAT THE TABLE SAYS ABOUT THE TRICK, AND WHEN (#180).
+  //
+  // `announce` is non-null exactly when there is a hold with reading time in it
+  // to say it on, and `runTrickReveal` then runs it as the hold OPENS. Note that
+  // a `reveal` at all implies `trickPose` — `trickRevealPlan` is handed
+  // `posed: !!trickPose` and returns null without one — so `announce` being set
+  // is also the guarantee that the reveal path below is the one taken.
+  //
+  // THE PATHS WITH NO SUCH HOLD ARE UNTOUCHED, and that is what `closeTrick`
+  // below is for: the multiplayer path where the felt could not pose the trick,
+  // and the Instant rung, whose hold is the fourth card's flight and has no
+  // reading time in it. Both still announce and gather in one breath.
+  const announce = (trick && reveal?.reads)
+    ? () => announceTrick(shown, trick, { held: reveal.holdMs == null })
+    : null;
+  // What a resume still owes the trick.
+  const closeTrick = (st) => {
+    if (!trick) return;
+    if (announce) gatherTrick(st, trick);
+    else celebrateTrick(st, trick);
+  };
 
   if (state.gameOver) {
     // Recorded before the render, so the panel that is eventually built can
@@ -4475,14 +4788,23 @@ function afterMove(state, move, from, message, { publish = true } = {}) {
     // whole: the card that ends a match is the card that won it. The match is
     // over either way, so nothing here races the hold — `offerFinalLook` waits
     // for the player anyway.
+    //
+    // AND IT SPLITS LIKE EVERY OTHER TRICK (#180). This resume is a different
+    // one, but the HOLD is the same hold: the same four cards, held the same
+    // length by the same rung, with the same player looking at them. The trick
+    // that ends a match is if anything the one most worth naming while it is
+    // still on the felt, and a last trick that announced itself differently
+    // from the twelve before it would read as the table losing its place. What
+    // is special about this path is what comes AFTER the gather — the win cue
+    // and the final look — and both of those still wait for the hold.
     const finish = () => {
       render(state, message);
       if (!reveal) animateMove(state, move, from);
-      if (trick) celebrateTrick(state, trick);
+      closeTrick(state);
       playWin();
       offerFinalLook(state, move, ending);
     };
-    if (reveal && trickPose) runTrickReveal(trickPose, move, from, reveal, finish);
+    if (reveal && trickPose) runTrickReveal(trickPose, move, from, reveal, finish, announce);
     else finish();
     return;
   }
@@ -4510,7 +4832,7 @@ function afterMove(state, move, from, message, { publish = true } = {}) {
     // The played card has already flown onto the posed trick; flying it again
     // here would be the same card arriving twice.
     if (!reveal) animateMove(shown, move, from);
-    if (trick) celebrateTrick(shown, trick);
+    closeTrick(shown);
     // After the card has been seen to land. A show's own steps are the
     // narration, so nothing competes with them — the first `showScored` banner
     // firing here would say pone's count over the last pegging card.
@@ -4547,7 +4869,7 @@ function afterMove(state, move, from, message, { publish = true } = {}) {
     // No bot is scheduled and nothing is announced until `settle` runs: the
     // beat is a pause in the game, not a pause the game plays through.
     cancelAnnouncementBeats();
-    runTrickReveal(trickPose, move, from, reveal, settle);
+    runTrickReveal(trickPose, move, from, reveal, settle, announce);
     return;
   }
   settle();
@@ -4923,6 +5245,46 @@ function adoptMatch(pack, state, message, {
   dealing = false, seats = null, seating = null, shared = false, hints = 0, daily = null,
 } = {}) {
   epoch += 1;
+  // THE PREFERENCE SNAPSHOT IS REFRESHED HERE, BECAUSE A MATCH OPENING IS THE
+  // MOMENT THE NEW-GAME SHEET'S ANSWERS EXIST (#184).
+  //
+  // WHY THERE IS A SNAPSHOT AT ALL: `settings` is the felt's own copy of the
+  // preferences blob, and it exists for ONE number read on hot paths — how fast
+  // a card crosses the table. `flightDurationMs(settings?.botDelayMs)` is asked
+  // at five call sites and the bot driver's `botDelayMs` is asked once a turn,
+  // so a storage read per use would be a `JSON.parse` per flight, per trick
+  // reveal and per round beat to answer a question whose answer only a person
+  // can change.
+  //
+  // AND WHY IT WAS STALE: it was assigned in exactly two places — `initTable`
+  // at boot, and `rerenderTable` on a resume or an SDK settings change — and
+  // THE NEW-GAME SHEET IS NEITHER OF THEM. The sheet's answers are written to
+  // storage by `rememberPreferences` (src/ui/lobby.js) on the very gesture that
+  // deals, which then calls straight into `openTable`; nothing between there and
+  // here re-renders. So a player who picked Slow in the lobby got a table still
+  // flying at whatever rung the tab had booted on, for the whole match. The
+  // status bar's chip hid it, exactly the way the summary's dial hid the same
+  // fault for the pace (#181): `cycleSpeed` writes the snapshot in the same
+  // breath as storage, so the setting worked on every surface anybody tested it
+  // on and on none of the ones they did not.
+  //
+  // HERE RATHER THAN IN `openTable`, because this is the only place a session is
+  // born and so the one point downstream of every door into a match — a lobby
+  // deal, a resumed save, Play again, and the host's `dealHostedTable` and
+  // `resumeHostedTable`. It is downstream of the sheet, whose write is already
+  // on disk (`Arcade.state` is synchronous) before the pack fetch that precedes
+  // this even starts, and upstream of every reader: the first thing to ask for a
+  // flight duration is the `render` at the bottom of this function.
+  //
+  // WHAT ELSE GETS FRESHER: NOTHING, TODAY, AND THAT IS WORTH SAYING OUT LOUD.
+  // The other four things in the blob are not read off this snapshot at all.
+  // `botDifficulty` and `pace` are read from storage at the moment they are used
+  // (the driver's `difficulty` below, and `currentPace`); `hands` goes through
+  // `loadHandPrefs`, which `createSession` just below calls fresh for this pack;
+  // `showLegalHints` has no reader anywhere. So the only value this line can
+  // change under a running table is the one the sheet just set, and a match that
+  // is opening has nothing in flight to be surprised by it.
+  settings = loadSettings();
   stopSession(session);
   // A pre-move copy belongs to the match it was taken in, and this is a
   // different one (see notePreMove).
@@ -5423,13 +5785,80 @@ export function initTable({ onExit }) {
     if (liveState()) render(liveState());
   }, true);
 
+  // A TAP ON THE FELT ENDS WHATEVER BEAT THE FELT IS HOLDING (#176, #181).
+  //
+  // ASKED OF THE GATE, NOT OF THE BEAT. It read `session.trickBeat` while a
+  // completed trick was the only thing that ever waited for a person; the counts
+  // of a cribbage show wait at the same rung now, and they are not a trick.
+  // `session.beatResume` is the one field either of them sets and the one thing
+  // this listener actually needs — there is something standing on the felt
+  // asking to be dismissed — so it needs no list of what kinds there are. The
+  // show card is inside #table, which is what makes a tap on the thing being
+  // READ the tap that continues.
+  //
+  // ON THE FELT, NOT ON THE SCREEN. #status-bar is outside #table, so the Lobby
+  // button and the score chip are exempt by construction — they are not on the
+  // felt and a tap on them is a player going somewhere, not a player saying
+  // "yes, I saw it". What IS inside #table is the chrome standing on it, and
+  // every item below already knows what a tap on it means: the help mark and its
+  // sheet, the opponent row (a seat plate, the view toggle), the out-of-turn
+  // announcement and emote bars, and the rail's own two buttons. `closest`
+  // rather than a comparison to `target`, the way the round panel does it, so a
+  // tap landing on a label inside one of them still counts as that control's.
+  //
+  // NOTHING ELSE ON THE FELT WANTS THIS TAP. `render` builds its UI model with
+  // `acts: false` for the whole beat (the `humanActs` line reads `trickBeat`,
+  // and `roundBeat` for a show), so no card, pile or meld chip has a handler
+  // armed on it — this cannot swallow a move, because while a beat is being held
+  // there is no move to swallow.
+  el.table.addEventListener('click', (event) => {
+    if (!session?.beatResume) return;
+    if (event.target.closest?.(
+      '#help-button, #help-sheet, .opponent-row, #announce-bar, #emote-bar, #hand-sort, #action-button',
+    )) return;
+    // AND NOT THE TAP THAT OPENED THE BEAT IT FINDS. `#hand` is inside `#table`,
+    // so the tap that plays the fourth card arrives here too — after the card's
+    // own handler has already run the move and opened the beat, in the same
+    // dispatch — and this listener was ending the hold it had just watched open.
+    // The player only ever saw the beat on tricks a bot finished. A show stacks
+    // three of those dispatches in a row, each count opening inside the tap that
+    // dismissed the last, which is the same bug three times over and would end a
+    // whole hand in one gesture. See endHeldBeat.
+    endHeldBeat(event);
+  });
+
   // The plate is anchored to a seat's rect, so anything that moves that rect
   // has to move the plate with it — the row scrolling under it most of all.
   el.opponentsTop.addEventListener('scroll', placeOpenPlate, { passive: true });
   window.addEventListener('resize', placeOpenPlate, { passive: true });
 
   window.addEventListener('keydown', (event) => {
-    if (event.key !== 'Escape' || !session) return;
+    if (!session) return;
+    // THE SAME DOOR, WITHOUT A POINTER (#176, #181). At the Manual rung the
+    // trick hold is indefinite and so is every count of a show, so a beat only a
+    // tap could end would strand anyone playing this from a keyboard or a screen
+    // reader in a table that never moves again. Enter and Space, because that is
+    // what "activate" already means everywhere on this screen and it is what the
+    // felt's own sentence promises. The gate is the condition here for the same
+    // reason it is on the felt's click: what a key means during a held beat does
+    // not depend on which kind of beat it is.
+    //
+    // NOT WHEN THE KEY IS AIMED AT A CONTROL. Focus sitting on Lobby and a press
+    // of Enter is a player leaving; this must not read it as "go on".
+    if (session.beatResume && (event.key === 'Enter' || event.key === ' ')
+        && !event.target?.closest?.('button, a[href], input, select, textarea')) {
+      // AND NOT THE KEY PRESS THAT OPENED IT, for the reason the felt's click
+      // gives: a hand card is a `role="button"` div and not a `<button>`, so it
+      // does not match the opt-out above — Enter on the card that ends a trick
+      // plays it, opens the hold, and then arrives here as an ordinary key.
+      //
+      // Space scrolls the page otherwise, which on a short felt moves the very
+      // cards the hold exists to show — but only swallow the key if there was
+      // actually a hold to end, which is what `endHeldBeat` comes back with.
+      if (endHeldBeat(event)) event.preventDefault();
+      return;
+    }
+    if (event.key !== 'Escape') return;
     // The sheet is the innermost thing open, so it is the first thing closed.
     if (helpOpen()) {
       setHelpOpen(false);
@@ -5538,12 +5967,17 @@ export function initTable({ onExit }) {
   bots = createBotDriver({
     clock: feltClock({ shared: () => !!session?.shared }),
     currentEpoch: () => epoch,
+    // The snapshot, like every other reader of this number — and since #184 it
+    // is refreshed by `adoptMatch`, so the rung the sheet just chose is the rung
+    // the first bot of the match plays at.
     botDelayMs: () => settings.botDelayMs,
-    // READ FRESH, NOT OFF THE SNAPSHOT. `settings` is loaded when the table is
-    // initialised and refreshed on a re-render, and the new-game sheet can
+    // READ FRESH, NOT OFF THE SNAPSHOT. `settings` was loaded when the table was
+    // initialised and refreshed on a re-render, and the new-game sheet could
     // change this between the two — deal a Sharp game straight after a Steady
-    // one and the snapshot would still say Steady. The driver asks at fire
-    // time (src/ui/botDriver.js) precisely so this can be answered late.
+    // one and the snapshot would still say Steady. #184 closed that particular
+    // hole by refreshing the snapshot at match open; this stays a live read
+    // anyway, for the reason `currentPace` gives at length. The driver asks at
+    // fire time (src/ui/botDriver.js) precisely so this can be answered late.
     difficulty: () => loadSettings().botDifficulty,
     me,
     identityOf,

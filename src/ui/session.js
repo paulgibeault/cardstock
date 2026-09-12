@@ -126,6 +126,31 @@ export function createSession({
     // placement applied and its consequences deliberately not run
     // (`template.poseMove`). Never logged, saved or published.
     trickPoseState: null,
+    // THE WAY OUT OF WHATEVER BEAT THE FELT IS HOLDING, for a tap (#176).
+    // `runTrickReveal` is handed a `resume` and both of its call sites pass a
+    // different one, so the felt's tap handler cannot close over it — it has to
+    // be able to ASK the session what is currently being held, and this is that
+    // answer.
+    //
+    // ONE FIELD FOR EVERY SUCH BEAT, NOT ONE PER BEAT (#181). The show's counts
+    // now wait for a person too, and a second handle beside this one would be a
+    // second set of listeners, a second stamp and a second chance for the two of
+    // them to disagree about what a tap means. There is only ever one beat on
+    // the felt asking to be dismissed, so there is one handle: the trick hold
+    // sets it, each count of a show sets it, and `endHeldBeat` in
+    // src/ui/table.js is the one door either of them is closed through.
+    //
+    // A LIVE HANDLE, NOT A RECORD OF ONE. It is nulled the instant it runs and
+    // by `stopSession` below, and the closure itself refuses to run unless the
+    // session still points at it — so a tap arriving after the beat ended, after
+    // the next one armed its own, or after the table closed finds nothing to
+    // fire. At the Manual rung it is the ONLY way out: no timer is armed.
+    beatResume: null,
+    // WHEN THAT BEAT OPENED, on `performance.now()`'s clock, so the input that
+    // opened it cannot be the input that ends it. `inputEndsHeldBeat` at the
+    // foot of this file is the whole of why this is here; null whenever
+    // `beatResume` is.
+    beatOpenedAt: null,
 
     // Which collapsed seat the player has PICKED to open, or null to let the
     // plate follow whoever is playing. The opponent row is rebuilt wholesale on
@@ -176,6 +201,13 @@ export function createSession({
     // one is cancelled by stopSession below.
     botTimer: null,
     bannerTimer: null,
+    // THE ONE BANNER WITH NO TIMER (#180). A trick held at a rung that waits for
+    // a person keeps its pill up for the whole hold, so there is nothing armed
+    // to take it down and something has to remember that it is standing —
+    // `releaseBanner` brings it down with the cards, and every other door that
+    // clears the felt (`hideBanner`, `stopSession`) drops the claim so a later
+    // release cannot cut short whatever the banner is saying by then.
+    bannerHeld: false,
     announceTimers: [],
     // THE ROUND ENDING'S OWN TIMERS (#150). `runRoundBeat` used to fire these
     // straight at `Arcade.session.setTimeout` and keep no handle: the only
@@ -217,12 +249,19 @@ export function stopSession(session) {
   session.botTimer = null;
   if (session.bannerTimer) session.bannerTimer.cancel();
   session.bannerTimer = null;
+  session.bannerHeld = false;
   for (const timer of session.announceTimers) timer.cancel();
   session.announceTimers = [];
   for (const timer of session.beatTimers) timer.cancel();
   session.beatTimers = [];
   if (session.revealTimer) session.revealTimer.cancel();
   session.revealTimer = null;
+  // AND THE BEAT'S OTHER END WITH IT (#176). Cancelling the timer is only half
+  // of stopping a held beat now that a tap can end one — and at the rung that
+  // waits, a show's count has no timer to cancel at all: a resume left on a
+  // stopped session is a closure over a finished match waiting for a finger.
+  session.beatResume = null;
+  session.beatOpenedAt = null;
   if (session.advanceTimer) session.advanceTimer.cancel();
   session.advanceTimer = null;
   if (session.nudgeTimer) session.nudgeTimer.cancel();
@@ -233,6 +272,63 @@ export function stopSession(session) {
   session.peek = null;
   session.pendingRender = null;
   session.selection = null;
+}
+
+/* ------------------------------------------------------------------ *
+ * A held beat's other end — which input is allowed to close it
+ * ------------------------------------------------------------------ */
+
+/**
+ * May an input stamped `inputAt` end the beat that opened at `openedAt`?
+ *
+ * THE GESTURE THAT OPENS A BEAT IS NOT THE GESTURE THAT ENDS IT (#176, #181).
+ *
+ * ASKED OF EVERY BEAT THAT WAITS, not only of the trick hold it was written for.
+ * A show's counts wait for a person at the same rung, and each one of them opens
+ * inside the dispatch of the tap that dismissed the one before it — so the rule
+ * generalises exactly: every beat stamps the moment it opened, and an input from
+ * before that moment belongs to the beat that has already gone. Without it one
+ * gesture would cascade down the whole ending, trick to count to count to count
+ * to sheet, and a hand would finish in a single tap.
+ *
+ * As shipped, the hold worked for every trick a BOT completed and was skipped
+ * whole whenever the player laid the fourth card themselves: four cards
+ * appeared and play resumed immediately to the next trick — the one beat the
+ * hold exists to give, missing at exactly the moment the player had just
+ * acted. The reason is that the tap which plays the fourth card is ALSO a tap
+ * on the felt. `#hand` is inside `#table`; the card's own handler runs the move
+ * and `runTrickReveal` with it before that click has finished bubbling; the
+ * felt's listener then finds a live `trickBeat` and ends the hold it has just
+ * watched open. One tap, two meanings, inside one dispatch. The keyboard has
+ * the same shape — a hand card is a `role="button"` div, not a `<button>`, so
+ * Enter on it plays the card and then reaches the window's Enter-ends-the-hold
+ * listener as an ordinary key press with nothing to tell it apart.
+ *
+ * SO ASK WHEN THE INPUT STARTED, not where it landed. `Event.timeStamp` is a
+ * DOMHighResTimeStamp on the same time origin as `performance.now()` in every
+ * browser this ships to, so this is an exact comparison and not a tolerance:
+ * the playing tap carries a stamp from before the hold existed, and a genuine
+ * second tap carries one from after it. `>` rather than `>=`, so an input
+ * stamped at the very moment the hold opened reads as the one that opened it.
+ *
+ * NOT AN EXEMPTION FOR `#hand-row`, which is the fix this looks like and which
+ * would cover only the tap. A card DRAGGED onto the play zone commits on
+ * pointerup and raises its click on `#table-play`, which is not in the hand at
+ * all; the rail's own gestures commit from elsewhere again. Every one of them
+ * is nonetheless an input from before the hold, so the moment answers all of
+ * them at once and needs no list to maintain.
+ *
+ * IT FAILS OPEN. An unreadable stamp says yes. At the Manual rung
+ * `runTrickReveal` arms no timer whatsoever and neither does `runShowSequence`,
+ * so an input is the ONLY way out of either beat, and a predicate that refused
+ * an event it could not read would be a table that never moves again. The cost
+ * of guessing wrong in this direction is the bug above — one trick swept, or one
+ * count dismissed, a beat early; the cost in the other is a dead game, and the
+ * two are not comparable.
+ */
+export function inputEndsHeldBeat(openedAt, inputAt) {
+  if (!Number.isFinite(openedAt) || !Number.isFinite(inputAt)) return true;
+  return inputAt > openedAt;
 }
 
 /* ------------------------------------------------------------------ *
