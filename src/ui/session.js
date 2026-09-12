@@ -126,22 +126,31 @@ export function createSession({
     // placement applied and its consequences deliberately not run
     // (`template.poseMove`). Never logged, saved or published.
     trickPoseState: null,
-    // THE WAY OUT OF THAT HOLD, for a tap (#176). `runTrickReveal` is handed a
-    // `resume` and both of its call sites pass a different one, so the felt's
-    // tap handler cannot close over it — it has to be able to ASK the session
-    // what is currently being held, and this is that answer.
+    // THE WAY OUT OF WHATEVER BEAT THE FELT IS HOLDING, for a tap (#176).
+    // `runTrickReveal` is handed a `resume` and both of its call sites pass a
+    // different one, so the felt's tap handler cannot close over it — it has to
+    // be able to ASK the session what is currently being held, and this is that
+    // answer.
+    //
+    // ONE FIELD FOR EVERY SUCH BEAT, NOT ONE PER BEAT (#181). The show's counts
+    // now wait for a person too, and a second handle beside this one would be a
+    // second set of listeners, a second stamp and a second chance for the two of
+    // them to disagree about what a tap means. There is only ever one beat on
+    // the felt asking to be dismissed, so there is one handle: the trick hold
+    // sets it, each count of a show sets it, and `endHeldBeat` in
+    // src/ui/table.js is the one door either of them is closed through.
     //
     // A LIVE HANDLE, NOT A RECORD OF ONE. It is nulled the instant it runs and
     // by `stopSession` below, and the closure itself refuses to run unless the
-    // session still points at it — so a tap arriving after the hold ended, after
-    // a second trick armed its own, or after the table closed finds nothing to
+    // session still points at it — so a tap arriving after the beat ended, after
+    // the next one armed its own, or after the table closed finds nothing to
     // fire. At the Manual rung it is the ONLY way out: no timer is armed.
-    trickResume: null,
-    // WHEN THAT HOLD OPENED, on `performance.now()`'s clock, so the input that
-    // opened it cannot be the input that ends it. `inputEndsTrickHold` at the
+    beatResume: null,
+    // WHEN THAT BEAT OPENED, on `performance.now()`'s clock, so the input that
+    // opened it cannot be the input that ends it. `inputEndsHeldBeat` at the
     // foot of this file is the whole of why this is here; null whenever
-    // `trickResume` is.
-    trickHoldAt: null,
+    // `beatResume` is.
+    beatOpenedAt: null,
 
     // Which collapsed seat the player has PICKED to open, or null to let the
     // plate follow whoever is playing. The opponent row is rebuilt wholesale on
@@ -247,11 +256,12 @@ export function stopSession(session) {
   session.beatTimers = [];
   if (session.revealTimer) session.revealTimer.cancel();
   session.revealTimer = null;
-  // AND THE HOLD'S OTHER END WITH IT (#176). Cancelling the timer is only half
-  // of stopping a trick hold now that a tap can end one: a resume left on a
+  // AND THE BEAT'S OTHER END WITH IT (#176). Cancelling the timer is only half
+  // of stopping a held beat now that a tap can end one — and at the rung that
+  // waits, a show's count has no timer to cancel at all: a resume left on a
   // stopped session is a closure over a finished match waiting for a finger.
-  session.trickResume = null;
-  session.trickHoldAt = null;
+  session.beatResume = null;
+  session.beatOpenedAt = null;
   if (session.advanceTimer) session.advanceTimer.cancel();
   session.advanceTimer = null;
   if (session.nudgeTimer) session.nudgeTimer.cancel();
@@ -265,13 +275,21 @@ export function stopSession(session) {
 }
 
 /* ------------------------------------------------------------------ *
- * The trick hold's other end — which input is allowed to close it
+ * A held beat's other end — which input is allowed to close it
  * ------------------------------------------------------------------ */
 
 /**
- * May an input stamped `inputAt` end the trick hold that opened at `openedAt`?
+ * May an input stamped `inputAt` end the beat that opened at `openedAt`?
  *
- * THE GESTURE THAT OPENS A HOLD IS NOT THE GESTURE THAT ENDS IT (#176).
+ * THE GESTURE THAT OPENS A BEAT IS NOT THE GESTURE THAT ENDS IT (#176, #181).
+ *
+ * ASKED OF EVERY BEAT THAT WAITS, not only of the trick hold it was written for.
+ * A show's counts wait for a person at the same rung, and each one of them opens
+ * inside the dispatch of the tap that dismissed the one before it — so the rule
+ * generalises exactly: every beat stamps the moment it opened, and an input from
+ * before that moment belongs to the beat that has already gone. Without it one
+ * gesture would cascade down the whole ending, trick to count to count to count
+ * to sheet, and a hand would finish in a single tap.
  *
  * As shipped, the hold worked for every trick a BOT completed and was skipped
  * whole whenever the player laid the fourth card themselves: four cards
@@ -301,13 +319,14 @@ export function stopSession(session) {
  * them at once and needs no list to maintain.
  *
  * IT FAILS OPEN. An unreadable stamp says yes. At the Manual rung
- * `runTrickReveal` arms no timer whatsoever, so an input is the ONLY way out of
- * the hold, and a predicate that refused an event it could not read would be a
- * table that never moves again. The cost of guessing wrong in this direction is
- * the bug above — one trick swept a beat early; the cost in the other is a dead
- * game, and the two are not comparable.
+ * `runTrickReveal` arms no timer whatsoever and neither does `runShowSequence`,
+ * so an input is the ONLY way out of either beat, and a predicate that refused
+ * an event it could not read would be a table that never moves again. The cost
+ * of guessing wrong in this direction is the bug above — one trick swept, or one
+ * count dismissed, a beat early; the cost in the other is a dead game, and the
+ * two are not comparable.
  */
-export function inputEndsTrickHold(openedAt, inputAt) {
+export function inputEndsHeldBeat(openedAt, inputAt) {
   if (!Number.isFinite(openedAt) || !Number.isFinite(inputAt)) return true;
   return inputAt > openedAt;
 }

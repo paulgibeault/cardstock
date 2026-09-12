@@ -16,8 +16,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import {
-  bannerBand, createCelebrations, trickHoldLine,
-  BANNER_HOLD_MS, BANNER_FADE_MS, TRICK_TAP_HINT, TRICK_BANNER_PRIORITY,
+  bannerBand, createCelebrations, heldBeatLine,
+  BANNER_HOLD_MS, BANNER_FADE_MS, TAP_TO_GO_ON, TRICK_BANNER_PRIORITY,
 } from "../src/ui/celebrations.js";
 import { ROOT } from "../tools/stage.mjs";
 
@@ -509,21 +509,21 @@ test("the live region carries the winner and the way out in one write", () => {
   // hold has to say how to end a pause with no clock on it, and the
   // announcement wants to name the winner. Two writes in a frame is one
   // sentence announced and one lost, and the one at risk carries the way out.
-  assert.strictEqual(trickHoldLine(TRICK_SAID), `${TRICK_SAID}. ${TRICK_TAP_HINT}`);
-  assert.match(trickHoldLine(TRICK_SAID), /Nell/, "the live region does not name the winner");
-  assert.match(trickHoldLine(TRICK_SAID), /Tap the table|press Enter/,
+  assert.strictEqual(heldBeatLine(TRICK_SAID), `${TRICK_SAID}. ${TAP_TO_GO_ON}`);
+  assert.match(heldBeatLine(TRICK_SAID), /Nell/, "the live region does not name the winner");
+  assert.match(heldBeatLine(TRICK_SAID), /Tap the table|press Enter/,
     "the live region does not say how to end the hold");
   // Half the narrations already carry an em dash, so the join is a full stop:
   // a sentence with two dashes in it parses as neither.
-  assert.strictEqual(trickHoldLine("Trick is yours — 3 of your 5"),
-    `Trick is yours — 3 of your 5. ${TRICK_TAP_HINT}`);
+  assert.strictEqual(heldBeatLine("Trick is yours — 3 of your 5"),
+    `Trick is yours — 3 of your 5. ${TAP_TO_GO_ON}`);
   // And it never doubles a stop the narration already ended with.
-  assert.strictEqual(trickHoldLine("Trick is yours."), `Trick is yours. ${TRICK_TAP_HINT}`);
+  assert.strictEqual(heldBeatLine("Trick is yours."), `Trick is yours. ${TAP_TO_GO_ON}`);
   // The bare possessive is the fallback the hold used before it had a narration
   // to fold in, and it still reads as the sentence that shipped.
-  assert.strictEqual(trickHoldLine("Nell's trick"), `Nell's trick. ${TRICK_TAP_HINT}`);
-  assert.strictEqual(trickHoldLine(""), TRICK_TAP_HINT);
-  assert.strictEqual(trickHoldLine(null), TRICK_TAP_HINT);
+  assert.strictEqual(heldBeatLine("Nell's trick"), `Nell's trick. ${TAP_TO_GO_ON}`);
+  assert.strictEqual(heldBeatLine(""), TAP_TO_GO_ON);
+  assert.strictEqual(heldBeatLine(null), TAP_TO_GO_ON);
 });
 
 test("the fade is one number too, and neither end of a held pill loops", () => {
@@ -582,8 +582,8 @@ test("an open-ended hold writes the live region once, with both facts in it", ()
   assert.strictEqual((open[1].match(/el\.log\.textContent =/g) || []).length, 1,
     "the open-ended hold writes #log more than once in a frame — one of the two sentences is "
     + "lost, and the one that carries the way out is the net for a pause with no clock on it");
-  assert.match(open[1], /trickHoldLine\(/,
-    "the live region's sentence is built somewhere other than trickHoldLine");
+  assert.match(open[1], /heldBeatLine\(/,
+    "the live region's sentence is built somewhere other than heldBeatLine");
   assert.match(open[1], /said \? said\.text/,
     "the winner is not in the sentence the live region gets");
 });

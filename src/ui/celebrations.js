@@ -59,22 +59,23 @@ export const BANNER_FADE_MS = Math.round(BANNER_HOLD_MS * 0.18);
 const BANNER_CLEARANCE = 6;
 
 /**
- * The way out of a trick hold that has no clock on it, said in the live region.
+ * The way out of a beat that has no clock on it, said in the live region.
  *
  * The status bar says the same thing in its 122px slot ("Nell's trick. Tap to
- * go on."); this is the announced copy, which has room to name both inputs
- * because the hold takes either.
+ * go on.", "Round over. Tap to go on."); this is the announced copy, which has
+ * room to name both inputs because the beat takes either.
  */
-export const TRICK_TAP_HINT = 'Tap the table or press Enter to go on.';
+export const TAP_TO_GO_ON = 'Tap the table or press Enter to go on.';
 
 /**
- * WHAT `#log` SAYS WHILE AN OPEN-ENDED TRICK HOLD IS WAITING (#180).
+ * WHAT `#log` SAYS WHILE A BEAT WITH NO CLOCK ON IT IS WAITING (#180, #181).
  *
  * TWO FACTS, ONE WRITE. `#log` is `role="status"` and the announced surface, and
- * both halves of this beat now want it: the hold's own branch has to say how to
- * end a pause with no clock on it — the accessibility net for a gate a sighted
- * pointer user discovers by tapping — and the announcement wants to name the
- * winner while the four cards are still whole. Two writes in the same frame is
+ * both halves of such a beat want it: the beat has to say how to end a pause
+ * with no clock on it — the accessibility net for a gate a sighted pointer user
+ * discovers by tapping — and the thing being held wants to say what it IS. For a
+ * trick that is the winner's name while the four cards are still whole; for a
+ * count of a show it is "Your hand is worth 8". Two writes in the same frame is
  * one sentence announced and one lost, and the one at risk was the instruction.
  *
  * JOINED WITH A FULL STOP rather than a dash, because half the narrations this
@@ -82,9 +83,9 @@ export const TRICK_TAP_HINT = 'Tap the table or press Enter to go on.';
  * sentence with two of them parses as neither. Any stop the narration already
  * ends with is dropped so the join cannot double it.
  */
-export function trickHoldLine(trickText) {
-  const said = String(trickText ?? '').trim().replace(/[.!?]+$/, '');
-  return said ? `${said}. ${TRICK_TAP_HINT}` : TRICK_TAP_HINT;
+export function heldBeatLine(beatText) {
+  const said = String(beatText ?? '').trim().replace(/[.!?]+$/, '');
+  return said ? `${said}. ${TAP_TO_GO_ON}` : TAP_TO_GO_ON;
 }
 
 /**
@@ -413,7 +414,7 @@ export function createCelebrations({
     playTrickTaken({ bad });
     pulseSeat(ev.seat, bad ? 'bad' : 'good');
     // The live region is the CALLER'S, deliberately: an open-ended hold has a
-    // second fact to fit in the same write (`trickHoldLine`), and two writes in
+    // second fact to fit in the same write (`heldBeatLine`), and two writes in
     // one frame is one sentence announced and one lost.
     return said;
   }

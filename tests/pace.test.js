@@ -247,6 +247,67 @@ test("Instant has no beat at all: no hold, no steps, no sheet", () => {
   assert.strictEqual(plan.autoAdvanceMs, 0);
 });
 
+/* ------------------------------------------------------------------ *
+ * The rung inside the SHOW (issue #181)
+ * ------------------------------------------------------------------ *
+ *
+ * The third term to say "wait for me" with an absence rather than a number. The
+ * shipped rung waited at the trick and at the sheet and counted the show in
+ * between on a clock — "fifteen two, fifteen four, and a pair is six" three
+ * times in four and a half seconds, at the rung whose whole meaning is that
+ * nothing moves without you.
+ */
+
+test("every rung says how long a count stands, and only Manual leaves it open", () => {
+  for (const level of PACE_LEVELS) {
+    assert.ok('stepScale' in level,
+      `${level.id}: a rung with no show term is a rung the felt cannot pace a count at`);
+    assert.ok(level.stepScale === null || level.stepScale >= 0,
+      `${level.id}: ${level.stepScale} is neither "wait for me" nor a multiplier`);
+  }
+  assert.deepStrictEqual(
+    PACE_LEVELS.filter((l) => l.stepScale === null).map((l) => l.id), ['manual'],
+    'exactly one rung may leave a count up until a person dismisses it, and it has '
+    + 'to be the one whose `autoMs` and `trickReadScale` already mean the same thing '
+    + 'at the two beats on either side of it');
+  // The ladder, same as `autoMs` and `trickReadScale`: every rung after Manual
+  // reads for less time than the one before it.
+  const reads = PACE_LEVELS.map((l) => (l.stepScale == null ? Infinity : l.stepScale));
+  for (let i = 1; i < reads.length; i++) {
+    assert.ok(reads[i] < reads[i - 1],
+      `${PACE_LEVELS[i].id} counts at ${reads[i]}×, no less than ${PACE_LEVELS[i - 1].id}'s`);
+  }
+  // THE THREE TERMS READ ALIKE AT EVERY RUNG, which is the whole argument for
+  // spelling this one as a null: a rung is one answer to "how much of this game
+  // do I want to watch", so a rung that waits at one beat and runs itself at
+  // another is a dial saying two different things at once.
+  for (const level of PACE_LEVELS) {
+    assert.strictEqual(level.stepScale === null, level.autoMs === null,
+      `${level.id} waits at one beat and not the other; the dial has to mean one thing`);
+    assert.strictEqual(level.stepScale === null, level.trickReadScale === null,
+      `${level.id} waits at the trick and not at the count, or the other way round`);
+  }
+});
+
+// THE SHIPPED RUNG COUNTS ONE TAP AT A TIME, and that is a decision rather than
+// arithmetic: a player who has never opened the settings gets it on their first
+// cribbage hand, and Paul asked for it by name — "three taps one per player and
+// crib to continue".
+test("the shipped default waits for a person at the count too", () => {
+  assert.strictEqual(paceLevel(DEFAULT_PACE).stepScale, null,
+    'no count of a show may replace itself at the shipped rung');
+  const plan = roundBeatPlan(showEnd, { flightMs: 420 });
+  assert.strictEqual(plan.steps.length, 3,
+    'pone, the dealer and the crib — three counts, which is three taps');
+  assert.strictEqual(plan.summaryAt, null,
+    'and the sheet after the last of them, which is the fourth');
+  // The felt promises it at exactly the rung that needs it promised, on the bar
+  // and in the live region — three motionless counts read as a hang otherwise.
+  assert.match(read("src/ui/table.js"), /'Round over\. Tap to go on\.'/,
+    'the status bar must offer the tap whenever a count is waiting for one, which at '
+    + 'the shipped rung is every count of every cribbage hand');
+});
+
 test("the show stretches and shrinks with the rung", () => {
   const quick = roundBeatPlan(showEnd, { flightMs: 420, pace: 'quick' });
   const relaxed = roundBeatPlan(showEnd, { flightMs: 420, pace: 'relaxed' });
@@ -265,8 +326,13 @@ test("the show stretches and shrinks with the rung", () => {
 
 // #120's invariant, re-asserted per rung: the summary is the acknowledgement,
 // so everything it covers has to have been on screen before it.
+//
+// ASKED ONLY OF THE RUNGS THAT COUNT ON A CLOCK. At `manual` the show is a
+// sequence and there are no numbers left to compare (#181) — the same invariant
+// is asserted for it in the section below, through `nextShowBeat`, which is what
+// "after" means once the arithmetic is gone.
 test("the summary still opens last, at every rung that opens one", () => {
-  for (const id of ['manual', 'relaxed', 'quick']) {
+  for (const id of ['relaxed', 'quick']) {
     const plan = roundBeatPlan(showEnd, { flightMs: 420, pace: id });
     assert.ok(plan.summaryAt >= MIN_HOLD_MS, `${id}: the summary opened on the move itself`);
     for (const step of plan.steps) {
@@ -274,6 +340,9 @@ test("the summary still opens last, at every rung that opens one", () => {
         `${id}: summary at ${plan.summaryAt} must follow a step at ${step.at}`);
     }
   }
+  // And the rung with no clock still opens a sheet, which is the half of this
+  // that is not about ordering: `manual` is not `instant`.
+  assert.strictEqual(roundBeatPlan(showEnd, { flightMs: 420, pace: 'manual' }).instant, false);
 });
 
 /* ------------------------------------------------------------------ *
@@ -416,6 +485,42 @@ test("the felt builds its trick plan with the player's rung and its own shared f
   assert.match(call[0], /shared: !!session\?\.shared/,
     "without the shared flag an indefinite hold gates one device's queue while "
     + "three other players keep playing");
+
+  // THE SAME TWO ARGUMENTS ONE BEAT LATER (#181). The round beat's plan needs
+  // both for the same two reasons, and a call that dropped the shared flag here
+  // would gate a shared device's queue on three taps rather than one.
+  const round = table.match(/roundBeatPlan\(events, \{[\s\S]*?\}\) : null/);
+  assert.ok(round, "afterMove must be the one place a round ending is planned");
+  assert.match(round[0], /pace: currentPace\(\)\.id/,
+    "without the rung the show is counted at the default for everybody, whatever "
+    + "dial the player set");
+  assert.match(round[0], /shared: !!session\?\.shared/,
+    "without the shared flag a count with no clock on it stalls one device's queue "
+    + "three times a hand while the other players keep playing");
+});
+
+// THE RUNG HAS TO BE READ WHERE IT IS WRITTEN, AND IT WAS NOT (#181). `settings`
+// in table.js is a snapshot taken by `initTable` at boot and refreshed by
+// `rerenderTable` — a resume, or an SDK settings change. The NEW-GAME SHEET is
+// neither: it writes storage and deals. So picking Quick in the lobby left the
+// table running at whatever rung the tab had booted on, for the whole match, and
+// the only door that worked was the summary's own control, which writes the
+// snapshot itself and therefore hid this everywhere anybody looked.
+//
+// FOUND BY TRYING TO WATCH QUICK COUNT ITSELF in a browser: a table dealt at
+// Quick sat waiting for a tap, because the rung that reached the arithmetic was
+// Manual. `botDriver`'s `difficulty` has read fresh since #91 for exactly this
+// reason and says so in its own comment.
+test("the pace is read from storage, not from a snapshot the lobby cannot refresh", () => {
+  const src = read("src/ui/table.js");
+  const fn = src.match(/function currentPace\(\) \{[\s\S]*?\n\}/);
+  assert.ok(fn, "currentPace must exist — it is the one place the felt asks for the rung");
+  assert.match(fn[0], /loadSettings\(\)\.pace/,
+    "the rung must be read fresh at the moment it is needed");
+  assert.doesNotMatch(fn[0], /settings \?/,
+    "reading the module snapshot first is the bug: the new-game sheet writes storage "
+    + "and never touches that snapshot, so a rung picked in the lobby does not reach "
+    + "the felt until the tab is reloaded");
 });
 
 test("an unknown rung runs the default schedule rather than no schedule", () => {
