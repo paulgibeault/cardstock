@@ -252,6 +252,83 @@ test("the chip cycles the rung, and the very next flight uses it", () => {
     + "for the first paint of a session");
 });
 
+// THE SHEET'S ANSWER HAS TO REACH THE FELT, AND THE SNAPSHOT IS WHERE IT STOPPED
+// (#184). `settings` in table.js is the felt's copy of the preferences blob, and
+// it used to be assigned in exactly two places: `initTable` at boot, and
+// `rerenderTable` on a resume or an SDK settings change. THE NEW-GAME SHEET IS
+// NEITHER — it writes storage on the gesture that deals and goes straight to the
+// table — so the rung picked in the lobby did nothing at all until something
+// else happened to re-render, which for a whole match is never.
+//
+// ASSERTED AS A PROPERTY, NOT AS A LINE, because the line is not the point: a
+// setting the sheet can change must not be answered from a snapshot taken before
+// the sheet ran. So this derives the list of settings the sheet writes from the
+// lobby itself, finds the ones the felt reads off the snapshot, and requires
+// that the snapshot be refreshed where a match opens and before anything in that
+// function reads it. Add a fourth row to the sheet tomorrow and it is covered
+// without anybody remembering this file exists.
+//
+// A GREP, for the reason the whole bottom half of this file is one: table.js
+// touches `document` at import time, so no Node test can load it and ask.
+test("a setting the new-game sheet can change is never read from a snapshot older than the sheet", () => {
+  const lobby = read("src/ui/lobby.js");
+  const remember = lobby.match(/\nfunction rememberPreferences\(setup\) \{[\s\S]*?\n\}\n/);
+  assert.ok(remember, "rememberPreferences must exist — it is the gesture that deals, writing "
+    + "everything the sheet asked that is a preference");
+  const written = remember[0].match(/const next = \{[\s\S]*?\n  \};/);
+  assert.ok(written, "rememberPreferences must build one object of what it saves — this gate "
+    + "reads that object to learn what a new game can change");
+  const keys = [...written[0].matchAll(/^ {4}(\w+):/gm)].map((m) => m[1]);
+  assert.ok(keys.includes('botDelayMs'),
+    "card speed must be one of the settings the sheet writes (#175), or this gate is watching "
+    + "a road the setting no longer takes");
+
+  // THE CODE, WITH THE PROSE STRIPPED. Half of what is written about this
+  // snapshot is written in comments that quote it — including the one that
+  // explains this very fix — and a gate that counted those would be reading the
+  // argument rather than the program.
+  const code = read("src/ui/table.js")
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/.*$/gm, '');
+  const bodyOf = (name) => {
+    const m = code.match(new RegExp(`\\n(?:export )?(?:async )?function ${name}\\([\\s\\S]*?\\n\\}\\n`));
+    assert.ok(m, `${name} must exist in src/ui/table.js`);
+    return m[0];
+  };
+
+  // EVERY DOOR INTO A MATCH GOES THROUGH ONE ROOM, which is what makes a single
+  // refresh a fix rather than a fourth place to forget. A new door that adopts a
+  // state by itself fails here, which is the point.
+  const adopt = bodyOf('adoptMatch');
+  for (const door of ['startGame', 'dealHostedTable', 'resumeHostedTable', 'openTable']) {
+    assert.match(bodyOf(door), /adoptMatch\(|startGame\(/,
+      `${door} must reach the felt through adoptMatch — a path that seats a match some other `
+      + "way is a path with its own idea of how fast the cards move");
+  }
+
+  // The settings the sheet writes that the felt answers from its snapshot.
+  const snapshotted = keys.filter((key) => new RegExp(`settings\\??\\.${key}(?!\\s*=)`).test(code));
+  if (snapshotted.length) {
+    assert.match(adopt, /\n  settings = loadSettings\(\);/,
+      `${snapshotted.join(', ')}: read off the module snapshot, and nothing refreshes that `
+      + "snapshot where a match opens — `initTable` runs once a session and `rerenderTable` only "
+      + "on a resume or an SDK settings event, so a rung chosen on the new-game sheet cannot "
+      + "reach the felt at all this session");
+    assert.ok(adopt.indexOf('settings = loadSettings()') < adopt.indexOf('render('),
+      "the refresh must happen before the first paint of the match, or the deal itself flies at "
+      + "the rung the last match was played at");
+  }
+
+  // AND THE OTHER HALF OF THE PROPERTY: anything the sheet writes that is NOT
+  // snapshotted has to be read live. There is no third option — a setting read
+  // from neither storage nor a refreshed snapshot is not being read at all.
+  for (const key of keys.filter((k) => !snapshotted.includes(k))) {
+    assert.match(code, new RegExp(`loadSettings\\(\\)\\.${key}`),
+      `${key}: the sheet writes it and the felt neither snapshots it nor reads it fresh, so `
+      + "whatever the player picked is being thrown away");
+  }
+});
+
 // ONE SETTING, and the decision that says so (#175, decided rather than found).
 // Splitting watching speed from thinking speed would mean a second key, and the
 // argument against it is already written in src/ui/flight.js.

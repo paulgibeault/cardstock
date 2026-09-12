@@ -2931,13 +2931,15 @@ function renderStatusBar(state, acting) {
  * ------------------------------------------------------------------ */
 
 /**
- * The player's rung, read LIVE, exactly the way `currentPace` is.
+ * The player's rung, off the same snapshot the felt itself flies at.
  *
- * `settings` is the snapshot `rerenderTable` refreshes, and it is the snapshot
- * — not storage — that every consumer of this number already reads:
- * `flightDurationMs(settings?.botDelayMs)` at three call sites, and the bot
- * driver's `botDelayMs: () => settings.botDelayMs`. Falling back to a fresh
- * read keeps the first paint of a session honest, before any render has run.
+ * `settings` is the snapshot `initTable`, `rerenderTable` and — since #184 —
+ * `adoptMatch` refresh, and it is the snapshot, not storage, that every consumer
+ * of this number reads: `flightDurationMs(settings?.botDelayMs)` at five call
+ * sites, and the bot driver's `botDelayMs: () => settings.botDelayMs`. The chip
+ * has to agree with the cards, so it reads what they read. Falling back to a
+ * fresh read keeps the first paint of a session honest, before any render has
+ * run — that is the one instant the snapshot is still null.
  */
 function currentSpeed() {
   return speedForDelay(settings ? settings.botDelayMs : loadSettings().botDelayMs);
@@ -4398,6 +4400,19 @@ function roundContractLines(finalState) {
  *
  * ONE READ PER ROUND ENDING is what this costs, which is one `JSON.parse` of a
  * small object per hand — the same price `difficulty` pays per bot turn.
+ *
+ * AND IT STAYS A STORAGE READ NOW THAT THE ROOT CAUSE IS FIXED (#184), which is
+ * a decision rather than an oversight, so here is the reasoning. #184 refreshed
+ * the snapshot in `adoptMatch`, so `settings.pace` would now be as fresh as this
+ * is at every call site the felt has — the two really are the same value, and
+ * one of them is redundant. The redundant one is kept HERE, because the two are
+ * not the same KIND of correct: a value read at the instant it is used cannot
+ * go stale by construction, while a snapshot is only as fresh as the last
+ * person to remember the line that refreshes it, and this fault has now been
+ * found twice by watching a rung fail to do anything. Card speed cannot take
+ * that deal — five call sites on the flight path, several of them per trick —
+ * which is exactly why it has a snapshot and this has not. `difficulty` makes
+ * the same trade next door for the same reason.
  */
 function currentPace() {
   return paceLevel(loadSettings().pace);
@@ -5231,6 +5246,46 @@ function adoptMatch(pack, state, message, {
   dealing = false, seats = null, seating = null, shared = false, hints = 0, daily = null,
 } = {}) {
   epoch += 1;
+  // THE PREFERENCE SNAPSHOT IS REFRESHED HERE, BECAUSE A MATCH OPENING IS THE
+  // MOMENT THE NEW-GAME SHEET'S ANSWERS EXIST (#184).
+  //
+  // WHY THERE IS A SNAPSHOT AT ALL: `settings` is the felt's own copy of the
+  // preferences blob, and it exists for ONE number read on hot paths — how fast
+  // a card crosses the table. `flightDurationMs(settings?.botDelayMs)` is asked
+  // at five call sites and the bot driver's `botDelayMs` is asked once a turn,
+  // so a storage read per use would be a `JSON.parse` per flight, per trick
+  // reveal and per round beat to answer a question whose answer only a person
+  // can change.
+  //
+  // AND WHY IT WAS STALE: it was assigned in exactly two places — `initTable`
+  // at boot, and `rerenderTable` on a resume or an SDK settings change — and
+  // THE NEW-GAME SHEET IS NEITHER OF THEM. The sheet's answers are written to
+  // storage by `rememberPreferences` (src/ui/lobby.js) on the very gesture that
+  // deals, which then calls straight into `openTable`; nothing between there and
+  // here re-renders. So a player who picked Slow in the lobby got a table still
+  // flying at whatever rung the tab had booted on, for the whole match. The
+  // status bar's chip hid it, exactly the way the summary's dial hid the same
+  // fault for the pace (#181): `cycleSpeed` writes the snapshot in the same
+  // breath as storage, so the setting worked on every surface anybody tested it
+  // on and on none of the ones they did not.
+  //
+  // HERE RATHER THAN IN `openTable`, because this is the only place a session is
+  // born and so the one point downstream of every door into a match — a lobby
+  // deal, a resumed save, Play again, and the host's `dealHostedTable` and
+  // `resumeHostedTable`. It is downstream of the sheet, whose write is already
+  // on disk (`Arcade.state` is synchronous) before the pack fetch that precedes
+  // this even starts, and upstream of every reader: the first thing to ask for a
+  // flight duration is the `render` at the bottom of this function.
+  //
+  // WHAT ELSE GETS FRESHER: NOTHING, TODAY, AND THAT IS WORTH SAYING OUT LOUD.
+  // The other four things in the blob are not read off this snapshot at all.
+  // `botDifficulty` and `pace` are read from storage at the moment they are used
+  // (the driver's `difficulty` below, and `currentPace`); `hands` goes through
+  // `loadHandPrefs`, which `createSession` just below calls fresh for this pack;
+  // `showLegalHints` has no reader anywhere. So the only value this line can
+  // change under a running table is the one the sheet just set, and a match that
+  // is opening has nothing in flight to be surprised by it.
+  settings = loadSettings();
   stopSession(session);
   // A pre-move copy belongs to the match it was taken in, and this is a
   // different one (see notePreMove).
@@ -5913,12 +5968,17 @@ export function initTable({ onExit }) {
   bots = createBotDriver({
     clock: feltClock({ shared: () => !!session?.shared }),
     currentEpoch: () => epoch,
+    // The snapshot, like every other reader of this number — and since #184 it
+    // is refreshed by `adoptMatch`, so the rung the sheet just chose is the rung
+    // the first bot of the match plays at.
     botDelayMs: () => settings.botDelayMs,
-    // READ FRESH, NOT OFF THE SNAPSHOT. `settings` is loaded when the table is
-    // initialised and refreshed on a re-render, and the new-game sheet can
+    // READ FRESH, NOT OFF THE SNAPSHOT. `settings` was loaded when the table was
+    // initialised and refreshed on a re-render, and the new-game sheet could
     // change this between the two — deal a Sharp game straight after a Steady
-    // one and the snapshot would still say Steady. The driver asks at fire
-    // time (src/ui/botDriver.js) precisely so this can be answered late.
+    // one and the snapshot would still say Steady. #184 closed that particular
+    // hole by refreshing the snapshot at match open; this stays a live read
+    // anyway, for the reason `currentPace` gives at length. The driver asks at
+    // fire time (src/ui/botDriver.js) precisely so this can be answered late.
     difficulty: () => loadSettings().botDifficulty,
     me,
     identityOf,
