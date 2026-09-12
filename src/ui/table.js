@@ -182,7 +182,6 @@ const el = {
   tablePlay: document.getElementById('table-play'),
   tableZones: document.getElementById('table-zones'),
   tableBoard: document.getElementById('table-board'),
-  feltMiddle: document.getElementById('felt-middle'),
   opponentsTop: document.getElementById('opponents-top'),
   feltMiddle: document.getElementById('felt-middle'),
   centerPiles: document.getElementById('center-piles'),
