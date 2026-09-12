@@ -237,9 +237,12 @@ test("the chip cycles the rung, and the very next flight uses it", () => {
   assert.ok(cycle, "cycleSpeed must exist — it is the whole of the in-match control");
   assert.match(cycle[0], /saveSettings\(/,
     "cycling must persist immediately — the setting outlives the match, like pace and difficulty");
-  assert.match(cycle[0], /settings\.botDelayMs = level\.delayMs/,
-    "the SNAPSHOT too (the precedent is cyclePace): every reader of this number reads "
-    + "`settings`, so storage alone leaves the next flight at the old speed");
+  // AND NOTHING ELSE. This also wrote the module snapshot when it shipped,
+  // because every reader read that snapshot. Now every reader asks storage (see
+  // the test below), so a second copy here is only a second thing to forget.
+  assert.doesNotMatch(cycle[0], /settings\.botDelayMs =/,
+    "the snapshot must not be written: `currentDelayMs` reads storage at the moment a "
+    + "card launches, and a cached copy beside it is what broke the new-game sheet");
   assert.match(cycle[0], /el\.log\.textContent/,
     "the change must be announced — #log is the live region, and a chip's word changing "
     + "is nothing at all to a screen reader");
@@ -247,9 +250,58 @@ test("the chip cycles the rung, and the very next flight uses it", () => {
   // new-game sheet has changed the setting between two hands.
   assert.match(src, /function renderStatusBar\(state, acting\) \{[\s\S]*?paintSpeedChip\(\)/,
     "renderStatusBar must repaint the chip, or the sheet can leave it showing a stale rung");
-  assert.match(src, /speedForDelay\(settings \? settings\.botDelayMs : loadSettings\(\)\.botDelayMs\)/,
-    "the chip must read the same snapshot the flights do, with a fresh read as the fallback "
-    + "for the first paint of a session");
+  assert.match(src, /speedForDelay\(currentDelayMs\(\)\)/,
+    "the chip must read the rung the same way the flights do, or it can sit above a felt "
+    + "moving at a speed its own word denies");
+});
+
+// THE SIBLING OF tests/pace.test.js's "read from storage, not from a snapshot
+// the lobby cannot refresh" (#181), and the same bug in the same module: the
+// new-game sheet is the ONLY surface that offers these four rungs before a
+// match exists, and it was the one surface whose choice never arrived. The
+// snapshot is written in exactly two places — `initTable` at boot and
+// `rerenderTable`, which main.js calls on a resume and on a change to the SDK's
+// OWN settings — and src/ui/lobby.js writes storage and then opens the table,
+// which is neither. So the first match of a session flew at the rung from
+// before the sheet. Verified in a browser on #175's own dial: a table dealt at
+// Slow ran at Brisk.
+//
+// A SOURCE GREP, because src/ui/table.js reaches for `document` at import time
+// and no Node test can load it — the same constraint every "the wiring the
+// tests above cannot import" block in this file works around.
+test("the speed is read from storage, not from a snapshot the lobby cannot refresh", () => {
+  const src = read("src/ui/table.js");
+  const fn = src.match(/function currentDelayMs\(\) \{[\s\S]*?\n\}/);
+  assert.ok(fn, "currentDelayMs must exist — it is the one place the felt asks for the number");
+  assert.match(fn[0], /loadSettings\(\)\.botDelayMs/,
+    "the number must be read fresh at the moment it is needed");
+  assert.doesNotMatch(fn[0], /settings \?/,
+    "reading the module snapshot first is the bug: the new-game sheet writes storage "
+    + "and never touches that snapshot, so a rung picked in the lobby does not reach "
+    + "the felt until the tab is reloaded");
+
+  // AND EVERY CONSUMER GOES THROUGH IT. One fresh read helps nobody if the five
+  // flights and the bot driver still reach past it for the snapshot, which is
+  // exactly the state #91 left this number in: `difficulty` beside it was fixed
+  // and `botDelayMs` was not.
+  assert.ok(!/settings\??\.botDelayMs/.test(src),
+    "no consumer may read botDelayMs off the snapshot — `currentDelayMs` and "
+    + "`currentFlightMs` are the two ways to ask");
+  const flight = src.match(/function currentFlightMs\(\) \{[\s\S]*?\n\}/);
+  assert.ok(flight, "currentFlightMs must exist — the five flight sites share one arithmetic");
+  assert.match(flight[0], /flightDurationMs\(currentDelayMs\(\)\)/,
+    "the duration must come off the live number");
+  assert.strictEqual((src.match(/currentFlightMs\(\)/g) || []).length, 6,
+    "all five flight-duration call sites must ask currentFlightMs, plus its own definition — "
+    + "a site left on the snapshot is a card that still flies at the stale rung");
+  assert.match(src, /botDelayMs: \(\) => currentDelayMs\(\)/,
+    "the bot driver must ask at fire time, the way `difficulty` beside it does (#91)");
+
+  // THE RAW NUMBER, NOT THE TREAD. `speedForDelay` snaps to the nearest rung, so
+  // routing a flight through it would retime every off-ladder save: a hand-edited
+  // 700 reads as Brisk (the test above) and would start flying at 600's duration.
+  assert.doesNotMatch(src, /flightDurationMs\(\s*currentSpeed\(\)/,
+    "a flight must not be timed off the rung the number rounds to — see speedForDelay");
 });
 
 // ONE SETTING, and the decision that says so (#175, decided rather than found).

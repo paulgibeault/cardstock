@@ -2925,16 +2925,39 @@ function renderStatusBar(state, acting) {
  * ------------------------------------------------------------------ */
 
 /**
- * The player's rung, read LIVE, exactly the way `currentPace` is.
+ * The number behind the rung, read LIVE — from storage, never from `settings`.
  *
- * `settings` is the snapshot `rerenderTable` refreshes, and it is the snapshot
- * — not storage — that every consumer of this number already reads:
- * `flightDurationMs(settings?.botDelayMs)` at three call sites, and the bot
- * driver's `botDelayMs: () => settings.botDelayMs`. Falling back to a fresh
- * read keeps the first paint of a session honest, before any render has run.
+ * THE NEW-GAME SHEET CANNOT REFRESH THAT SNAPSHOT, which is the whole reason
+ * this reads past it. `settings` is assigned in exactly two places — `initTable`
+ * at boot, and `rerenderTable` on a resume or a change to the SDK's own
+ * settings — and the sheet is neither: src/ui/lobby.js writes the chosen rung to
+ * storage and then opens the table. A snapshot read therefore hands the first
+ * match of a session the rung from before the sheet, so a table dealt at Slow
+ * flies at Brisk until the tab is reloaded. The bot driver's `difficulty` was
+ * fixed this way in #91, and `currentPace` for the same reason in #181.
+ *
+ * THE STORED NUMBER, NOT THE TREAD IT LIGHTS. `speedForDelay` snaps to the
+ * NEAREST rung on purpose, so a save hand-edited to 700 lights Brisk while
+ * still flying at 700 (src/ui/speed.js). Everything that does arithmetic on the
+ * setting comes through here rather than through the rung, so that stays true.
  */
+function currentDelayMs() {
+  return loadSettings().botDelayMs;
+}
+
+/** The rung to put a name on: the chip's word, and the sheet's lit button. */
 function currentSpeed() {
-  return speedForDelay(settings ? settings.botDelayMs : loadSettings().botDelayMs);
+  return speedForDelay(currentDelayMs());
+}
+
+/**
+ * ONE DURATION FOR THE WHOLE TABLE, at the rung in force the moment a card
+ * launches. Asked rather than cached for the reason above, and asked at every
+ * call site rather than once per match because the status bar's chip can move
+ * the rung mid-hand.
+ */
+function currentFlightMs() {
+  return flightDurationMs(currentDelayMs());
 }
 
 /**
@@ -2953,12 +2976,14 @@ function paintSpeedChip() {
 /**
  * Move to the next rung, on the tap that asked for it.
  *
- * THE SNAPSHOT IS UPDATED IN THE SAME BREATH AS STORAGE, which is the whole
- * point of this control and the precedent `cyclePace` set for the summary's
- * own. Writing storage alone would leave the very next flight at the old speed
- * until a settings event came back round through main.js — and the next flight
- * is precisely the one the player is watching for, because the reason they
- * reached for this was that the last one went past too fast.
+ * STORAGE IS THE ONLY WRITE, BECAUSE STORAGE IS THE ONLY READ. The next flight
+ * is precisely the one the player is watching for — the reason they reached for
+ * this is that the last one went past too fast — and it picks the new rung up
+ * without a settings event coming back round through main.js, because
+ * `currentDelayMs` asks storage as the card launches. There is deliberately no
+ * snapshot to update in the same breath: a second copy of this number is a
+ * second thing to forget, and forgetting it is the bug this control shipped on
+ * top of.
  *
  * NOTHING IN FLIGHT IS RESTARTED. Unlike the pace control, which cancels and
  * re-arms a countdown it may have shortened, this changes nothing that has
@@ -2975,7 +3000,6 @@ function cycleSpeed() {
   const level = speedLevel(nextSpeed(currentSpeed().id));
   const stored = loadSettings();
   saveSettings({ ...stored, botDelayMs: level.delayMs });
-  if (settings) settings.botDelayMs = level.delayMs;
   paintSpeedChip();
   el.log.textContent = `Card speed: ${level.label}. ${level.description}`;
 }
@@ -3541,10 +3565,10 @@ function zoneRect(address) {
  */
 function animateMove(state, move, from) {
   if (!from) return;
-  // ONE DURATION FOR THE WHOLE TABLE, and it is the player's own pace setting
+  // ONE DURATION FOR THE WHOLE TABLE, and it is the player's own speed setting
   // rather than a distinction between their cards and a bot's — see
-  // flightDurationMs. `settings` is null for the instant before the first load.
-  const duration = flightDurationMs(settings?.botDelayMs);
+  // flightDurationMs.
+  const duration = currentFlightMs();
   if (move.type === 'draw' || move.type === 'takeHand') {
     // A draw has no single landing slot in a fanned hand, so it dissolves on
     // arrival rather than pretending to become a particular card. The human's
@@ -3932,7 +3956,7 @@ function finalPlaySentence(state, move) {
 function offerFinalLook(state, move, ending) {
   const myEpoch = epoch;
   pulseSeat(state.winner, 'good');
-  const beat = Math.max(700, flightDurationMs(settings?.botDelayMs) + 280);
+  const beat = Math.max(700, currentFlightMs() + 280);
   Arcade.session.setTimeout(async () => {
     if (myEpoch !== epoch) return;
     const acknowledged = await awaitFinalLook(winnerSentence(state), finalPlaySentence(state, move));
@@ -4448,11 +4472,11 @@ function afterMove(state, move, from, message, { publish = true } = {}) {
   // never left behind to be re-used by the next move.
   const finalState = takeRoundFinal(roundOver ? move : null);
   const reveal = trick ? trickRevealPlan(events, {
-    flightMs: flightDurationMs(settings?.botDelayMs),
+    flightMs: currentFlightMs(),
     posed: !!trickPose,
   }) : null;
   const plan = roundOver ? roundBeatPlan(events, {
-    flightMs: flightDurationMs(settings?.botDelayMs),
+    flightMs: currentFlightMs(),
     // No snapshot means no ending to pose or repaint, so the reveal degrades to
     // the plain hold — the multiplayer path (afterRemoteMove).
     narrate: !!finalState,
@@ -4853,7 +4877,7 @@ function performAnnouncement(state, move, myEpoch = epoch) {
   const roundOver = state.events.find((e) => e.type === 'roundOver' && !e.over);
   const finalState = takeRoundFinal(roundOver ? move : null);
   const plan = roundOver ? roundBeatPlan(state.events, {
-    flightMs: flightDurationMs(settings?.botDelayMs),
+    flightMs: currentFlightMs(),
     narrate: !!finalState,
     pace: currentPace().id,
   }) : null;
@@ -5538,12 +5562,13 @@ export function initTable({ onExit }) {
   bots = createBotDriver({
     clock: feltClock({ shared: () => !!session?.shared }),
     currentEpoch: () => epoch,
-    botDelayMs: () => settings.botDelayMs,
-    // READ FRESH, NOT OFF THE SNAPSHOT. `settings` is loaded when the table is
-    // initialised and refreshed on a re-render, and the new-game sheet can
-    // change this between the two — deal a Sharp game straight after a Steady
-    // one and the snapshot would still say Steady. The driver asks at fire
-    // time (src/ui/botDriver.js) precisely so this can be answered late.
+    // READ FRESH, NOT OFF THE SNAPSHOT — both of these. `settings` is loaded
+    // when the table is initialised and refreshed on a re-render, and the
+    // new-game sheet can change either between the two: deal a Sharp game
+    // straight after a Steady one, or a Slow one after a Brisk one, and the
+    // snapshot would still say Steady and Brisk. The driver asks at fire time
+    // (src/ui/botDriver.js) precisely so both can be answered late.
+    botDelayMs: () => currentDelayMs(),
     difficulty: () => loadSettings().botDifficulty,
     me,
     identityOf,
