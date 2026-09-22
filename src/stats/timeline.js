@@ -31,7 +31,32 @@ import { baseId } from '../engine/selectors.js';
 import { cardName } from '../ui/describe.js';
 
 /** The events worth a glyph on the map, and what the map shows of each. */
-const MARKS = new Set(['trickWon', 'roundOver', 'showScored', 'announced', 'caught', 'wildPlayed', 'instantWin', 'trickCleared']);
+const MARKS = new Set(['trickWon', 'roundOver', 'showScored', 'announced', 'caught', 'wildPlayed', 'instantWin', 'trickCleared', 'cardsPassed', 'go', 'passed', 'combinationPlayed']);
+
+/**
+ * The events that CLOSE a beat — the unit of contest the map is read in.
+ *
+ * A trick is taken (`trickWon`), a Thirteen pile is cleared by everybody
+ * passing (`trickCleared`), a cribbage count is closed by a go or a 31 (`go`
+ * with `closes`), the pass is complete (`cardsPassed`), the hand ends. Each is
+ * an event the template already emits for the felt's own narration; the map
+ * reads them rather than asking the template what a trick is.
+ */
+function closes(mark) {
+  switch (mark.type) {
+    case 'trickWon': case 'trickCleared': case 'cardsPassed': case 'roundOver': return true;
+    case 'go': return !!mark.closes;
+    default: return false;
+  }
+}
+
+/** A move's class, for the beats a hand splits into before any card is led. */
+function classOf(type) {
+  if (type === 'bid') return 'bidding';
+  if (type === 'passCards') return 'pass';
+  if (type === 'declareMeld') return 'meld';
+  return 'play';
+}
 
 /** The same table src/ui/botDriver.js reads for the bar, for a move's verb. */
 const VERBS = {
@@ -95,20 +120,30 @@ export function matchTimeline(pack, snapshot, { labelOf = (seat) => `Seat ${seat
   const turns = [];
   let handFrom = 0;
   let turn = null;
+  // Did the move before this one close a beat? The seat that takes a trick
+  // leads the next, so its fourth card and its lead are consecutive moves by
+  // one actor — and two turns, because "the beginning of a turn" a player
+  // asks to go back to is the lead, not the gather before it.
+  let closed = false;
 
   snapshot.log.forEach((move, i) => {
     applyMove(state, move);
     const index = i + 1;
     const hand = hands.length;
-    if (!turn || turn.seat !== move.actor || turn.hand !== hand) {
+    if (!turn || turn.seat !== move.actor || turn.hand !== hand || closed) {
       turn = { hand, seat: move.actor, from: i, to: index };
       turns.push(turn);
     } else {
       turn.to = index;
     }
+    closed = state.events.some((e) => closes(e));
     const marks = state.events
       .filter((e) => MARKS.has(e.type))
-      .map((e) => ({ type: e.type, seat: e.seat ?? null, points: e.points ?? null, over: e.over ?? null, label: e.label ?? null }));
+      .map((e) => ({
+        type: e.type, seat: e.seat ?? null, points: e.points ?? null, over: e.over ?? null,
+        label: e.label ?? null, closes: e.closes ?? null,
+        cards: Array.isArray(e.cards) ? e.cards.slice() : null,
+      }));
     moves.push({
       index,
       seat: move.actor,
@@ -139,7 +174,7 @@ export function matchTimeline(pack, snapshot, { labelOf = (seat) => `Seat ${seat
     });
   }
 
-  return {
+  const timeline = {
     seats: snapshot.seats,
     length: snapshot.log.length,
     hands,
@@ -148,6 +183,94 @@ export function matchTimeline(pack, snapshot, { labelOf = (seat) => `Seat ${seat
     gameOver: state.gameOver,
     winner: state.winner,
   };
+  timeline.beats = beatsOf(timeline);
+  return timeline;
+}
+
+/**
+ * THE BEATS: a hand read as the units a player remembers it in.
+ *
+ * A Thirteen hand is fifty turns and most of them are "passed"; what a player
+ * remembers is a dozen tricks and who took each one with what. So the map
+ * groups turns into beats — a trick where the pack has one, a count at
+ * cribbage, the pass and the bidding where a hand starts with those, and a LAP
+ * of the table (one turn each round) at the packs where nobody takes anything
+ * (Crazy Eights, Milestones, Stockpile).
+ *
+ * WHAT WINS ONE. A trick is won by the seat the closing mark names — the
+ * template's own verdict — and the winning cards are what that seat played in
+ * the beat. A Thirteen hand that ends with somebody going out has no
+ * `trickCleared` on its last pile; the seat that went out won it. A lap has no
+ * winner, and the map shows every card in it instead.
+ *
+ * @returns Array<{ hand, kind, n, from, to, winner, winning, points, plays }>
+ *   where `plays` are the turns inside it, each `{ from, to, seat, cards,
+ *   passed, won }`, and `kind` is 'trick' | 'count' | 'lap' | 'pass' |
+ *   'bidding' | 'meld'.
+ */
+export function beatsOf(timeline) {
+  const beats = [];
+  for (const [h, hand] of timeline.hands.entries()) {
+    const turns = timeline.turns.filter((t) => t.hand === h);
+    const lastMove = (turn) => timeline.moves[turn.to - 1];
+    const closerOf = (turn) => lastMove(turn).marks.find((m) => closes(m) && m.type !== 'roundOver') || null;
+    // Tricks and counts are cut by the closers; a hand with no closer at all is
+    // a lap pack.
+    const hasClosers = turns.some((t) => closerOf(t));
+    let open = null;
+    const counts = {};
+    const start = (turn, kind) => {
+      counts[kind] = (counts[kind] || 0) + 1;
+      open = { hand: h, kind, n: counts[kind], from: turn.from, to: turn.to, winner: null, winning: [], points: null, plays: [] };
+      beats.push(open);
+    };
+    const seen = new Set();
+    for (const turn of turns) {
+      const cls = classOf(timeline.moves[turn.from].type);
+      const kind = cls !== 'play' ? cls : (hasClosers ? (closerOf(turn)?.type === 'go' || (open?.kind === 'count') ? 'count' : 'trick') : 'lap');
+      // A NEW BEAT when the class changes (the pass ends, the bidding ends),
+      // when a lap comes round to a seat already in it, or after a closer.
+      const lapWraps = kind === 'lap' && seen.has(turn.seat);
+      if (!open || open.kind !== kind || lapWraps) {
+        if (kind === 'lap') seen.clear();
+        start(turn, kind);
+      }
+      seen.add(turn.seat);
+      const moves = timeline.moves.slice(turn.from, turn.to);
+      const played = moves.flatMap((m) => m.cards);
+      const passed = moves.every((m) => m.type === 'pass') && played.length === 0;
+      open.plays.push({ from: turn.from, to: turn.to, seat: turn.seat, cards: played, passed, won: false });
+      open.to = turn.to;
+      const closer = closerOf(turn);
+      if (closer) {
+        open.winner = closer.seat ?? null;
+        open.points = closer.points ?? null;
+        open = null;
+      }
+    }
+    // The pile nobody cleared because the hand ended on it: the seat that went
+    // out won it, with the cards it went out on.
+    const last = beats[beats.length - 1];
+    if (last && last.hand === h && last.kind === 'trick' && last.winner == null) {
+      const lastPlay = [...last.plays].reverse().find((p) => !p.passed);
+      if (lastPlay) last.winner = lastPlay.seat;
+    }
+  }
+  // The winning cards: what the winner played in the beat, and which play it was.
+  for (const beat of beats) {
+    if (beat.winner == null) continue;
+    const mine = beat.plays.filter((p) => p.seat === beat.winner && !p.passed);
+    const won = mine[mine.length - 1] || null;
+    if (won) { won.won = true; beat.winning = won.cards.slice(); }
+  }
+  return beats;
+}
+
+/** The beat a position stands in; the last one at the end. */
+export function beatAt(timeline, n) {
+  return timeline.beats.find((b) => b.from <= n && n < b.to)
+    || timeline.beats[timeline.beats.length - 1]
+    || null;
 }
 
 /** The state after the first `n` moves — a fresh state with a fresh log. */

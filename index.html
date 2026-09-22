@@ -530,7 +530,19 @@
     </div>
   </div>
 
-  <!-- THE MAP: every hand, every turn, every card, as a list you scroll and tap. -->
+  <!-- THE MAP BESIDE THE FELT, where there is room for both (src/ui/table.js's
+       openReviewMap picks this over the sheet below at a wide window): the felt
+       shrinks to make room and follows every tap, so the map is read next to
+       the position it names rather than over it. -->
+  <aside id="review-drawer" aria-label="The game so far" hidden>
+    <div class="review-drawer__head">
+      <span class="panel__title">The game so far</span>
+      <button type="button" id="review-drawer-close" class="ghost-button">Close</button>
+    </div>
+    <div id="review-drawer-host"></div>
+  </aside>
+
+  <!-- THE MAP AS A SHEET, for a window too narrow to show it beside the felt. -->
   <div id="review-overlay" hidden>
     <div class="panel panel--wide review-panel">
       <div class="panel__title">The game so far</div>

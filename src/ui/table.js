@@ -114,7 +114,8 @@ import {
 import {
   initPanels, showRoundSummary, hideRoundSummary, paintRoundPace,
   showScoreboard, showGameOver, hideAllPanels, showRules, awaitFinalLook,
-  showReviewMap, hideReviewMap, isReviewMapOpen, hideGameOver, hideScoreboard,
+  showReviewMap, hideReviewMap, isReviewMapOpen, isReviewDrawerOpen, reviewMapNode,
+  hideGameOver, hideScoreboard,
 } from './panels.js';
 import { packRules } from './rules.js';
 import { roundBeatPlan, trickRevealPlan, nextShowBeat, finalShowPlan } from './roundBeat.js';
@@ -122,7 +123,7 @@ import { lastHandSentence, revealSentence } from './scoreDirection.js';
 import { serializeMatch } from '../engine/replay.js';
 import { viewFor } from '../engine/view.js';
 import { matchTimeline, positionAt, seekTargets } from '../stats/timeline.js';
-import { reviewMapModel, renderReviewMap, reviewBarModel } from './review.js';
+import { reviewMapModel, renderReviewMap, reviewBarModel, paintReviewCursor, beatMoment } from './review.js';
 import { paceLevel, nextSummaryPace } from './pace.js';
 import { speedLevel, speedForDelay, nextSpeed } from './speed.js';
 import {
@@ -4076,6 +4077,9 @@ function seekReview(n) {
   hideShowCard();
   render(review.state);
   paintReviewBar();
+  // The map follows the felt, in place: the drawer stays open across a whole
+  // review and a rebuild per step would redraw hundreds of faces.
+  paintReviewCursor(reviewMapNode(), review.timeline, index);
   // The sentence for where we are: the move that led here, which is what a
   // player stepping back is trying to see.
   const led = index > 0 ? review.timeline.moves[index - 1] : null;
@@ -4100,17 +4104,47 @@ function stepReview(which) {
   if (target != null) seekReview(target);
 }
 
+/**
+ * Where the map goes: BESIDE the felt when the window has room for both, so
+ * every tap on it moves the felt in view; over it as a sheet otherwise.
+ * Answered when the map opens, against the window as it is then.
+ */
+function reviewMapFits() {
+  return typeof window !== 'undefined' && window.matchMedia?.('(min-width: 900px)').matches;
+}
+
 function openReviewMap() {
   const review = session?.review;
   if (!review) return;
+  if (isReviewMapOpen()) { hideReviewMap(); refitFelt(); return; }
   const live = liveState();
+  const drawer = reviewMapFits();
   const model = reviewMapModel(review.timeline, { index: review.index, labelOf: seatLabel });
   const node = renderReviewMap(model, {
     art,
     cardOf: (id) => cardById(live, id) ?? null,
-    onSeek: (from) => { hideReviewMap(); seekReview(from); },
+    // A play stands the felt at the moment before it. As a sheet the map
+    // closes to show it; as a drawer it stays and the felt moves beside it.
+    onSeek: (from) => {
+      if (!isReviewDrawerOpen()) hideReviewMap();
+      seekReview(from);
+    },
+    // A beat's head opens it; beside the felt it also shows the winning play
+    // landed, which is the moment a player opening a trick wants to see.
+    onBeat: (beat, open) => {
+      if (open && isReviewDrawerOpen()) seekReview(beatMoment(beat));
+    },
   });
-  showReviewMap(node);
+  showReviewMap(node, { drawer });
+  refitFelt();
+}
+
+/** The felt after the drawer took or gave back its width: measure again. */
+function refitFelt() {
+  if (!session) return;
+  session.seatFit = null;
+  session.handFit = null;
+  render(feltState());
 }
 
 /** Back to the game: the live felt, the bots, and the results if the match was over. */
@@ -4121,6 +4155,8 @@ function leaveReview() {
   el.reviewBar.hidden = true;
   const state = liveState();
   if (!state) return;
+  session.seatFit = null;
+  session.handFit = null;
   render(state);
   if (state.gameOver) {
     if (session.ending) showGameOver(state, session.ending);
@@ -6102,7 +6138,7 @@ export function initTable({ onExit }) {
         return;
       }
       if (event.key === 'Escape') {
-        if (isReviewMapOpen()) hideReviewMap();
+        if (isReviewMapOpen()) { hideReviewMap(); refitFelt(); }
         else leaveReview();
         return;
       }
@@ -6260,6 +6296,7 @@ export function initTable({ onExit }) {
 
   initPanels({
     onReview: () => enterReview(),
+    onReviewMapClosed: () => refitFelt(),
     onContinueRound: () => dismissRoundSummary(),
     onPlayAgain: () => livePack() && startGame(livePack(), liveState()?.seats),
     onLobby: () => exitToLobby(),

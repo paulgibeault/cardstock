@@ -6145,33 +6145,106 @@ button.tile__daily:hover { background: var(--ghost-hover); }
 .review-hand__title { font-weight: 700; }
 .review-hand__result { font-size: 0.8rem; opacity: 0.75; text-align: right; }
 
-.review-turn {
+/* A BEAT: one trick (or count, lap, pass, bidding), collapsed to who won it
+   and with what; open, every play inside it. */
+.review-beat { border-bottom: 1px solid color-mix(in srgb, var(--panel-border) 50%, transparent); }
+.review-beat--current { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+
+.review-beat__head {
   display: grid;
-  grid-template-columns: 4.5rem minmax(0, 1fr);
-  grid-template-areas: "seat cards" "seat words";
+  grid-template-columns: 5.5rem minmax(0, 1fr);
+  grid-template-areas: "title cards" "who cards";
   column-gap: 0.5rem;
-  row-gap: 0.15rem;
+  align-items: center;
   width: 100%;
   text-align: left;
   font: inherit;
   color: inherit;
   background: transparent;
   border: none;
-  border-bottom: 1px solid color-mix(in srgb, var(--panel-border) 50%, transparent);
   padding: 0.4rem 0.4rem;
   cursor: pointer;
-  align-items: start;
+  min-height: 44px;
 }
-.review-turn:hover { background: var(--chip-bg, rgba(255, 255, 255, 0.06)); }
-.review-turn--current { background: color-mix(in srgb, var(--accent) 18%, transparent); }
-.review-turn--current:hover { background: color-mix(in srgb, var(--accent) 26%, transparent); }
-.review-turn:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.review-turn__seat { grid-area: seat; font-weight: 600; font-size: 0.85rem; padding-top: 0.15rem; overflow: hidden; text-overflow: ellipsis; }
-.review-turn__cards { grid-area: cards; display: flex; flex-wrap: wrap; gap: 0.15rem; min-height: 0; }
-.review-turn__cards:empty { display: none; }
+.review-beat__head:hover { background: var(--chip-bg, rgba(255, 255, 255, 0.06)); }
+.review-beat__head:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.review-beat__title { grid-area: title; font-size: 0.8rem; font-weight: 700; }
+.review-beat__who { grid-area: who; display: flex; gap: 0.35rem; align-items: baseline; font-size: 0.8rem; }
+.review-beat__winner { font-weight: 600; }
+.review-beat__winner--none { opacity: 0.7; font-weight: 400; }
+.review-beat__points {
+  font-size: 0.7rem;
+  padding: 0 0.35rem;
+  border-radius: 999px;
+  background: var(--chip-bg, rgba(255, 255, 255, 0.1));
+}
+.review-beat__head .review-cards { grid-area: cards; justify-self: start; }
+
+.review-cards { display: flex; flex-wrap: wrap; gap: 0.15rem; align-items: center; }
+.review-cards:empty { display: none; }
 .review-card { display: block; width: 26px; flex: none; }
 .review-card svg { display: block; width: 100%; height: auto; }
 .review-card--named { width: auto; font-size: 0.75rem; opacity: 0.8; }
-.review-turn__words { grid-area: words; font-size: 0.8rem; opacity: 0.85; line-height: 1.3; display: block; }
-.review-turn__text { display: block; }
-.review-turn__marks { display: block; font-size: 0.75rem; opacity: 0.7; font-style: italic; }
+
+.review-beat__plays { display: none; padding: 0 0 0.3rem 0.6rem; }
+.review-beat--open > .review-beat__plays { display: block; }
+
+.review-play {
+  display: grid;
+  grid-template-columns: 4.5rem minmax(0, 1fr);
+  grid-template-areas: "seat cards" "seat words";
+  column-gap: 0.5rem;
+  row-gap: 0.1rem;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border: none;
+  border-left: 3px solid transparent;
+  padding: 0.3rem 0.4rem;
+  cursor: pointer;
+  align-items: start;
+}
+.review-play:hover { background: var(--chip-bg, rgba(255, 255, 255, 0.06)); }
+.review-play:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.review-play--won { border-left-color: var(--accent); }
+.review-play--current { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+.review-play__seat { grid-area: seat; font-weight: 600; font-size: 0.8rem; padding-top: 0.1rem; overflow: hidden; text-overflow: ellipsis; }
+.review-play--won .review-play__seat::after { content: " ✓"; opacity: 0.8; }
+.review-play .review-cards { grid-area: cards; }
+.review-play__passed { grid-area: cards; font-size: 0.8rem; opacity: 0.6; font-style: italic; }
+.review-play__words { grid-area: words; font-size: 0.75rem; opacity: 0.8; line-height: 1.3; display: block; }
+.review-play__text { display: block; }
+.review-play__marks { display: block; font-size: 0.72rem; opacity: 0.7; font-style: italic; }
+
+/* THE DRAWER: the map beside the felt at a wide window. The felt gives up
+   the drawer's width (margin on #table-screen) and the reel moves over with
+   it, so nothing the player taps is under anything else. */
+:root { --review-drawer-w: 24rem; }
+#review-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: var(--review-drawer-w);
+  z-index: 8;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel-bg);
+  color: var(--panel-text);
+  border-left: 1px solid var(--panel-border);
+  box-shadow: -10px 0 34px var(--panel-shadow);
+}
+#review-drawer[hidden] { display: none; }
+.review-drawer__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.6rem 0.8rem 0.4rem;
+}
+.review-drawer__head .panel__title { margin: 0; }
+#review-drawer-host { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+#review-drawer-host .review-map { flex: 1 1 auto; max-height: none; margin: 0; border-bottom: none; }
+body.review-drawer #table-screen { margin-right: var(--review-drawer-w); }
+body.review-drawer #review-bar { right: var(--review-drawer-w); }

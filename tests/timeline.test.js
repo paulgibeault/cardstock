@@ -15,8 +15,9 @@ import { createRng } from "../src/engine/rng.js";
 import { serializeMatch, rehydrateMatch } from "../src/engine/replay.js";
 import { loadPackFromDisk } from "../tools/pack-test.mjs";
 import {
-  matchTimeline, positionAt, turnAt, handAt, seekTargets, positionLabel,
+  matchTimeline, positionAt, turnAt, handAt, seekTargets, positionLabel, beatAt,
 } from "../src/stats/timeline.js";
+import { reviewMapModel, beatMoment } from "../src/ui/review.js";
 
 const label = (seat) => ["You", "Nell", "Ada", "Bo", "Cy", "Di"][seat] ?? `Seat ${seat + 1}`;
 
@@ -61,8 +62,13 @@ test("every move is in exactly one turn and one hand, and the ranges tile the lo
           assert.strictEqual(tl.moves[i].turn, t - 1);
           assert.strictEqual(tl.moves[i].hand, h);
         }
-        // A turn boundary is a change of actor or of hand, never a whim.
-        if (turn.to < hand.to) assert.notStrictEqual(tl.moves[turn.to].seat, turn.seat, `${id}: a turn ends when the actor changes`);
+        // A turn boundary is a change of actor, a change of hand, or a beat
+        // closing under the same actor — the seat that takes a trick leads the
+        // next, and the gather and the lead are two turns.
+        if (turn.to < hand.to) {
+          const closedIt = tl.moves[turn.to - 1].marks.some((m) => ['trickWon', 'trickCleared', 'cardsPassed'].includes(m.type) || (m.type === 'go' && m.closes));
+          assert.ok(tl.moves[turn.to].seat !== turn.seat || closedIt, `${id}: a turn ends when the actor changes or a beat closes`);
+        }
         pos = turn.to;
       }
     }
@@ -159,4 +165,120 @@ test("a whole match maps in the time a frame takes", async () => {
     // rest. Generous, so the test is about a regression and not a slow CI box.
     assert.ok(ms < 250, `${id}: ${ms.toFixed(1)}ms to map ${snapshot.log.length} moves and seek three positions`);
   }
+});
+
+/* ------------------------------------------------------------------ *
+ * Beats: the map read trick by trick
+ * ------------------------------------------------------------------ */
+
+test("beats tile every hand, and every turn is in exactly one", async () => {
+  for (const [id, seats] of PACKS) {
+    const { pack, snapshot } = await playedOut(id, seats);
+    const tl = matchTimeline(pack, snapshot, { labelOf: label });
+    let t = 0;
+    for (const [h, hand] of tl.hands.entries()) {
+      const beats = tl.beats.filter((b) => b.hand === h);
+      let pos = hand.from;
+      for (const beat of beats) {
+        assert.strictEqual(beat.from, pos, `${id}: beats are contiguous in hand ${h}`);
+        for (const play of beat.plays) {
+          const turn = tl.turns[t++];
+          assert.deepStrictEqual([play.from, play.to, play.seat], [turn.from, turn.to, turn.seat], `${id}: a play is a turn`);
+        }
+        pos = beat.to;
+      }
+      assert.strictEqual(pos, hand.to, `${id}: the last beat ends with the hand`);
+    }
+    assert.strictEqual(t, tl.turns.length);
+  }
+});
+
+test("Hearts: a pass, then thirteen tricks a hand, each four plays with a winner and its card", async () => {
+  const { pack, snapshot } = await playedOut('hearts', 4);
+  const tl = matchTimeline(pack, snapshot, { labelOf: label });
+  for (const [h] of tl.hands.entries()) {
+    const beats = tl.beats.filter((b) => b.hand === h);
+    const tricks = beats.filter((b) => b.kind === 'trick');
+    assert.strictEqual(tricks.length, 13, `hand ${h}`);
+    tricks.forEach((trick, i) => {
+      assert.strictEqual(trick.n, i + 1);
+      assert.strictEqual(trick.plays.length, 4, 'four cards to a trick');
+      assert.ok(Number.isInteger(trick.winner));
+      const won = trick.plays.filter((p) => p.won);
+      assert.strictEqual(won.length, 1, 'exactly one winning play');
+      assert.strictEqual(won[0].seat, trick.winner);
+      assert.deepStrictEqual(trick.winning, won[0].cards);
+      assert.strictEqual(trick.winning.length, 1);
+    });
+    const passes = beats.filter((b) => b.kind === 'pass');
+    // Hearts passes on three hands in four (left, right, across, hold).
+    if (passes.length) {
+      assert.strictEqual(passes[0].from, tl.hands[h].from, 'the pass opens the hand');
+      assert.strictEqual(passes[0].plays.length, 4, 'everybody passes');
+      assert.strictEqual(passes[0].winner, null);
+    }
+  }
+});
+
+test("Thirteen: a trick is won by whoever played last before everybody passed", async () => {
+  const { pack, snapshot } = await playedOut('thirteen', 4);
+  const tl = matchTimeline(pack, snapshot, { labelOf: label });
+  const tricks = tl.beats.filter((b) => b.kind === 'trick');
+  assert.ok(tricks.length > 0);
+  assert.ok(tl.beats.every((b) => b.kind === 'trick'), 'Thirteen is tricks and nothing else');
+  for (const trick of tricks) {
+    const lastPlay = [...trick.plays].reverse().find((p) => !p.passed);
+    assert.ok(lastPlay, 'a trick has at least one play');
+    assert.strictEqual(trick.winner, lastPlay.seat, 'the last combination standing wins');
+    assert.deepStrictEqual(trick.winning, lastPlay.cards);
+    assert.ok(lastPlay.won);
+    // A pass is a play with no cards.
+    for (const play of trick.plays) assert.strictEqual(play.passed, play.cards.length === 0);
+  }
+  // The beats are far fewer than the turns: that is the whole point.
+  assert.ok(tl.beats.length * 2 < tl.turns.length, `${tl.beats.length} beats for ${tl.turns.length} turns`);
+});
+
+test("Crazy Eights: laps of the table, no winner, every card on the head", async () => {
+  const { pack, snapshot } = await playedOut('crazy-eights', 4);
+  const tl = matchTimeline(pack, snapshot, { labelOf: label });
+  assert.ok(tl.beats.every((b) => b.kind === 'lap' && b.winner === null && b.winning.length === 0));
+  for (const lap of tl.beats) {
+    const seatsIn = lap.plays.map((p) => p.seat);
+    assert.strictEqual(new Set(seatsIn).size, seatsIn.length, 'a lap visits a seat at most once');
+  }
+  const model = reviewMapModel(tl, { index: 0, labelOf: label });
+  const head = model.hands[0].beats[0];
+  assert.strictEqual(head.title, 'Round 1 of the table');
+  assert.deepStrictEqual(head.cards, head.plays.flatMap((p) => p.cards), 'a lap shows every card it played');
+});
+
+test("cribbage: the play is counts closed by a go, and a count has a winner", async () => {
+  const { pack, snapshot } = await playedOut('cribbage', 2);
+  const tl = matchTimeline(pack, snapshot, { labelOf: label });
+  const counts = tl.beats.filter((b) => b.kind === 'count');
+  assert.ok(counts.length > 0, 'the play is counted');
+  assert.ok(counts.some((b) => b.winner !== null), 'a go is one for somebody');
+});
+
+test("the map opens on the beat the felt stands in, and a beat's moment shows the winning play landed", async () => {
+  const { pack, snapshot } = await playedOut('hearts', 4);
+  const tl = matchTimeline(pack, snapshot, { labelOf: label });
+  const trick = tl.beats.find((b) => b.kind === 'trick' && b.n === 5);
+  const inside = trick.plays[1].from;
+  const model = reviewMapModel(tl, { index: inside, labelOf: label });
+  const current = model.hands.flatMap((h) => h.beats).filter((b) => b.current);
+  assert.strictEqual(current.length, 1);
+  assert.strictEqual(current[0].from, trick.from);
+  assert.ok(current[0].open, 'the current beat starts open');
+  assert.strictEqual(current[0].plays.filter((p) => p.current).length, 1);
+  assert.strictEqual(beatAt(tl, inside), trick);
+  // The moment: after the winning play unless it closed the trick itself.
+  const won = trick.plays.find((p) => p.won);
+  const after = trick.plays[trick.plays.indexOf(won) + 1];
+  assert.strictEqual(beatMoment(trick), after ? after.from : won.from);
+  // The end of the match maps to the last beat.
+  const last = tl.beats[tl.beats.length - 1];
+  assert.strictEqual(beatAt(tl, tl.length), last);
+  assert.ok(reviewMapModel(tl, { index: tl.length, labelOf: label }).hands.flatMap((h) => h.beats).find((b) => b.from === last.from).current);
 });

@@ -39,6 +39,9 @@ const el = {
   reviewOverlay: document.getElementById('review-overlay'),
   reviewMapHost: document.getElementById('review-map-host'),
   reviewClose: document.getElementById('review-close'),
+  reviewDrawer: document.getElementById('review-drawer'),
+  reviewDrawerHost: document.getElementById('review-drawer-host'),
+  reviewDrawerClose: document.getElementById('review-drawer-close'),
   scoreRules: document.getElementById('scoreboard-rules'),
 
   rulesOverlay: document.getElementById('rules-overlay'),
@@ -557,22 +560,50 @@ export function hideGameOver() {
   el.gameOverOverlay.hidden = true;
 }
 
-/** The map of the game, over the felt (src/ui/review.js builds `node`). */
-export function showReviewMap(node) {
-  el.reviewMapHost.replaceChildren(node);
-  el.reviewOverlay.hidden = false;
+/**
+ * The map of the game (src/ui/review.js builds `node`): beside the felt as a
+ * drawer where there is room, over it as a sheet where there is not.
+ *
+ * THE TABLE DECIDES WHICH — `drawer` is its call, made against the window —
+ * because the felt is what has to make room, and it does so by a class on
+ * body that src/ui/table.css reads (`body.review-drawer`).
+ */
+export function showReviewMap(node, { drawer = false } = {}) {
+  hideReviewMap();
+  if (drawer) {
+    el.reviewDrawerHost.replaceChildren(node);
+    el.reviewDrawer.hidden = false;
+    document.body.classList.add('review-drawer');
+  } else {
+    el.reviewMapHost.replaceChildren(node);
+    el.reviewOverlay.hidden = false;
+  }
   // The row the felt is standing on, in view — a map of a long match is a
   // list of hundreds, and opening it at the top is opening it at the deal.
-  node.querySelector('.review-turn--current')?.scrollIntoView({ block: 'center' });
+  (node.querySelector('.review-play--current') || node.querySelector('.review-beat--current'))
+    ?.scrollIntoView({ block: 'center' });
 }
 
 export function hideReviewMap() {
   el.reviewOverlay.hidden = true;
   el.reviewMapHost.replaceChildren();
+  el.reviewDrawer.hidden = true;
+  el.reviewDrawerHost.replaceChildren();
+  document.body.classList.remove('review-drawer');
 }
 
 export function isReviewMapOpen() {
-  return !el.reviewOverlay.hidden;
+  return !el.reviewOverlay.hidden || !el.reviewDrawer.hidden;
+}
+
+/** Is the map open BESIDE the felt, where the felt can follow a tap? */
+export function isReviewDrawerOpen() {
+  return !el.reviewDrawer.hidden;
+}
+
+/** The map's live node, for a cursor repaint, or null. */
+export function reviewMapNode() {
+  return el.reviewDrawerHost.firstElementChild || el.reviewMapHost.firstElementChild || null;
 }
 
 export function hideAllPanels() {
@@ -632,6 +663,7 @@ export function hideRules() {
  */
 export function initPanels({
   onContinueRound, onPlayAgain, onLobby, onCloseScoreboard, onEndMatch, onRules, onCyclePace, onReview,
+  onReviewMapClosed,
 }) {
   el.rulesClose.addEventListener('click', () => hideRules());
   // TWO DOORS INTO REVIEW: the scoreboard mid-match, and the results panel at
@@ -639,6 +671,7 @@ export function initPanels({
   el.scoreReview.addEventListener('click', () => { hideScoreboard(); onReview?.(); });
   el.gameOverReview.addEventListener('click', () => { hideGameOver(); onReview?.(); });
   el.reviewClose.addEventListener('click', () => hideReviewMap());
+  el.reviewDrawerClose.addEventListener('click', () => { hideReviewMap(); onReviewMapClosed?.(); });
   el.scoreRules.addEventListener('click', () => onRules?.());
   el.roundContinue.addEventListener('click', () => onContinueRound());
   el.roundEndMatch.addEventListener('click', () => onEndMatch());
