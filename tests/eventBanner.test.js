@@ -595,8 +595,10 @@ test("only a hold with reading time in it announces early", () => {
     + "the winner, and sound the cue, with the deciding card still in the air");
   assert.match(source, /if \(announce\) gatherTrick\(st, trick\);\s*\n\s*else celebrateTrick\(st, trick\);/,
     "a path with no early announcement no longer celebrates the whole trick at its resume");
-  assert.strictEqual((source.match(/closeTrick\(/g) || []).length, 2,
-    "the two resumes no longer both go through closeTrick");
+  // THREE SINCE #189: the trick's own settle, the match ending on a card, and the
+  // match ending inside a show (runFinalShow opens on the same close).
+  assert.strictEqual((source.match(/closeTrick\(/g) || []).length, 3,
+    "the three resumes no longer all go through closeTrick");
   assert.doesNotMatch(source, /if \(trick\) celebrateTrick\(/,
     "a resume celebrates the whole trick itself again, so a held announcement is said twice");
   assert.strictEqual(

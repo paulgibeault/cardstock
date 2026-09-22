@@ -45,6 +45,7 @@ const el = {
   finalLook: document.getElementById('final-look'),
   finalLookResult: document.getElementById('final-look-result'),
   finalLookPlay: document.getElementById('final-look-play'),
+  finalLookHand: document.getElementById('final-look-hand'),
   finalLookContinue: document.getElementById('final-look-continue'),
 
   gameOverOverlay: document.getElementById('game-over-overlay'),
@@ -402,14 +403,18 @@ let dismissFinalLook = null;
  * @param result the sentence that says who won
  * @param play   what the last card was and who played it, or '' when the ending
  *               was not a play (a match that ran out of rounds)
+ * @param hand   what the last hand did to the totals, or '' when the boundary
+ *               scored nobody (src/ui/scoreDirection.js's lastHandSentence)
  * @returns a promise that resolves true when acknowledged, false when the table
  *          closed under it — so a caller can decline to open a panel over a
  *          match that is no longer on screen.
  */
-export function awaitFinalLook(result, play) {
+export function awaitFinalLook(result, play, hand = '') {
   el.finalLookResult.textContent = result;
   el.finalLookPlay.textContent = play || '';
   el.finalLookPlay.hidden = !play;
+  el.finalLookHand.textContent = hand || '';
+  el.finalLookHand.hidden = !hand;
   el.finalLook.hidden = false;
   return new Promise((resolve) => {
     const close = (acknowledged) => {

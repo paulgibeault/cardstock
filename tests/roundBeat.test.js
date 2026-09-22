@@ -27,7 +27,7 @@ import { ROOT } from "../tools/stage.mjs";
 import {
   roundBeatPlan, showSteps, MIN_HOLD_MS, MIN_TRICK_HOLD_MS, SHOW_STEP_MS,
   trickRevealPlan, MIN_TRICK_REVEAL_MS, READ_AFTER_LANDING_MS, SHARED_TRICK_HOLD_MS,
-  nextShowBeat, SHARED_SHOW_STEP_MS,
+  nextShowBeat, SHARED_SHOW_STEP_MS, finalShowPlan,
 } from "../src/ui/roundBeat.js";
 import { PACE_LEVELS, DEFAULT_PACE } from "../src/ui/pace.js";
 import { FLIGHT_MIN_MS, FLIGHT_MS, FLIGHT_MAX_MS } from "../src/ui/flight.js";
@@ -863,4 +863,123 @@ test("the round beat's schedule is untouched by the trick reveal", () => {
   assert.equal(roundBeatPlan(events, { flightMs: 200 }).holdMs, MIN_TRICK_HOLD_MS);
   assert.equal(plan.summaryAt, plan.holdMs);
   assert.ok(plan.gathered);
+});
+
+/* ------------------------------------------------------------------ *
+ * The show of the hand that ends the match (#189)
+ * ------------------------------------------------------------------ */
+
+// THE SAME SHOW WITH THE MATCH ENDING ON IT. The crib's count takes the dealer
+// past 121, so `peg` answers false, `ctx.endRound(seat)` is called INSIDE the
+// move, and the roundOver carries `over: true` — with every count still in the
+// event window in front of it.
+const decidingShow = cribbageShow.map((e) => (e.type === 'roundOver'
+  ? { ...e, round: 9, totals: [98, 124], over: true } : e));
+
+test("the hand that ends the match still counts its show", () => {
+  const plan = finalShowPlan(decidingShow, { flightMs: 420, pace: 'quick' });
+  assert.ok(plan, 'a match-ending show used to come and go in a frame');
+  assert.strictEqual(plan.final, true);
+  assert.deepStrictEqual(plan.steps.map((s) => [s.seat, s.isCrib, s.points]),
+    [[1, false, 8], [0, false, 11], [0, true, 4]],
+    'pone, the dealer, the crib — the order the rules put them in');
+  assert.strictEqual(plan.steps[0].at, plan.holdMs, 'the first count opens on the hold');
+  assert.ok(plan.lookAt > plan.steps[2].at, 'the final look opens after the last count');
+  assert.strictEqual(plan.roundOver.over, true);
+});
+
+// PINNED AGAINST EACH OTHER, at every rung and both flights, so the two schedules
+// cannot drift: a count is a count whether or not the match survives it.
+test("a match-ending show is scheduled exactly as a live round's show is", () => {
+  for (const level of PACE_LEVELS) {
+    for (const flightMs of [260, 420, 700]) {
+      for (const shared of [false, true]) {
+        const live = roundBeatPlan(cribbageShow, { flightMs, pace: level.id, shared });
+        const last = finalShowPlan(decidingShow, { flightMs, pace: level.id, shared });
+        if (level.instant) {
+          assert.strictEqual(last, null, 'Instant has no show to count at the end either');
+          continue;
+        }
+        assert.strictEqual(last.holdMs, live.holdMs, `${level.id}: the hold`);
+        assert.strictEqual(last.stepMs, live.stepMs, `${level.id}: a count's length`);
+        assert.deepStrictEqual(last.steps, live.steps, `${level.id}: the counts and their times`);
+        assert.strictEqual(last.lookAt, live.summaryAt,
+          `${level.id}: the final look opens where the sheet would have`);
+      }
+    }
+  }
+});
+
+test("the ending that is only a card is still offerFinalLook's, untouched", () => {
+  // A trick-taking match ending on its last trick: held by the trick reveal,
+  // then the final look. Nothing to count.
+  assert.strictEqual(finalShowPlan([
+    { type: 'trickWon', seat: 0, points: 13, cards: [] },
+    { type: 'roundOver', round: 7, scores: {}, totals: [104, 61], over: true },
+  ]), null);
+  // A shedding match ending on somebody going out.
+  assert.strictEqual(finalShowPlan([
+    { type: 'roundOver', round: 4, scores: { 0: 0, 1: 31 }, totals: [102, 88], over: true },
+  ]), null);
+  // A cribbage match ending by PEGGING: the round ends, no count was made.
+  assert.strictEqual(finalShowPlan([
+    { type: 'pegged', seat: 1, points: 2, reason: 'play', total: 121 },
+    { type: 'roundOver', round: 9, scores: {}, totals: [98, 121], over: true },
+  ]), null);
+});
+
+test("a live round's show is never the final show's, and the reverse", () => {
+  assert.strictEqual(finalShowPlan(cribbageShow, { pace: 'quick' }), null,
+    'the match survived this hand; the sheet owns it');
+  assert.strictEqual(roundBeatPlan(decidingShow, { pace: 'quick' }), null,
+    'and the sheet must not also claim the deciding one');
+});
+
+test("the final show degrades exactly as a live one does", () => {
+  assert.strictEqual(finalShowPlan(decidingShow, { narrate: false }), null,
+    'a remote move has no position to count over');
+  assert.strictEqual(finalShowPlan(decidingShow, { pace: 'instant' }), null);
+});
+
+test("at the rung that waits, the final show is a sequence that ends in the final look", () => {
+  const plan = finalShowPlan(decidingShow, { flightMs: 420, pace: 'manual' });
+  assert.strictEqual(plan.stepMs, null);
+  assert.strictEqual(plan.lookAt, null, 'the final look opens on a tap, not a clock');
+  const walked = [];
+  for (let dismissed = 0; ; dismissed++) {
+    const step = nextShowBeat(plan, dismissed);
+    if (!step) break;
+    walked.push(step);
+    assert.ok(dismissed < 4, 'the walk never ends; the match cannot conclude');
+  }
+  assert.deepStrictEqual(walked, plan.steps, 'every count, once, in order, then the final look');
+  // And a shared table's version of the same show is finite.
+  const shared = finalShowPlan(decidingShow, { flightMs: 420, pace: 'manual', shared: true });
+  assert.strictEqual(shared.stepMs, SHARED_SHOW_STEP_MS);
+  assert.ok(Number.isFinite(shared.lookAt), 'three other people are waiting');
+});
+
+// PART GREP, for the reason the tap tests above are: src/ui/table.js touches the
+// DOM at import and nothing loads it. The arithmetic is pinned above; this pins
+// that the game-over path actually asks for it and runs it through the same
+// show machinery — a plan nobody reads is the bug this fixes, still there.
+test("the game-over path counts the final show through the same machinery", () => {
+  const table = read("src/ui/table.js");
+  const gameOver = table.slice(table.indexOf("  if (state.gameOver) {"), table.indexOf("  if (passed && !message)"));
+  assert.ok(gameOver.length > 0, 'the game-over branch must still be where afterMove starts');
+  assert.match(gameOver, /finalShowPlan\(events,/, 'the game-over branch must ask for the final show');
+  assert.match(gameOver, /runFinalShow\(/, 'and run it');
+  const runner = table.slice(table.indexOf("function runFinalShow("), table.indexOf("function afterMove("));
+  assert.match(runner, /runShowSequence\(plan, finalState, open\)/,
+    'the counts that wait must be walked by the same sequence a live show is');
+  assert.match(runner, /beatTimer\(open, plan\.lookAt\)/,
+    'and the counts on a clock must end in the final look at the plan\'s own time');
+  assert.match(runner, /session\.roundBeat = true/,
+    'the felt must hold the ending while the counts are read (feltState)');
+  // The ending position is claimed for a match-ending round too, or there is
+  // nothing to pose the crib face down on.
+  assert.match(table, /takeRoundFinal\(ended \? move : null\)/);
+  // And the last count comes down with the results, not before them.
+  const look = table.slice(table.indexOf("function offerFinalLook("), table.indexOf("function openScoreboard("));
+  assert.match(look, /hideShowCard\(\);\s*\n\s*showGameOver\(state, ending\)/);
 });

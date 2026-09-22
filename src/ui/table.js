@@ -116,7 +116,8 @@ import {
   showScoreboard, showGameOver, hideAllPanels, showRules, awaitFinalLook,
 } from './panels.js';
 import { packRules } from './rules.js';
-import { roundBeatPlan, trickRevealPlan, nextShowBeat } from './roundBeat.js';
+import { roundBeatPlan, trickRevealPlan, nextShowBeat, finalShowPlan } from './roundBeat.js';
+import { lastHandSentence } from './scoreDirection.js';
 import { paceLevel, nextSummaryPace } from './pace.js';
 import { speedLevel, speedForDelay, nextSpeed } from './speed.js';
 import {
@@ -3963,18 +3964,31 @@ function finalPlaySentence(state, move) {
  * Floored at the old value so nobody waits longer than they already did unless
  * they have asked for a slower table.
  */
-function offerFinalLook(state, move, ending) {
+function offerFinalLook(state, move, ending, { ended = null, now = false } = {}) {
   const myEpoch = epoch;
   pulseSeat(state.winner, 'good');
-  const beat = Math.max(700, flightDurationMs(settings?.botDelayMs) + 280);
-  Arcade.session.setTimeout(async () => {
+  const ask = async () => {
     if (myEpoch !== epoch) return;
-    const acknowledged = await awaitFinalLook(winnerSentence(state), finalPlaySentence(state, move));
+    const acknowledged = await awaitFinalLook(
+      winnerSentence(state),
+      finalPlaySentence(state, move),
+      lastHandSentence(state.pack, state.seats, ended, seatLabel),
+    );
     // Closed under it, or a new game started while it was up — either way these
     // results belong to a match that is no longer the one on screen.
     if (!acknowledged || myEpoch !== epoch) return;
+    // THE LAST COUNT COMES DOWN WITH THE RESULTS GOING UP (#189), not with the
+    // bar: the bar exists so the cards can be read, and the show card is the
+    // reading. A no-op at every ending that had no show.
+    hideShowCard();
     showGameOver(state, ending);
-  }, beat);
+  };
+  // NOW is the path a final show has already held (runFinalShow, #189): the
+  // deciding count was on the felt until the player dismissed it, so the flight
+  // this beat waits out landed three taps ago.
+  if (now) { ask(); return; }
+  const beat = Math.max(700, flightDurationMs(settings?.botDelayMs) + 280);
+  Arcade.session.setTimeout(ask, beat);
 }
 
 function openScoreboard() {
@@ -4661,6 +4675,58 @@ function runShowSequence(plan, finalState, openSummary) {
   beatTimer(open, plan.steps[0].at);
 }
 
+/**
+ * The show of the hand that ended the MATCH, held exactly as a live hand's is,
+ * with the final look where the sheet would be (issue #189).
+ *
+ * THE SAME MACHINERY, ON PURPOSE. `runShowSequence` walks the counts one tap at
+ * a time and `beatTimer` runs them on a clock, and both were written for the
+ * sheet to follow; `done` is what follows here instead. The felt holds the
+ * ending under `roundBeat` for the same reason a live round's is held — a
+ * rotation of the phone repaints `feltState()`, and `render` offers nothing on
+ * it — and `finalState` is the same pre-move fork with the move re-applied, so
+ * the crib can be posed face down until its own count (`posedForShow`).
+ *
+ * WHEN THE LAST COUNT IS DISMISSED the felt goes live again under the bar: at
+ * match end the live state IS the ending position (maybeFinishRound never dealt
+ * over it), so nothing is lost by letting go of the fork, and the final look's
+ * promise — the table under it stays inspectable — holds. The show card stays
+ * up; `offerFinalLook` takes it down with the results.
+ *
+ * @param plan       a finalShowPlan
+ * @param finalState the ending with the crib face up (takeRoundFinal)
+ * @param shown      the same ending posed for the first count (posedForShow)
+ * @param done       what the final look owes once the counts are read
+ */
+function runFinalShow(state, plan, finalState, shown, { message, move, from, reveal, closeTrick, done }) {
+  cancelRoundBeat();
+  const myEpoch = epoch;
+  session.roundBeat = true;
+  session.roundFinalState = shown;
+  render(shown, message);
+  if (!reveal) animateMove(shown, move, from);
+  closeTrick(shown);
+
+  const open = () => {
+    if (myEpoch !== epoch || !session || !session.roundBeat) return;
+    session.roundBeat = false;
+    session.roundFinalState = null;
+    render(state);
+    done();
+  };
+  if (plan.stepMs == null) {
+    runShowSequence(plan, finalState, open);
+    return;
+  }
+  for (const step of plan.steps) {
+    beatTimer(() => {
+      if (!session.roundBeat) return;
+      playShowStep(finalState, step);
+    }, step.at);
+  }
+  beatTimer(open, plan.lookAt);
+}
+
 /* ------------------------------------------------------------------ *
  * Applying moves
  * ------------------------------------------------------------------ */
@@ -4716,7 +4782,11 @@ function afterMove(state, move, from, message, { publish = true } = {}) {
   if (publish) onLocalMove?.(state, move, events.slice());
   const trick = events.find((e) => e.type === 'trickWon');
   const passed = events.find((e) => e.type === 'cardsPassed');
-  const roundOver = events.find((e) => e.type === 'roundOver' && !e.over);
+  // THE ROUND THAT ENDED, and whether the match survived it. `roundOver` is
+  // the live match's — the sheet's — and null for the hand that ends the match;
+  // `ended` is either, because the ending position is wanted both ways (#189).
+  const ended = events.find((e) => e.type === 'roundOver');
+  const roundOver = ended && !ended.over ? ended : null;
 
   // FOUR CARDS ON THE TABLE, claimed FIRST: `takeRoundFinal` consumes the
   // pre-move snapshot, and the last trick of a hand wants both poses off it.
@@ -4724,7 +4794,7 @@ function afterMove(state, move, from, message, { publish = true } = {}) {
   // WHERE THE ROUND ENDED, claimed before anything can throw. `takeRoundFinal`
   // consumes the pre-move snapshot whether or not it is wanted, so a fork is
   // never left behind to be re-used by the next move.
-  const finalState = takeRoundFinal(roundOver ? move : null);
+  const finalState = takeRoundFinal(ended ? move : null);
   const reveal = trick ? trickRevealPlan(events, {
     flightMs: flightDurationMs(settings?.botDelayMs),
     posed: !!trickPose,
@@ -4798,12 +4868,34 @@ function afterMove(state, move, from, message, { publish = true } = {}) {
     // from the twelve before it would read as the table losing its place. What
     // is special about this path is what comes AFTER the gather — the win cue
     // and the final look — and both of those still wait for the hold.
+    //
+    // AND THE HAND THAT ENDS THE MATCH ENDS LIKE EVERY OTHER HAND (#189). A
+    // cribbage match ends INSIDE a show — the deciding count is in this move's
+    // event window — and until this plan existed that count was never played:
+    // the felt went from the last pegging card to the final-look bar in a
+    // frame. `finalShowPlan` is null for every pack that ends on a card, so
+    // the path below is exactly what it was for all of them.
+    const show = finalShowPlan(events, {
+      flightMs: flightDurationMs(settings?.botDelayMs),
+      narrate: !!finalState,
+      pace: currentPace().id,
+      shared: !!session?.shared,
+    });
+    const look = (now) => {
+      playWin();
+      offerFinalLook(state, move, ending, { ended, now });
+    };
     const finish = () => {
+      if (show && finalState) {
+        runFinalShow(state, show, finalState, posedForShow(finalState, show), {
+          message, move, from, reveal, closeTrick, done: () => look(true),
+        });
+        return;
+      }
       render(state, message);
       if (!reveal) animateMove(state, move, from);
       closeTrick(state);
-      playWin();
-      offerFinalLook(state, move, ending);
+      look(false);
     };
     if (reveal && trickPose) runTrickReveal(trickPose, move, from, reveal, finish, announce);
     else finish();

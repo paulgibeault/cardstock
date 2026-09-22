@@ -36,7 +36,7 @@
 // penalty it has always been. A UI that disagreed with the bot about which way
 // is up would be the same bug wearing different clothes.
 
-import { sidesOf, sideOfSeat, sideScores } from '../engine/sides.js';
+import { sidesOf, sideOfSeat, sideScores, foldToSides } from '../engine/sides.js';
 
 /**
  * 'highestScore' | 'lowestScore' | null — the pack's own declaration, and null
@@ -107,6 +107,47 @@ export function targetSentence(pack, seats, totals) {
   if (!Number.isFinite(togo) || togo <= 0) return '';
   if (pointsArePrize(pack)) return `First to ${target} wins — ${togo} to go.`;
   return `Match ends when anyone reaches ${target} — ${togo} away. Lowest score wins.`;
+}
+
+/* ------------------------------------------------------------------ *
+ * The final look's second line
+ * ------------------------------------------------------------------ */
+
+/**
+ * What the hand that ended the match did to the totals — "Last hand: You +12 ·
+ * Ada +26 · Bo 0" — or '' when the boundary scored nobody.
+ *
+ * THE LAST HAND'S NUMBERS WERE TWO TAPS AWAY (issue #189). The sheet a live
+ * round opens is exactly this arithmetic, and the round that ends the match
+ * never opens one: its damage was on the results panel under a collapsed
+ * "Round by round", so a player who lost a shedding match to a hand they never
+ * saw scored had to go looking for what it cost. The final-look bar already
+ * stands over the ending to be read; this is the line it was missing.
+ *
+ * PER SIDE, like the sheet it stands in for (#125): a partnership pack banks a
+ * side's whole result on one seat, and a per-seat list would read as one partner
+ * carrying the team. The sign is printed even for a gain, because the direction
+ * is the pack's (see the header) and "+26" is a fact either way; a zero is "0",
+ * exactly as the sheet's own delta column prints it.
+ *
+ * EMPTY WHEN THERE IS NOTHING TO SAY. Cribbage pegs every hole live, so its
+ * boundary carries no deltas; a "Last hand: You 0 · Nell 0" there would be a
+ * sentence about nothing, and the bar is small on purpose.
+ *
+ * @param ev      the match-ending `roundOver` event (`scores` per seat)
+ * @param labelOf (seat) => the table's own label for it — "You", "Nell"
+ */
+export function lastHandSentence(pack, seats, ev, labelOf) {
+  const scores = ev?.scores || {};
+  if (Object.keys(scores).length === 0) return '';
+  const sides = sidesOf(pack, seats);
+  const deltas = foldToSides(scores, sides);
+  const parts = sides.map((members, i) => {
+    const who = members.map((seat) => labelOf(seat)).join(' & ');
+    const n = deltas[i] ?? 0;
+    return `${who} ${n > 0 ? `+${n}` : n}`;
+  });
+  return `Last hand: ${parts.join(' · ')}.`;
 }
 
 /* ------------------------------------------------------------------ *

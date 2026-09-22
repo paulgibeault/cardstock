@@ -355,6 +355,68 @@ export function roundBeatPlan(events, {
 }
 
 /**
+ * The show a MATCH-ENDING round owes, or null when there is nothing to count.
+ *
+ * THE HAND THAT ENDS THE MATCH ENDS LIKE EVERY OTHER HAND (issue #189).
+ * `roundBeatPlan` returns null for a `roundOver` carrying `over: true`, and that
+ * is right for the SHEET — there is no next deal under a finished match to hold
+ * back, and the final look is the acknowledgement. It was wrong for the SHOW:
+ * cribbage emits the count that wins the match INSIDE the match-ending move
+ * (`theShow` in src/templates/cribbage.js; `peg` answers false and the show
+ * stops), and the game-over path went from the render straight to the final
+ * look, so pone's, the dealer's or the crib's deciding count — the one moment
+ * the whole match was building to — came and went in a frame. Every other pack
+ * ends on a card the trick hold or the final look already covers, which is why
+ * this was "sometimes" and why it is a plan of its own rather than a flag on
+ * the other one.
+ *
+ * SCHEDULED EXACTLY AS A LIVE ROUND'S SHOW IS, and tests/roundBeat.test.js pins
+ * the two against each other: the first count opens on the same flight-measured
+ * hold, the rung that waits makes it a sequence, the rungs that count make it a
+ * timeline, and a shared table's cap replaces the null the same way. What
+ * differs is only what FOLLOWS the last count — `lookAt` is when the final look
+ * opens, where `summaryAt` was the sheet — and what a null answer means: no
+ * plan here is "nothing to narrate", and the game-over path then holds the
+ * ending exactly as it did before this existed.
+ *
+ * NULL FOR A ROUND THE MATCH SURVIVES, so the two plans can never both claim
+ * one move, and null at Instant and on the remote path for the reasons
+ * `roundBeatPlan` gives — Instant has no show, and a move with no position to
+ * pose has nothing to count over.
+ */
+export function finalShowPlan(events, {
+  flightMs = 0, stepMs = SHOW_STEP_MS, narrate = true, pace = DEFAULT_PACE, shared = false,
+} = {}) {
+  const roundOver = (events || []).find((e) => e.type === 'roundOver' && e.over);
+  if (!roundOver) return null;
+  const level = paceLevel(pace);
+  if (!narrate || level.instant) return null;
+  const counts = showSteps(events);
+  if (!counts.length) return null;
+
+  const gathered = (events || []).some((e) => e.type === 'trickWon');
+  // The same three expressions `roundBeatPlan` uses, deliberately: the hold is
+  // measured against the flight, the count is the rung's, and the cap replaces
+  // the null. Kept as expressions rather than a shared helper because the test
+  // that says "these agree" is worth more than the ten lines it would save.
+  const holdMs = gathered
+    ? Math.max(MIN_TRICK_HOLD_MS, flightMs + 640)
+    : Math.max(MIN_HOLD_MS, flightMs + 280);
+  const scaled = level.stepScale == null
+    ? (shared ? SHARED_SHOW_STEP_MS : null)
+    : Math.round(stepMs * level.stepScale);
+  const steps = counts.map((step, i) => ({
+    ...step,
+    at: i === 0 ? holdMs : (scaled == null ? null : holdMs + i * scaled),
+  }));
+  // When the final look opens: one step after the last count, or on the tap
+  // that dismisses it (`nextShowBeat` running off the end of the steps).
+  const lookAt = scaled == null ? null : steps[steps.length - 1].at + scaled;
+
+  return { roundOver, gathered, holdMs, steps, lookAt, pace: level.id, stepMs: scaled, final: true };
+}
+
+/**
  * What the show puts up after `dismissed` counts, or null for the round summary.
  *
  * THE SEQUENCE'S OWN ARITHMETIC, for the rung that has no other kind (#181).
