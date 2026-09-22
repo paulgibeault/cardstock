@@ -236,6 +236,14 @@ export function showSteps(events) {
       points: ev.points ?? 0,
       cards: Array.isArray(ev.cards) ? ev.cards.slice() : [],
       parts: Array.isArray(ev.parts) ? ev.parts.slice() : [],
+      // THE REVEAL'S OWN FIELDS (src/engine/scoring.js): which price this is,
+      // who it goes to, whether it was the moon, and how many cards there were
+      // even when the ids did not survive the wire. Absent on cribbage's steps,
+      // whose sentence is the template's.
+      reason: ev.reason ?? null,
+      to: ev.to ?? null,
+      sweep: ev.sweep ?? null,
+      n: ev.n ?? (Array.isArray(ev.cards) ? ev.cards.length : 0),
     });
   }
   return out;

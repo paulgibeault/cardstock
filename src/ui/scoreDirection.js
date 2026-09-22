@@ -110,6 +110,64 @@ export function targetSentence(pack, seats, totals) {
 }
 
 /* ------------------------------------------------------------------ *
+ * The reveal's sentence
+ * ------------------------------------------------------------------ */
+
+/**
+ * What one seat's cards were worth at the end of the hand, as the felt says it
+ * over the card that shows them (src/engine/scoring.js emits the step; the
+ * table plays it through `playShowStep`).
+ *
+ * THREE PRICES, THREE SENTENCES, because the sheet's delta is not always this
+ * seat's own number: a Thirteen hand costs its holder, a Crazy Eights hand pays
+ * the seat that went out, and a Hearts pile is what its owner was made to take
+ * — or, once a hand, the moon. Cribbage's own steps have no `reason` and keep
+ * the template's sentence; this returns null for them.
+ *
+ * TONE FOLLOWS THE VIEWER, not the number: the same 60 points is bad news on
+ * your card and good news on the card that names you as the winner.
+ *
+ * @param step        a showSteps() entry carrying `reason`
+ * @param label       (seat) => "You" | the name
+ * @param possessive  (seat) => "Your" | "Nell's"
+ * @param viewerSeat  the seat this device holds
+ */
+export function revealSentence(step, { label, possessive, viewerSeat }) {
+  if (!step || !step.reason) return null;
+  const mine = step.seat === viewerSeat;
+  const n = step.n ?? step.cards?.length ?? 0;
+  const cards = `${n} card${n === 1 ? '' : 's'}`;
+  const points = `${step.points} point${step.points === 1 ? '' : 's'}`;
+  switch (step.reason) {
+    case 'leftover':
+      return {
+        text: `${label(step.seat)} ${mine ? 'are' : 'is'} caught with ${cards} — ${points}.`,
+        tone: mine ? 'bad' : 'neutral',
+      };
+    case 'to-winner': {
+      const toMine = step.to === viewerSeat;
+      return {
+        text: `${possessive(step.seat)} ${cards} ${n === 1 ? 'is' : 'are'} worth ${step.points} to ${label(step.to)}.`,
+        tone: toMine ? 'good' : (mine ? 'bad' : 'neutral'),
+      };
+    }
+    case 'taken':
+      if (step.sweep) {
+        const cost = step.sweep === 'self-lose-sum'
+          ? `${step.points} off ${mine ? 'your' : 'their'} score`
+          : `${step.points} to everyone else`;
+        return { text: `${label(step.seat)} shot the moon — ${cost}.`, tone: mine ? 'good' : 'bad' };
+      }
+      return {
+        text: `${label(step.seat)} took ${step.points} in penalty cards.`,
+        tone: mine ? 'bad' : 'neutral',
+      };
+    default:
+      return null;
+  }
+}
+
+/* ------------------------------------------------------------------ *
  * The final look's second line
  * ------------------------------------------------------------------ */
 

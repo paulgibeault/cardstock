@@ -117,7 +117,7 @@ import {
 } from './panels.js';
 import { packRules } from './rules.js';
 import { roundBeatPlan, trickRevealPlan, nextShowBeat, finalShowPlan } from './roundBeat.js';
-import { lastHandSentence } from './scoreDirection.js';
+import { lastHandSentence, revealSentence } from './scoreDirection.js';
 import { paceLevel, nextSummaryPace } from './pace.js';
 import { speedLevel, speedForDelay, nextSpeed } from './speed.js';
 import {
@@ -4286,13 +4286,17 @@ function playShowStep(finalState, step, { waits = false } = {}) {
     session.roundFinalState = finalState;
     render(finalState);
   }
-  const said = finalState.pack.template.describeEvent?.(
-    // `parts` too: the template says WHAT a hand was worth it for — fifteen
-    // two, a pair, his nobs — and a step stripped of them can only say a
-    // number (#124, item 41).
-    { type: 'showScored', seat: step.seat, isCrib: step.isCrib, points: step.points, parts: step.parts },
-    { seatLabel, seatPossessive, seatVerb, viewerSeat: mySeat() },
-  );
+  // A REVEAL SAYS ITSELF (src/engine/scoring.js, #189): the platform priced the
+  // cards, so the platform has the sentence — and it differs by which price it
+  // was. A cribbage count has no `reason` and stays the template's.
+  const said = revealSentence(step, { label: seatLabel, possessive: seatPossessive, viewerSeat: mySeat() })
+    || finalState.pack.template.describeEvent?.(
+      // `parts` too: the template says WHAT a hand was worth it for — fifteen
+      // two, a pair, his nobs — and a step stripped of them can only say a
+      // number (#124, item 41).
+      { type: 'showScored', seat: step.seat, isCrib: step.isCrib, points: step.points, parts: step.parts },
+      { seatLabel, seatPossessive, seatVerb, viewerSeat: mySeat() },
+    );
   const text = said?.text
     || `${seatPossessive(step.seat)} ${step.isCrib ? 'crib' : 'hand'} is worth ${step.points}.`;
   // THE CARD INSTEAD OF THE BANNER (#152), and the sentence still in the log —
@@ -4305,8 +4309,10 @@ function playShowStep(finalState, step, { waits = false } = {}) {
   if (model) showShowCard(model);
   else showBanner(text, said?.tone || (step.points ? 'good' : 'neutral'));
   el.log.textContent = waits ? heldBeatLine(text) : text;
-  pulseSeat(step.seat, step.points ? 'good' : 'neutral');
-  spotlightZone(step.isCrib ? 'show' : `play.${step.seat}`);
+  pulseSeat(step.seat, said?.tone === 'bad' ? 'bad' : (step.points ? 'good' : 'neutral'));
+  spotlightZone(step.reason
+    ? `${step.reason === 'taken' ? 'won' : 'hand'}.${step.seat}`
+    : (step.isCrib ? 'show' : `play.${step.seat}`));
 }
 
 /**
@@ -4336,6 +4342,10 @@ function showCardFor(finalState, step) {
     parts: step.parts,
     cards,
     starterAt: starterId ? ids.length - 1 : null,
+    // A reveal's card is titled for what it shows and says "nothing" for a
+    // zero; "nineteen" is cribbage's joke and stays on cribbage's counts.
+    what: step.reason === 'taken' ? 'penalty cards' : null,
+    zeroLabel: step.reason ? 'nothing' : undefined,
   });
 }
 

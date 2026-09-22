@@ -57,8 +57,9 @@ export const NINETEEN = 'nineteen';
  */
 export function showCardModel({
   whose = '', isCrib = false, points = 0, parts = [], cards = [], starterAt = null,
+  what = null, zeroLabel = NINETEEN,
 } = {}) {
-  const title = `${String(whose || '').trim()} ${isCrib ? 'crib' : 'hand'}`.trim();
+  const title = `${String(whose || '').trim()} ${what || (isCrib ? 'crib' : 'hand')}`.trim();
 
   const faces = (Array.isArray(cards) ? cards : [])
     .map((card, at) => (card ? { card, at, starter: at === starterAt } : null))
@@ -66,7 +67,7 @@ export function showCardModel({
 
   const rows = (Array.isArray(parts) ? parts : [])
     .map((part) => {
-      const label = partPhrase(part);
+      const label = part?.kind === 'held' ? heldPhrase(part) : partPhrase(part);
       if (!label) return null;
       return {
         label,
@@ -80,6 +81,10 @@ export function showCardModel({
     })
     .filter(Boolean);
 
+  // A ZERO IS NOT ALWAYS A NINETEEN. Cribbage's word for a hand worth nothing
+  // is the caller's default; a reveal (src/engine/scoring.js) of cards that
+  // happened to cost nothing says so in plain words, because the joke belongs
+  // to one game.
   const zero = !rows.length || !points;
   const spoken = rows.map((r) => `${r.label} ${r.points}`).join(', ');
 
@@ -89,12 +94,24 @@ export function showCardModel({
     rows: zero ? [] : rows,
     total: points || 0,
     zero,
+    zeroLabel,
     // For the log line and for anything that wants one string. The felt's own
     // sentence is the template's (`describeEvent`); this is the card read out.
     aria: zero
-      ? `${title}: ${NINETEEN} — nothing.`
+      ? `${title}: ${zeroLabel} — nothing.`
       : `${title}: ${spoken} — ${points}.`,
   };
+}
+
+/**
+ * A reveal row: cards grouped by what each one is worth (the `held` part of
+ * src/engine/scoring.js). "7 cards at 1" is a Thirteen hand; "a card at 50" is
+ * the eight somebody was caught with.
+ */
+function heldPhrase(part) {
+  const n = part?.n ?? 0;
+  const each = part?.each ?? 0;
+  return `${n === 1 ? 'a card' : `${n} cards`} at ${each}`;
 }
 
 /**
@@ -134,7 +151,7 @@ export function renderShowCard(model, { doc = globalThis.document, art } = {}) {
   card.appendChild(faces);
 
   if (model.zero) {
-    card.appendChild(line('show-card__nineteen', NINETEEN));
+    card.appendChild(line('show-card__nineteen', model.zeroLabel || NINETEEN));
   } else {
     const list = doc.createElement('div');
     list.className = 'show-card__parts';

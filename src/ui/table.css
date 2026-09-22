@@ -3947,8 +3947,13 @@ body.is-dragging .card-face { cursor: grabbing; }
 .show-card__faces {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 0.2rem;
   flex: none;
+  /* A reveal (src/engine/scoring.js) can be a whole Thirteen hand; cribbage's
+     five never wrapped and still do not. */
+  flex-wrap: wrap;
+  max-width: min(88vw, 30rem);
 }
 
 .show-card__face {
