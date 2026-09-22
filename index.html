@@ -409,10 +409,10 @@
            finished, trick by trick, without dealing the next one. Opening it
            stops the countdown — a player reading this is not ready to deal —
            and every play in it is a door onto the felt at that moment. -->
-      <button type="button" id="round-map-toggle" class="ghost-button" aria-expanded="false">
-        The game, trick by trick
+      <button type="button" id="round-map-toggle" class="sheet-disclosure" aria-expanded="false" aria-controls="round-map">
+        Trick by trick
       </button>
-      <div id="round-map" hidden></div>
+      <div id="round-map" class="sheet-disclosure__body" hidden></div>
       <div class="panel__actions">
         <!-- The countdown, drawn ON the button it is counting down to rather
              than beside it as digits: the fact worth showing is "this is about
@@ -567,17 +567,20 @@
       <div id="game-over-message"></div>
       <div id="game-over-record"></div>
       <div id="game-over-stats" class="stats-grid"></div>
-      <button type="button" id="game-over-rounds-toggle" class="ghost-button" aria-expanded="false" hidden>
+      <!-- TWO SECTIONS OF THE SHEET, NOT TWO BUTTONS: the rounds and the tricks
+           fold out under a hairline each, the way a sheet's own headings do.
+           The verbs live in the actions row; these are headings you open. -->
+      <button type="button" id="game-over-rounds-toggle" class="sheet-disclosure" aria-expanded="false" aria-controls="game-over-rounds" hidden>
         Round by round
       </button>
-      <div id="game-over-rounds" class="round-history" hidden></div>
+      <div id="game-over-rounds" class="round-history sheet-disclosure__body" hidden></div>
       <!-- THE WHOLE GAME, IN THE RESULTS (src/ui/review.js): every hand, every
            trick, who took it with what — opened here without leaving the sheet,
            and every play in it a door onto the felt at that moment. -->
-      <button type="button" id="game-over-map-toggle" class="ghost-button" aria-expanded="false">
-        The game, trick by trick
+      <button type="button" id="game-over-map-toggle" class="sheet-disclosure" aria-expanded="false" aria-controls="game-over-map">
+        Trick by trick
       </button>
-      <div id="game-over-map" hidden></div>
+      <div id="game-over-map" class="sheet-disclosure__body" hidden></div>
       <div class="panel__actions">
         <button id="game-over-lobby-button" class="ghost-button">Lobby</button>
         <button id="game-over-review" class="ghost-button">Review the game</button>

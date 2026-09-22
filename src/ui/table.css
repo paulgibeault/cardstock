@@ -4818,7 +4818,6 @@ body.is-dragging .card-face { cursor: grabbing; }
 .stat-card__label { opacity: 0.7; }
 .stat-card__value { font-weight: 700; font-variant-numeric: tabular-nums; }
 
-#game-over-rounds-toggle { margin-bottom: 1rem; font-size: 0.78rem; }
 #game-over-rounds-toggle[hidden] { display: none; }
 #game-over-rounds[hidden] { display: none; }
 
@@ -6280,3 +6279,61 @@ body.review-drawer #review-bar { right: var(--review-drawer-w); }
 #round-map { margin: 0.5rem 0; }
 #round-map[hidden] { display: none; }
 #round-map .review-map { max-height: min(46dvh, 22rem); }
+
+/* ------------------------------------------------------------------ *
+ * A SHEET'S FOLD-OUT SECTION. "Round by round" and "Trick by trick" are
+ * headings you open, not things you do — so they are drawn as a sheet's
+ * own rows: a hairline, the name at the left, a chevron at the right that
+ * turns when the section is open. The verbs (Deal, Lobby, Play again) stay
+ * in the actions row and stay looking like buttons.
+ * ------------------------------------------------------------------ */
+.sheet-disclosure {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  width: 100%;
+  margin: 0;
+  padding: 0.6rem 0.25rem;
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--panel-text);
+  background: transparent;
+  border: none;
+  border-top: 1px solid var(--panel-border);
+  border-radius: 0;
+  cursor: pointer;
+  text-align: left;
+  opacity: 0.88;
+}
+.sheet-disclosure:hover { opacity: 1; background: color-mix(in srgb, var(--panel-text) 5%, transparent); }
+.sheet-disclosure:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.sheet-disclosure::after {
+  content: "";
+  flex: none;
+  width: 0.5em;
+  height: 0.5em;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(45deg) translate(-0.1em, -0.1em);
+  transition: transform 0.18s ease;
+  opacity: 0.7;
+  margin-right: 0.2em;
+}
+.sheet-disclosure[aria-expanded="true"]::after { transform: rotate(-135deg) translate(-0.1em, -0.05em); }
+.sheet-disclosure[hidden] { display: none; }
+.sheet-disclosure__body { margin: 0 0 0.4rem; }
+.sheet-disclosure__body[hidden] { display: none; }
+/* The last fold before the actions closes with its own hairline, and the
+   actions keep their breathing room above. */
+.sheet-disclosure__body + .panel__actions,
+.sheet-disclosure + .panel__actions { border-top: 1px solid var(--panel-border); padding-top: 1rem; }
+
+/* On the round sheet the target line sits directly on the first fold. */
+#round-panel .round-target { margin-bottom: 0.6rem; }
+#round-panel .sheet-disclosure { margin-top: 0.2rem; }
+#round-map { margin: 0.4rem 0 0.2rem; }
+#game-over-map { margin: 0.4rem 0 0.2rem; }
+#game-over-overlay .round-history.sheet-disclosure__body { margin-top: 0.4rem; }

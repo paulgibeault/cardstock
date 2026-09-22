@@ -760,7 +760,8 @@ export function initPanels({
   el.gameOverRoundsToggle.addEventListener('click', () => {
     const open = el.gameOverRounds.hidden;
     el.gameOverRounds.hidden = !open;
+    // The chevron says open or shut (src/ui/table.css `.sheet-disclosure`);
+    // the heading keeps its name either way, like a heading.
     el.gameOverRoundsToggle.setAttribute('aria-expanded', String(open));
-    el.gameOverRoundsToggle.textContent = open ? 'Hide the rounds' : 'Round by round';
   });
 }
