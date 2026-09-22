@@ -12,8 +12,9 @@
   "template": "climbing",
   "tagline": "Beat it, bomb it, or pass.",
   "howToPlay": [
-    "The 2 is the highest card in the game and the 3 is the lowest, which is the opposite of nearly every other game on this shelf. Suits break every tie — spades lowest, then clubs, diamonds, hearts — so no two cards are equal and there is always an answer or a pass. The lowest card in play leads the first hand and the lead has to contain it, which is the 3♠ at a full table and whatever survived the deal at a short one.",
+    "The 2 is the highest card in the game and the 3 is the lowest, which is the opposite of nearly every other game on this shelf. Suits break every tie — spades lowest, then clubs, diamonds, hearts — so no two cards are equal and there is always an answer or a pass. The lowest card in play leads every hand and the lead has to contain it, which is the 3♠ at a full table and whatever survived the deal at a short one; the felt says who has it as the cards land.",
     "By default a pass only skips your turn and you are asked again when the play comes back round. Switch off \"Passing keeps you in the trick\" for the stricter rule, where a pass puts you out of the trick for good and passing early to keep a run together is a real decision rather than a shrug.",
+    "A run all of one suit upgrades the trick. Play 5♥ 6♥ 7♥ over a mixed run of three and the felt says so, and from that point on nothing but another run all of one suit — same length, higher — is a legal answer. Suits are part of the ladder, so a suited run in hearts beats one in spades of the same ranks, and a hand with a flush run in it is worth holding together.",
     "The bombs are the point of the game. Three consecutive pairs kill a lone 2, four of a kind kills a pair of them, and a chop can itself be chopped — which is why holding the highest card in the deck is not the free win the ladder makes it look.",
     "Two-handed, the deal is different. Dealing thirteen each would leave half the deck unseen by anybody, so instead the whole pack goes into three face-down hands of seventeen (with one odd card set aside) and you take one each — the third hand sits out. Whoever lost the last hand picks first, and the first hand of a match is a coin toss; the lowest card in play still leads either way, so the pick and the lead tend to fall on opposite sides of the table."
   ],
@@ -30,6 +31,7 @@
     "runExcludes": ["rank:2"],
     "stripExcludes": ["rank:2"],
     "matchShape": "same-type-same-size",
+    "runUpgrade": "same-suit",
     "bombs": [
       { "shape": "consecutive-pairs(3)", "beats": ["single:rank:2"] },
       { "shape": "quad", "beats": ["single:rank:2", "pair:rank:2", "consecutive-pairs(3)"] },
@@ -38,7 +40,7 @@
     ],
     "passIsFinal": true,
     "firstLead": { "card": "lowest", "mustInclude": true },
-    "laterLead": "trick-winner",
+    "laterLead": "lowest",
     "direction": "counterclockwise",
     "winner": "first-empty-hand"
   },
@@ -49,6 +51,22 @@
     "gameOver": { "when": "anyScore >= 50", "winner": "lowestScore" }
   },
   "variants": [
+    {
+      "id": "plain-runs",
+      "name": "Suits do not upgrade a run",
+      "description": "A run all of one suit is worth no more than a mixed one. Every run is compared by its top card alone, and any higher run of the same length answers it.",
+      "default": false,
+      "available": true,
+      "patch": { "rules.runUpgrade": "none" }
+    },
+    {
+      "id": "winner-leads",
+      "name": "The winner of a hand leads the next",
+      "description": "Instead of the lowest card in play opening every hand, the seat that went out leads the next one, free to lead anything.",
+      "default": false,
+      "available": true,
+      "patch": { "rules.laterLead": "trick-winner" }
+    },
     {
       "id": "pass-stays-in",
       "name": "Passing keeps you in the trick",

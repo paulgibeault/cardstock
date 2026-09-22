@@ -79,7 +79,7 @@ import { suggestMove } from './hint.js';
 import { schedule } from './clock.js';
 import { line, svgNode, clearSvgCache } from './dom.js';
 import { promptChoice, closeChoiceDialog } from './choiceDialog.js';
-import { createCelebrations, TRICK_BANNER_PRIORITY, heldBeatLine } from './celebrations.js';
+import { createCelebrations, TRICK_BANNER_PRIORITY, heldBeatLine, dealEvents } from './celebrations.js';
 import { showCardModel, renderShowCard } from './showCard.js';
 import { createContractLadder } from './contractLadder.js';
 import { createContractStrip } from './contractStrip.js';
@@ -664,6 +664,20 @@ function instancesOf(def, seat) {
 
 function sharedZoneInstances(state) {
   const out = [];
+  // WHETHER A ZONE IS ON THE TABLE RIGHT NOW, which the three flags below
+  // cannot answer because all three are properties of the DEFINITION and a
+  // definition does not change with the phase. `hideWhenEmpty` is the near
+  // miss and it is the wrong question for a pile that is empty for ordinary
+  // reasons: Thirteen's `pile` is empty at the start of every trick and is
+  // the drop target for the lead, so hiding it while empty would take the
+  // target away and reflow the felt once a trick.
+  //
+  // Asked ONCE per render rather than per zone — `makeCtx` walks the state —
+  // and only for a template that has an opinion; `false` is the only answer
+  // that does anything, so a hook can take a zone away for a phase and never
+  // conjure one the definition already excluded.
+  const opinion = state.pack.template.zoneOnFelt;
+  const ctx = opinion ? makeCtx(state) : null;
   for (const def of state.zones.defs.values()) {
     if (def.per === 'player') continue;
     // Hidden shared zones (Stockpile's `recycled`) stay off the table; a
@@ -686,6 +700,7 @@ function sharedZoneInstances(state) {
     // sitting beside the real crib is the felt saying the crib is empty.
     for (const inst of instancesOf(def, null)) {
       if (def.hideWhenEmpty && state.zones.count(inst.address) === 0) continue;
+      if (opinion && opinion(ctx, inst.address) === false) continue;
       out.push(inst);
     }
   }
@@ -3800,6 +3815,22 @@ function celebrateAction(state, events, opts) { return moments ? moments.celebra
 function animatePenaltyDraw(state, seat, count, delay) { if (moments) moments.animatePenaltyDraw(state, seat, count, delay); }
 
 /**
+ * WHAT THE DEAL ITSELF SAID — the event window a hand is BORN with, celebrated
+ * at the moment that hand becomes visible. `dealEvents` is the seam and carries
+ * the argument for it (src/ui/celebrations.js).
+ *
+ * TWO CALLERS, BOTH OF THEM "the new hand is on the screen now": `adoptMatch`
+ * for the first hand of a match, and `dismissRoundSummary` for every hand after
+ * it — the engine deals the next hand inside the round-ending move, but the
+ * felt holds the ending position until the summary is dismissed, so the deal's
+ * own sentence has to wait there too.
+ */
+function celebrateDeal(state) {
+  const dealt = dealEvents(state?.events || []);
+  if (dealt.length) celebrateAction(state, dealt);
+}
+
+/**
  * Stop here, between rounds, without playing the match out.
  *
  * The door that was missing. A match runs to its pack's threshold — Wildfire's
@@ -3900,6 +3931,9 @@ function dismissRoundSummary(message) {
   session.dealAnimation = true;
   playDeal(liveState().seats);
   render(liveState(), message || `Round ${liveState().roundNumber}.`);
+  // The hand the engine dealt inside the round-ending move is only now on the
+  // screen, so this is where anything it announced gets said (`celebrateDeal`).
+  celebrateDeal(liveState());
   scheduleNextTurn();
 }
 
@@ -5708,6 +5742,11 @@ function adoptMatch(pack, state, message, {
   setHelpOpen(false);
   hideBanner();
   render(state, message);
+  // ONLY ON A FRESH DEAL. A resume arrives here having REPLAYED its log
+  // (src/engine/replay.js), so `state.events` is the last move of a hand that
+  // has been going for twenty turns — narrating it would open the table on a
+  // sentence about something the player did yesterday.
+  if (dealing) celebrateDeal(state);
   persistMatch();
   scheduleNextTurn();
   scheduleAnnouncementBeats();

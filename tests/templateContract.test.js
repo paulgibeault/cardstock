@@ -55,6 +55,10 @@ const OPTIONAL_FUNCTIONS = [
   // are called — src/ui/describe.js. A pile that holds a whole trick cannot be
   // reported as a count (#122).
   "zoneFocus",
+  // Whether a shared pile is part of the table during THIS phase — the question
+  // `hideWhenEmpty` cannot answer, because a pile that is empty for ordinary
+  // reasons is still a place on the table (src/ui/table.js).
+  "zoneOnFelt",
   // Whether a SEAT is still assembling something — the question interactionMode
   // cannot answer, because the mode comes from the table-wide turn.phase.
   "gathers",

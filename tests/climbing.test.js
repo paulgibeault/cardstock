@@ -747,6 +747,188 @@ test("two-tops-runs: the dragon is still 3-to-A, not the whole hand", async () =
     "letting a 2 end a run moved the dragon");
 });
 
+/* ------------------------------------------------------------------ *
+ * The suited-run upgrade (`rules.runUpgrade: "same-suit"`)
+ * ------------------------------------------------------------------ *
+ *
+ * The rule TABLE is in the pack, as always. What is here is the half a
+ * given-state table cannot reach: the ENUMERATOR, which is what a bot picks
+ * from and what every tap target on the felt is derived from, and the SENTENCE,
+ * which is the only thing that tells a player the trick has changed under them.
+ */
+
+test("the enumerator builds the suited run, not just the cheapest one", async () => {
+  // THE BUG THIS PINS. The run walk fills every rank below the top with the
+  // LOWEST card of that rank, because for an ordinary run those choices are the
+  // same play — a run is compared by its top card alone. Under the upgrade they
+  // are not, and the suited run is very often built from cards that walk never
+  // touches: here the hand holds 6♥ and 6♠, the walk takes the 6♠, and
+  // 5♥-6♥-7♥ — the only run in the hand that upgrades anything — is unreachable
+  // from it. A bot that cannot see it is a bot playing a rule only a human has.
+  const state = await stacked([
+    ["hearts-5", "hearts-6", "hearts-7", "spades-6", "spades-2"],
+    ["diamonds-4"], ["diamonds-9"], ["diamonds-10"],
+  ]);
+  const runs = enumerateLegalMoves(state, 0)
+    .filter((m) => m.type === "playCard" && m.cards.length === 3)
+    .map((m) => [...m.cards].sort().join("+"));
+  assert.ok(runs.includes(["hearts-5", "hearts-6", "hearts-7"].sort().join("+")),
+    `the suited run was never offered: ${runs.join(" / ")}`);
+  assert.ok(runs.includes(["hearts-5", "spades-6", "hearts-7"].sort().join("+")),
+    `the ordinary run walk lost a play it used to offer: ${runs.join(" / ")}`);
+  // AND IT IS OFFERED ONCE. Every card set the two halves of the walk agree on
+  // is the same play, and a shortlist that carried it twice is a bot choosing
+  // between duplicates and twice the wire for a joiner.
+  assert.strictEqual(new Set(runs).size, runs.length,
+    `the enumerator offered the same run twice: ${runs.join(" / ")}`);
+});
+
+test("only a suited answer is enumerated once the trick has been upgraded", async () => {
+  // The other end of the same claim: what the enumerator TAKES AWAY. Seat 3
+  // holds a mixed run that beats the pile on every card and is not an answer,
+  // and a suited one that is.
+  const state = await stacked([
+    ["hearts-5", "hearts-6", "hearts-7", "spades-2"],
+    ["diamonds-4"], ["diamonds-3"],
+    ["clubs-8", "diamonds-9", "hearts-10", "spades-8", "spades-9", "spades-10"],
+  ]);
+  applyMove(state, { actor: 0, type: "playCard", cards: ["hearts-5", "hearts-6", "hearts-7"] });
+  assert.strictEqual(state.turn.seat, 3, "the turn did not move counter-clockwise onto seat 3");
+
+  const plays = enumerateLegalMoves(state, 3).filter((m) => m.type === "playCard");
+  assert.strictEqual(plays.length, 1, `seat 3 was offered ${plays.length} answers, not one`);
+  assert.deepStrictEqual([...plays[0].cards].sort(), ["spades-10", "spades-8", "spades-9"]);
+  assert.ok(enumerateLegalMoves(state, 3).some((m) => m.type === "pass"));
+
+  // RECORDED IS NOT ENFORCED: the omission is asserted against the refusal, so
+  // this cannot pass in a build where the enumerator is merely fussy.
+  const verdict = validateMove(state,
+    { actor: 3, type: "playCard", cards: ["clubs-8", "diamonds-9", "hearts-10"] });
+  assert.strictEqual(verdict.rule, "not-suited",
+    "a mixed run was refused for the wrong reason, so the player is told the wrong thing");
+  assert.match(verdict.reason, /run all of one suit/);
+
+  // AND THE PILE WEARS THE SUIT. `zoneFocus` is what the felt writes over the
+  // cards being answered, and "Run of 3" would be the same words over a pile a
+  // mixed run can beat and a pile only a suited run can.
+  const focus = state.pack.template.zoneFocus(makeCtx(state), "pile");
+  assert.strictEqual(focus.label, "Run of 3 in hearts");
+});
+
+test("the upgrade announces itself exactly once, and names the suit", async () => {
+  const state = await stacked([
+    ["clubs-3", "diamonds-4", "hearts-5", "spades-2"],
+    ["spades-9", "spades-10", "spades-J", "hearts-2"],
+    ["diamonds-3"],
+    ["spades-6", "spades-7", "spades-8", "clubs-2"],
+  ]);
+  applyMove(state, { actor: 0, type: "playCard", cards: ["clubs-3", "diamonds-4", "hearts-5"] });
+  assert.ok(!state.events.find((e) => e.type === "combinationPlayed").suited,
+    "a mixed run announced an upgrade");
+
+  applyMove(state, { actor: 3, type: "playCard", cards: ["spades-6", "spades-7", "spades-8"] });
+  const upgrade = state.events.find((e) => e.type === "combinationPlayed");
+  assert.strictEqual(upgrade.suited, "spades");
+  const say = (viewerSeat) => state.pack.template.describeEvent(upgrade, {
+    seatLabel: (s) => `Seat ${s}`, viewerSeat,
+  });
+  assert.match(say(3).text, /You played a run in spades — only suited runs answer it now/);
+  assert.match(say(0).text, /Seat 3 played a run in spades — only suited runs answer it now/);
+
+  // ONCE. Every answer from here on is suited too, so a suit carried on all of
+  // them would announce the same upgrade once a turn for the rest of the trick.
+  applyMove(state, { actor: 2, type: "pass" });
+  applyMove(state, { actor: 1, type: "playCard", cards: ["spades-9", "spades-10", "spades-J"] });
+  assert.ok(!state.events.find((e) => e.type === "combinationPlayed").suited,
+    "the second suited run announced the upgrade again");
+});
+
+test("plain-runs: the upgrade is a declaration, and a pack can decline it", async () => {
+  // TWO CLAIMS IN ONE, and they are separate: that `climbing` implements the
+  // upgrade only where a pack DECLARES it — otherwise no other game of the
+  // genre could play plain runs — and that Thirteen ships a switch for it, the
+  // way it ships one for every other rule tables disagree about.
+  const hands = [
+    ["hearts-5", "hearts-6", "hearts-7", "spades-2"],
+    ["diamonds-4"], ["diamonds-3"],
+    ["clubs-8", "diamonds-9", "hearts-10"],
+  ];
+  const mixed = ["clubs-8", "diamonds-9", "hearts-10"];
+
+  const off = await stacked(hands, ["plain-runs"]);
+  assert.strictEqual(off.pack.rules.runUpgrade, "none", "the variant did not reach the rules");
+  applyMove(off, { actor: 0, type: "playCard", cards: ["hearts-5", "hearts-6", "hearts-7"] });
+  assert.ok(!off.vars.combo.suit, "the combination carried a suit with the rule switched off");
+  assert.ok(validateMove(off, { actor: 3, type: "playCard", cards: mixed }).legal,
+    "a mixed run was refused with the upgrade switched off");
+  assert.ok(enumerateLegalMoves(off, 3).some((m) => m.type === "playCard"),
+    "the enumerator still hides the mixed answer with the upgrade switched off");
+  assert.ok(!off.pack.template.ruleLines(off.pack.rules).some((l) => /upgrades the trick/.test(l)),
+    "the rules page still offers a rule the variant took away");
+
+  // The same position under the shipped rules, so the only thing that differs
+  // between the two runs is the declaration.
+  const on = await stacked(hands, []);
+  assert.strictEqual(on.pack.rules.runUpgrade, "same-suit");
+  applyMove(on, { actor: 0, type: "playCard", cards: ["hearts-5", "hearts-6", "hearts-7"] });
+  assert.strictEqual(validateMove(on, { actor: 3, type: "playCard", cards: mixed }).rule,
+    "not-suited");
+});
+
+test("no seat ever gets a mixed run onto a suited one, bots included", async () => {
+  // THE RULE, ASSERTED WHERE IT ACTUALLY HAS TO HOLD. Everything else about the
+  // upgrade is pinned on constructed positions; this is the claim over whole
+  // matches, and it is about BOTS as much as about the refusal — a bot picks
+  // from `enumerateLegalMoves`, so a run the enumerator let through would be
+  // played, and no rule test would ever see it.
+  //
+  // Two seat counts because they reach it differently: seventeen-card hands
+  // upgrade far more often per hand, thirteen-card ones put more seats in front
+  // of the standing run.
+  let upgrades = 0;
+  let answered = 0;
+  for (const seats of [2, 4]) {
+    for (let game = 0; game < 12; game++) {
+      const state = await dealt(seats, `suited:${seats}:${game}`);
+      for (let step = 0; step < 4000 && !state.gameOver; step++) {
+        const seat = acting(state)[0];
+        if (seat === undefined) break;
+        const standing = state.vars.combo;
+        if (standing?.suit) {
+          answered += 1;
+          // Every play on the list is suited. Asserted over the whole list
+          // rather than over the move chosen, because the list is what a human
+          // taps from too.
+          for (const move of enumerateLegalMoves(state, seat)) {
+            if (move.type !== "playCard") continue;
+            const suits = new Set(move.cards.map((id) => id.slice(0, id.indexOf("-"))));
+            assert.strictEqual(suits.size, 1,
+              `seat ${seat} was offered ${move.cards.join("+")} against a run in ${standing.suit}`);
+          }
+        }
+        const chosen = chooseBotMove(state, seat);
+        applyMove(state, chosen);
+        const now = state.vars.combo;
+        if (now?.suit && !standing?.suit) upgrades += 1;
+        // AND THE STANDING RUN NEVER LOSES ITS SUIT. That is the whole reason
+        // the upgrade needs no trick var: only a suited run can answer a suited
+        // run, so `combo.suit` survives to the end of the trick by itself. A
+        // build where it did not would leave the trick silently un-upgraded
+        // half way through and nothing above would catch it.
+        if (standing?.suit && now) {
+          assert.ok(now.suit,
+            `the standing run lost its suit when seat ${seat} played ${(chosen.cards || []).join("+")}`);
+        }
+      }
+    }
+  }
+  // AN EMPTY PROBE IS NOT A PASS: measured over this sweep, 60 matches at each
+  // count upgrade about 300 tricks between them. If a change to the bot moves
+  // these to zero, widen the sweep rather than dropping the bar.
+  assert.ok(upgrades > 20, `only ${upgrades} tricks were ever upgraded — the sweep tested nothing`);
+  assert.ok(answered > 40, `only ${answered} turns faced a suited run`);
+});
+
 test("the deal walks the table in the direction of play", async () => {
   // `nextSeat(seat, dir)` was being handed a STEP COUNT as its direction
   // (`nextSeat(openingSeat(), n)`), which visits every seat exactly once and so
@@ -770,7 +952,7 @@ test("the deal walks the table in the direction of play", async () => {
   }
 });
 
-test("the 3 of spades leads hand one, and the seat that goes out leads hand two", async () => {
+test("the 3 of spades leads hand one, and the lowest card in play leads hand two", async () => {
   const state = await dealt(4, "leads");
   const holder = [0, 1, 2, 3].find((s) => state.zones.cards(handAddress(s)).includes("spades-3"));
   // At a FULL table the lowest card in play is the 3♠, so the general rule and
@@ -795,9 +977,82 @@ test("the 3 of spades leads hand one, and the seat that goes out leads hand two"
     applyMove(state, chooseBotMove(state, acting(state)[0]));
   }
   assert.strictEqual(state.roundNumber, 2, "the first hand never ended");
-  // Hand two is opened by whoever went out, free to lead anything (D-3).
+  // AND HAND TWO OPENS THE SAME WAY (`laterLead: "lowest"`). The old rule gave
+  // the lead to whoever went out; this asserts the new one against the cards
+  // actually dealt rather than against the 3♠, because a fresh deal is a fresh
+  // deal and at four seats the lowest card in play happens to be the 3♠ again —
+  // an assertion on the card would pass in a build that had simply kept the
+  // nominated-card rule.
+  const next = lowestInPlay(state);
+  const opener = [0, 1, 2, 3].find((s) => state.zones.cards(handAddress(s)).includes(next));
+  assert.strictEqual(state.turn.seat, opener,
+    `hand two opened on ${state.turn.seat}, not on ${opener} who holds ${next}`);
+  assert.strictEqual(state.vars.leader, opener);
+  assert.strictEqual(state.playerVars[opener].__mustInclude, next,
+    "hand two's opening lead does not owe the lowest card in play");
+  const held = state.zones.cards(handAddress(opener)).filter((id) => id !== next);
+  assert.strictEqual(
+    validateMove(state, { actor: opener, type: "playCard", cards: [held[0]] }).rule, "first-lead",
+    "hand two's opening lead was allowed without the lowest card in play");
+});
+
+test("the deal says who has the lowest card, every hand and to both sides of the table", async () => {
+  // THE RULE IS THE FIRST THING THAT HAPPENS IN A HAND AND IT HAPPENED IN
+  // SILENCE: the turn token moved to a seat for a reason nothing on the felt
+  // ever gave, and under `laterLead: "lowest"` it moves for that reason every
+  // hand rather than once a match. So the deal announces it.
+  const state = await dealt(4, "toast");
+  const dealt1 = state.events.filter((e) => e.type === "holdsLowest");
+  assert.strictEqual(dealt1.length, 1, `the deal emitted ${dealt1.length} announcements`);
+  assert.strictEqual(dealt1[0].seat, state.turn.seat, "the toast names a seat that is not on lead");
+  assert.strictEqual(dealt1[0].lowest, true, "the toast does not say which rule named the seat");
+
+  // A SEAT AND NOTHING ELSE. Naming the card would publish a card sitting in
+  // somebody's hand, which is exactly what `__mustInclude` is a per-seat var to
+  // avoid — and short-handed the other players genuinely do not know which card
+  // it is, because a quarter to a half of the deck was never dealt.
+  const ids = new Set(state.pack.cardsById.keys());
+  assert.ok(!Object.values(dealt1[0]).some((v) => typeof v === "string" && ids.has(v)),
+    `the announcement carries a card id: ${JSON.stringify(dealt1[0])}`);
+
+  const say = (viewerSeat) => state.pack.template.describeEvent(dealt1[0], {
+    seatLabel: (s) => `Seat ${s}`, viewerSeat,
+  });
+  assert.strictEqual(say(dealt1[0].seat).text, "You have the lowest card — you lead");
+  assert.strictEqual(say((dealt1[0].seat + 1) % 4).text,
+    `Seat ${dealt1[0].seat} has the lowest card and leads`);
+  assert.strictEqual(say(dealt1[0].seat).priority, 2,
+    "the deal's own sentence no longer outranks an ordinary play");
+
+  // EVERY HAND, which is the half a setup-only check would miss: the boundary
+  // is a different code path (`startRound`) from the one that deals hand one.
+  for (let step = 0; step < 1000 && state.roundNumber === 1 && !state.gameOver; step++) {
+    applyMove(state, chooseBotMove(state, acting(state)[0]));
+  }
+  assert.strictEqual(state.roundNumber, 2, "the first hand never ended");
+  const dealt2 = state.events.filter((e) => e.type === "holdsLowest");
+  assert.strictEqual(dealt2.length, 1, "hand two was dealt without saying who leads it");
+  assert.strictEqual(dealt2[0].seat, state.turn.seat);
+  // ...and it lands AFTER `roundOver`, which is the seam the felt slices the
+  // window on (`dealEvents`, src/ui/celebrations.js). Emitted before it, the
+  // sentence would be thrown away with the hand that just ended.
+  assert.ok(state.events.findIndex((e) => e.type === "holdsLowest")
+    > state.events.findIndex((e) => e.type === "roundOver"),
+    "the deal's announcement is inside the ending hand's half of the event window");
+});
+
+test("winner-leads: the old rule is still one toggle away", async () => {
+  // The rule `laterLead: "lowest"` replaced (D-3), kept as a variant rather than
+  // deleted — it is the rule most tables play and the one the genre's other
+  // games use. Asserted against the same seed as the default above, so the only
+  // thing that differs between the two runs is the declaration.
+  const state = await dealt(4, "leads", ["winner-leads"]);
+  for (let step = 0; step < 1000 && state.roundNumber === 1 && !state.gameOver; step++) {
+    applyMove(state, chooseBotMove(state, acting(state)[0]));
+  }
+  assert.strictEqual(state.roundNumber, 2, "the first hand never ended");
   assert.ok(state.playerVars.every((own) => !own.__mustInclude),
-    "hand two still owes the 3 of spades");
+    "hand two owes the lowest card under the winner-leads rule");
   assert.strictEqual(state.turn.seat, state.vars.leader);
 });
 
@@ -838,6 +1093,63 @@ test("two seats are dealt three hands to choose from, and the piles say nothing 
   assert.strictEqual(ui.handSelectable.size, 0, "an empty hand offered something to tap");
 });
 
+test("the table during the pick is the piles on offer and nothing else", async () => {
+  // FOUND ON A PHONE. The choose phase drew four boxes in a row — `pile`,
+  // `discard`, and the two hands still on offer — and the two empty ones are
+  // not the same shape as each other, because a `spread` pile and a `stack` are
+  // drawn at different widths. What the phase asks of a player is to tell two
+  // IDENTICAL face-down piles apart, and a row that puts two differently-sized
+  // empty boxes in front of them answers that wrongly before it is asked.
+  const state = await dealt(2, "offer:felt");
+  assert.strictEqual(state.turn.phase, "choose");
+  const onFelt = (address) => state.pack.template.zoneOnFelt(makeCtx(state), address);
+  assert.strictEqual(onFelt("pile"), false, "the play pile is still on the felt during the pick");
+  assert.strictEqual(onFelt("discard"), false, "the played pile is still on the felt during the pick");
+  for (const n of [1, 2, 3]) {
+    assert.notStrictEqual(onFelt(`offer.${n}`), false, `hand ${n} was taken off the felt`);
+  }
+
+  // AND THE MOMENT THE PHASE ENDS THEY COME BACK, which is the half that says
+  // this is not `hideWhenEmpty` in disguise: `pile` is empty at the start of
+  // every trick and is where a lead LANDS, so a rule about emptiness would take
+  // the drop target away once a trick and reflow the felt under a thumb.
+  pickHands(state);
+  assert.strictEqual(state.turn.phase, "play");
+  assert.strictEqual(state.zones.count("pile"), 0, "the pile is not empty, so this proves nothing");
+  assert.strictEqual(onFelt("pile"), null, "the pile is off the felt with cards still to play on it");
+  assert.strictEqual(onFelt("discard"), null, "the played pile never comes back");
+
+  // A table with no pick has no opinion at all — the hook is about the PHASE,
+  // and three and four seats never enter it.
+  for (const seats of [3, 4]) {
+    const flat = await dealt(seats, `offer:felt:${seats}`);
+    const ctx = makeCtx(flat);
+    for (const address of ["pile", "discard"]) {
+      assert.strictEqual(flat.pack.template.zoneOnFelt(ctx, address), null,
+        `${seats} seats: the template has an opinion about ${address}`);
+    }
+  }
+});
+
+test("the felt asks the template which piles are on the table", () => {
+  // A SOURCE GATE, because src/ui/table.js touches `document` on its first line
+  // and no Node test can load it — and a hook nothing consults is a hook that
+  // is green forever and hides nothing. The two halves the gate pins are that
+  // the hook is asked at all, and that only `false` does anything: anything
+  // else has to leave the zone definition's own flags alone, or a template
+  // returning `undefined` for a zone it has no opinion about would empty the
+  // table.
+  const source = fs.readFileSync(path.join(ROOT, "src/ui/table.js"), "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^\s*\/\/.*$/gm, "");
+  const body = /function sharedZoneInstances\([\s\S]*?\n\}/.exec(source);
+  assert.ok(body, "sharedZoneInstances has moved");
+  assert.match(body[0], /const opinion = state\.pack\.template\.zoneOnFelt;/,
+    "the felt no longer asks the template which piles are on the table");
+  assert.match(body[0], /opinion\(ctx, inst\.address\) === false/,
+    "the felt treats an answer other than `false` as a reason to drop a zone");
+});
+
 test("a pile taken is a hand of 17, and the one nobody took leaves the table", async () => {
   const state = await dealt(2, "offer:take");
   const first = state.turn.seat;
@@ -873,13 +1185,16 @@ test("a pile taken is a hand of 17, and the one nobody took leaves the table", a
   assert.strictEqual(interactionMode(state), "combination", "the mode never left the pick");
 });
 
-test("the loser of a hand picks first, and the winner leads once the picks are in", async () => {
-  // THE BARGAIN THE RULE IS (#157): the player who lost gets first choice of
-  // pile, the player who won gets the lead. Asserted at every round boundary of
-  // several whole matches rather than on one seeded hand, because the two
-  // halves are decided in different places — `startRound` reads who won, and
-  // `finishChoose` spends it two moves later — and a test of one deal would not
-  // notice them drifting apart.
+test("the loser of a hand picks first, and the lowest card leads once the picks are in", async () => {
+  // THE BARGAIN THE RULE WAS (#157): the player who lost got first choice of
+  // pile, the player who won got the lead. THE SECOND HALF IS GONE — the lowest
+  // card in play now opens every hand — and the first half is not, because it
+  // never depended on it: `firstPicker` reads who won, and that is a fact about
+  // the hand that ended whatever `laterLead` does with the lead. Asserted at
+  // every round boundary of several whole matches rather than on one seeded
+  // hand, because the two halves are decided in different places — `startRound`
+  // reads who won, and `finishChoose` spends it two moves later — and a test of
+  // one deal would not notice them drifting apart.
   let boundaries = 0;
   for (let game = 0; game < 12; game++) {
     const state = await dealt(2, `offer:order:${game}`);
@@ -898,10 +1213,12 @@ test("the loser of a hand picks first, and the winner leads once the picks are i
       applyMove(state, chooseBotMove(state, state.turn.seat));
       applyMove(state, chooseBotMove(state, state.turn.seat));
       assert.strictEqual(state.turn.phase, "play");
-      assert.strictEqual(state.turn.seat, seat,
-        `round ${round + 1} did not open on the seat that went out`);
-      assert.ok(state.playerVars.every((own) => !own.__mustInclude),
-        "a later hand still owes the lowest card");
+      const lowest = lowestInPlay(state);
+      const opener = [0, 1].find((s) => state.zones.cards(handAddress(s)).includes(lowest));
+      assert.strictEqual(state.turn.seat, opener,
+        `round ${round + 1} opened on ${state.turn.seat}, not on ${opener} who holds ${lowest}`);
+      assert.strictEqual(state.playerVars[opener].__mustInclude, lowest,
+        `round ${round + 1} does not owe the lowest card of the thirty-four in play`);
     }
   }
   assert.ok(boundaries > 20, `only ${boundaries} hands finished — the sweep proved little`);
