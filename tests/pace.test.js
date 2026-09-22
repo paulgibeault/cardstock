@@ -644,7 +644,8 @@ test("the panel offers the cycling control and refuses to swallow End match", ()
   const panels = read("src/ui/panels.js");
   assert.match(panels, /roundPanel\.addEventListener\('click'/,
     "the whole sheet must be the deal target, not only the button");
-  assert.match(panels, /closest\('#round-end-match, #round-pace, #round-continue'\)/,
+  // ...and the map on the sheet (#191), which is read, not tapped to deal.
+  assert.match(panels, /closest\('#round-end-match, #round-pace, #round-continue, #round-map-toggle, #round-map'\)/,
     "End match and the pace control must opt out of tap-to-deal, and the Deal "
     + "button must not be handled twice");
   assert.match(panels, /el\.roundPace\.addEventListener\('click'/);

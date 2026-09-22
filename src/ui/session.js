@@ -91,6 +91,10 @@ export function createSession({
     // What `concludeMatch` handed back when this match ended, kept so the
     // results panel can be put back after a review of the finished game.
     ending: null,
+    // How to put the round sheet back after a review opened from it — the
+    // same call that opened it, countdown restarted. Set by runRoundBeat's
+    // openSummary, cleared with `roundSummaryOpen`.
+    reopenSummary: null,
     // The refusal sentence #log is currently carrying for a staged selection the
     // engine will not take (renderStageTray). Kept so a repaint for some other
     // reason — a bot moving, a resize — does not re-announce the same sentence
@@ -258,6 +262,7 @@ export function createSession({
 export function stopSession(session) {
   if (!session) return;
   session.review = null;
+  session.reopenSummary = null;
   if (session.botTimer) session.botTimer.cancel();
   session.botTimer = null;
   if (session.bannerTimer) session.bannerTimer.cancel();

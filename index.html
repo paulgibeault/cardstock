@@ -405,6 +405,14 @@
            a match that runs to 500 points offers no exit but closing the
            table, which keeps the game in progress and waiting in the lobby. -->
       <div id="round-target" class="round-target"></div>
+      <!-- THE GAME SO FAR, ON THE SHEET (src/ui/review.js): the hand just
+           finished, trick by trick, without dealing the next one. Opening it
+           stops the countdown — a player reading this is not ready to deal —
+           and every play in it is a door onto the felt at that moment. -->
+      <button type="button" id="round-map-toggle" class="ghost-button" aria-expanded="false">
+        The game, trick by trick
+      </button>
+      <div id="round-map" hidden></div>
       <div class="panel__actions">
         <!-- The countdown, drawn ON the button it is counting down to rather
              than beside it as digits: the fact worth showing is "this is about

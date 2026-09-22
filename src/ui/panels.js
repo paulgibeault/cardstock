@@ -37,6 +37,8 @@ const el = {
   scoreReview: document.getElementById('scoreboard-review'),
   gameOverReview: document.getElementById('game-over-review'),
   gameOverMapToggle: document.getElementById('game-over-map-toggle'),
+  roundMapToggle: document.getElementById('round-map-toggle'),
+  roundMap: document.getElementById('round-map'),
   gameOverMap: document.getElementById('game-over-map'),
   reviewOverlay: document.getElementById('review-overlay'),
   reviewMapHost: document.getElementById('review-map-host'),
@@ -315,6 +317,9 @@ function targetSentence(state, ev) {
 
 export function hideRoundSummary() {
   el.roundOverlay.hidden = true;
+  el.roundMap.hidden = true;
+  el.roundMap.replaceChildren();
+  el.roundMapToggle.setAttribute('aria-expanded', 'false');
   // The ring stops being a countdown the moment the sheet stops being on
   // screen. Left running, its animation would still be ticking inside a hidden
   // overlay — the exact battery shape cardstock#24 exists to forbid — and would
@@ -677,7 +682,7 @@ export function hideRules() {
  */
 export function initPanels({
   onContinueRound, onPlayAgain, onLobby, onCloseScoreboard, onEndMatch, onRules, onCyclePace, onReview,
-  onReviewMapClosed, onGameOverMap,
+  onReviewMapClosed, onGameOverMap, onRoundMap,
 }) {
   el.rulesClose.addEventListener('click', () => hideRules());
   // TWO DOORS INTO REVIEW: the scoreboard mid-match, and the results panel at
@@ -705,7 +710,13 @@ export function initPanels({
   // `roundSummaryOpen` — but a second call that only survives on a guard is not
   // a design.
   el.roundPanel.addEventListener('click', (event) => {
-    if (event.target.closest('#round-end-match, #round-pace, #round-continue')) return;
+    // A TAP WHOSE TARGET HAS ALREADY LEFT THE DOM is not a tap on the sheet.
+    // A play in the map (#191) opens the review in its own handler, which
+    // takes the sheet — and the map — down before this listener runs; the
+    // detached button then has no `#round-map` ancestor for `closest` to
+    // find, and the deal fired on a tap that meant "show me that trick".
+    if (!event.target.isConnected) return;
+    if (event.target.closest('#round-end-match, #round-pace, #round-continue, #round-map-toggle, #round-map')) return;
     onContinueRound();
   });
   el.playAgainButton.addEventListener('click', () => onPlayAgain());
@@ -731,6 +742,20 @@ export function initPanels({
       // The last trick, in view: a finished game's map opens at its end.
       el.gameOverMap.querySelector('.review-beat--current')?.scrollIntoView({ block: 'nearest' });
     }
+  });
+  // THE SAME MAP ON THE ROUND SHEET. `onRoundMap` builds it AND stops the
+  // sheet's countdown, because a player who opened this is reading, not
+  // waiting to deal; the sheet's own tap-to-deal already excludes it above.
+  el.roundMapToggle.addEventListener('click', () => {
+    const open = el.roundMap.hidden;
+    if (open && !el.roundMap.firstElementChild) {
+      const node = onRoundMap?.();
+      if (!node) return;
+      el.roundMap.replaceChildren(node);
+    }
+    el.roundMap.hidden = !open;
+    el.roundMapToggle.setAttribute('aria-expanded', String(open));
+    if (open) el.roundMap.querySelector('.review-beat--current')?.scrollIntoView({ block: 'nearest' });
   });
   el.gameOverRoundsToggle.addEventListener('click', () => {
     const open = el.gameOverRounds.hidden;

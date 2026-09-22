@@ -6130,20 +6130,38 @@ button.tile__daily:hover { background: var(--ghost-hover); }
   border-bottom: 1px solid var(--panel-border);
 }
 
+.review-hand { margin-top: 0.6rem; }
+.review-hand:first-child { margin-top: 0; }
 .review-hand__head {
   position: sticky;
   top: 0;
   z-index: 1;
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 0.75rem;
-  padding: 0.5rem 0.4rem 0.3rem;
-  background: var(--panel-bg);
+  padding: 0.55rem 0.6rem 0.5rem;
+  background: color-mix(in srgb, var(--accent) 22%, var(--panel-bg));
+  border-top: 2px solid var(--accent);
   border-bottom: 1px solid var(--panel-border);
 }
-.review-hand__title { font-weight: 700; }
-.review-hand__result { font-size: 0.8rem; opacity: 0.75; text-align: right; }
+.review-hand__head--live { background: color-mix(in srgb, var(--accent) 10%, var(--panel-bg)); border-top-style: dashed; }
+.review-hand__titlerow { display: flex; align-items: baseline; gap: 0.5rem; }
+.review-hand__title { font-weight: 800; font-size: 1.05rem; letter-spacing: 0.01em; }
+.review-hand__of { font-size: 0.75rem; opacity: 0.7; }
+.review-hand__standings { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.3rem; }
+.review-hand__chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.3rem;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--panel-bg) 70%, transparent);
+  border: 1px solid var(--panel-border);
+  font-size: 0.75rem;
+}
+.review-hand__chip-name { opacity: 0.8; }
+.review-hand__chip-total { font-weight: 700; }
+.review-hand__chip-delta { opacity: 0.75; font-size: 0.7rem; }
+
+/* Tricks sit inside their hand: indented, with a rail down the side. */
+.review-hand .review-beat { margin-left: 0.5rem; border-left: 2px solid color-mix(in srgb, var(--panel-border) 60%, transparent); }
 
 /* A BEAT: one trick (or count, lap, pass, bidding), collapsed to who won it
    and with what; open, every play inside it. */
@@ -6255,3 +6273,10 @@ body.review-drawer #review-bar { right: var(--review-drawer-w); }
 #game-over-map { margin: 0.5rem 0; }
 #game-over-map[hidden] { display: none; }
 #game-over-map .review-map { max-height: min(46dvh, 22rem); }
+
+/* The map on the round sheet, scrolling on its own inside a sheet that must
+   still fit the window with it open. */
+#round-overlay .panel { max-height: calc(100dvh - 2rem); overflow: auto; }
+#round-map { margin: 0.5rem 0; }
+#round-map[hidden] { display: none; }
+#round-map .review-map { max-height: min(46dvh, 22rem); }

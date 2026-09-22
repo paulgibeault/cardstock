@@ -3843,6 +3843,7 @@ async function endMatchFromSummary() {
     recordForfeit(state.pack.id, session.seating);
   }
   session.roundSummaryOpen = false;
+  session.reopenSummary = null;
   session.roundBeat = false;
   session.roundFinalState = null;
   hideRoundSummary();
@@ -3863,6 +3864,7 @@ function dismissRoundSummary(message) {
   // that any other code path hiding the overlay would silently erase.
   if (!session || !session.roundSummaryOpen || !liveState()) return;
   session.roundSummaryOpen = false;
+  session.reopenSummary = null;
   // A TAP BEATS THE CLOCK, and the clock must not fire behind it. This is also
   // what makes the door idempotent under the panel's two listeners: the second
   // call finds `roundSummaryOpen` false and returns above.
@@ -4031,9 +4033,12 @@ function offerFinalLook(state, move, ending, { ended = null, now = false } = {})
 /** Can a review be opened on this felt right now? */
 function reviewOffered() {
   const state = liveState();
-  return !!state && !state.isView && !!session && !session.review
-    && !session.roundBeat && !session.trickBeat && !session.roundSummaryOpen
-    && state.log.length > 0;
+  if (!state || state.isView || !session || session.review || state.log.length === 0) return false;
+  // FROM THE SHEET IS FINE: the beat is holding at the summary, which knows how
+  // to put itself back (`reopenSummary`). Mid-beat — a trick held, a count up —
+  // is not: there is a timer or a tap the beat is waiting on.
+  if (session.roundSummaryOpen) return !!session.reopenSummary;
+  return !session.roundBeat && !session.trickBeat;
 }
 
 /**
@@ -4049,6 +4054,12 @@ function enterReview({ at = null, map = false } = {}) {
   hideBanner();
   hideGameOver();
   hideScoreboard();
+  if (session.roundSummaryOpen) {
+    // The sheet steps aside and its countdown stops; `leaveReview` puts both
+    // back. `roundSummaryOpen` stays true: we are still between hands.
+    cancelRoundBeat();
+    hideRoundSummary();
+  }
   const snapshot = serializeMatch(state);
   const timeline = matchTimeline(state.pack, snapshot, { labelOf: seatLabel });
   session.review = {
@@ -4162,6 +4173,27 @@ function gameOverMapNode() {
   });
 }
 
+/**
+ * The map on the round sheet: the hand just finished, standing at its last
+ * trick. Opening it stops the countdown — the sheet's own control shows Manual
+ * for the rest of this sheet, the way "End match" does while it asks.
+ */
+function roundMapNode() {
+  const state = liveState();
+  if (!state || state.isView || !state.log.length || !session?.roundSummaryOpen) return null;
+  if (session.advanceTimer) { session.advanceTimer.cancel(); session.advanceTimer = null; }
+  paintRoundPace({ ...paceView(paceLevel(currentPace().id)), autoMs: null });
+  const snapshot = serializeMatch(state);
+  const timeline = matchTimeline(state.pack, snapshot, { labelOf: seatLabel });
+  const at = seekTargets(timeline, timeline.length).prevTurn ?? 0;
+  const model = reviewMapModel(timeline, { index: at, labelOf: seatLabel });
+  return renderReviewMap(model, {
+    art,
+    cardOf: (id) => cardById(state, id) ?? null,
+    onSeek: (from) => enterReview({ at: from, map: reviewMapFits() }),
+  });
+}
+
 /** The felt after the drawer took or gave back its width: measure again. */
 function refitFelt() {
   if (!session) return;
@@ -4180,6 +4212,13 @@ function leaveReview() {
   if (!state) return;
   session.seatFit = null;
   session.handFit = null;
+  if (session.roundSummaryOpen && session.reopenSummary) {
+    // Back between hands: the ending on the felt and the sheet over it, its
+    // countdown restarted. The bots wait on the sheet's own door, as before.
+    render(feltState());
+    session.reopenSummary();
+    return;
+  }
   render(state);
   if (state.gameOver) {
     if (session.ending) showGameOver(state, session.ending);
@@ -4793,11 +4832,16 @@ function runRoundBeat(state, plan, finalState) {
       dismissRoundSummary(roundResultLine(state, plan.roundOver));
       return;
     }
-    showRoundSummary(
-      state, plan.roundOver, session.seating, roundContractLines(finalState),
-      paceView(paceLevel(plan.pace)),
-    );
-    armAutoAdvance(plan.autoAdvanceMs);
+    // KEPT AS A CLOSURE, so a review opened from the sheet can put it back
+    // exactly as it was (leaveReview) — countdown restarted, not resumed.
+    session.reopenSummary = () => {
+      showRoundSummary(
+        state, plan.roundOver, session.seating, roundContractLines(finalState),
+        paceView(paceLevel(plan.pace)),
+      );
+      armAutoAdvance(plan.autoAdvanceMs);
+    };
+    session.reopenSummary();
   };
 
   // A TIMELINE OR A SEQUENCE, AND THE PLAN SAYS WHICH (#181). `stepMs` is null
@@ -6321,6 +6365,7 @@ export function initTable({ onExit }) {
     onReview: () => enterReview(),
     onReviewMapClosed: () => refitFelt(),
     onGameOverMap: () => gameOverMapNode(),
+    onRoundMap: () => roundMapNode(),
     onContinueRound: () => dismissRoundSummary(),
     onPlayAgain: () => livePack() && startGame(livePack(), liveState()?.seats),
     onLobby: () => exitToLobby(),

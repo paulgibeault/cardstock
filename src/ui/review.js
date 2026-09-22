@@ -106,7 +106,23 @@ export function reviewMapModel(timeline, { index = 0, labelOf = (s) => `Seat ${s
     const result = hand.live
       ? 'in play'
       : hand.totals.map((total, seat) => `${labelOf(seat)} ${total}`).join(' · ');
-    return { round: hand.round, title: `Hand ${hand.round}`, result, live: hand.live, beats };
+    // One chip per seat for the header: the running total, and what this hand
+    // did to it — the same two numbers the round sheet prints.
+    const standings = hand.totals.map((total, seat) => ({
+      seat,
+      label: labelOf(seat),
+      total,
+      delta: hand.scores ? (hand.scores[seat] ?? 0) : null,
+    }));
+    return {
+      round: hand.round,
+      title: `Hand ${hand.round}`,
+      of: timeline.hands.length,
+      result,
+      standings,
+      live: hand.live,
+      beats,
+    };
   });
   return { hands };
 }
@@ -148,10 +164,29 @@ export function renderReviewMap(model, { doc = globalThis.document, art, cardOf,
   for (const hand of model.hands) {
     const section = doc.createElement('section');
     section.className = 'review-hand';
+    // A HAND IS A CHAPTER, and it has to look like one next to the tricks
+    // under it: a band across the list, the title large, and a chip per seat
+    // with the total and what the hand did to it.
     const head = doc.createElement('div');
-    head.className = 'review-hand__head';
-    head.appendChild(line('review-hand__title', hand.title));
-    head.appendChild(line('review-hand__result', hand.result));
+    head.className = `review-hand__head ${hand.live ? 'review-hand__head--live' : ''}`;
+    const titleRow = doc.createElement('div');
+    titleRow.className = 'review-hand__titlerow';
+    titleRow.appendChild(line('review-hand__title', hand.title));
+    titleRow.appendChild(line('review-hand__of', hand.live ? 'in play' : `of ${hand.of}`));
+    head.appendChild(titleRow);
+    const standings = doc.createElement('div');
+    standings.className = 'review-hand__standings';
+    for (const s of hand.standings) {
+      const chip = doc.createElement('span');
+      chip.className = 'review-hand__chip';
+      chip.appendChild(line('review-hand__chip-name', s.label));
+      chip.appendChild(line('review-hand__chip-total', String(s.total)));
+      if (s.delta != null && s.delta !== 0) {
+        chip.appendChild(line('review-hand__chip-delta', `${s.delta > 0 ? '+' : ''}${s.delta}`));
+      }
+      standings.appendChild(chip);
+    }
+    head.appendChild(standings);
     section.appendChild(head);
     for (const beat of hand.beats) {
       const node = doc.createElement('div');
