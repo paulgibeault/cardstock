@@ -563,6 +563,13 @@
         Round by round
       </button>
       <div id="game-over-rounds" class="round-history" hidden></div>
+      <!-- THE WHOLE GAME, IN THE RESULTS (src/ui/review.js): every hand, every
+           trick, who took it with what — opened here without leaving the sheet,
+           and every play in it a door onto the felt at that moment. -->
+      <button type="button" id="game-over-map-toggle" class="ghost-button" aria-expanded="false">
+        The game, trick by trick
+      </button>
+      <div id="game-over-map" hidden></div>
       <div class="panel__actions">
         <button id="game-over-lobby-button" class="ghost-button">Lobby</button>
         <button id="game-over-review" class="ghost-button">Review the game</button>

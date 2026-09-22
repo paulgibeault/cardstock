@@ -36,6 +36,8 @@ const el = {
   scoreClose: document.getElementById('scoreboard-close'),
   scoreReview: document.getElementById('scoreboard-review'),
   gameOverReview: document.getElementById('game-over-review'),
+  gameOverMapToggle: document.getElementById('game-over-map-toggle'),
+  gameOverMap: document.getElementById('game-over-map'),
   reviewOverlay: document.getElementById('review-overlay'),
   reviewMapHost: document.getElementById('review-map-host'),
   reviewClose: document.getElementById('review-close'),
@@ -552,12 +554,19 @@ export function showGameOver(state, {
   el.gameOverRoundsToggle.setAttribute('aria-expanded', 'false');
   roundHistoryInto(el.gameOverRounds, rounds, seating, state.seats, state.pack);
 
+  // The map closed, and emptied: it is built for THIS match when it is asked
+  // for, never carried from the last one.
+  el.gameOverMap.hidden = true;
+  el.gameOverMap.replaceChildren();
+  el.gameOverMapToggle.setAttribute('aria-expanded', 'false');
   el.gameOverOverlay.classList.toggle('game-over--won', won);
   el.gameOverOverlay.hidden = false;
 }
 
 export function hideGameOver() {
   el.gameOverOverlay.hidden = true;
+  el.gameOverMap.hidden = true;
+  el.gameOverMap.replaceChildren();
 }
 
 /**
@@ -568,8 +577,13 @@ export function hideGameOver() {
  * because the felt is what has to make room, and it does so by a class on
  * body that src/ui/table.css reads (`body.review-drawer`).
  */
-export function showReviewMap(node, { drawer = false } = {}) {
+export function showReviewMap(node, { drawer = false, title = 'The game so far' } = {}) {
   hideReviewMap();
+  // "So far" is a live match's word; a finished one is the whole game.
+  for (const head of [el.reviewDrawer, el.reviewOverlay]) {
+    const t = head.querySelector('.panel__title');
+    if (t) t.textContent = title;
+  }
   if (drawer) {
     el.reviewDrawerHost.replaceChildren(node);
     el.reviewDrawer.hidden = false;
@@ -663,7 +677,7 @@ export function hideRules() {
  */
 export function initPanels({
   onContinueRound, onPlayAgain, onLobby, onCloseScoreboard, onEndMatch, onRules, onCyclePace, onReview,
-  onReviewMapClosed,
+  onReviewMapClosed, onGameOverMap,
 }) {
   el.rulesClose.addEventListener('click', () => hideRules());
   // TWO DOORS INTO REVIEW: the scoreboard mid-match, and the results panel at
@@ -699,6 +713,24 @@ export function initPanels({
   el.scoreClose.addEventListener('click', () => {
     hideScoreboard();
     onCloseScoreboard?.();
+  });
+  // THE MAP INSIDE THE RESULTS. Built on the first open by the table
+  // (`onGameOverMap` returns the node, or null when there is nothing to map),
+  // because the table owns the timeline and the card renderer; this panel
+  // only owns where it goes.
+  el.gameOverMapToggle.addEventListener('click', () => {
+    const open = el.gameOverMap.hidden;
+    if (open && !el.gameOverMap.firstElementChild) {
+      const node = onGameOverMap?.();
+      if (!node) return;
+      el.gameOverMap.replaceChildren(node);
+    }
+    el.gameOverMap.hidden = !open;
+    el.gameOverMapToggle.setAttribute('aria-expanded', String(open));
+    if (open) {
+      // The last trick, in view: a finished game's map opens at its end.
+      el.gameOverMap.querySelector('.review-beat--current')?.scrollIntoView({ block: 'nearest' });
+    }
   });
   el.gameOverRoundsToggle.addEventListener('click', () => {
     const open = el.gameOverRounds.hidden;

@@ -4041,7 +4041,7 @@ function reviewOffered() {
  * the position a player most wants to look at is the one just before the
  * thing that just happened.
  */
-function enterReview({ at = null } = {}) {
+function enterReview({ at = null, map = false } = {}) {
   if (!reviewOffered()) return;
   const state = liveState();
   cancelBotTurn();
@@ -4061,6 +4061,7 @@ function enterReview({ at = null } = {}) {
   const start = at ?? (seekTargets(timeline, timeline.length).prevTurn ?? 0);
   seekReview(start);
   el.reviewBar.hidden = false;
+  if (map) openReviewMap();
 }
 
 /** Stand the felt at position `n` of the reviewed match. */
@@ -4135,8 +4136,30 @@ function openReviewMap() {
       if (open && isReviewDrawerOpen()) seekReview(beatMoment(beat));
     },
   });
-  showReviewMap(node, { drawer });
+  showReviewMap(node, { drawer, title: live.gameOver ? 'The whole game' : 'The game so far' });
   refitFelt();
+}
+
+/**
+ * The finished game's map, for the results panel (issue #191): the same
+ * accordion, standing at the end, every play of it a door onto the felt at
+ * that moment — the results close, the review opens there, and beside the
+ * felt the drawer opens with it so the reading can go on.
+ */
+function gameOverMapNode() {
+  const state = liveState();
+  if (!state || state.isView || !state.log.length) return null;
+  const snapshot = serializeMatch(state);
+  const timeline = matchTimeline(state.pack, snapshot, { labelOf: seatLabel });
+  const model = reviewMapModel(timeline, { index: timeline.length, labelOf: seatLabel });
+  return renderReviewMap(model, {
+    art,
+    cardOf: (id) => cardById(state, id) ?? null,
+    onSeek: (from) => {
+      hideGameOver();
+      enterReview({ at: from, map: reviewMapFits() });
+    },
+  });
 }
 
 /** The felt after the drawer took or gave back its width: measure again. */
@@ -6297,6 +6320,7 @@ export function initTable({ onExit }) {
   initPanels({
     onReview: () => enterReview(),
     onReviewMapClosed: () => refitFelt(),
+    onGameOverMap: () => gameOverMapNode(),
     onContinueRound: () => dismissRoundSummary(),
     onPlayAgain: () => livePack() && startGame(livePack(), liveState()?.seats),
     onLobby: () => exitToLobby(),

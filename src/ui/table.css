@@ -6248,3 +6248,10 @@ button.tile__daily:hover { background: var(--ghost-hover); }
 #review-drawer-host .review-map { flex: 1 1 auto; max-height: none; margin: 0; border-bottom: none; }
 body.review-drawer #table-screen { margin-right: var(--review-drawer-w); }
 body.review-drawer #review-bar { right: var(--review-drawer-w); }
+
+/* THE MAP INSIDE THE RESULTS: the same accordion, scrolling on its own inside
+   a sheet that must still fit the window with it open. */
+#game-over-overlay .panel { max-height: calc(100dvh - 2rem); overflow: auto; }
+#game-over-map { margin: 0.5rem 0; }
+#game-over-map[hidden] { display: none; }
+#game-over-map .review-map { max-height: min(46dvh, 22rem); }
