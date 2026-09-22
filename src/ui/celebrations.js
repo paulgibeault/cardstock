@@ -134,6 +134,32 @@ export function bannerBand(rects, height) {
 }
 
 /**
+ * THE PART OF AN EVENT WINDOW THE DEAL PUT THERE — pure, so the seam can be
+ * argued with here rather than inside a function that also renders.
+ *
+ * Every event on the felt but these is the consequence of a MOVE, and
+ * `afterMove` narrates it over the position it happened in. A deal's are not:
+ * `setup` and `startRound` run with nobody's move in flight
+ * (src/engine/movePipeline.js), so a template that announces something about
+ * the cards it has just dealt was announcing it into a window nothing read.
+ * Thirteen is the first pack to do it — the lowest card in play opens every
+ * hand, and until now the turn token moved to a seat for a reason the felt
+ * never gave.
+ *
+ * `roundOver` IS THE SEAM, and it is a seam rather than a flag because the
+ * boundary emits it in the middle of the window: the round-ending move's own
+ * events, then `roundOver`, then whatever `startRound` said about the hand it
+ * dealt underneath it. Everything before the seam has already been said over
+ * the hand that ended; everything after it belongs to the hand that has not
+ * been seen yet. A window with no `roundOver` in it is a fresh match, where the
+ * whole window is the deal's.
+ */
+export function dealEvents(events = []) {
+  const at = events.findIndex((ev) => ev.type === 'roundOver');
+  return events.slice(at + 1);
+}
+
+/**
  * WHAT A TRICK'S OWN CELEBRATION IS WORTH, on the same scale `describeEvent`
  * uses (src/templates/CONTRACT.md, "Saying which event ENDED the move").
  *

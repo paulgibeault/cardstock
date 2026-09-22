@@ -592,7 +592,106 @@
       ]
     },
     {
-      "name": "two-handed: the loser of the hand picks first and the winner leads the next one",
+      "name": "a run all of one suit upgrades the trick, and a mixed run no longer answers it",
+      "setup": {
+        "seats": 4,
+        "turn": { "seat": 0, "phase": "play" },
+        "direction": "counterclockwise",
+        "zones": {
+          "hand.0": ["hearts-5", "hearts-6", "hearts-7", "spades-2"],
+          "hand.1": ["diamonds-4"],
+          "hand.2": ["spades-8", "spades-9", "spades-10", "hearts-3"],
+          "hand.3": ["clubs-8", "diamonds-9", "hearts-10", "spades-4"]
+        },
+        "vars": { "combo": null, "passed": [], "lastPlayer": null, "leader": 0, "trickNumber": 1 }
+      },
+      "assert": [
+        { "apply": { "actor": 0, "type": "playCard", "cards": ["hearts-5", "hearts-6", "hearts-7"] } },
+        { "move": { "actor": 3, "type": "playCard", "cards": ["clubs-8", "diamonds-9", "hearts-10"] },
+          "legal": false, "rule": "not-suited" },
+        { "apply": { "actor": 3, "type": "pass" } },
+        { "move": { "actor": 2, "type": "playCard", "cards": ["spades-8", "spades-9", "spades-10"] },
+          "legal": true }
+      ]
+    },
+    {
+      "name": "the upgrade can happen mid-trick, and it holds for the rest of it",
+      "setup": {
+        "seats": 4,
+        "turn": { "seat": 0, "phase": "play" },
+        "direction": "counterclockwise",
+        "zones": {
+          "hand.0": ["clubs-3", "diamonds-4", "hearts-5", "spades-2"],
+          "hand.1": ["spades-9", "spades-10", "spades-J", "hearts-2"],
+          "hand.2": ["clubs-Q", "diamonds-K", "hearts-A", "spades-3"],
+          "hand.3": ["spades-6", "spades-7", "spades-8", "clubs-2"]
+        },
+        "vars": { "combo": null, "passed": [], "lastPlayer": null, "leader": 0, "trickNumber": 1 }
+      },
+      "assert": [
+        { "apply": { "actor": 0, "type": "playCard", "cards": ["clubs-3", "diamonds-4", "hearts-5"] } },
+        { "apply": { "actor": 3, "type": "playCard", "cards": ["spades-6", "spades-7", "spades-8"] } },
+        { "expect": { "turn": { "seat": 2 } } },
+        { "move": { "actor": 2, "type": "playCard", "cards": ["clubs-Q", "diamonds-K", "hearts-A"] },
+          "legal": false, "rule": "not-suited" },
+        { "apply": { "actor": 2, "type": "pass" } },
+        { "move": { "actor": 1, "type": "playCard", "cards": ["spades-9", "spades-10", "spades-J"] },
+          "legal": true }
+      ]
+    },
+    {
+      "name": "an upgraded run still has to be beaten, and the suit ladder is what beats it",
+      "setup": {
+        "seats": 4,
+        "turn": { "seat": 0, "phase": "play" },
+        "direction": "counterclockwise",
+        "zones": {
+          "hand.0": ["clubs-5", "clubs-6", "clubs-7", "spades-2"],
+          "hand.1": ["spades-4", "spades-5", "spades-6", "hearts-2"],
+          "hand.2": ["hearts-5", "hearts-6", "hearts-7", "spades-3"],
+          "hand.3": ["diamonds-9"]
+        },
+        "vars": { "combo": null, "passed": [], "lastPlayer": null, "leader": 0, "trickNumber": 1 }
+      },
+      "assert": [
+        { "apply": { "actor": 0, "type": "playCard", "cards": ["clubs-5", "clubs-6", "clubs-7"] } },
+        { "apply": { "actor": 3, "type": "pass" } },
+        { "move": { "actor": 2, "type": "playCard", "cards": ["hearts-5", "hearts-6", "hearts-7"] },
+          "legal": true },
+        { "apply": { "actor": 2, "type": "pass" } },
+        { "move": { "actor": 1, "type": "playCard", "cards": ["spades-4", "spades-5", "spades-6"] },
+          "legal": false, "rule": "not-higher" }
+      ]
+    },
+    {
+      "name": "the upgrade belongs to the trick, and the trick after it starts mixed again",
+      "setup": {
+        "seats": 4,
+        "turn": { "seat": 0, "phase": "play" },
+        "direction": "counterclockwise",
+        "zones": {
+          "hand.0": ["clubs-5", "clubs-6", "clubs-7", "spades-3", "hearts-4", "diamonds-5", "spades-2"],
+          "hand.1": ["spades-4"],
+          "hand.2": ["spades-5"],
+          "hand.3": ["clubs-8", "diamonds-9", "hearts-10", "spades-6", "hearts-7", "diamonds-8"]
+        },
+        "vars": { "combo": null, "passed": [], "lastPlayer": null, "leader": 0, "trickNumber": 1 }
+      },
+      "assert": [
+        { "apply": { "actor": 0, "type": "playCard", "cards": ["clubs-5", "clubs-6", "clubs-7"] } },
+        { "move": { "actor": 3, "type": "playCard", "cards": ["clubs-8", "diamonds-9", "hearts-10"] },
+          "legal": false, "rule": "not-suited" },
+        { "apply": { "actor": 3, "type": "pass" } },
+        { "apply": { "actor": 2, "type": "pass" } },
+        { "apply": { "actor": 1, "type": "pass" } },
+        { "expect": { "turn": { "seat": 0 }, "vars": { "combo": null, "trickNumber": 2 } } },
+        { "apply": { "actor": 0, "type": "playCard", "cards": ["spades-3", "hearts-4", "diamonds-5"] } },
+        { "move": { "actor": 3, "type": "playCard", "cards": ["spades-6", "hearts-7", "diamonds-8"] },
+          "legal": true }
+      ]
+    },
+    {
+      "name": "two-handed: the loser of the hand still picks first, and no seat is owed the lead",
       "setup": {
         "seats": 2,
         "turn": { "seat": 0, "phase": "play" },
@@ -607,7 +706,7 @@
         { "apply": { "actor": 0, "type": "playCard", "cards": ["spades-5"] } },
         { "expect": {
           "turn": { "seat": 1, "phase": "choose" },
-          "vars": { "opening": 0 },
+          "vars": { "opening": null },
           "zones": { "offer.1": 17, "offer.2": 17, "offer.3": 17, "aside": 1,
                      "hand.0": 0, "hand.1": 0 },
           "scores": { "0": 0, "1": 2 } } }

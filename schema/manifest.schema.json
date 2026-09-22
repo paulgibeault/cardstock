@@ -1352,6 +1352,12 @@
           ],
           "description": "How an answer must match what is on the table. 'same-type-same-size' is the genre's rule and the only one implemented: a five-card run is not a legal answer to a four-card run, it is simply not an answer (THIRTEEN_RULES.md D-7)."
         },
+        "runUpgrade": {
+          "enum": [
+            "same-suit"
+          ],
+          "description": "A run ALL OF ONE SUIT upgrades the trick it is played into, whether it is led or played as an answer: from that point on only another run all of one suit, of the same length and with a higher top card, is a legal answer. Omit it and a run is compared by its top card alone, which is the plain rule of the genre. The suit is part of the total order (`suitLadder`), so 'higher' needs no second rule and the upgraded run need not be answered in the SAME suit — only in one suit. Because nothing but a suited run can answer a suited run, the upgrade holds for the rest of the trick without a var of its own."
+        },
         "bombs": {
           "type": "array",
           "description": "The OUT-OF-SHAPE ladder, low to high in declaration order. A bomb may be played on somebody else's turn-to-answer against a combination it does not match the shape of — which is what makes holding the highest card in the game something other than a free win. A bomb LED is an ordinary combination of its own shape and is answered in shape, so nothing here describes that case.",
@@ -1407,9 +1413,10 @@
         },
         "laterLead": {
           "enum": [
-            "trick-winner"
+            "trick-winner",
+            "lowest"
           ],
-          "description": "Who leads once hand one's opening is spent: 'trick-winner' is the last player to have played, both within a hand (when everybody else has passed the trick clears to them) and across one (the seat that went out leads the next deal)."
+          "description": "Who leads hand TWO onward. 'trick-winner' is the seat that went out, free to lead anything. 'lowest' declines that and re-applies `firstLead` to every deal, so the holder of the lowest card in play opens every hand and owes that card every time (THIRTEEN_RULES.md D-3). Within a hand the trick always clears to the last player to have played, whatever this says — that is the genre rather than a declaration, so it has no key."
         },
         "direction": {
           "enum": [

@@ -91,6 +91,13 @@ Two rules about runs carry all the weight:
   for consecutive pairs.
 * **A run only beats a run of the same length.** A five-card run does not beat
   a four-card run; it is simply not a legal answer to it.
+* **A run all of one suit upgrades the trick** (D-15). Lead or answer with
+  `5♥ 6♥ 7♥` and from that moment nothing but another run all of one suit —
+  same length, higher top card — answers it, for the rest of that trick. It
+  need not be the *same* suit: the order over the deck is total and suits are
+  part of it (§1.2), so a suited run in hearts is simply higher than one in
+  spades, and "higher" needs no second rule. The upgrade belongs to the trick
+  and dies with it.
 
 The same "same shape, same size" rule governs everything: a pair answers a
 pair, a triple answers a triple, a four-card run answers a four-card run.
@@ -148,15 +155,23 @@ whoever still has cards and has not passed.
 
 ### 1.6 The first lead, and later ones
 
-* **First hand of a match:** the holder of the **lowest card in play** leads,
-  and the combination they lead **must contain it** (see D-2). It may be the
-  bare single, or that card inside a pair, a run, anything legal. At a full
-  table the lowest card in play is the 3♠ and this is the rule everybody
-  states; short-handed the deal leaves a third or a half of the deck out of
-  play (D-11) and the 3♠ is frequently not among the cards dealt at all, so
-  the rule has to be written as what it means rather than as the card it
-  usually names. The manifest says `firstLead.card: "lowest"`.
-* **Later hands:** see D-3.
+* **Every hand:** the holder of the **lowest card in play** leads, and the
+  combination they lead **must contain it** (see D-2). It may be the bare
+  single, or that card inside a pair, a run, anything legal. At a full table
+  the lowest card in play is the 3♠ and this is the rule everybody states;
+  short-handed the deal leaves a third or a half of the deck out of play (D-11)
+  and the 3♠ is frequently not among the cards dealt at all, so the rule has to
+  be written as what it means rather than as the card it usually names. The
+  manifest says `firstLead.card: "lowest"` and `laterLead: "lowest"` — the
+  second is what applies the first to hand two onward (D-3).
+* **Whose turn it is, said out loud.** The deal announces the seat the rule
+  named — "West has the lowest card and leads" — because it is the first thing
+  that happens in a hand and it used to happen in silence. It names the SEAT
+  and never the card: short-handed the other players do not know which card it
+  is, and publishing one would be publishing a card out of somebody's hand.
+* **Within a hand:** when everybody else has passed, the trick clears to the
+  last player to have played and they lead the next one, free to lead anything.
+  That is the genre rather than a house rule, and it is not affected by D-3.
 
 ### 1.6a Two-handed: three hands on offer
 
@@ -168,11 +183,13 @@ one**; the third hand sits out (D-14). Thirty-four cards in play instead of
 twenty-six, and the deal becomes a decision rather than something that happens
 to you.
 
-The player who **lost the previous hand picks first**, which is the other half
-of D-3's bargain: the winner gets the lead, the loser gets first choice of
-pile. The first hand of a match is a coin toss, because at that point nobody
+The player who **lost the previous hand picks first**. That began as the other
+half of D-3's bargain — the winner got the lead, the loser got first choice of
+pile — and it outlived it: D-3 now hands the lead to the lowest card in play
+whoever won, and the pick order is still a fact about the hand that just
+ended. The first hand of a match is a coin toss, because at that point nobody
 is holding anything for a rule to be written over. Once both hands are
-chosen the ordinary first-lead rule applies to them — the lowest card of the
+chosen the ordinary lead rule applies to them — the lowest card of the
 thirty-four in play leads, and it is the 3♠ about two thirds of the time.
 
 ### 1.7 Winning
@@ -196,8 +213,8 @@ intent without offering a switch that changes nothing.
 | # | Question | Default here | Why |
 |---|---|---|---|
 | **D-1** | Turn direction | **counter-clockwise** | The traditional Vietnamese direction. Cosmetic for solo-vs-bots, but it is a real fact about the game and the seat ring should honour it. |
-| **D-2** | Must the first lead contain the lowest card? | **yes** | Removes the whole first-lead decision from hand one and is the near-universal rule. Worth a variant for the casual "lead anything" table. The card is named as `"lowest"` rather than as `spades-3`, because at 2 and 3 seats (D-11) the 3♠ is often not dealt — half the deck is never dealt at two seats and a quarter of it at three, and the card is out of play in 50.7% and 25.8% of deals over 400 seeded deals each — and a nominated card that is out of play names no seat, so the lead fell to the rotating opening seat, which on hand one is the human. |
-| **D-3** | Who leads later hands | **the previous hand's winner** | The alternative — the holder of 3♠ leads every hand — is played, but rewards the deal rather than the play. |
+| **D-2** | Must the opening lead contain the lowest card? | **yes** | Removes the whole opening decision from the hand — every hand, since D-3 — and is the near-universal rule. Worth a variant for the casual "lead anything" table. The card is named as `"lowest"` rather than as `spades-3`, because at 2 and 3 seats (D-11) the 3♠ is often not dealt — half the deck is never dealt at two seats and a quarter of it at three, and the card is out of play in 50.7% and 25.8% of deals over 400 seeded deals each — and a nominated card that is out of play names no seat, so the lead fell to the rotating opening seat, which on hand one is the human. |
+| **D-3** | Who leads later hands | **the holder of the lowest card in play, every hand** | Reversed from this document's first draft, which took the previous hand's winner on the grounds that the alternative "rewards the deal rather than the play". Both are played; what settled it is that one rule for every hand is one rule to learn, and the opening constraint (D-2) is the most characteristic thing about the game's first turn — spending it once a match and never again made it feel like a quirk of the deal rather than the game. `rules.laterLead: "lowest"`, and the old rule ships as the variant `winner-leads`. Note the two halves are separate: the TRICK still clears to the last player to have played (§1.6), which is the genre and has no key. |
 | **D-4** | Can you win by playing a 2? | **yes** | The "no ending on a pig" rule is a real house rule and a good variant, but it turns a won position into a trap in a way that needs the UI to warn about it. |
 | **D-5** | Pair/triple comparison | **by highest card, suit included** | `9♥9♦` beats `9♣9♠`. Follows from the total order (§1.2); the alternative (rank only, ties impossible in practice for triples) is a special case nobody needs. |
 | **D-6** | Does four of a kind beat a **pair** of 2s? | **yes** | The commonest Southern rule. Some tables require four consecutive pairs for a pair of pigs; a variant. |
@@ -208,6 +225,7 @@ intent without offering a switch that changes nothing.
 | **D-11** | Player counts other than 4 | **2 and 3 supported; 3 deals 13 each with the remainder out of play, 2 deals for the pick (D-14)** | 3 players leaves 13 cards unseen, which is genuinely how it is played short-handed. Solo-vs-bots means 4 is what almost everybody will see. |
 | **D-12** | Passing out of a trick | **you stay in, shipped as a variant that is ON** | §1.5.3. Somebody asked. The strict rule is still the pack's `rules.passIsFinal: true`; the variant `pass-stays-in` patches it to `false`, ships `default: true`, and is what a new table gets — a pass skips your turn and the play comes back round to you. The strict rule is one toggle away, and a resumed match keeps whichever it was dealt under. |
 | **D-13** | Can a 2 end a run? | **no, shipped as a variant that is OFF** | §1.3. `Q-K-A-2` is a widely played house rule; `2-2 A-A K-K` as a bomb-eligible strip is not, and neither is a 3-to-2 dragon. One exclusion list could not tell those apart, so the pack declares `runExcludes` and `stripExcludes` separately and the variant `two-tops-runs` empties only the first. The run still never wraps (`A-2-3` is not a run), the strip is untouched, and the instant-win dragon is measured against the ranks *both* lists allow, so it stays 3-to-A under either reading. |
+| **D-15** | Does a run all of one suit beat a mixed one? | **it upgrades the trick, on by default** | §1.3. *Sảnh đồng chất*, and the one rule here that is on by default without being universal — it is what a suited run is FOR, and without it the suits inside a run are noise. Written as an upgrade to the TRICK rather than as "a suited run beats a mixed one of the same top card", which would be a second comparison rule sitting beside a total order that already answers "higher". `rules.runUpgrade: "same-suit"`. The answer need not be the same suit, only all of ONE suit; because nothing else can answer a suited run, the upgrade holds for the rest of the trick with no state of its own. |
 | **D-14** | The two-handed deal | **three face-down hands of 17, pick one each; loser picks first** | §1.6a. A flat thirteen each leaves 26 of the 52 unseen, and at two seats that is the difference between a game of Thirteen and a shuffle. `rules.offer: { atSeats: 2, piles: 3 }`; the pile size is derived (deck ÷ piles) so it cannot disagree with the deck, and the odd card plus the pile nobody takes go face down and out of play — hidden rather than discarded, because a discard is public and the bot reads it. Hand one's pick order is a **coin toss** off the match's own seed: "the player who does not hold the lowest card picks first" reads well and cannot be built, since at hand one the pick happens before anybody holds a card, and the rotating opening seat is seat 0 on round one, which is the human. The compensation is D-2's, which already exists: whichever pile you take, the lowest card in play leads. |
 
 ### Scoring, concretely
@@ -356,6 +374,7 @@ Sketch of the `rules` block, to be schema'd against a new
   "combinations": ["single", "pair", "triple", "run(3+)", "consecutive-pairs(3+)", "quad"],
   "runExcludes": ["rank:2"],
   "matchShape": "same-type-same-size",
+  "runUpgrade": "same-suit",
   "bombs": [
     { "shape": "consecutive-pairs(3)", "beats": ["single:rank:2"] },
     { "shape": "quad",                 "beats": ["single:rank:2", "pair:rank:2", "consecutive-pairs(3)"] },
@@ -364,7 +383,7 @@ Sketch of the `rules` block, to be schema'd against a new
   ],
   "passIsFinal": true,
   "firstLead": { "card": "spades-3", "mustInclude": true },
-  "laterLead": "trick-winner",
+  "laterLead": "lowest",
   "winner": "first-empty-hand"
 }
 ```
@@ -385,8 +404,11 @@ The ones that would catch a wrong build, in the order they are worth writing:
 4. Three consecutive pairs chops a single 2 and does **not** chop a pair of 2s.
 5. Four of a kind chops the three consecutive pairs that just chopped a pig.
 6. A seat that passed is offered no moves for the rest of the trick.
-7. The first lead of hand one is refused unless it contains 3♠.
+7. The opening lead of a hand is refused unless it contains the lowest card
+   in play — every hand, not only the first.
 8. A trick clears and the last player to have played leads next.
+9. A run all of one suit upgrades the trick, a mixed run no longer answers it,
+   and the upgrade dies with the trick.
 
 ---
 

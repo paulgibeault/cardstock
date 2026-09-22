@@ -22,12 +22,15 @@
 //
 // What this file does NOT decide, on purpose: which combinations exist, which
 // of them may be played out of shape and over what, whether a pass is final,
-// which card must open the first hand, which way the turn goes, which cards a
-// hand may not end on, and whether a deal can win on its own. All eight are
-// keys in the manifest, and every one of them is read below — the last two are
-// #103's house rules (`lastCardExcludes`, `instantWins`), and the third
-// (`quad-needs-four-pairs`) needed no key at all, because a chopping ladder
-// was already a declaration and the variant simply patches it.
+// which card must open the first hand and which hands that rule applies to,
+// whether a run all of one suit is worth more than a mixed one, which way the
+// turn goes, which cards a hand may not end on, and whether a deal can win on
+// its own. Every one of them is a key in the manifest and every one is read
+// below — `lastCardExcludes` and `instantWins` are #103's house rules, the
+// third (`quad-needs-four-pairs`) needed no key at all because a chopping
+// ladder was already a declaration and the variant simply patches it, and
+// `runUpgrade` and `laterLead: "lowest"` are the two adjustments Thirteen
+// asked for after the round-6 playtest.
 
 import { cardOrder, rankIndexOf, rankLadderOf } from '../engine/cards.js';
 import { selectorMatches } from '../engine/selectors.js';
@@ -170,6 +173,31 @@ function outOfSequence(ctx, card, kind = null) {
 }
 
 /**
+ * THE ONE SUIT A RUN IS ALL OF, or null — the suited-run upgrade
+ * (`rules.runUpgrade: "same-suit"`).
+ *
+ * A run is ordinarily compared by its top card alone and its suits are noise.
+ * Under this rule a run of ONE suit is a different animal: playing one upgrades
+ * the trick, and from that point on nothing but another run of one suit — same
+ * length, higher top card — is a legal answer. So the suit is carried on the
+ * combination, and the upgrade needs no trick var of its own: only a suited run
+ * can answer a suited run, so the answer is itself suited and the rule holds
+ * itself up for the rest of the trick.
+ *
+ * WHY IT IS `"same-suit"` RATHER THAN A BOOLEAN. The name says which property
+ * the run has to be uniform in, and a pack that upgrades on something else (a
+ * colour, a pack-defined tag) is the next value rather than a second key. A
+ * pack that declares nothing gets no upgrade and every run in the game is
+ * compared by its top card, which is what every other climbing pack expects.
+ */
+function suitOf(ctx, cards) {
+  if (ctx.rules.runUpgrade !== 'same-suit') return null;
+  const suit = cards[0]?.suit;
+  if (suit == null) return null;
+  return cards.every((card) => card.suit === suit) ? suit : null;
+}
+
+/**
  * WHAT THIS PILE OF CARDS IS, or null for a pile that is not a play.
  *
  * `size` is the shape's own unit, which is what `matchShape` compares and what
@@ -211,7 +239,13 @@ function classify(ctx, cardIds) {
   if (byRank.size === n) {
     if (cards.some((card) => outOfSequence(ctx, card, 'run'))) return null;
     const run = vocab.get('run');
-    if (run && n >= run.min) return { kind: 'run', size: n, top, cards: cardIds.slice() };
+    if (run && n >= run.min) {
+      const combo = { kind: 'run', size: n, top, cards: cardIds.slice() };
+      // THE ONE PROPERTY A RUN CARRIES BEYOND ITS TOP CARD — see `suitOf`.
+      const suit = suitOf(ctx, cards);
+      if (suit) combo.suit = suit;
+      return combo;
+    }
     return null;
   }
 
@@ -250,7 +284,12 @@ function comboName(ctx, combo) {
     if (card && (!best || cardOrder(card, ladder) > cardOrder(best, ladder))) best = card;
   }
   const rank = best?.rank == null ? '' : String(best.rank);
-  if (combo.kind === 'run') return `Run of ${combo.size}`;
+  // THE SUIT IS PART OF THE NAME once the trick has been upgraded, because it
+  // is part of what has to be answered: "Run of 4" would be the same words over
+  // a pile a plain run can beat and a pile only a suited run can.
+  if (combo.kind === 'run') {
+    return combo.suit ? `Run of ${combo.size} in ${combo.suit}` : `Run of ${combo.size}`;
+  }
   if (combo.kind === 'consecutive-pairs') return `${combo.size} consecutive pairs`;
   if (combo.kind === 'single') return rank ? `Single ${rank}` : 'A single';
   if (combo.kind === 'pair') return rank ? `Pair of ${rank}s` : 'A pair';
@@ -275,6 +314,13 @@ function comboName(ctx, combo) {
 function beatsInShape(ctx, played, current) {
   if (ctx.rules.matchShape !== 'same-type-same-size') return false;
   if (played.kind !== current.kind || played.size !== current.size) return false;
+  // THE UPGRADE (`suitOf`). `current.suit` is set on runs and on nothing else,
+  // so this line is a run rule without saying the word: once the trick holds a
+  // run of one suit, a mixed run of the same length is no longer an answer to
+  // it however high it is. It does NOT have to be the same suit — the suit
+  // ladder is part of the total order, so a suited run in hearts is simply
+  // higher than one in spades and "higher" needs no second rule.
+  if (current.suit && !played.suit) return false;
   return played.top > current.top;
 }
 
@@ -682,9 +728,22 @@ function openPlay(ctx, opening) {
     if (holder !== null) {
       leader = holder;
       // THE OPENING LEAD MUST CONTAIN IT, held as a var rather than
-      // re-derived, because it is true exactly once per match and stops being
+      // re-derived, because it is true exactly once per hand and stops being
       // true the moment that lead is played.
       if (ctx.rules.firstLead.mustInclude) ctx.setPlayerVar(leader, '__mustInclude', card);
+      // WHO HAS IT, SAID OUT LOUD. The rule is the first thing that happens in
+      // a hand and until now it happened silently: the turn token moved to a
+      // seat for a reason nothing on the felt ever gave, and under
+      // `laterLead: "lowest"` it moves for that reason every hand rather than
+      // once a match. So the deal announces it.
+      //
+      // A SEAT AND NOTHING ELSE. Naming the card would publish a card sitting
+      // in somebody's hand — the exact thing `requiredCardFor` keeps off the
+      // shared vars, and at two and three seats the other players genuinely do
+      // not know which card it is, because a quarter to a half of the deck was
+      // never dealt (D-11). `lowest` says which rule named the seat, so a pack
+      // that nominates one literal card gets a sentence that is true of it.
+      ctx.emit('holdsLowest', { seat: leader, lowest: ctx.rules.firstLead.card === 'lowest' });
     } else {
       // Only reachable for a LITERAL `firstLead.card` the deal left out of
       // play; `"lowest"` is resolved against the dealt cards and always names
@@ -759,6 +818,32 @@ function finishChoose(ctx) {
  * terms (src/ui/interaction.js, mode 'combination').
  */
 
+/** A card set, as one string — for holding back a play the walk found twice. */
+function setKey(cardIds) {
+  return [...cardIds].sort().join('|');
+}
+
+/**
+ * The suited chains of a run window, one rank longer.
+ *
+ * `null` starts them: one chain per suit present at the window's bottom rank.
+ * After that a chain survives only while the hand holds its suit at every rank
+ * in turn, which is exactly the shape of a same-suit run.
+ */
+function extendSuited(chains, here) {
+  if (chains === null) {
+    const started = new Map();
+    for (const entry of here) if (!started.has(entry.card.suit)) started.set(entry.card.suit, [entry]);
+    return started;
+  }
+  for (const [suit, chain] of chains) {
+    const next = here.find((entry) => entry.card.suit === suit);
+    if (next) chain.push(next);
+    else chains.delete(suit);
+  }
+  return chains;
+}
+
 function combinationsFrom(cards, k) {
   if (k > cards.length) return [];
   const out = [];
@@ -808,16 +893,39 @@ function candidateSets(ctx, seat, { kind = null, size = null } = {}) {
   // Runs: windows of consecutive ladder positions the hand can fill.
   const run = vocab.get('run');
   if (run && (kind === null || kind === 'run')) {
+    const upgrades = ctx.rules.runUpgrade === 'same-suit';
     for (let i = 0; i < positions.length; i++) {
       const cardsSoFar = [];
+      // ONE CHAIN PER SUIT that has survived every rank of the window so far,
+      // and the reason the walk needed a second half at all: the top-card walk
+      // below fills every rank under the top with the LOWEST card of that rank,
+      // because for an ordinary run those choices are the same play. Under the
+      // upgrade they are not — a run is suited or it is not — and the suited
+      // one is very often built from cards the top-card walk never reaches. A
+      // bot that could not see it would be playing a rule only a human has.
+      let chains = null;
       for (let j = i; j < positions.length; j++) {
         if (j > i && positions[j] !== positions[j - 1] + 1) break;
         const here = sequential(positions[j], 'run');
         if (!here.length) break;
+        if (upgrades) chains = extendSuited(chains, here);
         const length = j - i + 1;
         if (length >= run.min && wants('run', length)) {
           // Only the TOP rank's choice changes what the run beats.
-          for (const topCard of here) out.push([...cardsSoFar.map((e) => e.id), topCard.id]);
+          const seen = new Set();
+          for (const topCard of here) {
+            const cards = [...cardsSoFar.map((e) => e.id), topCard.id];
+            seen.add(setKey(cards));
+            out.push(cards);
+          }
+          // A suited run of the lowest suit at every rank IS one of the above,
+          // so the mixed walk's own sets are held back — an enumerator that
+          // offered the same play twice would be a bot choosing between
+          // duplicates and a shortlist twice the size on the wire.
+          for (const chain of chains ? chains.values() : []) {
+            const cards = chain.map((e) => e.id);
+            if (!seen.has(setKey(cards))) out.push(cards);
+          }
         }
         cardsSoFar.push(here[0]);
       }
@@ -1281,9 +1389,9 @@ const climbing = {
 
   /**
    * Hand two onward. Implemented for the reason CONTRACT.md's `startRound` trap
-   * gives: the default boundary wipes every `playerVars` entry, and the seat
-   * that went out last hand leads this one (`rules.laterLead: "trick-winner"`,
-   * D-3) — which is meta-state that outlives a round.
+   * gives: the default boundary wipes every `playerVars` entry, and who won the
+   * last hand is meta-state that outlives a round — `rules.laterLead` may hand
+   * that seat the lead, and the offer deal owes it the pick order either way.
    */
   startRound(ctx) {
     // READ ONCE, USED TWICE, and the two uses are not the same question. The
@@ -1298,6 +1406,11 @@ const climbing = {
       if (ctx.playerVar(seat, 'wonLastHand')) wonLast = seat;
       ctx.setPlayerVar(seat, 'wonLastHand', false);
     }
+    // `trick-winner` hands the next hand to the seat that went out (D-3).
+    // `lowest` — Thirteen's rule — declines it, and `null` is how `beginHand`
+    // is told to apply `rules.firstLead` to the cards it is about to deal: the
+    // lowest card in play leads EVERY hand, and owes that card every time,
+    // exactly as it does on hand one.
     beginHand(ctx, ctx.rules.laterLead === 'trick-winner' ? wonLast : null, wonLast);
   },
 
@@ -1374,6 +1487,14 @@ const climbing = {
       const standing = comboName(ctx, current) || 'the combination on the table';
       const said = standing[0].toLowerCase() + standing.slice(1);
       if (played.kind === current.kind && played.size === current.size) {
+        // THE UPGRADE GETS ITS OWN SENTENCE, because "that does not beat it" is
+        // a lie about a run that beats it on every card: what is wrong with the
+        // play is its suits, and a refusal the player cannot act on is a rule
+        // they have to reverse-engineer from a greyed-out button.
+        if (current.suit && !played.suit) {
+          return ctx.fail('not-suited',
+            `The ${said} can only be answered by a higher run all of one suit — or pass.`);
+        }
         return ctx.fail('not-higher', `That does not beat the ${said}.`);
       }
       return ctx.fail('wrong-shape', `Answer the ${said} with the same shape, or pass.`);
@@ -1439,8 +1560,9 @@ const climbing = {
     }
 
     const played = classify(ctx, move.cards);
+    const standing = ctx.var('combo');
     ctx.moveCards(move.cards.slice(), ctx.zoneAddr('hand', seat), 'pile');
-    const wasLead = !ctx.var('combo');
+    const wasLead = !standing;
     ctx.setVar('combo', { ...played, seat });
     ctx.setVar('lastPlayer', seat);
     if (wasLead) ctx.setVar('leader', seat);
@@ -1449,6 +1571,12 @@ const climbing = {
     for (let s = 0; s < ctx.seats; s++) ctx.setPlayerVar(s, '__mustInclude', null);
     ctx.emit('combinationPlayed', {
       seat, kind: played.kind, size: played.size, cards: played.cards.slice(),
+      // THE MOMENT THE TRICK CHANGED, and only that moment: every answer from
+      // here on is suited too (`beatsInShape`), so carrying the suit on all of
+      // them would announce the same upgrade once a turn. The suit is a public
+      // fact about cards lying face up — it is the pile's own name now
+      // (`comboName`) — so it is in the payload rather than left to be read.
+      ...(played.suit && !standing?.suit ? { suited: played.suit } : {}),
     });
 
     // `rules.winner: "first-empty-hand"` — going forward ends the hand.
@@ -1640,6 +1768,36 @@ const climbing = {
   },
 
   /**
+   * THE TABLE DURING THE PICK IS THE THREE PILES AND NOTHING ELSE (#157's
+   * felt, found on a phone).
+   *
+   * The two-handed deal opens in `choose` with three face-down hands on offer
+   * and every other pile on the felt empty — so the middle of the table drew
+   * four boxes in a row: `pile`, `discard`, and the two hands still to pick
+   * from. The two empty ones are not the same SHAPE as each other, because a
+   * spread pile and a stack are drawn at different widths, and they are not the
+   * same shape as the piles beside them either. What a player is being asked to
+   * do in this phase is tell two identical face-down piles apart; a row that
+   * puts two differently-sized empty boxes in front of them answers that
+   * question wrongly before it is asked.
+   *
+   * NOT `hideWhenEmpty` ON THOSE TWO ZONES, which is the one-word version of
+   * this and is wrong in ordinary play: `pile` is empty at the start of every
+   * trick and is where a lead LANDS (`landing: 'play'`), so it would vanish and
+   * come back once a trick, taking the drop target with it and reflowing the
+   * felt under a thumb. `discard` is empty for the whole of a hand's first
+   * trick for the same kind of reason. The question is not "is this pile
+   * empty", it is "is this pile part of the table during THIS phase" — which is
+   * a question only the template can answer, and the same split
+   * `interactionMode` makes between the platform's vocabulary and the
+   * template's phases.
+   */
+  zoneOnFelt(ctx, address) {
+    if (ctx.turn.phase !== 'choose') return null;
+    return address !== 'pile' && address !== 'discard';
+  },
+
+  /**
    * WHICH CARDS IN THE PILE ARE THE THING TO ANSWER, and what they are called.
    *
    * `pile` holds every card played this trick, in sequence — that is deliberate
@@ -1683,6 +1841,16 @@ const climbing = {
         ? { text: 'Everybody passed — the lead is yours', tone: 'good', priority: 2 }
         : { text: `${who(ev.seat)} takes the trick and leads`, tone: 'neutral', priority: 2 };
     }
+    if (ev.type === 'holdsLowest') {
+      // THE TOAST THAT SAYS WHOSE TURN IT IS, and why it is theirs. Priority 2,
+      // the same rung `trickCleared` sits on: it is the conclusion of the deal,
+      // and at a round boundary it is competing with nothing else — the hand
+      // that just ended has already had its own summary.
+      const what = ev.lowest ? 'the lowest card' : 'the opening card';
+      return mine(ev.seat)
+        ? { text: `You have ${what} — you lead`, tone: 'good', priority: 2 }
+        : { text: `${who(ev.seat)} has ${what} and leads`, tone: 'neutral', priority: 2 };
+    }
     if (ev.type === 'handTaken') {
       // The count, because the count is the public fact — and because the other
       // player is about to want to know how big the hand they are picking from
@@ -1701,6 +1869,17 @@ const climbing = {
       const shape = ev.kind === 'consecutive-pairs' ? `${ev.size} consecutive pairs`
         : ev.kind === 'single' ? 'a single'
           : `a ${ev.kind}`;
+      // THE UPGRADE IS THE LOUDER HALF OF THE SENTENCE, because it changes what
+      // everybody else may do next and nothing else on the felt says so: the
+      // pile's name carries the suit from here on, but a player already looking
+      // at their own run needs telling before they gather it.
+      if (ev.suited) {
+        return {
+          text: `${who(ev.seat)} played ${shape} in ${ev.suited} — only suited runs answer it now`,
+          tone: mine(ev.seat) ? 'good' : 'neutral',
+          priority: 1,
+        };
+      }
       return { text: `${who(ev.seat)} played ${shape}`, tone: 'neutral' };
     }
     return null;
@@ -1729,15 +1908,30 @@ const climbing = {
       out.push('Once you pass you are out of that trick, so pass carefully.');
     }
     if (rules.bombs?.length) out.push('A bomb can be played out of shape to kill the highest cards.');
-    // The first lead is a rule about the very first turn of the match, and the
-    // felt refuses moves over it, so it says so rather than being discovered.
-    if (rules.firstLead?.card === 'lowest') {
-      out.push(rules.firstLead.mustInclude
-        ? 'The lowest card in play leads the first hand, and that lead has to contain it.'
-        : 'The lowest card in play leads the first hand.');
+    if (rules.runUpgrade === 'same-suit') {
+      out.push('A run all of one suit upgrades the trick, and from then on only a higher run '
+        + 'all of one suit answers it.');
     }
+    // The opening lead is a rule about the first turn of a hand, and the felt
+    // refuses moves over it, so it says so rather than being discovered.
+    if (rules.firstLead?.card === 'lowest') {
+      // WHICH HANDS, and it is `laterLead` that says: the sentence used to read
+      // "the first hand" under a rule that now opens every one of them the same
+      // way, which is the rules page describing a different game.
+      const when = rules.laterLead === 'lowest' ? 'every hand' : 'the first hand';
+      out.push(rules.firstLead.mustInclude
+        ? `The lowest card in play leads ${when}, and that lead has to contain it.`
+        : `The lowest card in play leads ${when}.`);
+    }
+    // UNCONDITIONAL, because the trick clearing to the last player to have
+    // played is the GENRE (`clearTrick`) and not a declaration — `laterLead`
+    // only says who opens the next HAND. Gated on `trick-winner`, this sentence
+    // disappeared the moment a pack declined that rule, taking the one
+    // explanation of how a trick ends with it.
+    out.push('When everyone else passes, the last player to have played takes the trick '
+      + 'and leads the next one.');
     if (rules.laterLead === 'trick-winner') {
-      out.push('When everyone else passes, the last player to have played leads the next trick.');
+      out.push('The seat that goes out leads the next hand.');
     }
     // The two variants that change what is LEGAL say so here, because a rule
     // whose only expression is a move quietly missing from the felt is a rule

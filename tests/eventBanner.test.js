@@ -16,7 +16,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import {
-  bannerBand, createCelebrations, heldBeatLine,
+  bannerBand, createCelebrations, heldBeatLine, dealEvents,
   BANNER_HOLD_MS, BANNER_FADE_MS, TAP_TO_GO_ON, TRICK_BANNER_PRIORITY,
 } from "../src/ui/celebrations.js";
 import { ROOT } from "../tools/stage.mjs";
@@ -620,4 +620,51 @@ test("Instant's hold is the flight alone, and says so", () => {
   const source = read("src/ui/roundBeat.js");
   assert.match(source, /const reads = read == null \|\| read > 0;/,
     "trickRevealPlan no longer says whether its hold has reading time in it");
+});
+
+/* ------------------------------------------------------------------ *
+ * What the DEAL said, and when the felt is allowed to say it
+ * ------------------------------------------------------------------ */
+
+test("the deal's own events are the window after roundOver, and nothing before it", () => {
+  // THE WINDOW A ROUND BOUNDARY LEAVES BEHIND. `applyMove` clears the events
+  // once per move, so the move that ends a hand and the deal the engine does
+  // underneath it share one array (src/engine/movePipeline.js). Everything up
+  // to and including `roundOver` has already been said over the position it
+  // happened in; everything after it belongs to a hand nobody has seen yet.
+  const window = [
+    { type: "combinationPlayed", seat: 2 },
+    { type: "roundOver", round: 3 },
+    { type: "holdsLowest", seat: 1 },
+    { type: "roundStart", round: 4 },
+  ];
+  assert.deepEqual(dealEvents(window).map((ev) => ev.type), ["holdsLowest", "roundStart"]);
+
+  // A FRESH MATCH HAS NO SEAM, because nothing ended: `setup` runs before the
+  // first move and the whole window is the deal's. `findIndex` returning -1 is
+  // what makes that the same line rather than a second case.
+  assert.deepEqual(dealEvents([{ type: "holdsLowest", seat: 0 }]).map((ev) => ev.type),
+    ["holdsLowest"]);
+  assert.deepEqual(dealEvents([]), []);
+  assert.deepEqual(dealEvents(), []);
+
+  // And a move that ended nothing is not a deal, however much it said.
+  assert.deepEqual(dealEvents([{ type: "passed", seat: 1 }]).map((ev) => ev.type), ["passed"]);
+});
+
+test("both moments a new hand becomes visible say what the deal said", () => {
+  // A source gate for the same reason the file's others exist: a narrator
+  // nothing calls is green forever and says nothing. The two call sites are the
+  // two doors a dealt hand comes through — `adoptMatch` for the first hand of a
+  // match, `dismissRoundSummary` for every one after it.
+  const source = read("src/ui/table.js");
+  assert.strictEqual((source.match(/celebrateDeal\(/g) || []).length, 3,
+    "the deal's narration is no longer defined once and called from both doors");
+  assert.match(source, /if \(dealing\) celebrateDeal\(state\);/,
+    "a resumed match narrates its deal — `state.events` there is the last REPLAYED move, so the "
+    + "table would open on a sentence about something the player did yesterday");
+  const dismiss = /function dismissRoundSummary\([\s\S]*?\n\}/.exec(source);
+  assert.ok(dismiss, "dismissRoundSummary has moved");
+  assert.match(dismiss[0], /celebrateDeal\(liveState\(\)\);/,
+    "the hand the engine dealt inside the round-ending move arrives on screen unannounced");
 });

@@ -142,6 +142,7 @@ platform file.
 | `pendingChoice` | `(ctx, move) -> Ask \| null` | `src/ui/table.js` | no question |
 | `activeMatch` | `(ctx) -> {address, attr, value, onCard} \| null` | `describe.js`, `table.js` | none |
 | `zoneFocus` | `(ctx, address) -> {cards, label, seat?} \| null` | `describe.js`, `zoneRenderer.js` | none |
+| `zoneOnFelt` | `(ctx, address) -> false \| anything` | `src/ui/table.js` | the zone definition's own flags decide |
 | `scoreChip` | `(ctx, seat) -> {short, long, label?, aria} \| null` | `table.js` | the SIDE's total (the seat's own, where there are no sides), labelled `Score` |
 | `seatCounters` | `(ctx, seat) -> {text, aria, label, kind?, minimizedOnly?, openOnly?}[] \| null` | `table.js` | the hand count, labelled `Cards` |
 | `tableCounters` | `(ctx) -> {text, label, aria?}[] \| null` | `table.js` | no strip at all |
