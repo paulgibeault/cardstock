@@ -52,6 +52,14 @@
   },
   "variants": [
     {
+      "id": "plain-runs",
+      "name": "Suits do not upgrade a run",
+      "description": "A run all of one suit is worth no more than a mixed one. Every run is compared by its top card alone, and any higher run of the same length answers it.",
+      "default": false,
+      "available": true,
+      "patch": { "rules.runUpgrade": "none" }
+    },
+    {
       "id": "winner-leads",
       "name": "The winner of a hand leads the next",
       "description": "Instead of the lowest card in play opening every hand, the seat that went out leads the next one, free to lead anything.",

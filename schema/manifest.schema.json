@@ -1354,9 +1354,10 @@
         },
         "runUpgrade": {
           "enum": [
-            "same-suit"
+            "same-suit",
+            "none"
           ],
-          "description": "A run ALL OF ONE SUIT upgrades the trick it is played into, whether it is led or played as an answer: from that point on only another run all of one suit, of the same length and with a higher top card, is a legal answer. Omit it and a run is compared by its top card alone, which is the plain rule of the genre. The suit is part of the total order (`suitLadder`), so 'higher' needs no second rule and the upgraded run need not be answered in the SAME suit — only in one suit. Because nothing but a suited run can answer a suited run, the upgrade holds for the rest of the trick without a var of its own."
+          "description": "A run ALL OF ONE SUIT upgrades the trick it is played into, whether it is led or played as an answer: from that point on only another run all of one suit, of the same length and with a higher top card, is a legal answer. Omit it and a run is compared by its top card alone, which is the plain rule of the genre. The suit is part of the total order (`suitLadder`), so 'higher' needs no second rule and the upgraded run need not be answered in the SAME suit — only in one suit. Because nothing but a suited run can answer a suited run, the upgrade holds for the rest of the trick without a var of its own. “none” is the same as omitting the key and exists so a VARIANT can switch the rule off: a patch sets a value, it cannot take a key away."
         },
         "bombs": {
           "type": "array",

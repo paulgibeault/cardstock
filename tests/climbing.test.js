@@ -843,21 +843,90 @@ test("the upgrade announces itself exactly once, and names the suit", async () =
     "the second suited run announced the upgrade again");
 });
 
-test("without the declaration a run is compared by its top card alone", async () => {
-  // The rule is a manifest key, so the template has to be asked with it absent —
-  // otherwise "climbing implements the upgrade" and "Thirteen plays it" are one
-  // claim and no other pack of the genre could decline it.
-  const state = await stacked([
+test("plain-runs: the upgrade is a declaration, and a pack can decline it", async () => {
+  // TWO CLAIMS IN ONE, and they are separate: that `climbing` implements the
+  // upgrade only where a pack DECLARES it — otherwise no other game of the
+  // genre could play plain runs — and that Thirteen ships a switch for it, the
+  // way it ships one for every other rule tables disagree about.
+  const hands = [
     ["hearts-5", "hearts-6", "hearts-7", "spades-2"],
     ["diamonds-4"], ["diamonds-3"],
     ["clubs-8", "diamonds-9", "hearts-10"],
-  ]);
-  state.pack = { ...state.pack, rules: { ...state.pack.rules, runUpgrade: undefined } };
-  applyMove(state, { actor: 0, type: "playCard", cards: ["hearts-5", "hearts-6", "hearts-7"] });
-  assert.ok(!state.vars.combo.suit, "the combination carried a suit with the rule switched off");
-  assert.ok(validateMove(state,
-    { actor: 3, type: "playCard", cards: ["clubs-8", "diamonds-9", "hearts-10"] }).legal,
+  ];
+  const mixed = ["clubs-8", "diamonds-9", "hearts-10"];
+
+  const off = await stacked(hands, ["plain-runs"]);
+  assert.strictEqual(off.pack.rules.runUpgrade, "none", "the variant did not reach the rules");
+  applyMove(off, { actor: 0, type: "playCard", cards: ["hearts-5", "hearts-6", "hearts-7"] });
+  assert.ok(!off.vars.combo.suit, "the combination carried a suit with the rule switched off");
+  assert.ok(validateMove(off, { actor: 3, type: "playCard", cards: mixed }).legal,
     "a mixed run was refused with the upgrade switched off");
+  assert.ok(enumerateLegalMoves(off, 3).some((m) => m.type === "playCard"),
+    "the enumerator still hides the mixed answer with the upgrade switched off");
+  assert.ok(!off.pack.template.ruleLines(off.pack.rules).some((l) => /upgrades the trick/.test(l)),
+    "the rules page still offers a rule the variant took away");
+
+  // The same position under the shipped rules, so the only thing that differs
+  // between the two runs is the declaration.
+  const on = await stacked(hands, []);
+  assert.strictEqual(on.pack.rules.runUpgrade, "same-suit");
+  applyMove(on, { actor: 0, type: "playCard", cards: ["hearts-5", "hearts-6", "hearts-7"] });
+  assert.strictEqual(validateMove(on, { actor: 3, type: "playCard", cards: mixed }).rule,
+    "not-suited");
+});
+
+test("no seat ever gets a mixed run onto a suited one, bots included", async () => {
+  // THE RULE, ASSERTED WHERE IT ACTUALLY HAS TO HOLD. Everything else about the
+  // upgrade is pinned on constructed positions; this is the claim over whole
+  // matches, and it is about BOTS as much as about the refusal — a bot picks
+  // from `enumerateLegalMoves`, so a run the enumerator let through would be
+  // played, and no rule test would ever see it.
+  //
+  // Two seat counts because they reach it differently: seventeen-card hands
+  // upgrade far more often per hand, thirteen-card ones put more seats in front
+  // of the standing run.
+  let upgrades = 0;
+  let answered = 0;
+  for (const seats of [2, 4]) {
+    for (let game = 0; game < 12; game++) {
+      const state = await dealt(seats, `suited:${seats}:${game}`);
+      for (let step = 0; step < 4000 && !state.gameOver; step++) {
+        const seat = acting(state)[0];
+        if (seat === undefined) break;
+        const standing = state.vars.combo;
+        if (standing?.suit) {
+          answered += 1;
+          // Every play on the list is suited. Asserted over the whole list
+          // rather than over the move chosen, because the list is what a human
+          // taps from too.
+          for (const move of enumerateLegalMoves(state, seat)) {
+            if (move.type !== "playCard") continue;
+            const suits = new Set(move.cards.map((id) => id.slice(0, id.indexOf("-"))));
+            assert.strictEqual(suits.size, 1,
+              `seat ${seat} was offered ${move.cards.join("+")} against a run in ${standing.suit}`);
+          }
+        }
+        const chosen = chooseBotMove(state, seat);
+        applyMove(state, chosen);
+        const now = state.vars.combo;
+        if (now?.suit && !standing?.suit) upgrades += 1;
+        // AND THE STANDING RUN NEVER LOSES ITS SUIT. That is the whole reason
+        // the upgrade needs no trick var: only a suited run can answer a suited
+        // run, so `combo.suit` survives to the end of the trick by itself. A
+        // build where it did not would leave the trick silently un-upgraded
+        // half way through and nothing above would catch it.
+        if (standing?.suit && now) {
+          assert.ok(now.suit,
+            `the standing run lost its suit when seat ${seat} played ${(chosen.cards || []).join("+")}`);
+        }
+      }
+    }
+  }
+  // AN EMPTY PROBE IS NOT A PASS: measured over this sweep, 60 matches at each
+  // count upgrade about 300 tricks between them. If a change to the bot moves
+  // these to zero, widen the sweep rather than dropping the bar.
+  assert.ok(upgrades > 20, `only ${upgrades} tricks were ever upgraded — the sweep tested nothing`);
+  assert.ok(answered > 40, `only ${answered} turns faced a suited run`);
 });
 
 test("the deal walks the table in the direction of play", async () => {
