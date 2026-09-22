@@ -3667,7 +3667,7 @@ do not, and there was no way at all to say which. The only speed preference in
 which is the shape this deliberately does not copy — "how many milliseconds
 should a hand take" is not a question anybody has an answer to.
 
-### The four rungs, and why the default is Quick
+### The four rungs, and why the default was Quick (it is Manual now — see below)
 
 `src/ui/pace.js` is the list, a data module for the reason `difficulty.js` is
 one: the two things that render it reach for `document` at import time, so the
@@ -3684,6 +3684,30 @@ ship rather than guessed: a four-seat summary is four rows of name, delta and
 total, and reading it is one saccade per row; the number was left at 2.5s
 because the sheet is also a countdown you can watch and cancel with a tap, so
 being a little short of a full read costs a tap and not the information.
+
+**That held until 2026-09-11, and the default is now Manual.** #176 had
+recorded the Quick default as settled — a flip "would need new evidence, not
+symmetry with the trick beat" — and the new evidence is Paul playing the merged
+build with #176's trick tap in it. Round 6 reads differently from the other
+side of that tap: those players were not asking for a clock, they were asking
+for a way OUT of a wait they had no way to end, and the tap is the way out.
+Once both beats end on a tap, dealing over the player stops being the price of
+not being stuck.
+
+The consequence is bigger than one word, because the rung now governs two
+beats: Manual's `trickReadScale` is `null` as well as its `autoMs`, so a game
+at the defaults holds **every completed trick** until a tap as well as every
+score sheet — thirteen taps in a hand plus one, where the shipped table used to
+run itself end to end. That is intended. What keeps it a beat rather than a
+freeze is that both waits end on a tap anywhere on the felt or on Enter/Space,
+and that the bar says "Tap to go on" for exactly the holds with no clock on
+them. The countdown ring below is drawn only by a rung that names a duration,
+so a default game never draws one; the first ring a player sees is the one
+their first tap on `Pace · Manual >` turns on.
+
+Everything else in this section is the #150 record and still describes the
+Quick rung accurately — it is one tap away, and it is still arithmetically the
+rung this repo has always shipped, at both beats.
 
 Written at the one gesture that deals (`rememberPreferences` in
 src/ui/lobby.js, which carries all three of them now — renamed from

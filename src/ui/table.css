@@ -3855,6 +3855,42 @@ body.is-dragging .card-face { cursor: grabbing; }
   100% { opacity: 0; transform: translate(-50%, -64%) scale(0.95); }
 }
 
+/* A PILL WHOSE MIDDLE IS A PERSON (#180). At the Manual rung a trick hold ends
+   on a tap rather than a clock, and the sentence naming the winner has to stand
+   for as long as the four cards do — `banner-in` would have faded it out two
+   seconds into an open-ended pause and left the player looking at an unexplained
+   trick, which is the bug this fixed wearing the other trouser leg.
+
+   IT IS NOT A LONGER ANIMATION AND IT IS NOT A LOOP (cardstock#24). The pill
+   ARRIVES on `banner-enter` — `banner-in`'s own first 18%, renormalised, so the
+   entrance is the same movement at the same speed — and then NOTHING runs: a
+   static box holding the resting transform through `both`. `releaseBanner`
+   (src/ui/celebrations.js) swaps in `banner-leave` when the hold ends, which is
+   the other 18%, and hides the pill when that has played. `--banner-fade` is
+   BANNER_FADE_MS, and the fallback below is pinned to it by
+   tests/eventBanner.test.js exactly as the hold's is. */
+.event-banner--held { animation: banner-enter var(--banner-fade, 396ms) cubic-bezier(0.2, 0.9, 0.3, 1) both; }
+.event-banner--bad.event-banner--held {
+  animation: banner-enter var(--banner-fade, 396ms) cubic-bezier(0.2, 0.9, 0.3, 1) both,
+             banner-shake 0.5s ease-in-out 0.15s;
+}
+.event-banner--out { animation: banner-leave var(--banner-fade, 396ms) cubic-bezier(0.2, 0.9, 0.3, 1) both; }
+
+/* The two ends of banner-in, on their own. Every frame obeys the same rule the
+   entrance does — inside the rect bannerBand reserved, with only the exit's
+   drift upward into the chrome under the seat row — and eventBanner.test.js
+   holds all three keyframe sets to it. */
+@keyframes banner-enter {
+  0% { opacity: 0; transform: translate(-50%, -50%) scale(0.85); }
+  67% { opacity: 1; transform: translate(-50%, -50%) scale(1.05); }
+  100% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+
+@keyframes banner-leave {
+  0% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, -64%) scale(0.95); }
+}
+
 @keyframes banner-shake {
   0%, 100% { margin-left: 0; }
   25% { margin-left: -8px; }
@@ -3933,8 +3969,13 @@ body.is-dragging .card-face { cursor: grabbing; }
 .show-card__faces {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 0.2rem;
   flex: none;
+  /* A reveal (src/engine/scoring.js) can be a whole Thirteen hand; cribbage's
+     five never wrapped and still do not. */
+  flex-wrap: wrap;
+  max-width: min(88vw, 30rem);
 }
 
 .show-card__face {
@@ -4410,6 +4451,9 @@ body.is-dragging .card-face { cursor: grabbing; }
   .seat--target,
   .event-banner--in,
   .event-banner--bad.event-banner--in,
+  .event-banner--held,
+  .event-banner--bad.event-banner--held,
+  .event-banner--out,
   .contract-chip[data-chip="broken"],
   .show-card,
   .zone-celebrate,
@@ -4796,7 +4840,6 @@ body.is-dragging .card-face { cursor: grabbing; }
 .stat-card__label { opacity: 0.7; }
 .stat-card__value { font-weight: 700; font-variant-numeric: tabular-nums; }
 
-#game-over-rounds-toggle { margin-bottom: 1rem; font-size: 0.78rem; }
 #game-over-rounds-toggle[hidden] { display: none; }
 #game-over-rounds[hidden] { display: none; }
 
@@ -5998,3 +6041,321 @@ button.tile__daily:hover { background: var(--ghost-hover); }
   15% { opacity: 1; }
   100% { opacity: 0; }
 }
+
+/* ------------------------------------------------------------------ *
+ * Review: the reel under the felt and the map of the game (src/ui/review.js)
+ * ------------------------------------------------------------------ */
+
+#review-bar {
+  position: fixed;
+  inset: 0;
+  z-index: 9;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 0 1rem 1.1rem;
+  pointer-events: none;
+}
+#review-bar[hidden] { display: none; }
+
+.review-bar__bar {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.45rem 0.6rem;
+  border-radius: 14px;
+  background: var(--panel-bg);
+  color: var(--panel-text);
+  border: 1px solid var(--panel-border);
+  box-shadow: 0 10px 34px var(--panel-shadow);
+  animation: final-look-in 0.4s cubic-bezier(0.2, 0.9, 0.3, 1) both;
+  max-width: calc(100vw - 2rem);
+}
+
+.review-bar__step,
+.review-bar__label,
+.review-bar__done {
+  font: inherit;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  color: var(--panel-text);
+  background: transparent;
+  padding: 0.4rem 0.55rem;
+  min-height: 44px;
+}
+.review-bar__step { font-size: 1rem; }
+.review-bar__step:disabled { opacity: 0.3; cursor: default; }
+.review-bar__step:hover:not(:disabled),
+.review-bar__label:hover { background: var(--chip-bg, rgba(255, 255, 255, 0.08)); }
+.review-bar__label {
+  font-weight: 600;
+  white-space: nowrap;
+  text-decoration: underline dotted;
+  text-underline-offset: 0.2em;
+}
+.review-bar__done {
+  background: var(--action-bg);
+  color: var(--action-text);
+  font-weight: 600;
+  margin-left: 0.25rem;
+  white-space: nowrap;
+}
+.review-bar__done:hover { background: var(--action-bg-hover); }
+.review-bar__step:focus-visible,
+.review-bar__label:focus-visible,
+.review-bar__done:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+@media (max-width: 480px) {
+  .review-bar__bar { gap: 0.15rem; padding: 0.35rem 0.4rem; }
+  .review-bar__label { font-size: 0.85rem; padding: 0.4rem 0.3rem; }
+  .review-bar__done { font-size: 0.85rem; padding: 0.4rem 0.5rem; }
+}
+
+#review-overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--scrim);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  z-index: 10;
+}
+#review-overlay[hidden] { display: none; }
+#review-overlay .panel {
+  background: var(--panel-bg);
+  color: var(--panel-text);
+  border: 1px solid var(--panel-border);
+  padding: 1.25rem;
+  border-radius: 14px;
+  box-shadow: 0 20px 60px var(--panel-shadow);
+  animation: settle-in 0.3s ease-out;
+  margin: auto;
+  width: 100%;
+  max-width: min(38rem, 100%) !important;
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100dvh - 2rem);
+}
+
+.review-map {
+  text-align: left;
+  overflow: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: min(70dvh, 36rem);
+  margin: 0.5rem 0;
+  border-top: 1px solid var(--panel-border);
+  border-bottom: 1px solid var(--panel-border);
+}
+
+.review-hand { margin-top: 0.6rem; }
+.review-hand:first-child { margin-top: 0; }
+.review-hand__head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 0.55rem 0.6rem 0.5rem;
+  background: color-mix(in srgb, var(--accent) 22%, var(--panel-bg));
+  border-top: 2px solid var(--accent);
+  border-bottom: 1px solid var(--panel-border);
+}
+.review-hand__head--live { background: color-mix(in srgb, var(--accent) 10%, var(--panel-bg)); border-top-style: dashed; }
+.review-hand__titlerow { display: flex; align-items: baseline; gap: 0.5rem; }
+.review-hand__title { font-weight: 800; font-size: 1.05rem; letter-spacing: 0.01em; }
+.review-hand__of { font-size: 0.75rem; opacity: 0.7; }
+.review-hand__standings { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.3rem; }
+.review-hand__chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.3rem;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--panel-bg) 70%, transparent);
+  border: 1px solid var(--panel-border);
+  font-size: 0.75rem;
+}
+.review-hand__chip-name { opacity: 0.8; }
+.review-hand__chip-total { font-weight: 700; }
+.review-hand__chip-delta { opacity: 0.75; font-size: 0.7rem; }
+
+/* Tricks sit inside their hand: indented, with a rail down the side. */
+.review-hand .review-beat { margin-left: 0.5rem; border-left: 2px solid color-mix(in srgb, var(--panel-border) 60%, transparent); }
+
+/* A BEAT: one trick (or count, lap, pass, bidding), collapsed to who won it
+   and with what; open, every play inside it. */
+.review-beat { border-bottom: 1px solid color-mix(in srgb, var(--panel-border) 50%, transparent); }
+.review-beat--current { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+
+.review-beat__head {
+  display: grid;
+  grid-template-columns: 5.5rem minmax(0, 1fr);
+  grid-template-areas: "title cards" "who cards";
+  column-gap: 0.5rem;
+  align-items: center;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border: none;
+  padding: 0.4rem 0.4rem;
+  cursor: pointer;
+  min-height: 44px;
+}
+.review-beat__head:hover { background: var(--chip-bg, rgba(255, 255, 255, 0.06)); }
+.review-beat__head:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.review-beat__title { grid-area: title; font-size: 0.8rem; font-weight: 700; }
+.review-beat__who { grid-area: who; display: flex; gap: 0.35rem; align-items: baseline; font-size: 0.8rem; }
+.review-beat__winner { font-weight: 600; }
+.review-beat__winner--none { opacity: 0.7; font-weight: 400; }
+.review-beat__points {
+  font-size: 0.7rem;
+  padding: 0 0.35rem;
+  border-radius: 999px;
+  background: var(--chip-bg, rgba(255, 255, 255, 0.1));
+}
+.review-beat__head .review-cards { grid-area: cards; justify-self: start; }
+
+.review-cards { display: flex; flex-wrap: wrap; gap: 0.15rem; align-items: center; }
+.review-cards:empty { display: none; }
+.review-card { display: block; width: 26px; flex: none; }
+.review-card svg { display: block; width: 100%; height: auto; }
+.review-card--named { width: auto; font-size: 0.75rem; opacity: 0.8; }
+
+.review-beat__plays { display: none; padding: 0 0 0.3rem 0.6rem; }
+.review-beat--open > .review-beat__plays { display: block; }
+
+.review-play {
+  display: grid;
+  grid-template-columns: 4.5rem minmax(0, 1fr);
+  grid-template-areas: "seat cards" "seat words";
+  column-gap: 0.5rem;
+  row-gap: 0.1rem;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border: none;
+  border-left: 3px solid transparent;
+  padding: 0.3rem 0.4rem;
+  cursor: pointer;
+  align-items: start;
+}
+.review-play:hover { background: var(--chip-bg, rgba(255, 255, 255, 0.06)); }
+.review-play:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.review-play--won { border-left-color: var(--accent); }
+.review-play--current { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+.review-play__seat { grid-area: seat; font-weight: 600; font-size: 0.8rem; padding-top: 0.1rem; overflow: hidden; text-overflow: ellipsis; }
+.review-play--won .review-play__seat::after { content: " ✓"; opacity: 0.8; }
+.review-play .review-cards { grid-area: cards; }
+.review-play__passed { grid-area: cards; font-size: 0.8rem; opacity: 0.6; font-style: italic; }
+.review-play__words { grid-area: words; font-size: 0.75rem; opacity: 0.8; line-height: 1.3; display: block; }
+.review-play__text { display: block; }
+.review-play__marks { display: block; font-size: 0.72rem; opacity: 0.7; font-style: italic; }
+
+/* THE DRAWER: the map beside the felt at a wide window. The felt gives up
+   the drawer's width (margin on #table-screen) and the reel moves over with
+   it, so nothing the player taps is under anything else. */
+:root { --review-drawer-w: 24rem; }
+#review-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: var(--review-drawer-w);
+  z-index: 8;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel-bg);
+  color: var(--panel-text);
+  border-left: 1px solid var(--panel-border);
+  box-shadow: -10px 0 34px var(--panel-shadow);
+}
+#review-drawer[hidden] { display: none; }
+.review-drawer__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.6rem 0.8rem 0.4rem;
+}
+.review-drawer__head .panel__title { margin: 0; }
+#review-drawer-host { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+#review-drawer-host .review-map { flex: 1 1 auto; max-height: none; margin: 0; border-bottom: none; }
+body.review-drawer #table-screen { margin-right: var(--review-drawer-w); }
+body.review-drawer #review-bar { right: var(--review-drawer-w); }
+
+/* THE MAP INSIDE THE RESULTS: the same accordion, scrolling on its own inside
+   a sheet that must still fit the window with it open. */
+#game-over-overlay .panel { max-height: calc(100dvh - 2rem); overflow: auto; }
+#game-over-map { margin: 0.5rem 0; }
+#game-over-map[hidden] { display: none; }
+#game-over-map .review-map { max-height: min(46dvh, 22rem); }
+
+/* The map on the round sheet, scrolling on its own inside a sheet that must
+   still fit the window with it open. */
+#round-overlay .panel { max-height: calc(100dvh - 2rem); overflow: auto; }
+#round-map { margin: 0.5rem 0; }
+#round-map[hidden] { display: none; }
+#round-map .review-map { max-height: min(46dvh, 22rem); }
+
+/* ------------------------------------------------------------------ *
+ * A SHEET'S FOLD-OUT SECTION. "Round by round" and "Trick by trick" are
+ * headings you open, not things you do — so they are drawn as a sheet's
+ * own rows: a hairline, the name at the left, a chevron at the right that
+ * turns when the section is open. The verbs (Deal, Lobby, Play again) stay
+ * in the actions row and stay looking like buttons.
+ * ------------------------------------------------------------------ */
+.sheet-disclosure {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  width: 100%;
+  margin: 0;
+  padding: 0.6rem 0.25rem;
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--panel-text);
+  background: transparent;
+  border: none;
+  border-top: 1px solid var(--panel-border);
+  border-radius: 0;
+  cursor: pointer;
+  text-align: left;
+  opacity: 0.88;
+}
+.sheet-disclosure:hover { opacity: 1; background: color-mix(in srgb, var(--panel-text) 5%, transparent); }
+.sheet-disclosure:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.sheet-disclosure::after {
+  content: "";
+  flex: none;
+  width: 0.5em;
+  height: 0.5em;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(45deg) translate(-0.1em, -0.1em);
+  transition: transform 0.18s ease;
+  opacity: 0.7;
+  margin-right: 0.2em;
+}
+.sheet-disclosure[aria-expanded="true"]::after { transform: rotate(-135deg) translate(-0.1em, -0.05em); }
+.sheet-disclosure[hidden] { display: none; }
+.sheet-disclosure__body { margin: 0 0 0.4rem; }
+.sheet-disclosure__body[hidden] { display: none; }
+/* The last fold before the actions closes with its own hairline, and the
+   actions keep their breathing room above. */
+.sheet-disclosure__body + .panel__actions,
+.sheet-disclosure + .panel__actions { border-top: 1px solid var(--panel-border); padding-top: 1rem; }
+
+/* On the round sheet the target line sits directly on the first fold. */
+#round-panel .round-target { margin-bottom: 0.6rem; }
+#round-panel .sheet-disclosure { margin-top: 0.2rem; }
+#round-map { margin: 0.4rem 0 0.2rem; }
+#game-over-map { margin: 0.4rem 0 0.2rem; }
+#game-over-overlay .round-history.sheet-disclosure__body { margin-top: 0.4rem; }

@@ -21,6 +21,91 @@ export function handValue(cards, scoring) {
   return cards.reduce((sum, c) => sum + cardValue(c, scoring), 0);
 }
 
+/* ------------------------------------------------------------------ *
+ * THE REVEAL — what each seat's cards were worth, said one seat at a time
+ * ------------------------------------------------------------------ *
+ *
+ * Cribbage's show was the only round ending the felt could hold up one count
+ * at a time, because cribbage was the only template that EMITTED one: a
+ * `showScored` per hand, with the cards and what they were worth. Every other
+ * pack scored the cards left in a hand (or taken into a pile) in silence, and
+ * the first the player saw of it was a delta on the sheet — "the last hand
+ * isn't even shown" (issue #189, and Paul asking for the cribbage treatment at
+ * every table, Thirteen first).
+ *
+ * So the three strategies that price CARDS emit the same event cribbage does,
+ * one per seat whose cards cost or earned anything, in the order the table
+ * would read them — round the table from the seat that ended the hand. The
+ * felt already knows what to do with a `showScored`: hold it as a card with the
+ * faces on it, one tap per seat at the rung that waits (src/ui/roundBeat.js),
+ * and at the match end too (finalShowPlan). Nothing in the UI had to learn
+ * what Thirteen is.
+ *
+ * WHAT THE EVENT CARRIES. `reason` says which of the three prices this is —
+ * `leftover` (each seat pays for its own hand), `to-winner` (every hand pays
+ * the seat that went out, named in `to`), `taken` (the cards a seat was made
+ * to take) — because the sentence differs and the sheet's delta is not always
+ * this seat's own number. `cards` are the ids so the felt can draw the faces;
+ * `n` is their count, which survives the wire where the ids may not
+ * (src/engine/view.js's eventsFor strips ids a seat cannot see). `parts` are
+ * the card's rows: one per VALUE, `{ kind: 'held', n, each, points, at }`, so a
+ * Thirteen hand reads "7 cards at 1" and a Crazy Eights hand "an eight at 50,
+ * two at 10" rather than thirteen rows of one card each.
+ *
+ * EMITTED INSIDE THE STRATEGY, so it is in the same event window as the
+ * `roundOver` that follows, and so a fork the bot plays forward emits it too
+ * and nobody notices — an event is not a state change. `points` is the hand's
+ * own value and is the AUTHORITY for the card's total, the way cribbage's is;
+ * the sheet still reads the returned deltas.
+ */
+
+/** The rows of a reveal card: one per distinct value, highest first. */
+function heldParts(cards, scoring) {
+  const byValue = new Map();
+  cards.forEach((card, at) => {
+    const each = cardValue(card, scoring);
+    if (!byValue.has(each)) byValue.set(each, []);
+    byValue.get(each).push(at);
+  });
+  return [...byValue.entries()]
+    .sort((a, b) => b[0] - a[0])
+    .map(([each, at]) => ({ kind: 'held', n: at.length, each, points: each * at.length, at }));
+}
+
+/** Seats in table order starting after `from` — the order a reveal reads round the table. */
+function seatsAfter(ctx, from) {
+  const start = Number.isInteger(from) ? from : -1;
+  const out = [];
+  for (let k = 1; k <= ctx.seats; k++) out.push((start + k + ctx.seats) % ctx.seats);
+  return out;
+}
+
+/**
+ * `ids` are the ZONE's ids and `cards` the records they resolve to, in the same
+ * order — two lists because a two-deck pack's second copy is `blue-1#2` in the
+ * zone and `blue-1` on the record, and the felt draws the face by the id it
+ * can find on the table.
+ */
+function emitReveal(ctx, seat, ids, cards, { reason, to = null, sweep = null, points = null }) {
+  const scoring = ctx.pack.scoring;
+  ctx.emit('showScored', {
+    seat,
+    isCrib: false,
+    reason,
+    to,
+    sweep,
+    points: points ?? handValue(cards, scoring),
+    n: ids.length,
+    cards: ids.slice(),
+    parts: heldParts(cards, scoring),
+  });
+}
+
+/** A zone's ids and records, paired by position. */
+function zoneCards(ctx, address) {
+  return { ids: ctx.cardIdsIn(address).slice(), cards: ctx.cardsIn(address) };
+}
+
 // "First seat with an empty hand" wins the round; every other seat's hand value
 // goes to them (Crazy Eights, Wildfire).
 export function roundScoreHandValuesToWinner(ctx) {
@@ -33,9 +118,13 @@ export function roundScoreHandValuesToWinner(ctx) {
   }
   if (winnerSeat !== null) {
     let total = 0;
-    for (let s = 0; s < ctx.seats; s++) {
+    for (const s of seatsAfter(ctx, winnerSeat)) {
       if (s === winnerSeat) continue;
-      total += handValue(ctx.cardsIn(ctx.zoneAddr('hand', s)), scoring);
+      const { ids, cards } = zoneCards(ctx, ctx.zoneAddr('hand', s));
+      total += handValue(cards, scoring);
+      // Every hand pays the winner, so every hand is shown — a hand worth
+      // nothing is still a hand somebody was caught with.
+      if (ids.length) emitReveal(ctx, s, ids, cards, { reason: 'to-winner', to: winnerSeat });
     }
     result[winnerSeat] = total;
   }
@@ -46,8 +135,10 @@ export function roundScoreHandValuesToWinner(ctx) {
 export function roundScoreLeftoverHandValues(ctx) {
   const scoring = ctx.pack.scoring;
   const result = {};
-  for (let s = 0; s < ctx.seats; s++) {
-    result[s] = handValue(ctx.cardsIn(ctx.zoneAddr('hand', s)), scoring);
+  for (const s of seatsAfter(ctx, ctx.state.roundWinner)) {
+    const { ids, cards } = zoneCards(ctx, ctx.zoneAddr('hand', s));
+    result[s] = handValue(cards, scoring);
+    if (ids.length) emitReveal(ctx, s, ids, cards, { reason: 'leftover' });
   }
   return result;
 }
@@ -66,34 +157,49 @@ function allCardsMatchingSelector(ctx, selector) {
 export function roundScorePenaltyCardsTaken(ctx) {
   const scoring = ctx.pack.scoring;
   const raw = {};
+  // The cards that COST something, out of everything the seat took: a Hearts
+  // won pile is thirteen tricks deep and eleven of them are worth nothing, and
+  // the reveal is the hearts and the Queen, not the whole pile.
+  const priced = {};
   for (let s = 0; s < ctx.seats; s++) {
-    raw[s] = handValue(ctx.cardsIn(ctx.zoneAddr('won', s)), scoring);
+    const { ids, cards } = zoneCards(ctx, ctx.zoneAddr('won', s));
+    raw[s] = handValue(cards, scoring);
+    const keep = cards.map((card) => cardValue(card, scoring) !== 0);
+    priced[s] = { ids: ids.filter((_, i) => keep[i]), cards: cards.filter((_, i) => keep[i]) };
   }
+  // Who shot the moon, if anybody — decided before anything is said, because
+  // the shooter's card says something different from everybody else's.
   const sweep = ctx.rules.sweepBonus;
-  if (!sweep) return raw;
-
-  const m = /^tookAll:(.+)$/.exec(sweep.if);
-  if (!m) return raw;
-  const allMatching = allCardsMatchingSelector(ctx, m[1]);
-  if (allMatching.length === 0) return raw;
-
-  for (let s = 0; s < ctx.seats; s++) {
-    const won = ctx.cardIdsIn(ctx.zoneAddr('won', s));
-    const tookAll = allMatching.every((id) => won.includes(id));
-    if (!tookAll) continue;
-    const total = Object.values(raw).reduce((a, b) => a + b, 0);
-    const result = {};
-    for (let s2 = 0; s2 < ctx.seats; s2++) {
-      if (sweep.award === 'self-lose-sum') {
-        result[s2] = s2 === s ? -total : 0;
-      } else {
-        // 'others-gain-sum' (default)
-        result[s2] = s2 === s ? 0 : total;
-      }
+  const m = sweep ? /^tookAll:(.+)$/.exec(sweep.if) : null;
+  const allMatching = m ? allCardsMatchingSelector(ctx, m[1]) : [];
+  let shooter = null;
+  if (allMatching.length) {
+    for (let s = 0; s < ctx.seats; s++) {
+      const won = ctx.cardIdsIn(ctx.zoneAddr('won', s));
+      if (allMatching.every((id) => won.includes(id))) { shooter = s; break; }
     }
-    return result;
   }
-  return raw;
+  // The reveal, round the table from whoever took the last trick.
+  for (const s of seatsAfter(ctx, ctx.var('leader'))) {
+    if (!priced[s].ids.length) continue;
+    emitReveal(ctx, s, priced[s].ids, priced[s].cards, {
+      reason: 'taken',
+      sweep: s === shooter ? (sweep.award === 'self-lose-sum' ? 'self-lose-sum' : 'others-gain-sum') : null,
+    });
+  }
+
+  if (shooter === null) return raw;
+  const total = Object.values(raw).reduce((a, b) => a + b, 0);
+  const result = {};
+  for (let s2 = 0; s2 < ctx.seats; s2++) {
+    if (sweep.award === 'self-lose-sum') {
+      result[s2] = s2 === shooter ? -total : 0;
+    } else {
+      // 'others-gain-sum' (default)
+      result[s2] = s2 === shooter ? 0 : total;
+    }
+  }
+  return result;
 }
 
 /* ------------------------------------------------------------------ *

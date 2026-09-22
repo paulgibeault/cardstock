@@ -53,8 +53,11 @@ test("a finished trick emits trickWon with its winner and its cost", async () =>
 
 test("the last trick of a hand scores the round and deals the next one", async () => {
   const state = await heartsLastTrick({ wonBySeat: { 2: ["hearts-3", "hearts-5"] } });
+  // `showScored` is the reveal of what each seat was made to take
+  // (src/engine/scoring.js, #189) and is pinned in tests/handReveal.test.js;
+  // this test is about the boundary.
   assert.deepEqual(
-    eventTypes(state).filter((t) => t !== "trickWon"),
+    eventTypes(state).filter((t) => t !== "trickWon" && t !== "showScored"),
     ["roundOver", "roundStart"],
   );
   const over = state.events.find((e) => e.type === "roundOver");

@@ -34,6 +34,18 @@ const el = {
   scoreTotals: document.getElementById('scoreboard-totals'),
   scoreHistory: document.getElementById('scoreboard-history'),
   scoreClose: document.getElementById('scoreboard-close'),
+  scoreReview: document.getElementById('scoreboard-review'),
+  gameOverReview: document.getElementById('game-over-review'),
+  gameOverMapToggle: document.getElementById('game-over-map-toggle'),
+  roundMapToggle: document.getElementById('round-map-toggle'),
+  roundMap: document.getElementById('round-map'),
+  gameOverMap: document.getElementById('game-over-map'),
+  reviewOverlay: document.getElementById('review-overlay'),
+  reviewMapHost: document.getElementById('review-map-host'),
+  reviewClose: document.getElementById('review-close'),
+  reviewDrawer: document.getElementById('review-drawer'),
+  reviewDrawerHost: document.getElementById('review-drawer-host'),
+  reviewDrawerClose: document.getElementById('review-drawer-close'),
   scoreRules: document.getElementById('scoreboard-rules'),
 
   rulesOverlay: document.getElementById('rules-overlay'),
@@ -45,6 +57,7 @@ const el = {
   finalLook: document.getElementById('final-look'),
   finalLookResult: document.getElementById('final-look-result'),
   finalLookPlay: document.getElementById('final-look-play'),
+  finalLookHand: document.getElementById('final-look-hand'),
   finalLookContinue: document.getElementById('final-look-continue'),
 
   gameOverOverlay: document.getElementById('game-over-overlay'),
@@ -304,6 +317,9 @@ function targetSentence(state, ev) {
 
 export function hideRoundSummary() {
   el.roundOverlay.hidden = true;
+  el.roundMap.hidden = true;
+  el.roundMap.replaceChildren();
+  el.roundMapToggle.setAttribute('aria-expanded', 'false');
   // The ring stops being a countdown the moment the sheet stops being on
   // screen. Left running, its animation would still be ticking inside a hidden
   // overlay — the exact battery shape cardstock#24 exists to forbid — and would
@@ -402,14 +418,18 @@ let dismissFinalLook = null;
  * @param result the sentence that says who won
  * @param play   what the last card was and who played it, or '' when the ending
  *               was not a play (a match that ran out of rounds)
+ * @param hand   what the last hand did to the totals, or '' when the boundary
+ *               scored nobody (src/ui/scoreDirection.js's lastHandSentence)
  * @returns a promise that resolves true when acknowledged, false when the table
  *          closed under it — so a caller can decline to open a panel over a
  *          match that is no longer on screen.
  */
-export function awaitFinalLook(result, play) {
+export function awaitFinalLook(result, play, hand = '') {
   el.finalLookResult.textContent = result;
   el.finalLookPlay.textContent = play || '';
   el.finalLookPlay.hidden = !play;
+  el.finalLookHand.textContent = hand || '';
+  el.finalLookHand.hidden = !hand;
   el.finalLook.hidden = false;
   return new Promise((resolve) => {
     const close = (acknowledged) => {
@@ -539,18 +559,77 @@ export function showGameOver(state, {
   el.gameOverRoundsToggle.setAttribute('aria-expanded', 'false');
   roundHistoryInto(el.gameOverRounds, rounds, seating, state.seats, state.pack);
 
+  // The map closed, and emptied: it is built for THIS match when it is asked
+  // for, never carried from the last one.
+  el.gameOverMap.hidden = true;
+  el.gameOverMap.replaceChildren();
+  el.gameOverMapToggle.setAttribute('aria-expanded', 'false');
   el.gameOverOverlay.classList.toggle('game-over--won', won);
   el.gameOverOverlay.hidden = false;
 }
 
 export function hideGameOver() {
   el.gameOverOverlay.hidden = true;
+  el.gameOverMap.hidden = true;
+  el.gameOverMap.replaceChildren();
+}
+
+/**
+ * The map of the game (src/ui/review.js builds `node`): beside the felt as a
+ * drawer where there is room, over it as a sheet where there is not.
+ *
+ * THE TABLE DECIDES WHICH — `drawer` is its call, made against the window —
+ * because the felt is what has to make room, and it does so by a class on
+ * body that src/ui/table.css reads (`body.review-drawer`).
+ */
+export function showReviewMap(node, { drawer = false, title = 'The game so far' } = {}) {
+  hideReviewMap();
+  // "So far" is a live match's word; a finished one is the whole game.
+  for (const head of [el.reviewDrawer, el.reviewOverlay]) {
+    const t = head.querySelector('.panel__title');
+    if (t) t.textContent = title;
+  }
+  if (drawer) {
+    el.reviewDrawerHost.replaceChildren(node);
+    el.reviewDrawer.hidden = false;
+    document.body.classList.add('review-drawer');
+  } else {
+    el.reviewMapHost.replaceChildren(node);
+    el.reviewOverlay.hidden = false;
+  }
+  // The row the felt is standing on, in view — a map of a long match is a
+  // list of hundreds, and opening it at the top is opening it at the deal.
+  (node.querySelector('.review-play--current') || node.querySelector('.review-beat--current'))
+    ?.scrollIntoView({ block: 'center' });
+}
+
+export function hideReviewMap() {
+  el.reviewOverlay.hidden = true;
+  el.reviewMapHost.replaceChildren();
+  el.reviewDrawer.hidden = true;
+  el.reviewDrawerHost.replaceChildren();
+  document.body.classList.remove('review-drawer');
+}
+
+export function isReviewMapOpen() {
+  return !el.reviewOverlay.hidden || !el.reviewDrawer.hidden;
+}
+
+/** Is the map open BESIDE the felt, where the felt can follow a tap? */
+export function isReviewDrawerOpen() {
+  return !el.reviewDrawer.hidden;
+}
+
+/** The map's live node, for a cursor repaint, or null. */
+export function reviewMapNode() {
+  return el.reviewDrawerHost.firstElementChild || el.reviewMapHost.firstElementChild || null;
 }
 
 export function hideAllPanels() {
   hideGameOver();
   hideFinalLook();
   hideRoundSummary();
+  hideReviewMap();
   hideScoreboard();
   hideRules();
 }
@@ -602,9 +681,16 @@ export function hideRules() {
  * owns the match — these overlays only ask.
  */
 export function initPanels({
-  onContinueRound, onPlayAgain, onLobby, onCloseScoreboard, onEndMatch, onRules, onCyclePace,
+  onContinueRound, onPlayAgain, onLobby, onCloseScoreboard, onEndMatch, onRules, onCyclePace, onReview,
+  onReviewMapClosed, onGameOverMap, onRoundMap,
 }) {
   el.rulesClose.addEventListener('click', () => hideRules());
+  // TWO DOORS INTO REVIEW: the scoreboard mid-match, and the results panel at
+  // the end. Both close themselves first; the reel is what opens instead.
+  el.scoreReview.addEventListener('click', () => { hideScoreboard(); onReview?.(); });
+  el.gameOverReview.addEventListener('click', () => { hideGameOver(); onReview?.(); });
+  el.reviewClose.addEventListener('click', () => hideReviewMap());
+  el.reviewDrawerClose.addEventListener('click', () => { hideReviewMap(); onReviewMapClosed?.(); });
   el.scoreRules.addEventListener('click', () => onRules?.());
   el.roundContinue.addEventListener('click', () => onContinueRound());
   el.roundEndMatch.addEventListener('click', () => onEndMatch());
@@ -624,7 +710,13 @@ export function initPanels({
   // `roundSummaryOpen` — but a second call that only survives on a guard is not
   // a design.
   el.roundPanel.addEventListener('click', (event) => {
-    if (event.target.closest('#round-end-match, #round-pace, #round-continue')) return;
+    // A TAP WHOSE TARGET HAS ALREADY LEFT THE DOM is not a tap on the sheet.
+    // A play in the map (#191) opens the review in its own handler, which
+    // takes the sheet — and the map — down before this listener runs; the
+    // detached button then has no `#round-map` ancestor for `closest` to
+    // find, and the deal fired on a tap that meant "show me that trick".
+    if (!event.target.isConnected) return;
+    if (event.target.closest('#round-end-match, #round-pace, #round-continue, #round-map-toggle, #round-map')) return;
     onContinueRound();
   });
   el.playAgainButton.addEventListener('click', () => onPlayAgain());
@@ -633,10 +725,43 @@ export function initPanels({
     hideScoreboard();
     onCloseScoreboard?.();
   });
+  // THE MAP INSIDE THE RESULTS. Built on the first open by the table
+  // (`onGameOverMap` returns the node, or null when there is nothing to map),
+  // because the table owns the timeline and the card renderer; this panel
+  // only owns where it goes.
+  el.gameOverMapToggle.addEventListener('click', () => {
+    const open = el.gameOverMap.hidden;
+    if (open && !el.gameOverMap.firstElementChild) {
+      const node = onGameOverMap?.();
+      if (!node) return;
+      el.gameOverMap.replaceChildren(node);
+    }
+    el.gameOverMap.hidden = !open;
+    el.gameOverMapToggle.setAttribute('aria-expanded', String(open));
+    if (open) {
+      // The last trick, in view: a finished game's map opens at its end.
+      el.gameOverMap.querySelector('.review-beat--current')?.scrollIntoView({ block: 'nearest' });
+    }
+  });
+  // THE SAME MAP ON THE ROUND SHEET. `onRoundMap` builds it AND stops the
+  // sheet's countdown, because a player who opened this is reading, not
+  // waiting to deal; the sheet's own tap-to-deal already excludes it above.
+  el.roundMapToggle.addEventListener('click', () => {
+    const open = el.roundMap.hidden;
+    if (open && !el.roundMap.firstElementChild) {
+      const node = onRoundMap?.();
+      if (!node) return;
+      el.roundMap.replaceChildren(node);
+    }
+    el.roundMap.hidden = !open;
+    el.roundMapToggle.setAttribute('aria-expanded', String(open));
+    if (open) el.roundMap.querySelector('.review-beat--current')?.scrollIntoView({ block: 'nearest' });
+  });
   el.gameOverRoundsToggle.addEventListener('click', () => {
     const open = el.gameOverRounds.hidden;
     el.gameOverRounds.hidden = !open;
+    // The chevron says open or shut (src/ui/table.css `.sheet-disclosure`);
+    // the heading keeps its name either way, like a heading.
     el.gameOverRoundsToggle.setAttribute('aria-expanded', String(open));
-    el.gameOverRoundsToggle.textContent = open ? 'Hide the rounds' : 'Round by round';
   });
 }

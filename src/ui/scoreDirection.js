@@ -36,7 +36,7 @@
 // penalty it has always been. A UI that disagreed with the bot about which way
 // is up would be the same bug wearing different clothes.
 
-import { sidesOf, sideOfSeat, sideScores } from '../engine/sides.js';
+import { sidesOf, sideOfSeat, sideScores, foldToSides } from '../engine/sides.js';
 
 /**
  * 'highestScore' | 'lowestScore' | null — the pack's own declaration, and null
@@ -107,6 +107,105 @@ export function targetSentence(pack, seats, totals) {
   if (!Number.isFinite(togo) || togo <= 0) return '';
   if (pointsArePrize(pack)) return `First to ${target} wins — ${togo} to go.`;
   return `Match ends when anyone reaches ${target} — ${togo} away. Lowest score wins.`;
+}
+
+/* ------------------------------------------------------------------ *
+ * The reveal's sentence
+ * ------------------------------------------------------------------ */
+
+/**
+ * What one seat's cards were worth at the end of the hand, as the felt says it
+ * over the card that shows them (src/engine/scoring.js emits the step; the
+ * table plays it through `playShowStep`).
+ *
+ * THREE PRICES, THREE SENTENCES, because the sheet's delta is not always this
+ * seat's own number: a Thirteen hand costs its holder, a Crazy Eights hand pays
+ * the seat that went out, and a Hearts pile is what its owner was made to take
+ * — or, once a hand, the moon. Cribbage's own steps have no `reason` and keep
+ * the template's sentence; this returns null for them.
+ *
+ * TONE FOLLOWS THE VIEWER, not the number: the same 60 points is bad news on
+ * your card and good news on the card that names you as the winner.
+ *
+ * @param step        a showSteps() entry carrying `reason`
+ * @param label       (seat) => "You" | the name
+ * @param possessive  (seat) => "Your" | "Nell's"
+ * @param viewerSeat  the seat this device holds
+ */
+export function revealSentence(step, { label, possessive, viewerSeat }) {
+  if (!step || !step.reason) return null;
+  const mine = step.seat === viewerSeat;
+  const n = step.n ?? step.cards?.length ?? 0;
+  const cards = `${n} card${n === 1 ? '' : 's'}`;
+  const points = `${step.points} point${step.points === 1 ? '' : 's'}`;
+  switch (step.reason) {
+    case 'leftover':
+      return {
+        text: `${label(step.seat)} ${mine ? 'are' : 'is'} caught with ${cards} — ${points}.`,
+        tone: mine ? 'bad' : 'neutral',
+      };
+    case 'to-winner': {
+      const toMine = step.to === viewerSeat;
+      return {
+        text: `${possessive(step.seat)} ${cards} ${n === 1 ? 'is' : 'are'} worth ${step.points} to ${label(step.to)}.`,
+        tone: toMine ? 'good' : (mine ? 'bad' : 'neutral'),
+      };
+    }
+    case 'taken':
+      if (step.sweep) {
+        const cost = step.sweep === 'self-lose-sum'
+          ? `${step.points} off ${mine ? 'your' : 'their'} score`
+          : `${step.points} to everyone else`;
+        return { text: `${label(step.seat)} shot the moon — ${cost}.`, tone: mine ? 'good' : 'bad' };
+      }
+      return {
+        text: `${label(step.seat)} took ${step.points} in penalty cards.`,
+        tone: mine ? 'bad' : 'neutral',
+      };
+    default:
+      return null;
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * The final look's second line
+ * ------------------------------------------------------------------ */
+
+/**
+ * What the hand that ended the match did to the totals — "Last hand: You +12 ·
+ * Ada +26 · Bo 0" — or '' when the boundary scored nobody.
+ *
+ * THE LAST HAND'S NUMBERS WERE TWO TAPS AWAY (issue #189). The sheet a live
+ * round opens is exactly this arithmetic, and the round that ends the match
+ * never opens one: its damage was on the results panel under a collapsed
+ * "Round by round", so a player who lost a shedding match to a hand they never
+ * saw scored had to go looking for what it cost. The final-look bar already
+ * stands over the ending to be read; this is the line it was missing.
+ *
+ * PER SIDE, like the sheet it stands in for (#125): a partnership pack banks a
+ * side's whole result on one seat, and a per-seat list would read as one partner
+ * carrying the team. The sign is printed even for a gain, because the direction
+ * is the pack's (see the header) and "+26" is a fact either way; a zero is "0",
+ * exactly as the sheet's own delta column prints it.
+ *
+ * EMPTY WHEN THERE IS NOTHING TO SAY. Cribbage pegs every hole live, so its
+ * boundary carries no deltas; a "Last hand: You 0 · Nell 0" there would be a
+ * sentence about nothing, and the bar is small on purpose.
+ *
+ * @param ev      the match-ending `roundOver` event (`scores` per seat)
+ * @param labelOf (seat) => the table's own label for it — "You", "Nell"
+ */
+export function lastHandSentence(pack, seats, ev, labelOf) {
+  const scores = ev?.scores || {};
+  if (Object.keys(scores).length === 0) return '';
+  const sides = sidesOf(pack, seats);
+  const deltas = foldToSides(scores, sides);
+  const parts = sides.map((members, i) => {
+    const who = members.map((seat) => labelOf(seat)).join(' & ');
+    const n = deltas[i] ?? 0;
+    return `${who} ${n > 0 ? `+${n}` : n}`;
+  });
+  return `Last hand: ${parts.join(' · ')}.`;
 }
 
 /* ------------------------------------------------------------------ *

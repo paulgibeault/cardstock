@@ -24,7 +24,7 @@ import path from "node:path";
 import { createState } from "../src/engine/state.js";
 import { loadPackFromDisk } from "../tools/pack-test.mjs";
 import { ROOT } from "../tools/stage.mjs";
-import { targetSentence, trickNarration, winDirection } from "../src/ui/scoreDirection.js";
+import { targetSentence, trickNarration, winDirection, lastHandSentence } from "../src/ui/scoreDirection.js";
 
 const seatLabel = (seat) => ["You", "Nell", "Ada", "Bo"][seat] ?? `Seat ${seat}`;
 
@@ -231,4 +231,43 @@ test("both narration surfaces go through the shared direction read", () => {
     "src/ui/panels.js no longer imports the direction read");
   assert.doesNotMatch(code(panels), /First to \$\{/,
     "the round summary is building its own target sentence again");
+});
+
+/* ------------------------------------------------------------------ *
+ * The final look's last-hand line (#189)
+ * ------------------------------------------------------------------ */
+
+const label = (seat) => seatLabel(seat);
+
+test("the last hand's numbers are said per seat at a teamless pack", async () => {
+  const state = await table("hearts");
+  const ev = { type: 'roundOver', round: 9, scores: { 0: 0, 1: 26, 2: 0, 3: 0 }, totals: [70, 104, 61, 49], over: true };
+  assert.strictEqual(lastHandSentence(state.pack, state.seats, ev, label),
+    "Last hand: You 0 · Nell +26 · Ada 0 · Bo 0.");
+});
+
+test("a partnership's last hand is one number per side, both names on it", async () => {
+  const state = await table("team-spades");
+  const ev = { type: 'roundOver', round: 6, scores: { 0: 63, 1: -40, 2: 0, 3: 0 }, totals: [511, 300, 0, 0], over: true };
+  assert.strictEqual(lastHandSentence(state.pack, state.seats, ev, label),
+    "Last hand: You & Ada +63 · Nell & Bo -40.");
+});
+
+test("a boundary that scored nobody says nothing", async () => {
+  const state = await table("cribbage", { seats: 2 });
+  // Cribbage pegs live: its roundOver carries no deltas at all.
+  assert.strictEqual(lastHandSentence(state.pack, state.seats, { type: 'roundOver', scores: {}, totals: [121, 90], over: true }, label), '');
+  assert.strictEqual(lastHandSentence(state.pack, state.seats, null, label), '');
+});
+
+// PART GREP, as above: the bar is built in src/ui/panels.js, which cannot be
+// loaded here, and the sentence reaches it through src/ui/table.js's final look.
+test("the final look is handed the last hand's line", () => {
+  const table = fs.readFileSync(path.join(ROOT, "src/ui/table.js"), "utf8");
+  assert.match(table, /lastHandSentence\(state\.pack, state\.seats, ended, seatLabel\)/);
+  const panels = fs.readFileSync(path.join(ROOT, "src/ui/panels.js"), "utf8");
+  assert.match(panels, /export function awaitFinalLook\(result, play, hand = ''\)/);
+  assert.match(panels, /el\.finalLookHand\.hidden = !hand/);
+  const html = fs.readFileSync(path.join(ROOT, "index.html"), "utf8");
+  assert.match(html, /id="final-look-hand"/);
 });

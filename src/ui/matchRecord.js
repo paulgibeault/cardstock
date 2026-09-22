@@ -15,7 +15,7 @@
 import { serializeMatch } from '../engine/replay.js';
 import { computeMatchStats, placements, sideStandings } from '../stats/matchStats.js';
 import { sideOfSeat } from '../engine/sides.js';
-import { recordResult, readStats, clearMatch, recordDailyResult, readDailyStats } from '../arcade/storage.js';
+import { recordResult, readStats, clearMatch, saveMatch, recordDailyResult, readDailyStats } from '../arcade/storage.js';
 
 /** Display-only faces from the manifest; see schema `heroCards`. */
 export function heroFaces(manifest) {
@@ -138,6 +138,10 @@ export function createMatchRecord({ me, seating, art, onConclude, daily = () => 
     // A finished match is not something to resume into — and a daily is not
     // something to resume into twice, so its own slot is the one cleared.
     clearMatch(state.pack.id, { slot: run ? 'daily' : 'match' });
+    // AND KEPT, under a slot that is never resumed: the finished match is what
+    // review reads (REVIEW_PLAN.md phase 3), and a save that costs a few KB is
+    // the cheapest way for the lobby to still have it tomorrow.
+    saveMatch(state, { hints, slot: 'last' });
     const stats = safeStats(state);
     const won = wonBySide(state);
     // ONE RESULT, IN ONE BOOK. A daily run is recorded against the day, and

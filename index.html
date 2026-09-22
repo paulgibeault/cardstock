@@ -405,6 +405,14 @@
            a match that runs to 500 points offers no exit but closing the
            table, which keeps the game in progress and waiting in the lobby. -->
       <div id="round-target" class="round-target"></div>
+      <!-- THE GAME SO FAR, ON THE SHEET (src/ui/review.js): the hand just
+           finished, trick by trick, without dealing the next one. Opening it
+           stops the countdown — a player reading this is not ready to deal —
+           and every play in it is a door onto the felt at that moment. -->
+      <button type="button" id="round-map-toggle" class="sheet-disclosure" aria-expanded="false" aria-controls="round-map">
+        Trick by trick
+      </button>
+      <div id="round-map" class="sheet-disclosure__body" hidden></div>
       <div class="panel__actions">
         <!-- The countdown, drawn ON the button it is counting down to rather
              than beside it as digits: the fact worth showing is "this is about
@@ -461,6 +469,7 @@
       <div id="scoreboard-history" class="round-history"></div>
       <div class="panel__actions">
         <button id="scoreboard-close">Close</button>
+        <button id="scoreboard-review" class="ghost-button">Review the game</button>
         <button id="scoreboard-rules" class="ghost-button">How to play</button>
       </div>
     </div>
@@ -506,7 +515,49 @@
     <div class="final-look__bar">
       <p id="final-look-result" class="final-look__result"></p>
       <p id="final-look-play" class="final-look__play"></p>
+      <!-- The last hand's numbers, per side (#189): the sheet the match-ending
+           round never opens, as one line under the last card. -->
+      <p id="final-look-hand" class="final-look__play"></p>
       <button type="button" id="final-look-continue">See the results</button>
+    </div>
+  </div>
+
+  <!-- THE REEL (REVIEW_PLAN.md phase 3, src/ui/review.js): while the felt is
+       standing at a past position of the match, this bar is how you move —
+       a hand or a turn either way, the map from the label in the middle, and
+       the way back to the game. Low and outside #table like #final-look, for
+       the same reason: the felt is the thing being looked at. -->
+  <div id="review-bar" hidden>
+    <div class="review-bar__bar" role="group" aria-label="Review the game">
+      <button type="button" id="review-prev-hand" class="review-bar__step" aria-label="Previous hand">⏮</button>
+      <button type="button" id="review-prev-turn" class="review-bar__step" aria-label="Previous turn">◀</button>
+      <button type="button" id="review-position" class="review-bar__label" aria-label="Open the map of the game"></button>
+      <button type="button" id="review-next-turn" class="review-bar__step" aria-label="Next turn">▶</button>
+      <button type="button" id="review-next-hand" class="review-bar__step" aria-label="Next hand">⏭</button>
+      <button type="button" id="review-done" class="review-bar__done">Back to the game</button>
+    </div>
+  </div>
+
+  <!-- THE MAP BESIDE THE FELT, where there is room for both (src/ui/table.js's
+       openReviewMap picks this over the sheet below at a wide window): the felt
+       shrinks to make room and follows every tap, so the map is read next to
+       the position it names rather than over it. -->
+  <aside id="review-drawer" aria-label="The game so far" hidden>
+    <div class="review-drawer__head">
+      <span class="panel__title">The game so far</span>
+      <button type="button" id="review-drawer-close" class="ghost-button">Close</button>
+    </div>
+    <div id="review-drawer-host"></div>
+  </aside>
+
+  <!-- THE MAP AS A SHEET, for a window too narrow to show it beside the felt. -->
+  <div id="review-overlay" hidden>
+    <div class="panel panel--wide review-panel">
+      <div class="panel__title">The game so far</div>
+      <div id="review-map-host"></div>
+      <div class="panel__actions">
+        <button id="review-close">Close</button>
+      </div>
     </div>
   </div>
 
@@ -516,12 +567,23 @@
       <div id="game-over-message"></div>
       <div id="game-over-record"></div>
       <div id="game-over-stats" class="stats-grid"></div>
-      <button type="button" id="game-over-rounds-toggle" class="ghost-button" aria-expanded="false" hidden>
+      <!-- TWO SECTIONS OF THE SHEET, NOT TWO BUTTONS: the rounds and the tricks
+           fold out under a hairline each, the way a sheet's own headings do.
+           The verbs live in the actions row; these are headings you open. -->
+      <button type="button" id="game-over-rounds-toggle" class="sheet-disclosure" aria-expanded="false" aria-controls="game-over-rounds" hidden>
         Round by round
       </button>
-      <div id="game-over-rounds" class="round-history" hidden></div>
+      <div id="game-over-rounds" class="round-history sheet-disclosure__body" hidden></div>
+      <!-- THE WHOLE GAME, IN THE RESULTS (src/ui/review.js): every hand, every
+           trick, who took it with what — opened here without leaving the sheet,
+           and every play in it a door onto the felt at that moment. -->
+      <button type="button" id="game-over-map-toggle" class="sheet-disclosure" aria-expanded="false" aria-controls="game-over-map">
+        Trick by trick
+      </button>
+      <div id="game-over-map" class="sheet-disclosure__body" hidden></div>
       <div class="panel__actions">
         <button id="game-over-lobby-button" class="ghost-button">Lobby</button>
+        <button id="game-over-review" class="ghost-button">Review the game</button>
         <button id="play-again-button">Play again</button>
       </div>
     </div>
