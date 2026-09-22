@@ -187,6 +187,64 @@ test("the rail is still the fixed width the fan is laid out against", () => {
 });
 
 /* ------------------------------------------------------------------ *
+ * The portrait band — the ends and the middle
+ * ------------------------------------------------------------------ */
+
+/** Every declaration block inside one media block, comments already stripped. */
+function rulesIn(body, matches) {
+  const out = [];
+  for (const [, head, decls] of body.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    const selector = head.split("}").pop().trim().replace(/\s+/g, " ");
+    if (selector && matches(selector)) out.push({ selector, decls });
+  }
+  return out;
+}
+
+const band = mediaBlocks(commentless).find((b) => /orientation:\s*portrait/.test(b.condition));
+
+test("the band stands the rungs at its two ends with the token between them", () => {
+  assert.ok(band, "no portrait-phone block in the stylesheet");
+  const stack = rulesIn(band.body, (sel) => sel === ".hand-rail__stack");
+  assert.strictEqual(stack.length, 1, "one rule lays the band's row out");
+  assert.match(stack[0].decls, /flex-direction:\s*row/, "the band stands its rungs in a row");
+  // PACKED AGAINST THE THUMB the sort toggle was the pill next to the one that
+  // commits, which is the neighbourhood that turned a Pass into "Deal order"
+  // under a finger (#122, round-5 item 19). The ends are what separate them.
+  assert.match(stack[0].decls, /justify-content:\s*space-between/,
+    "the two buttons take the two ends of the band");
+  // And the sort toggle takes the end AWAY from the action button. `order`
+  // rather than markup, so the tab order stays sort-then-commit in both shapes.
+  const sort = rulesIn(band.body, (sel) => sel === ".hand-rail__stack .hand-sort");
+  assert.strictEqual(sort.length, 1, "the sort toggle is sent to the far end");
+  assert.match(sort[0].decls, /order:\s*-1/, "which is the head of the row");
+  assert.doesNotMatch(railStack, /id="hand-sort"[\s\S]*turn-token/,
+    "the markup order is still the column's: the band re-orders in CSS alone");
+});
+
+test("the token lands on the centre line because both ends are one width", () => {
+  // IT IS CENTRED BY ARITHMETIC, not by a rule of its own: `space-between` puts
+  // the middle item on the row's centre line only while the items flanking it
+  // are the same width and the padding is symmetric. Both are pinned, so this
+  // is the test that would catch either one drifting.
+  const ends = rulesIn(band.body, (sel) => sel.includes("#action-button") && sel.includes(".hand-sort"));
+  assert.strictEqual(ends.length, 1, "both ends are laid out to one width, in one rule");
+  assert.match(ends[0].decls, /width:\s*5rem/, "the rail's own width, both ends");
+  const padding = rulesIn(band.body, (sel) => sel === ".hand-rail__stack")[0]
+    .decls.match(/padding:\s*([^;]+);/);
+  assert.ok(padding, "the band says what its ends are inset by");
+  const sides = padding[1].trim().split(/\s+/);
+  assert.ok(sides.length === 2 || (sides.length === 4 && sides[1] === sides[3]),
+    `asymmetric padding takes the token off centre: ${padding[1]}`);
+});
+
+test("a left-handed band swaps the ends and leaves the token between them", () => {
+  const mirrored = rulesIn(band.body, (sel) => sel.includes('[data-handedness="left"]'));
+  assert.strictEqual(mirrored.length, 1, "one rule mirrors the band");
+  assert.match(mirrored[0].decls, /flex-direction:\s*row-reverse/,
+    "reversing the row is what keeps the thumb's end the thumb's");
+});
+
+/* ------------------------------------------------------------------ *
  * #155 — the help mark
  * ------------------------------------------------------------------ */
 

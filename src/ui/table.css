@@ -2779,7 +2779,22 @@ button.pile-stack:focus-visible { outline: 2px solid var(--accent); outline-offs
  * has the width it is laid out to everywhere else, so nothing in the band
  * slides sideways when a phase begins or ends. The rail beside the fan stacked
  * its three rungs; the band stands them in a row, and the action button keeps
- * the thumb's end of it whether or not there is an action in it (#154). */
+ * the thumb's end of it whether or not there is an action in it (#154).
+ *
+ * THE TWO BUTTONS TAKE THE TWO ENDS, AND THE TOKEN THE MIDDLE. Packed against
+ * the thumb's end the three rungs read as one group of three, and the sort
+ * toggle was the pill NEXT TO the one that commits — the same neighbourhood
+ * that made a Pass turn into "Deal order" under a finger back when they shared
+ * a slot (#122, round-5 item 19). Sent to the far end it is plainly a different
+ * kind of control: arranging your own fan happens at the hand's left edge, and
+ * committing happens where the thumb already is.
+ *
+ * THE TOKEN IS CENTRED BY ARITHMETIC RATHER THAN BY A RULE OF ITS OWN. Both
+ * ends are the same 5rem and the band's padding is symmetric, so `space-between`
+ * puts the middle item on the row's centre line — over the middle of the fan,
+ * where "whose turn" is not standing next to anything that can be pressed. It
+ * stays centred when the turn is not the player's, because a quiet rung loses
+ * `visibility` and keeps its box. */
 @media (orientation: portrait) and (max-width: 480px) {
   #hand-row {
     flex-wrap: wrap;
@@ -2797,11 +2812,18 @@ button.pile-stack:focus-visible { outline: 2px solid var(--accent); outline-offs
     bottom: 0;
     flex-direction: row;
     align-items: center;
-    justify-content: flex-end;
+    justify-content: space-between;
     gap: 0.5rem;
     padding: 0 0.15rem;
   }
-  /* The thumb reaches the same side it always did. */
+  /* THE SORT TOGGLE LEADS THE ROW, and only here: the rail beside the fan is a
+     column where "first" means the rung farthest from the thumb, and its order
+     is the one #154 settled. `order` rather than a second markup order, so the
+     tab order stays the reading order in both shapes — sort, then commit. */
+  .hand-rail__stack .hand-sort { order: -1; }
+  /* The thumb reaches the same side it always did, and the sort toggle the
+     other one: reversing the row swaps the ends and leaves the token between
+     them. */
   [data-handedness="left"] .hand-rail__stack { flex-direction: row-reverse; }
   /* ONE WIDTH FOR BOTH — the rail's own 5rem, which is the width the action
      button is laid out to everywhere else and the width its label budget
