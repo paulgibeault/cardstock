@@ -291,8 +291,12 @@ test("the speed is read from storage, not from a snapshot the lobby cannot refre
   assert.ok(flight, "currentFlightMs must exist — the five flight sites share one arithmetic");
   assert.match(flight[0], /flightDurationMs\(currentDelayMs\(\)\)/,
     "the duration must come off the live number");
-  assert.strictEqual((src.match(/currentFlightMs\(\)/g) || []).length, 6,
-    "all five flight-duration call sites must ask currentFlightMs, plus its own definition — "
+  // More than the five flights since the review workstream (#196): the trick
+  // reveal's and the round beat's plans, the final show's plan and the final
+  // look's beat ask too — plus the definition. Exact, not a floor: a site left
+  // on the snapshot is a card that still flies at the stale rung.
+  assert.strictEqual((src.match(/currentFlightMs\(\)/g) || []).length, 8,
+    "every flight-duration call site must ask currentFlightMs, plus its own definition — "
     + "a site left on the snapshot is a card that still flies at the stale rung");
   assert.match(src, /botDelayMs: \(\) => currentDelayMs\(\)/,
     "the bot driver must ask at fire time, the way `difficulty` beside it does (#91)");
