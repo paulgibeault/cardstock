@@ -123,7 +123,7 @@ The match-ending hand ends like every other hand, and then the final look.
    cards are what the bar exists to let you read — and comes down with the
    results.
 3. The final-look bar says what the last hand did: one line, per side,
-   "Last hand: You +12 · Ada +26 · Bo +0", from the final `roundOver`'s
+   "Last hand: You +12 · Ada +26 · Bo 0", from the final `roundOver`'s
    `scores`. Absent when the hand scored nothing at the boundary (cribbage
    pegs live).
 4. The status bar promises the tap during a final show ("Round over. Tap to
