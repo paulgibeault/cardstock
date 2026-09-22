@@ -79,6 +79,18 @@ export function createSession({
     // counted into the pack's record when the match concludes, which is the
     // one place the question "does anybody use this" can be answered from.
     hintsTaken,
+    // REVIEW MODE (REVIEW_PLAN.md phase 3): the felt standing at a past
+    // position of this match, or null. `{ snapshot, timeline, index, state,
+    // lens }` — the log as it was when review opened, its map
+    // (src/stats/timeline.js), the position, the state rendered for it, and
+    // whether hidden cards are shown ('open') or the seat's own view is
+    // ('own'). Nothing on the felt is actable while it is set, the bots do
+    // not move, and the LIVE state is never touched: leaving review is
+    // rendering it again.
+    review: null,
+    // What `concludeMatch` handed back when this match ended, kept so the
+    // results panel can be put back after a review of the finished game.
+    ending: null,
     // The refusal sentence #log is currently carrying for a staged selection the
     // engine will not take (renderStageTray). Kept so a repaint for some other
     // reason — a bot moving, a resize — does not re-announce the same sentence
@@ -245,6 +257,7 @@ export function createSession({
 /** Cancel everything this session has in flight. Safe on null, safe twice. */
 export function stopSession(session) {
   if (!session) return;
+  session.review = null;
   if (session.botTimer) session.botTimer.cancel();
   session.botTimer = null;
   if (session.bannerTimer) session.bannerTimer.cancel();

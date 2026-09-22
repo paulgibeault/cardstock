@@ -461,6 +461,7 @@
       <div id="scoreboard-history" class="round-history"></div>
       <div class="panel__actions">
         <button id="scoreboard-close">Close</button>
+        <button id="scoreboard-review" class="ghost-button">Review the game</button>
         <button id="scoreboard-rules" class="ghost-button">How to play</button>
       </div>
     </div>
@@ -513,6 +514,33 @@
     </div>
   </div>
 
+  <!-- THE REEL (REVIEW_PLAN.md phase 3, src/ui/review.js): while the felt is
+       standing at a past position of the match, this bar is how you move —
+       a hand or a turn either way, the map from the label in the middle, and
+       the way back to the game. Low and outside #table like #final-look, for
+       the same reason: the felt is the thing being looked at. -->
+  <div id="review-bar" hidden>
+    <div class="review-bar__bar" role="group" aria-label="Review the game">
+      <button type="button" id="review-prev-hand" class="review-bar__step" aria-label="Previous hand">⏮</button>
+      <button type="button" id="review-prev-turn" class="review-bar__step" aria-label="Previous turn">◀</button>
+      <button type="button" id="review-position" class="review-bar__label" aria-label="Open the map of the game"></button>
+      <button type="button" id="review-next-turn" class="review-bar__step" aria-label="Next turn">▶</button>
+      <button type="button" id="review-next-hand" class="review-bar__step" aria-label="Next hand">⏭</button>
+      <button type="button" id="review-done" class="review-bar__done">Back to the game</button>
+    </div>
+  </div>
+
+  <!-- THE MAP: every hand, every turn, every card, as a list you scroll and tap. -->
+  <div id="review-overlay" hidden>
+    <div class="panel panel--wide review-panel">
+      <div class="panel__title">The game so far</div>
+      <div id="review-map-host"></div>
+      <div class="panel__actions">
+        <button id="review-close">Close</button>
+      </div>
+    </div>
+  </div>
+
   <div id="game-over-overlay" hidden>
     <div class="panel panel--wide">
       <div id="game-over-fan" class="game-over-fan" aria-hidden="true"></div>
@@ -525,6 +553,7 @@
       <div id="game-over-rounds" class="round-history" hidden></div>
       <div class="panel__actions">
         <button id="game-over-lobby-button" class="ghost-button">Lobby</button>
+        <button id="game-over-review" class="ghost-button">Review the game</button>
         <button id="play-again-button">Play again</button>
       </div>
     </div>

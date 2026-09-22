@@ -34,6 +34,11 @@ const el = {
   scoreTotals: document.getElementById('scoreboard-totals'),
   scoreHistory: document.getElementById('scoreboard-history'),
   scoreClose: document.getElementById('scoreboard-close'),
+  scoreReview: document.getElementById('scoreboard-review'),
+  gameOverReview: document.getElementById('game-over-review'),
+  reviewOverlay: document.getElementById('review-overlay'),
+  reviewMapHost: document.getElementById('review-map-host'),
+  reviewClose: document.getElementById('review-close'),
   scoreRules: document.getElementById('scoreboard-rules'),
 
   rulesOverlay: document.getElementById('rules-overlay'),
@@ -552,10 +557,29 @@ export function hideGameOver() {
   el.gameOverOverlay.hidden = true;
 }
 
+/** The map of the game, over the felt (src/ui/review.js builds `node`). */
+export function showReviewMap(node) {
+  el.reviewMapHost.replaceChildren(node);
+  el.reviewOverlay.hidden = false;
+  // The row the felt is standing on, in view — a map of a long match is a
+  // list of hundreds, and opening it at the top is opening it at the deal.
+  node.querySelector('.review-turn--current')?.scrollIntoView({ block: 'center' });
+}
+
+export function hideReviewMap() {
+  el.reviewOverlay.hidden = true;
+  el.reviewMapHost.replaceChildren();
+}
+
+export function isReviewMapOpen() {
+  return !el.reviewOverlay.hidden;
+}
+
 export function hideAllPanels() {
   hideGameOver();
   hideFinalLook();
   hideRoundSummary();
+  hideReviewMap();
   hideScoreboard();
   hideRules();
 }
@@ -607,9 +631,14 @@ export function hideRules() {
  * owns the match — these overlays only ask.
  */
 export function initPanels({
-  onContinueRound, onPlayAgain, onLobby, onCloseScoreboard, onEndMatch, onRules, onCyclePace,
+  onContinueRound, onPlayAgain, onLobby, onCloseScoreboard, onEndMatch, onRules, onCyclePace, onReview,
 }) {
   el.rulesClose.addEventListener('click', () => hideRules());
+  // TWO DOORS INTO REVIEW: the scoreboard mid-match, and the results panel at
+  // the end. Both close themselves first; the reel is what opens instead.
+  el.scoreReview.addEventListener('click', () => { hideScoreboard(); onReview?.(); });
+  el.gameOverReview.addEventListener('click', () => { hideGameOver(); onReview?.(); });
+  el.reviewClose.addEventListener('click', () => hideReviewMap());
   el.scoreRules.addEventListener('click', () => onRules?.());
   el.roundContinue.addEventListener('click', () => onContinueRound());
   el.roundEndMatch.addEventListener('click', () => onEndMatch());

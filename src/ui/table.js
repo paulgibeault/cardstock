@@ -114,10 +114,15 @@ import {
 import {
   initPanels, showRoundSummary, hideRoundSummary, paintRoundPace,
   showScoreboard, showGameOver, hideAllPanels, showRules, awaitFinalLook,
+  showReviewMap, hideReviewMap, isReviewMapOpen, hideGameOver, hideScoreboard,
 } from './panels.js';
 import { packRules } from './rules.js';
 import { roundBeatPlan, trickRevealPlan, nextShowBeat, finalShowPlan } from './roundBeat.js';
 import { lastHandSentence, revealSentence } from './scoreDirection.js';
+import { serializeMatch } from '../engine/replay.js';
+import { viewFor } from '../engine/view.js';
+import { matchTimeline, positionAt, seekTargets } from '../stats/timeline.js';
+import { reviewMapModel, renderReviewMap, reviewBarModel } from './review.js';
 import { paceLevel, nextSummaryPace } from './pace.js';
 import { speedLevel, speedForDelay, nextSpeed } from './speed.js';
 import {
@@ -189,6 +194,14 @@ const el = {
   tableZones: document.getElementById('table-zones'),
   tableBoard: document.getElementById('table-board'),
   feltMiddle: document.getElementById('felt-middle'),
+  // Review (REVIEW_PLAN.md phase 3): the reel under the felt.
+  reviewBar: document.getElementById('review-bar'),
+  reviewPrevHand: document.getElementById('review-prev-hand'),
+  reviewPrevTurn: document.getElementById('review-prev-turn'),
+  reviewNextTurn: document.getElementById('review-next-turn'),
+  reviewNextHand: document.getElementById('review-next-hand'),
+  reviewPosition: document.getElementById('review-position'),
+  reviewDone: document.getElementById('review-done'),
   opponentsTop: document.getElementById('opponents-top'),
   feltMiddle: document.getElementById('felt-middle'),
   centerPiles: document.getElementById('center-piles'),
@@ -424,7 +437,11 @@ function feltState() {
   // The trick reveal is the same idea one move smaller (#123): for one beat the
   // felt holds the four cards of a completed trick while the engine has already
   // given them to the seat that won them.
-  return (session?.trickBeat && session.trickPoseState)
+  // AND REVIEW IS THE SAME IDEA FOR THE WHOLE MATCH (REVIEW_PLAN.md phase
+  // 3): the felt stands at a position the engine moved past long ago, and it
+  // outranks the beats because a review is opened only when no beat is up.
+  return (session?.review && session.review.state)
+    || (session?.trickBeat && session.trickPoseState)
     || (session?.roundBeat && session.roundFinalState)
     || liveState();
 }
@@ -2881,7 +2898,7 @@ function renderStatusBar(state, acting) {
   // `session.roundBeat` for the same reason `render` reads it: while the felt
   // holds a finished hand, nobody is on turn and the bar must not say so. A
   // trick reveal is the same claim for one beat (#123).
-  const humanActs = acting.some(isMySeat) && !session?.roundBeat && !session?.trickBeat;
+  const humanActs = acting.some(isMySeat) && !session?.roundBeat && !session?.trickBeat && !session?.review;
   el.status.classList.toggle('status-bar--your-turn', humanActs);
   el.status.classList.toggle('status-bar--thinking', !state.gameOver && !humanActs);
 
@@ -3106,6 +3123,9 @@ function renderSharedBoardRow(state) {
 }
 
 function statusTextFor(state, acting) {
+  // REVIEWING IS NOBODY'S TURN. The reel under the felt says where in the
+  // match this is; the bar says only that the table is not waiting on anyone.
+  if (session?.review) return 'Reviewing';
   if (state.gameOver) return `Game over — ${winnerSentence(state)}`;
   // THE ROUND BEAT IS NOBODY'S TURN. The felt is holding the position the hand
   // ended in (runRoundBeat) and this state's `turn` is whatever the template
@@ -3241,7 +3261,7 @@ function render(state, message) {
   // turn either. A trick reveal (#123) is the same claim for one beat: the
   // posed position still has the fourth player on turn because the trick has
   // not been resolved on that copy, and their hand must not answer a tap.
-  const humanActs = acting.some(isMySeat) && !session.roundBeat && !session.trickBeat;
+  const humanActs = acting.some(isMySeat) && !session.roundBeat && !session.trickBeat && !session.review;
   // A remote seat's move, a resumed match, a view swapped in: none of them
   // pass through applyStateChange, so the hint is dropped here as well the
   // moment the human is no longer the one acting.
@@ -3989,6 +4009,125 @@ function offerFinalLook(state, move, ending, { ended = null, now = false } = {})
   if (now) { ask(); return; }
   const beat = Math.max(700, flightDurationMs(settings?.botDelayMs) + 280);
   Arcade.session.setTimeout(ask, beat);
+}
+
+/* ------------------------------------------------------------------ *
+ * Review: the felt at any turn of the match (REVIEW_PLAN.md phase 3)
+ *
+ * The log is the match (src/engine/replay.js) and a whole one replays in a
+ * few milliseconds, so a position is computed every time it is asked for
+ * (src/stats/timeline.js's positionAt) and nothing here caches a state. The
+ * LIVE state is never touched: review is a different thing on the felt, and
+ * leaving it is rendering the live one again.
+ *
+ * THE LENS. A finished match shows every position whole. A LIVE match shows
+ * what this seat could see at that position — `viewFor` through the same
+ * `modelFromView` a joiner renders — so scrubbing back through a hand still
+ * being played is never a peek at a card that was face down then. Opponents'
+ * hands render as backs either way until the open lens lands (phase 4).
+ * ------------------------------------------------------------------ */
+
+/** Can a review be opened on this felt right now? */
+function reviewOffered() {
+  const state = liveState();
+  return !!state && !state.isView && !!session && !session.review
+    && !session.roundBeat && !session.trickBeat && !session.roundSummaryOpen
+    && state.log.length > 0;
+}
+
+/**
+ * Open the review at `at`, or at the start of the last turn when not asked —
+ * the position a player most wants to look at is the one just before the
+ * thing that just happened.
+ */
+function enterReview({ at = null } = {}) {
+  if (!reviewOffered()) return;
+  const state = liveState();
+  cancelBotTurn();
+  cancelAnnouncementBeats();
+  hideBanner();
+  hideGameOver();
+  hideScoreboard();
+  const snapshot = serializeMatch(state);
+  const timeline = matchTimeline(state.pack, snapshot, { labelOf: seatLabel });
+  session.review = {
+    snapshot,
+    timeline,
+    index: 0,
+    state: null,
+    lens: state.gameOver ? 'open' : 'own',
+  };
+  const start = at ?? (seekTargets(timeline, timeline.length).prevTurn ?? 0);
+  seekReview(start);
+  el.reviewBar.hidden = false;
+}
+
+/** Stand the felt at position `n` of the reviewed match. */
+function seekReview(n) {
+  const review = session?.review;
+  if (!review) return;
+  const live = liveState();
+  const index = Math.max(0, Math.min(review.timeline.length, n | 0));
+  review.index = index;
+  const whole = positionAt(live.pack, review.snapshot, index);
+  review.state = review.lens === 'own'
+    ? modelFromView(viewFor(whole, mySeat()), live.pack)
+    : whole;
+  hideShowCard();
+  render(review.state);
+  paintReviewBar();
+  // The sentence for where we are: the move that led here, which is what a
+  // player stepping back is trying to see.
+  const led = index > 0 ? review.timeline.moves[index - 1] : null;
+  el.log.textContent = led ? `${led.text}.` : 'The deal.';
+}
+
+function paintReviewBar() {
+  const review = session?.review;
+  if (!review) return;
+  const model = reviewBarModel(review.timeline, review.index, seatLabel);
+  el.reviewPosition.textContent = model.label;
+  el.reviewPrevHand.disabled = model.prevHand == null;
+  el.reviewPrevTurn.disabled = model.prevTurn == null;
+  el.reviewNextTurn.disabled = model.nextTurn == null;
+  el.reviewNextHand.disabled = model.nextHand == null;
+}
+
+function stepReview(which) {
+  const review = session?.review;
+  if (!review) return;
+  const target = seekTargets(review.timeline, review.index)[which];
+  if (target != null) seekReview(target);
+}
+
+function openReviewMap() {
+  const review = session?.review;
+  if (!review) return;
+  const live = liveState();
+  const model = reviewMapModel(review.timeline, { index: review.index, labelOf: seatLabel });
+  const node = renderReviewMap(model, {
+    art,
+    cardOf: (id) => cardById(live, id) ?? null,
+    onSeek: (from) => { hideReviewMap(); seekReview(from); },
+  });
+  showReviewMap(node);
+}
+
+/** Back to the game: the live felt, the bots, and the results if the match was over. */
+function leaveReview() {
+  if (!session?.review) return;
+  session.review = null;
+  hideReviewMap();
+  el.reviewBar.hidden = true;
+  const state = liveState();
+  if (!state) return;
+  render(state);
+  if (state.gameOver) {
+    if (session.ending) showGameOver(state, session.ending);
+    return;
+  }
+  scheduleNextTurn();
+  scheduleAnnouncementBeats();
 }
 
 function openScoreboard() {
@@ -4865,6 +5004,9 @@ function afterMove(state, move, from, message, { publish = true } = {}) {
     // waits: the last card is the thing worth watching, and it is still in the
     // air on this frame.
     const ending = record.concludeMatch(state, { hints: session.hintsTaken });
+    // Kept so the results can be put back after a review of the finished
+    // game (leaveReview).
+    session.ending = ending;
     // THE LAST TRICK IS STILL A TRICK, and it is the one most worth seeing
     // whole: the card that ends a match is the card that won it. The match is
     // over either way, so nothing here races the hold — `offerFinalLook` waits
@@ -5322,6 +5464,10 @@ function scheduleNextTurn() {
   // bots play on around an empty chair. Nothing is torn down, so resuming is
   // one call and the table picks up mid-turn.
   if (paused) return;
+  // A REVIEW IS A PAUSE THE PLAYER OPENED: the felt is standing at a past
+  // position and a bot moving the live one underneath would be a move nobody
+  // saw. `leaveReview` re-arms the turn.
+  if (session?.review) return;
   if (bots) bots.scheduleNextTurn(session, epoch);
 }
 
@@ -5946,6 +6092,21 @@ export function initTable({ onExit }) {
     // reason it is on the felt's click: what a key means during a held beat does
     // not depend on which kind of beat it is.
     //
+    // THE REEL FROM THE KEYBOARD (REVIEW_PLAN.md phase 3): arrows step a turn,
+    // with Shift a hand; Escape closes the map, then the review.
+    if (session.review) {
+      if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+        const forward = event.key === 'ArrowRight';
+        stepReview(event.shiftKey ? (forward ? 'nextHand' : 'prevHand') : (forward ? 'nextTurn' : 'prevTurn'));
+        event.preventDefault();
+        return;
+      }
+      if (event.key === 'Escape') {
+        if (isReviewMapOpen()) hideReviewMap();
+        else leaveReview();
+        return;
+      }
+    }
     // NOT WHEN THE KEY IS AIMED AT A CONTROL. Focus sitting on Lobby and a press
     // of Enter is a player leaving; this must not read it as "go on".
     if (session.beatResume && (event.key === 'Enter' || event.key === ' ')
@@ -6098,6 +6259,7 @@ export function initTable({ onExit }) {
   });
 
   initPanels({
+    onReview: () => enterReview(),
     onContinueRound: () => dismissRoundSummary(),
     onPlayAgain: () => livePack() && startGame(livePack(), liveState()?.seats),
     onLobby: () => exitToLobby(),
@@ -6127,6 +6289,14 @@ export function initTable({ onExit }) {
   el.lobbyButton.addEventListener('click', () => exitToLobby());
   el.speedChip.addEventListener('click', () => cycleSpeed());
   el.scoreChip.addEventListener('click', () => openScoreboard());
+
+  // The reel's own buttons (index.html #review-bar).
+  el.reviewPrevHand.addEventListener('click', () => stepReview('prevHand'));
+  el.reviewPrevTurn.addEventListener('click', () => stepReview('prevTurn'));
+  el.reviewNextTurn.addEventListener('click', () => stepReview('nextTurn'));
+  el.reviewNextHand.addEventListener('click', () => stepReview('nextHand'));
+  el.reviewPosition.addEventListener('click', () => openReviewMap());
+  el.reviewDone.addEventListener('click', () => leaveReview());
   // The bar is on screen before the first render, so the chip needs its word
   // now rather than at the first `renderStatusBar` — an empty pill in the
   // chrome reads as a bug, not as a control waiting for a state.

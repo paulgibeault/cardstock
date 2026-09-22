@@ -135,7 +135,17 @@ export function isDailyKey(key) {
  * they are two saved games, and a caller that says `{ slot: 'daily' }` reads as
  * what it is at the call site.
  */
-const SLOT_KEY = { match: matchKey, daily: dailyKey };
+/**
+ * THE LAST FINISHED MATCH, kept for review (REVIEW_PLAN.md phase 3). One per
+ * pack, overwritten by the next finish, the same seed + log as a save: the
+ * lobby can offer "review last game" without the table having been kept open.
+ */
+export const LAST_KEY_PREFIX = 'last.';
+export function lastKey(packId) {
+  return `${LAST_KEY_PREFIX}${packId}`;
+}
+
+const SLOT_KEY = { match: matchKey, daily: dailyKey, last: lastKey };
 
 function slotKeyFor(packId, slot) {
   return (SLOT_KEY[slot] || matchKey)(packId);
