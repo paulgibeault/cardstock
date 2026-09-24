@@ -1974,10 +1974,18 @@ function headlessBotsFor(session) {
  *
  * A no-op while the felt is bound, because then the felt is already doing it
  * and two drivers scheduling against one state would move the same bot twice.
+ *
+ * AND NO PAUSE GATE, which is a decision rather than an omission (#203). "Wait
+ * for them" is the felt's pause — `setTablePaused` holds the table the felt is
+ * showing, and the felt's own scheduler is the only thing that reads it. There
+ * is no per-table pause for an unbound table to be held by, so this used to read
+ * a `session.paused` that nothing ever wrote: a gate that was always open,
+ * wearing the look of one that was not. See the note in `askAboutSeat` for the
+ * gap that leaves.
  */
 function driveBots(session) {
   if (!session?.hosting() || !session.bots || !session.state) return;
-  if (session.bound || session.paused) return;
+  if (session.bound) return;
   session.bots.scheduleNextTurn(session, session.epoch);
   session.bots.scheduleAnnouncementBeats(session, session.epoch);
 }
@@ -2127,6 +2135,12 @@ function askAboutSeat(seat, session) {
       setTablePaused(false);
       afterSeatChange(session);
     } else if (choice === 'pause') {
+      // THE FELT'S PAUSE, WHICH IS THE ONE THE FELT IS SHOWING. `setTablePaused`
+      // is not per-table: answering "wait for them" about a table the felt is
+      // not bound to holds whichever table it IS showing, and leaves the one
+      // that lost a player being played on by the headless driver. Noted with
+      // #203, which removed the `session.paused` that looked like a fix for this
+      // and never was; the fix itself is a per-table pause and is its own job.
       setTablePaused(true);
       setNotice(`Paused — waiting for ${who}.`);
       afterSeatChange(session);
