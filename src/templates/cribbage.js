@@ -752,7 +752,7 @@ const cribbage = {
 
   /**
    * HOW FAR ALONG THE MATCH A SEAT IS — the rollout's terminal signal
-   * (src/engine/CONTRACT.md, "what the `hard` bot asks of you").
+   * (src/templates/CONTRACT.md, "what the `hard` bot asks of you").
    *
    * It has to be exported rather than left to the default for one reason: the
    * default is the accumulated score SIGNED BY `scoring.gameOver.winner`, and

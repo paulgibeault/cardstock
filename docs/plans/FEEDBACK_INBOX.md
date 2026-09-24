@@ -1,5 +1,12 @@
 # Feedback Inbox
 
+**Shipped.** Every round below has been triaged into a plan beside this file —
+[FEEDBACK_PLAN.md](FEEDBACK_PLAN.md) (round 2),
+[MELD_SEATS_PLAN.md](MELD_SEATS_PLAN.md) (round 4),
+[NEW_GAMES_FEEDBACK_PLAN.md](NEW_GAMES_FEEDBACK_PLAN.md) (round 5) — and
+shipped; round 3 went straight to the change. Kept as the log, in the words the
+feedback arrived in.
+
 Running log of playtest feedback captured as it comes in. Not triaged
 against the code yet — that happens when this becomes a plan. Items stay
 here in the words they arrived in, with just enough structure to sort them

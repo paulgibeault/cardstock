@@ -1,7 +1,7 @@
 // EVERY LIVE TABLE ON THIS DEVICE, AND THE TWO RULES ABOUT WHICH MAY EXIST.
 //
 // The registry is a `Map<tableId, TableSession>` with a door. It is small on
-// purpose — all of the policy from TABLES_PLAN.md §1 lives here and nowhere
+// purpose — all of the policy from docs/plans/TABLES_PLAN.md §1 lives here and nowhere
 // else, so "may I host this?" has exactly one answer rather than one per call
 // site. src/ui/party.js used to answer it three ways: a truthy `host` check, a
 // truthy `client` check, and a directory lookup, and the second of those was
@@ -52,12 +52,7 @@ export function createSessionRegistry() {
    * anything, which is the distinction party.js spells `seatedHere()`.
    */
   const seatedForPack = (packId) =>
-    all().find((s) => !s.hosting() && s.packId === packId && heldSeat(s) !== null) || null;
-
-  function heldSeat(session) {
-    const seat = session.client?.seat?.();
-    return seat === undefined ? null : seat;
-  }
+    all().find((s) => !s.hosting() && s.packId === packId && s.seatedAt() !== null) || null;
 
   return {
     all,

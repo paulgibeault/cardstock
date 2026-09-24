@@ -1,5 +1,8 @@
 # Meld & Seat Row Plan
 
+**Shipped.** All nine items implemented; the plan below is kept as written for
+its root-cause analysis.
+
 Playtest feedback from 2026-09-03 (round 4 in
 [FEEDBACK_INBOX.md](FEEDBACK_INBOX.md), items 9–17), triaged against the
 code. Nine items in two workstreams: **the meld mechanic** — what the

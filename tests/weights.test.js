@@ -22,6 +22,7 @@ import { applyMove } from "../src/engine/movePipeline.js";
 import { chooseBotMove, rankMoves } from "../src/engine/bot.js";
 import { createRng } from "../src/engine/rng.js";
 import { loadPackFromDisk } from "../tools/pack-test.mjs";
+import { actingSeats } from "./fixtures/engine.js";
 
 // One table per template, plus a second for trick-taking — because that
 // template now houses two games with different currencies, and a weight only
@@ -49,9 +50,8 @@ async function dealt(packId, seats, seed) {
 
 /** Walk a bot-vs-bot game, calling `visit(state, seat)` before each move. */
 function walk(state, limit, visit) {
-  const template = state.pack.template;
   for (let i = 0; i < limit && !state.gameOver; i++) {
-    const acting = template.actingSeats ? template.actingSeats(makeCtx(state)) : [state.turn.seat];
+    const acting = actingSeats(state);
     let move = null;
     let actor = null;
     for (const seat of acting) {

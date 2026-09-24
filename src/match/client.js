@@ -32,6 +32,9 @@
 import {
   FRAME, PROTOCOL_VERSION, validateFrame, isAuthentic, isSafeId, EMOTES,
 } from './protocol.js';
+import {
+  claimSeatFrame, proposeFrame, snapshotReqFrame, emoteFrame, byeFrame, seatOfSelf,
+} from './frames.js';
 import { VIEW_VERSION } from '../engine/view.js';
 
 /**
@@ -170,17 +173,11 @@ export function createTableClient({ peer, expects, host = null, tableId, hooks =
     // It also handles losing the seat: a roster that stops naming us is the
     // host giving the chair to somebody else, and `bye 'replaced'` is the
     // courtesy rather than the mechanism.
-    seatedAt = seatOfSelf(frame);
+    seatedAt = seatOfSelf(frame, selfDeviceId());
     hooks.onLobby?.(frame);
     // A lobby while we hold a seat and no view means the host restarted, or we
     // reconnected into a match already in progress. Either way, ask.
     if (frame.started && !view && seatedAt !== null) requestSnapshot();
-  }
-
-  function seatOfSelf(frame) {
-    const me = selfDeviceId();
-    const mine = (frame?.seats || []).find((s) => s.kind === 'device' && s.deviceId === me);
-    return mine ? mine.seat : null;
   }
 
   function onMessage(payload, fromDeviceId, meta) {
@@ -238,7 +235,7 @@ export function createTableClient({ peer, expects, host = null, tableId, hooks =
    * ---------------------------------------------------------------- */
 
   function claimSeat(seat, localIndex = 0) {
-    return send({ k: FRAME.CLAIM_SEAT, seat, localIndex });
+    return send(claimSeatFrame(seat, localIndex));
   }
 
   /**
@@ -248,14 +245,14 @@ export function createTableClient({ peer, expects, host = null, tableId, hooks =
    */
   function propose(move) {
     const pid = `p${nextPid++}`;
-    send({ k: FRAME.PROPOSE, pid, move });
+    send(proposeFrame(pid, move));
     return pid;
   }
 
   function requestSnapshot() {
     if (pendingSnapshot) return false; // one outstanding at a time
     pendingSnapshot = true;
-    return send({ k: FRAME.SNAPSHOT_REQ, since: Math.max(0, lastSeq) });
+    return send(snapshotReqFrame(Math.max(0, lastSeq)));
   }
 
   /**
@@ -268,7 +265,7 @@ export function createTableClient({ peer, expects, host = null, tableId, hooks =
    */
   function emote(index) {
     if (!Number.isInteger(index) || index < 0 || index >= EMOTES.length) return false;
-    return send({ k: FRAME.EMOTE, i: index });
+    return send(emoteFrame(index));
   }
 
   /**
@@ -280,7 +277,7 @@ export function createTableClient({ peer, expects, host = null, tableId, hooks =
    * leaving each joiner to work it out from a departure notice.
    */
   function sendBye(why = 'leave') {
-    return send({ k: FRAME.BYE, why });
+    return send(byeFrame(why));
   }
 
   /* ---------------------------------------------------------------- *

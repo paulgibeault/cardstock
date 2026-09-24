@@ -25,6 +25,7 @@ import { loadPackFromDisk } from "../tools/pack-test.mjs";
 import { showSteps } from "../src/ui/roundBeat.js";
 import { showCardModel } from "../src/ui/showCard.js";
 import { revealSentence } from "../src/ui/scoreDirection.js";
+import { actingSeats } from "./fixtures/engine.js";
 
 /** Play `packId` with the house bot until the first round boundary; the ending move's events. */
 async function firstRoundEnd(packId, seats, seed = 3) {
@@ -33,7 +34,7 @@ async function firstRoundEnd(packId, seats, seed = 3) {
   pack.template.setup(makeCtx(state));
   const rng = createRng(seed);
   for (let guard = 0; guard < 3000; guard++) {
-    const acting = pack.template.actingSeats ? pack.template.actingSeats(makeCtx(state)) : [state.turn.seat];
+    const acting = actingSeats(state);
     const seat = acting[0] ?? state.turn.seat;
     const move = chooseBotMove(state, seat, { difficulty: 'easy', random: rng.next });
     assert.ok(move, `${packId}: the bot ran out of moves before the hand ended`);

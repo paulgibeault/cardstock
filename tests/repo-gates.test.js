@@ -236,7 +236,7 @@ test("sw.js keeps the CI-owned APP_VERSION line shape", () => {
 const OURTABLE_DEFAULT = /\([^()]*\b[A-Za-z_$][\w$]*\s*=\s*ourTable\(\)/;
 
 test("party.js takes its session, never defaults to the focused table", () => {
-  // The regex has to bite, or a green run means nothing (TABLES_PLAN.md §11).
+  // The regex has to bite, or a green run means nothing (docs/plans/TABLES_PLAN.md §11).
   assert.match("function refreshSeats(session = ourTable()) {", OURTABLE_DEFAULT);
   assert.match("function askAboutSeat(seat, session = ourTable()) {", OURTABLE_DEFAULT);
   assert.doesNotMatch("  const session = ourTable();", OURTABLE_DEFAULT);
@@ -250,6 +250,43 @@ test("party.js takes its session, never defaults to the focused table", () => {
   assert.deepStrictEqual(offenders, [],
     "a session defaulted to ourTable() answers about the focused table, not the one "
     + "the caller meant. Make it a required parameter and write ourTable() at the call site.");
+});
+
+/**
+ * ONE DEFAULT GRACE, IN ONE PLACE (#218).
+ *
+ * How long a seat gets when its host never chose was written twice: as
+ * `DEFAULT_GRACE_MS` in src/ui/partyModel.js, which is what a tile draws its
+ * countdown from, and as `TURN_TIMEOUT_MS` in src/ui/party.js, which is what
+ * the host's own turn timer actually runs on and the middle entry of
+ * `GRACE_CHOICES`. Two constants that had to stay equal and nothing making
+ * them: change one and a host who never opened the grace menu runs a timer
+ * every tile in the room disagrees with, with no test anywhere that fails.
+ *
+ * The model is the home, because the dependency only runs one way — party.js
+ * is a DOM module and partyModel.js is pure, so the model can never import the
+ * screen and the screen imports the model already.
+ *
+ * A grep, because the question is "is there a second one", and a source scan
+ * is the only shape that can answer it.
+ */
+test("the default grace is one constant, and party.js reads it rather than keeping its own", () => {
+  const model = fs.readFileSync(path.join(ROOT, "src/ui/partyModel.js"), "utf8");
+  assert.match(model, /^export const DEFAULT_GRACE_MS = 60_000;$/m,
+    "src/ui/partyModel.js no longer exports the one default grace");
+
+  const lines = fs.readFileSync(path.join(ROOT, "src/ui/party.js"), "utf8").split("\n")
+    .map((line, index) => ({ line, at: index + 1 }))
+    .filter(({ line }) => !/^\s*(\/\/|\*|\/\*)/.test(line));
+  assert.ok(lines.some(({ line }) => /\bDEFAULT_GRACE_MS\b/.test(line)),
+    "src/ui/party.js has stopped reading DEFAULT_GRACE_MS — the two copies are back");
+  const copies = lines
+    .filter(({ line }) => /=\s*60_?000\b/.test(line))
+    .map(({ line, at }) => `src/ui/party.js:${at}  ${line.trim()}`);
+  assert.deepStrictEqual(copies, [],
+    "a second default grace has been declared in party.js. Import DEFAULT_GRACE_MS "
+    + "from ./partyModel.js — the number the tiles promise and the number the timer "
+    + "runs on have to be the same number, not two that happen to match.");
 });
 
 /**
@@ -356,6 +393,47 @@ test("no frame leaves src/match without going through its stamping helper", () =
       `${file} has ${calls} peer.send call(s), expected ${budget}. `
       + "A new one means a frame that skips the stamp — give it to send()/broadcast() instead. "
       + "If the door count genuinely changed, update this gate deliberately.");
+  }
+});
+
+// THE HARNESS HELPERS ARE SHARED NOW, AND STAY SHARED (#207).
+//
+// Each of these three lines was pasted into ten or more test files before it
+// had a home, and each pasted copy had drifted from the thing it was standing
+// in for: a `packFromDisk` that forgot loadPack patches its manifest, an
+// `Arcade.stats` stub that answered a stored category without the defaults the
+// SDK merges under it, an `actingSeats` lambda with no "a finished match acts
+// on nobody" guard. A copy is cheap to write and invisible in review, which is
+// why this is a gate rather than a note in a header.
+test("no test re-copies a harness helper that now has one home", () => {
+  const banned = [
+    {
+      // `packs/<id>/manifest.json` read by hand — tools/lib/packs.mjs's job.
+      re: /readFileSync\([^)]*manifest\.json/,
+      allow: new Set(["tests/dailyLadder.test.js"]), // reads schema/, not a pack
+      say: "load the pack with loadPackFromDiskSync/readPackJsonSync from tools/lib/packs.mjs",
+    },
+    {
+      // A hand-built SDK stub (an object literal) — tests/fixtures/arcade.js's
+      // job. Saving and restoring whatever was there (`= had`) is not a stub.
+      re: /globalThis\.Arcade\s*=\s*\{/,
+      allow: new Set(),
+      say: "stand the SDK up with installArcade() from tests/fixtures/arcade.js",
+    },
+    {
+      // The felt's own rule, hand-copied — src/engine/context.js's job.
+      re: /\.actingSeats\s*\?/,
+      allow: new Set(),
+      say: "ask actingSeats(state) — tests/fixtures/engine.js re-exports the engine's",
+    },
+  ];
+  for (const f of tracked.filter((f) => /^tests\/.*\.js$/.test(f))) {
+    if (f === "tests/repo-gates.test.js" || f.startsWith("tests/fixtures/")) continue;
+    const src = fs.readFileSync(path.join(ROOT, f), "utf8");
+    for (const { re, allow, say } of banned) {
+      if (allow.has(f)) continue;
+      assert.ok(!re.test(src), `${f} re-copies a shared harness helper (${re}) — ${say}`);
+    }
   }
 });
 

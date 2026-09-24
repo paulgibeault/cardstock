@@ -1,5 +1,8 @@
 # Card Art Plan — detailed faces and themed backs, per game type
 
+**Shipped.** What the build changed is in §"What changed in the build" at the
+end; the plan above it is kept as written.
+
 Status: **implemented**. What the build changed from this plan is recorded in
 §"What changed in the build" at the end — the plan above is left as written so
 the two can be compared.

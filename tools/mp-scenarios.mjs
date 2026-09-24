@@ -1,7 +1,7 @@
-// The Definition-of-Done checklist for multiplayer (MULTIPLAYER_PLAN.md §11),
+// The Definition-of-Done checklist for multiplayer (docs/plans/MULTIPLAYER_PLAN.md §11),
 // one exported scenario per numbered item — plus the ones the checklist grew.
 // 7 and 8 came from the hardening and rejoin work; 9 is the two-table case
-// TABLES_PLAN.md §10 asked for, and is the only automated evidence that a
+// docs/plans/TABLES_PLAN.md §10 asked for, and is the only automated evidence that a
 // device can host two packs at once. 10 is the 2026-08-16 field test that
 // produced the framework's open-game redesign, replayed from a cold start: the
 // shape the party model got wrong, and the proof it no longer is.
@@ -345,8 +345,16 @@ const unknownTarget = {
     // simply dropped downstream. The `false` the game handles is a real answer
     // for a real reason — no live connection, or the `peer.sendTo` capability
     // missing — and this is the honest record of which is which.
-    const unknown = await frames.H.evaluate(() =>
-      window.Arcade.peer.send({ k: 'bye', why: 'leave', tableId: 'tbl-unreachable' }, { to: 'no-such-device' }));
+    // THE FRAME IS BUILT, NOT TYPED. This was the one `{ k: 'bye', ... }` in
+    // the repo that never named `FRAME` at all, so a renamed kind would have
+    // left this scenario cheerfully sending a frame nothing on the far end
+    // recognises — and passing, because what it measures is the transport's
+    // answer rather than the far end's.
+    const unknown = await frames.H.evaluate(async () => {
+      const { byeFrame } = await window.__mod('src/match/frames.js');
+      return window.Arcade.peer.send(
+        { ...byeFrame('leave'), tableId: 'tbl-unreachable' }, { to: 'no-such-device' });
+    });
     check('an unknown target is accepted by the transport, not refused',
       unknown === true,
       `send(to: unknown) → ${unknown}. If this ever returns false, the launcher `

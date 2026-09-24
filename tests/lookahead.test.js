@@ -26,6 +26,7 @@ import { applyMove, enumerateLegalMoves } from "../src/engine/movePipeline.js";
 import { chooseBotMove, rankMoves } from "../src/engine/bot.js";
 import { forkState } from "../src/engine/fork.js";
 import { loadPackFromDisk } from "../tools/pack-test.mjs";
+import { actingSeats } from "./fixtures/engine.js";
 
 /** Rank the same position with the template's `evaluateState` hook removed. */
 function rankWithoutLookahead(state, seat) {
@@ -48,9 +49,8 @@ async function dealt(packId, seats, seed) {
 
 /** Walk a bot-vs-bot game, calling `visit(state, seat)` before each move. */
 function walk(state, limit, visit) {
-  const template = state.pack.template;
   for (let i = 0; i < limit && !state.gameOver; i++) {
-    const acting = template.actingSeats ? template.actingSeats(makeCtx(state)) : [state.turn.seat];
+    const acting = actingSeats(state);
     let move = null;
     let actor = null;
     for (const seat of acting) {
