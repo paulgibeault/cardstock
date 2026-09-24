@@ -829,8 +829,13 @@ test("the upgrade announces itself exactly once, and names the suit", async () =
   applyMove(state, { actor: 3, type: "playCard", cards: ["spades-6", "spades-7", "spades-8"] });
   const upgrade = state.events.find((e) => e.type === "combinationPlayed");
   assert.strictEqual(upgrade.suited, "spades");
+  // The stub OBEYS THE PLATFORM'S RULE: `seatLabel` (src/ui/table.js) already
+  // answers "You" for the seat reading the sentence, which is why the template
+  // no longer rebuilds `seat === viewerSeat ? 'You' : …` for itself (#215). A
+  // stub that returned a name for every seat would be testing a `seatLabel`
+  // the felt has never had.
   const say = (viewerSeat) => state.pack.template.describeEvent(upgrade, {
-    seatLabel: (s) => `Seat ${s}`, viewerSeat,
+    seatLabel: (s) => (s === viewerSeat ? 'You' : `Seat ${s}`), viewerSeat,
   });
   assert.match(say(3).text, /You played a run in spades — only suited runs answer it now/);
   assert.match(say(0).text, /Seat 3 played a run in spades — only suited runs answer it now/);

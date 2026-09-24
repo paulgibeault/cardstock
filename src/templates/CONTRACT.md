@@ -30,10 +30,10 @@ a degradation.
 |---|---|---|
 | `id` | `string` | Matches its key in `index.js` and `registry.js`. |
 | `defaultZones` | `(rules, seats) -> ZoneDef[]` | **Both parameters, always** — `state.js` passes both, and three of the four templates used to declare neither. Pack `zones` override these by id. |
-| `setup` | `(ctx) -> void` | Round 1's deal. May write zones directly (see *Setup* below). |
+| `setup` | `(ctx) -> void` | Round 1's deal, through `ctx.placeDeck` — the one place reactions do not fire (see *Setup* below). |
 | `validateMove` | `(ctx, move) -> {legal, rule?, reason?}` | Through `ctx.ok()` / `ctx.fail(rule, reason)`. The pipeline still accepts a bare `true`; do not write one. |
 | `applyMove` | `(ctx, move) -> void` | Mutates only through `ctx`. |
-| `enumerateLegalMoves` | `(ctx, seat) -> move[]` | The single source of what anybody may do. Bots pick from it; every tap target the table lights up is derived from it. **A move it omits must be one `validateMove` refuses**, or a bot will be offered a move that throws. |
+| `enumerateLegalMoves` | `(ctx, seat) -> move[]` | What this seat may do now. Bots pick from it; almost every tap target the table lights up is derived from it. **Everything on it must be a move `validateMove` accepts** — see *Sound, not complete* below for what may be left OFF. |
 | `isRoundOver` | `(ctx) -> boolean` | Usually `ctx.roundEnded()` (see *Ending a round*). |
 
 > **A seat that is not acting enumerates nothing.** The list is what the seat
@@ -46,6 +46,41 @@ a degradation.
 > the check; new ones need not. Callers may rely on the rule: `view.moves`, hint
 > offers and the felt's tap targets all read it as "this seat may act".
 
+### `enumerateLegalMoves` is SOUND, not complete
+
+The invariant is one-directional, and it used to be written here the other way
+round ("a move it omits must be one `validateMove` refuses"), which no template
+has ever obeyed:
+
+* **Sound — enforced.** Every move on the list must be one `validateMove`
+  accepts. A bot picks blind from this list, so an illegal member is a move
+  that throws in the pipeline with nobody to catch it.
+* **Complete — NOT required.** A move may be legal and absent. What that costs
+  is precise and bounded: the bot will never consider it, and any surface that
+  derives its targets from the enumeration cannot offer it. It costs nothing
+  else, because `validateMove` remains the judge of what a human actually
+  submits.
+
+Three shortlists are sanctioned, and they are the only ones in the repo. Each
+is a combinatorial space too big to enumerate whole, narrowed to moves that are
+not dominated, with the felt building the real move from whatever was tapped:
+
+| Shortlist | Where | What it leaves out |
+|---|---|---|
+| climbing's combinations | `candidateSets`, `src/templates/climbing.js` | the 4^L same-play variants of a run or strip — every rank below the top is filled with the lowest card of that rank, because a run is compared by its top card alone. 55 moves where the subset walk gives 325. |
+| trick-taking's pass | `passCandidates`, `src/templates/trick-taking.js` | most of thirteen-choose-three (286), kept to the handful a passer would actually consider. |
+| trick-taking's meld | `bestMeldSelection`, `src/templates/trick-taking.js` | every meld declaration but the best one — a declaration has no trade-off in it, so the rest are dominated rather than merely unlisted. |
+
+A shortlist is only honest while the player is **not** restricted to it, which
+is why climbing's phase uses the `combination` interaction mode: that mode is
+the one place the UI asks `validateMove` per tap instead of matching the
+enumeration (`selectionLegality`, `src/ui/interaction.js` — see *The
+interaction-mode vocabulary*), and trick-taking's pass and meld are commit
+phases where the button submits the N cards that were staged. **Do not
+shortlist a phase whose only input path is a tap target read off the
+enumeration**, or the move the shortlist dropped becomes a move nobody at the
+table can make.
+
 ## Optional — every call site is guarded
 
 Absent means "the platform's default", which is always a real behaviour rather
@@ -57,7 +92,7 @@ than an error.
 |---|---|---|
 | `defaultReactions` | `(rules) -> Reaction[]` | none |
 | `startRound` | `(ctx) -> void` | **⚠ see the trap below** |
-| `scoreRound` | `(ctx) -> {seat: delta}` | `runRoundScore(ctx)` — the pack's declared strategy, or `{}` when it declares none |
+| `scoreRound` | `(ctx) -> {seat: delta}` | `runRoundScore(ctx)` — the pack's declared strategy, or `{}` when it declares none. **No template implements it**; see below |
 | `isGameOver` | `(ctx) -> boolean` | `false`. Only consulted when the pack's `scoring.gameOver` is absent or says `"template"`. |
 | `botHeuristic` | `(ctx, move, weights?) -> number` | every non-draw move scores equally |
 | `evaluateState` | `(ctx, seat, weights?) -> number` | none — the bot ranks by `botHeuristic` alone |
@@ -65,6 +100,20 @@ than an error.
 | `actingSeats` | `(ctx) -> seat[]` | `[ctx.turn.seat]`. Say so for a simultaneous-commit phase, or the table will schedule only one of the seats that may act. |
 | `enumerateAnnouncements` | `(ctx, seat) -> move[]` | none. Its presence is also what reserves the announce bar's slot on the felt. |
 | `applyAnnouncement` | `(ctx, announcement) -> void` | none — the rule-test harness's entry point only |
+
+> **`scoreRound` is listed, and nothing implements it.** Worth saying outright,
+> because the hook reads like the obvious place to put a genre's scoring and it
+> is not. All six templates get their round deltas one of two other ways: the
+> five that score at a round boundary leave the hook absent and let the default
+> run the strategy the PACK declares (`scoring.roundScore`, dispatched through
+> `ROUND_SCORE_STRATEGIES` in `src/engine/scoring.js` — `penalty-cards-taken`,
+> `hand-values-to-winner`, `leftover-hand-values`, `bids-and-bags`,
+> `meld-and-tricks`), and cribbage scores mid-hand through `ctx.addScore` as the
+> holes are pegged, so its round delta is zero by construction. Stockpile
+> declares no strategy at all and the default returns `{}`. Reach for the hook
+> only for a genre whose round score is a computation no pack-level strategy can
+> be written for; adding a strategy beside the five is usually the smaller move,
+> because a strategy is parameterised by the manifest and a hook is not.
 
 > **The `weights` member.** A template whose strategy is made of tuned numbers
 > gathers them into one frozen object, `weights`, and reads every one of them
@@ -163,15 +212,17 @@ platform file.
 | `zoneCardOwners` | `(ctx, address) -> (seat\|null)[] \| null` | `src/ui/zoneRenderer.js` | none — a spread zone's cards carry no owner |
 | `contractChips` | `(ctx, seat) -> Chip[] \| null` | `src/ui/contractStrip.js` | none — the strip stays hidden |
 | `getMeldGroups` | `(ctx, seat) -> Group[]` | `table.js` | `[]` |
-| `describeEvent` | `(ev, {seatLabel, seatPossessive, seatVerb, viewerSeat}) -> {text, tone, priority?} \| null` | `table.js` | the engine-effect vocabulary |
+| `describeEvent` | `(ev, {seatLabel, seatPossessive, seatVerb, viewerSeat} = {}) -> {text, tone, priority?} \| null` | `table.js`, `celebrations.js` | the engine-effect vocabulary |
 | `ruleLines` | `(rules) -> string[]` | `src/ui/rules.js` | none |
 | `endingLines` | `(pack) -> string[]` | `src/ui/rules.js` | none |
 | `statLines` | `(seatStats) -> {label, value, always?}[]` | `src/stats/matchStats.js` | moves + cards played |
 | `botVerbs` | `{moveType: string}` | `table.js` | draw/playCard/discard/pass |
 
-Plus three UI affordances that are genuinely per-genre and have no default —
-the platform simply does not offer the gesture when they are absent:
-`arrangeContract`, `suggestMeld` (contract-rummy's staging tray and hold-to-gather).
+Plus two UI affordances that are genuinely per-genre and have no default — the
+platform simply does not offer the gesture when they are absent:
+`arrangeContract` and `suggestMeld` (contract-rummy's staging tray and
+hold-to-gather; both are read by `src/ui/interaction.js` and both live in
+`src/templates/contract-rummy-ui.js`).
 
 ### Registry metadata
 
@@ -217,8 +268,9 @@ consecutive pairs, and none of the selections on the way to any of those is a
 play. So the button asks `validateMove` on every tap (`selectionLegality`,
 `src/ui/interaction.js`), which is the one place the UI does not derive a target
 from `enumerateLegalMoves` — deliberately, and the comment there says why: a
-climbing enumerator is a shortlist by necessity, and refusing a move the engine
-accepts is a worse failure than the one that invariant guards against.
+climbing enumerator is a shortlist by necessity (*Sound, not complete*, above),
+and a felt that offered only the shortlist would refuse plays the engine
+accepts.
 
 ## `commitPrompt` — what a `pass`-mode commit button says and does
 
@@ -417,15 +469,36 @@ nothing about priority keeps the old behaviour exactly.
 
 ## Naming a seat in a sentence — `seatLabel` and `seatPossessive`
 
-`describeEvent` is handed both, and a template that narrates a seat should use
-them rather than building a name itself. WHAT A SEAT IS CALLED is the table's
-business: it depends on the roster, on what the player typed as their name, and
-on whether the seat is the one reading the sentence.
+```js
+describeEvent(ev, { seatLabel, seatPossessive, seatVerb, viewerSeat } = {}) -> { text, tone, priority? } | null
+```
+
+**The bag arrives whole.** Both call sites — the banner
+(`src/ui/celebrations.js`) and the round-summary steps (`src/ui/table.js`) —
+pass all four members, and #124 is the issue that made them agree; a third
+caller owes the same four. **Declare the `= {}` default anyway.** It costs four
+characters and it is what makes `describeEvent(ev)` — the way a test or a
+headless probe reaches for the sentence — fail to find a member rather than
+throw on the destructure. Climbing and trick-taking declare it; cribbage and
+sequencing still destructure bare, which is drift rather than a decision.
+
+A template that narrates a seat should use these helpers rather than building a
+name itself. WHAT A SEAT IS CALLED is the table's business: it depends on the
+roster, on what the player typed as their name, and on whether the seat is the
+one reading the sentence.
 
 | Helper | Answers | Local seat |
 |---|---|---|
 | `seatLabel(seat)` | the name to put in a sentence | `You` |
 | `seatPossessive(seat)` | that name in the possessive | `Your` |
+| `seatVerb(seat, verb)` | the verb agreeing with that name | `peg`, not `pegs` |
+
+**Do not rebuild `seat === viewerSeat ? 'You' : seatLabel(seat)`.** The helper
+has already done it — that is the whole of the "Local seat" column above — so
+the conditional is the platform's rule written out a second time, in a file
+that will not be edited the day the rule changes. Two templates carried the
+copy (climbing's `who`, trick-taking's `name`) until #215 deleted both;
+cribbage always called the helper straight and is the pattern to follow.
 
 **Do not write `${seatLabel(seat)}'s`.** It is correct for every proper noun at
 the table and wrong for the one label that is a pronoun, so it reads perfectly
@@ -573,6 +646,27 @@ draws itself small rather than wrapping; `MAX_PIPS` is the ceiling.
 
 Pair it with `openOnly` on the digits it replaces, so the open plate still
 carries the captioned, spoken numbers.
+
+## `rules-*` keys belong to one template — and `firstLead` is the warning
+
+Each template gets its own `$defs.rules-<id>` block in
+`schema/manifest.schema.json` and an `allOf` clause that selects it, so two
+templates may spell a key the same way and mean different things. Nothing
+checks across the blocks, and one pair has already drifted:
+
+| | `rules-trick-taking` | `rules-climbing` |
+|---|---|---|
+| `firstLead` | a **string** — a card id (`'clubs-2'`), `'left-of-dealer'` or `'winner'` | an **object** — `{card, mustInclude}`, where `card` is a literal id or `'lowest'`, because the card names the LEADER and may also be owed in the combination they lead |
+
+Both are correct for their own genre and neither is going to be renamed: the
+packs are on disk and a rename is a manifest migration for a cosmetic win. It
+is written down here so the next reader of one schema block does not carry an
+assumption into the other, and so a THIRD template reaching for the name knows
+it is already ambiguous. **The rule for a new template: a key that means what
+an existing key means should be spelled the same; a key that does not should be
+spelled differently.** Climbing's `laterLead` is the good example of the second
+half — trick-taking folds the same question into `firstLead: 'winner'`, and
+climbing's is a separate key because its answer is not one of trick-taking's.
 
 ## Zone definition fields the platform reads
 
@@ -723,18 +817,30 @@ Read both back with `ctx.roundEnded()` and `ctx.gameOver()`. **Never
 persisted** channel the table animates and narrates from. `applyMove` clears it
 per move, so a replay regenerates exactly the same stream.
 
-The vocabulary in use today:
+The vocabulary in use today. **Keep this table in step with the emitters** —
+`describeEvent` is written against it, and an event nobody lists is an event
+nobody narrates:
 
 | Event | Emitted by | Payload |
 |---|---|---|
-| `roundOver` | pipeline | `{round, scores, totals, over}` |
-| `roundStart` | pipeline | `{round}` |
-| `recycled` | state reactions | `{from, to, count}` |
-| `pileCleared` | state reactions | `{zone, to, count}` |
+| `roundOver` | pipeline (`movePipeline.js`) | `{round, scores, totals, over}` |
+| `roundStart` | pipeline (`movePipeline.js`) | `{round}` |
+| `recycled` | state reactions (`state.js`), and sequencing's own sweep | `{from, to, count}` — the reaction's `from` is a zone ADDRESS, sequencing's is the zone kind `'discard'` swept across every seat's piles |
+| `pileCleared` | state reactions (`state.js`) | `{zone, to, count}` |
+| `showScored` | **engine** (`scoring.js`) for three round-score strategies, and cribbage for its own two counts | see the note below |
 | `trickWon` | trick-taking | `{seat, cards, points, trickNumber}` |
 | `cardsPassed` | trick-taking | `{direction}` |
 | `bidMade` | trick-taking | `{seat, bid, blind}` |
+| `contractSet` | trick-taking | `{seat, bid, trump, forced}` — once the auction settles, for a `points`-unit bid. `forced` is the seat that was stuck with the minimum because nobody bid |
+| `meldDeclared` | trick-taking | `{seat, points, melds}` — one per seat, all emitted in the same move once the last seat has declared |
 | `broken` | trick-taking | `{seat, cards, suit, card: {rank, suit}, selector, varName}` — once a hand, on the false→true flip of `rules.breaking.var`. `suit` is what may now be LED (not always the suit of the card: in Hearts the queen of spades breaks hearts) |
+| `combinationPlayed` | climbing | `{seat, kind, size, cards, suited?}` — `suited` only on the play that first makes the standing combination a suited one, because every answer after it is suited too |
+| `trickCleared` | climbing | `{seat, cards, trickNumber}` — everybody else passed; `seat` takes the trick and leads the next |
+| `passed` | climbing | `{seat}` |
+| `handTaken` | climbing | `{seat, count}` — the two-handed choose phase. A COUNT AND NO IDS, deliberately |
+| `instantWin` | climbing | `{seat, shape, cards}` — tới trắng: the deal was already decided, and this is the one move that says so |
+| `holdsLowest` | climbing | `{seat, lowest}` — who opens the hand and under which rule; `lowest` false means the pack nominated a literal card. A SEAT AND NOTHING ELSE, so the card is not published out of a hand |
+| `tableStuck` | sequencing | `{seat, stocks}` — nobody can play; `seat` wins on the shortest stock |
 | `skipped` | shedding effects | `{by, seat}` |
 | `reversed` | shedding effects | `{by, direction}` |
 | `penalty` | shedding effects | `{by, seat, drew, asked}` |
@@ -752,7 +858,22 @@ The vocabulary in use today:
 | `pegPlay` | cribbage | `{seat, count, points, parts}` |
 | `go` | cribbage | `{seat, closes?}` |
 | `pegged` | cribbage | `{seat, points, reason, total}` |
-| `showScored` | cribbage | `{seat, isCrib, points, parts, cards}` — each part is `{kind, points, n, at}`, where `at` are POSITIONS in `[...cards, starter]` rather than card ids, so the show card can light a combination's cards without an id crossing the view filter |
+
+**`showScored` is two events wearing one name, and the platform is the bigger
+emitter.** Cribbage's is the count of a hand or the crib:
+`{seat, isCrib, points, parts, cards}`, where each part is `{kind, points, n, at}`
+and `at` are POSITIONS in `[...cards, starter]` rather than card ids, so the
+show card can light a combination's cards without an id crossing the view
+filter. The engine's is a REVEAL at the round boundary
+(`emitReveal`, `src/engine/scoring.js`): `hand-values-to-winner`,
+`leftover-hand-values` and `penalty-cards-taken` each emit one per seat holding
+cards, carrying `{seat, isCrib: false, reason, to, sweep, points, n, cards, parts}`
+with `reason` one of `'to-winner'`, `'leftover'` or `'taken'`. `src/ui/table.js`
+reads `reason` to decide whose sentence it is: a reveal that has one says itself
+through `revealSentence` and never reaches the template, and cribbage's — which
+has no `reason` — falls through to `describeEvent`. **A template narrating
+`showScored` must therefore expect the engine's shape too**, or at least not
+throw on it.
 
 An event may carry `say: {text, tone}` to name its own banner sentence; that is
 the cheapest seam for an effect the platform has never heard of.
@@ -760,12 +881,22 @@ the cheapest seam for an effect the platform has never heard of.
 ## Setup
 
 `ctx.placeDeck(address, ids?)` is the deal: cards straight into a zone with
-their locations stamped, and **no reactions fire during it**. Called with no
-`ids` it shuffles the pack's whole deck in, which is the opening draw pile
-every template builds. That is sanctioned *for the initial deal only* — there
-is nothing for a `zoneEmpty` reaction to respond to while the deck is being
-handed out, and the alternative is a recycle firing mid-deal. Everything after
-setup goes through `moveCards`.
+their locations stamped, and **no reactions fire during it**. It is sanctioned
+*for the initial deal only* — there is nothing for a `zoneEmpty` reaction to
+respond to while the deck is being handed out, and the alternative is a recycle
+firing mid-deal. Everything after setup goes through `moveCards`.
+
+Both forms are in use, and **every template's deal is one of them**. There is
+no longer any sanctioned way to write a zone's `cards` array from a template —
+that door closed with `ctx.placeDeck` (#209), and *Nothing reaches past ctx*
+below is what keeps it shut:
+
+* **No `ids`** shuffles the pack's whole deck into one zone — the opening draw
+  pile that shedding, contract-rummy, sequencing and cribbage all build.
+* **With `ids`** places a named list, which is how a template that deals
+  straight to the seats does it: trick-taking's `dealAll` and climbing's
+  `dealHands` shuffle once and then place a card at a time, and climbing's
+  `dealOffer` fills the two-handed offer piles and the `aside` the same way.
 
 `ctx.resetPlayerVars({ keep })` is the other half of a round boundary: every
 seat's vars wiped, except the names in `keep`. The pipeline calls it with no

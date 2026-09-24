@@ -2802,7 +2802,11 @@ const trickTaking = {
    * declarations were emitted in.
    */
   describeEvent(ev, { seatLabel, viewerSeat } = {}) {
-    const name = (seat) => (seat === viewerSeat ? 'You' : (seatLabel?.(seat) ?? `Seat ${seat}`));
+    // `seatLabel` already answers "You" for the reader's own seat, so the
+    // `seat === viewerSeat ? 'You' : …` that used to be here was the platform's
+    // rule written out a second time. `viewerSeat` is still read below, for the
+    // clauses that change wholesale in the second person ("are stuck with").
+    const name = (seat) => seatLabel?.(seat) ?? `Seat ${seat}`;
     if (ev.type === 'contractSet') {
       if (!ev.trump) return null;
       const suit = suitLabel(ev.trump);
