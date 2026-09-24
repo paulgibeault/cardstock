@@ -68,6 +68,7 @@ import { forkState } from './fork.js';
 import { determinizeState } from './determinize.js';
 import { visibleCardIds } from './view.js';
 import { sidesOf, sideOfSeat } from './sides.js';
+import { prizeSign } from './contracts.js';
 
 function defaultHeuristic(ctx, move) {
   return move.type === 'draw' ? -1 : 1;
@@ -379,10 +380,11 @@ const now = () => (typeof performance !== 'undefined' ? performance.now() : Date
  * WITHOUT THE HOOK, THE STANDING IS THE ACCUMULATED SCORE, signed by the one
  * manifest field that says which way is up. Points are not universally good:
  * Crazy Eights hands the round's whole pot to whoever went out
- * (`winner: 'highestScore'`), Hearts counts them against you. A pack that says
- * nothing is assumed to be counting penalties, which is the commoner shape and
- * the safer guess. Differenced across a round (below) this is exactly the
- * round score, so a template without the hook is scored as it always was.
+ * (`winner: 'highestScore'`), Hearts counts them against you. `prizeSign`
+ * (src/engine/contracts.js) is that one field read in one place, and the
+ * trick-taking evaluators turn themselves round by the same call. Differenced
+ * across a round (below) this is exactly the round score, so a template without
+ * the hook is scored as it always was.
  *
  * @returns a finite number, or null for a template whose hook had no answer
  */
@@ -392,9 +394,7 @@ function standingOf(state, seat) {
     const value = hook(makeCtx(state), seat);
     return typeof value === 'number' && Number.isFinite(value) ? value : null;
   }
-  const scoring = state.pack.scoring || state.pack.manifest?.scoring || {};
-  const sign = scoring.gameOver?.winner === 'highestScore' ? 1 : -1;
-  return sign * (Number(state.scores?.[seat] ?? 0) || 0);
+  return prizeSign(state.pack) * (Number(state.scores?.[seat] ?? 0) || 0);
 }
 
 /**

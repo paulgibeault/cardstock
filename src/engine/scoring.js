@@ -4,6 +4,9 @@
 
 import { resolveSelectorMap, selectorMatches } from './selectors.js';
 import { sidesOf, sideOfSeat, foldToSides, representativeSeat } from './sides.js';
+import {
+  tricksOf, contractSeatOf, sideContract, sideTricks, bankedBagsOf, bankedOf,
+} from './contracts.js';
 
 export function cardValue(card, scoring) {
   const fromMap = scoring.cardValues ? resolveSelectorMap(card, scoring.cardValues, undefined) : undefined;
@@ -251,27 +254,23 @@ export function roundScoreBidsAndBags(ctx) {
   const result = {};
   for (let seat = 0; seat < ctx.seats; seat++) result[seat] = 0;
 
-  // Every trick is one card per seat, so a won pile's height says how many
-  // tricks it is without the template having to count them separately.
-  const tricksOf = (seat) => Math.floor(ctx.countIn(ctx.zoneAddr('won', seat)) / ctx.seats);
-
   for (const members of sides) {
+    // `members[0]` is this side's canonical seat, so asking the side questions
+    // about it asks them about the whole side (src/engine/contracts.js).
     const banker = members[0];
-    let contract = 0;
-    let tricks = 0;
-    for (const seat of members) {
-      const bid = ctx.playerVar(seat, 'bid');
-      tricks += tricksOf(seat);
-      if (Number.isInteger(bid) && bid > 0) contract += bid;
-    }
+    const contract = sideContract(ctx, banker) ?? 0;
+    const tricks = sideTricks(ctx, banker);
 
     for (const seat of members) {
       if (ctx.playerVar(seat, 'bid') !== 0) continue;
       const value = ctx.playerVar(seat, 'bidSight') === 'blind' ? blindValue : nilValue;
-      result[seat] += tricksOf(seat) === 0 ? value : -value;
+      result[seat] += tricksOf(ctx, seat) === 0 ? value : -value;
     }
 
-    let bags = members.reduce((sum, seat) => sum + (Number(ctx.playerVar(seat, 'bags')) || 0), 0);
+    // The banked count only — the live overtricks are added below, because THIS
+    // is where a bag is made and `bagsOf` is the felt reading the same rule back
+    // out mid-hand.
+    let bags = bankedBagsOf(ctx, banker);
     if (tricks >= contract) {
       result[banker] += contract * perTrick + (tricks - contract) * perOvertrick;
       bags += tricks - contract;
@@ -320,7 +319,9 @@ export function roundScoreBidsAndBags(ctx) {
  * refuses a bid that does not beat what has been said, so the maximum is unique
  * and every seat at the table watched it being made. A stored `contractSeat`
  * would be a second copy of a fact the public `bid` vars already carry, free to
- * disagree with them after a replay.
+ * disagree with them after a replay. The derivation itself is
+ * `contractSeatOf` (src/engine/contracts.js), which is where the felt and the
+ * bot read it too — it used to be typed out once here and once in the template.
  *
  * WHAT A SET COSTS. The bid, whole and negative — the meld and the tricks the
  * side did take are worth nothing at all, which is the rule that makes bidding
@@ -340,15 +341,8 @@ export function roundScoreMeldAndTricks(ctx) {
   const result = {};
   for (let seat = 0; seat < ctx.seats; seat++) result[seat] = 0;
 
-  let contractSeat = null;
-  let contract = 0;
-  for (let seat = 0; seat < ctx.seats; seat++) {
-    const bid = ctx.playerVar(seat, 'bid');
-    if (Number.isInteger(bid) && bid > contract) {
-      contract = bid;
-      contractSeat = seat;
-    }
-  }
+  const contractSeat = contractSeatOf(ctx);
+  const contract = contractSeat === null ? 0 : ctx.playerVar(contractSeat, 'bid');
   const contractSide = contractSeat === null ? null : sideOfSeat(ctx.pack, ctx.seats, contractSeat);
   const lastSeat = ctx.var('leader');
 
@@ -356,8 +350,7 @@ export function roundScoreMeldAndTricks(ctx) {
     const banker = members[0];
     let total = 0;
     for (const seat of members) {
-      total += Number(ctx.playerVar(seat, 'meld')?.points) || 0;
-      total += handValue(ctx.cardsIn(ctx.zoneAddr('won', seat)), scoring);
+      total += bankedOf(ctx, seat);
       if (seat === lastSeat) total += lastTrick;
     }
     result[banker] += side === contractSide && total < contract ? -contract : total;
