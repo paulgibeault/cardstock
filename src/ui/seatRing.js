@@ -25,6 +25,7 @@
 // pack, and `tests/seatRing.test.js` holds it to them.
 
 import { sidesOf, sideOfSeat, partnersOf, hasSides, sideScoreOf } from '../engine/sides.js';
+import { seatsAfter } from '../engine/templateKit.js';
 
 /**
  * The other chairs, in the order they sit around the table from `mySeat`.
@@ -35,13 +36,11 @@ import { sidesOf, sideOfSeat, partnersOf, hasSides, sideScoreOf } from '../engin
  * has no left.
  */
 export function opponentRing(seats, mySeat) {
-  const order = [];
-  if (!Number.isInteger(mySeat) || mySeat < 0 || mySeat >= seats) {
-    for (let seat = 0; seat < seats; seat++) order.push(seat);
-    return order;
-  }
-  for (let step = 1; step < seats; step++) order.push((mySeat + step) % seats);
-  return order;
+  // `seatsAfter` ends ON the seat it started from — it is the order a whole
+  // table is read in — so the ring is that minus the last entry, which is the
+  // chair the viewer is already sitting in. `null` starts it at 0.
+  if (!Number.isInteger(mySeat) || mySeat < 0 || mySeat >= seats) return seatsAfter(seats, null);
+  return seatsAfter(seats, mySeat).slice(0, -1);
 }
 
 /**

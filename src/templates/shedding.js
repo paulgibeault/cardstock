@@ -6,6 +6,7 @@ import { resolveByPlayers, recycleDiscardIntoDraw } from '../engine/deal.js';
 import { distinctValues } from '../engine/cards.js';
 import { applyEffect as runEffect } from '../engine/effects.js';
 import { cardValue } from '../engine/scoring.js';
+import { handCounter, rivalExtreme } from '../engine/templateKit.js';
 
 /* ------------------------------------------------------------------ *
  * What a position is worth (see `evaluateState` at the foot of this file)
@@ -804,20 +805,16 @@ const shedding = {
    * never declared wears the Catch! button, and one that did, does not.
    */
   seatCounters(ctx, seat) {
-    const hand = ctx.cardIdsIn(ctx.zoneAddr('hand', seat)).length;
+    const hand = ctx.countIn(ctx.zoneAddr('hand', seat));
     const cfg = ctx.rules.lastCardCall;
     const atCall = !!cfg && hand > 0 && hand <= callCountOf(cfg);
-    return [{
-      text: String(hand),
-      aria: atCall
-        ? `${hand} ${hand === 1 ? 'card' : 'cards'} left — down to their last`
-        : `${hand} ${hand === 1 ? 'card' : 'cards'}`,
-      label: 'Cards',
+    return [handCounter(ctx, seat, {
+      suffix: atCall ? ' left — down to their last' : '',
       // The KIND is the escalation. It is still the hand count in the primary
       // slot either way (CONTRACT.md: the badge in a given spot must not change
       // what it measures); only how loudly it is drawn changes.
       kind: atCall ? 'lastcard' : 'hand',
-    }];
+    })];
   },
 
   /** The shape of a turn, for the generated rules page (src/ui/rules.js). */
@@ -962,12 +959,8 @@ const shedding = {
       score -= cardValue(card, scoring) * w.DEADWOOD_WORTH;
     }
 
-    let rivalCards = Infinity;
-    for (let s = 0; s < ctx.seats; s++) {
-      if (s === seat) continue;
-      rivalCards = Math.min(rivalCards, ctx.countIn(ctx.zoneAddr('hand', s)));
-    }
-    return Number.isFinite(rivalCards) ? score + rivalCards * w.RIVAL_SHARE : score;
+    const rivalCards = rivalExtreme(ctx, seat, (s) => ctx.countIn(ctx.zoneAddr('hand', s)), 'min');
+    return rivalCards === null ? score : score + rivalCards * w.RIVAL_SHARE;
   },
 
   /** The evaluator's numbers, for a caller that wants to play with different ones. */

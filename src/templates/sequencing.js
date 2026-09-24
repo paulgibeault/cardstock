@@ -5,6 +5,7 @@
 
 import { selectorMatchesAny } from '../engine/selectors.js';
 import { resolveByPlayers } from '../engine/deal.js';
+import { handCounter, rivalExtreme } from '../engine/templateKit.js';
 
 // Zone addresses this template cares about are always `<kind>[.n].<seat>` for
 // per-player zones (hand/stock/discard) — the seat is always the last segment.
@@ -656,7 +657,6 @@ const sequencing = {
    */
   seatCounters(ctx, seat) {
     const stock = ctx.countIn(ctx.zoneAddr('stock', seat));
-    const hand = ctx.countIn(ctx.zoneAddr('hand', seat));
     return [{
       text: String(stock),
       // Said in full, because the printed form is a bare digit that could be
@@ -664,13 +664,7 @@ const sequencing = {
       aria: `${stock} left in stock`,
       label: 'Stock',
       kind: 'stock',
-    }, {
-      text: String(hand),
-      aria: `${hand} ${hand === 1 ? 'card' : 'cards'} in hand`,
-      label: 'Cards',
-      kind: 'hand',
-      minimizedOnly: true,
-    }];
+    }, handCounter(ctx, seat, { suffix: ' in hand', minimizedOnly: true })];
   },
 
   ruleLines(rules) {
@@ -818,12 +812,8 @@ const sequencing = {
       if (Number.isFinite(top) && Number.isFinite(under) && top === under - 1) score += w.SEQUENCE_WORTH;
     }
 
-    let rivalStock = Infinity;
-    for (let s = 0; s < ctx.seats; s++) {
-      if (s === seat) continue;
-      rivalStock = Math.min(rivalStock, ctx.countIn(ctx.zoneAddr('stock', s)));
-    }
-    return Number.isFinite(rivalStock) ? score + rivalStock * w.RIVAL_SHARE : score;
+    const rivalStock = rivalExtreme(ctx, seat, (s) => ctx.countIn(ctx.zoneAddr('stock', s)), 'min');
+    return rivalStock === null ? score : score + rivalStock * w.RIVAL_SHARE;
   },
 
   /**

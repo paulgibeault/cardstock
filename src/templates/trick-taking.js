@@ -6,7 +6,8 @@
 import { distinctValues, rankLadderOf, rankOrder } from '../engine/cards.js';
 import { selectorMatches } from '../engine/selectors.js';
 import { cardValue, handValue } from '../engine/scoring.js';
-import { sidesOf, sideOfSeat, arePartners } from '../engine/sides.js';
+import { sidesOf, sideOfSeat, sideMembers, arePartners } from '../engine/sides.js';
+import { handCounter, memoOnPack, rivalExtreme } from '../engine/templateKit.js';
 import { detectDeclaredMelds } from './melds.js';
 
 /* ------------------------------------------------------------------ *
@@ -415,11 +416,11 @@ function rejectPlayCard(ctx, seat, cardId, hand) {
  * per candidate card per turn, which is the point at which a per-pack answer
  * recomputed per call stops being free.
  */
-const packPeril = new WeakMap();
-
 function perilOf(ctx) {
-  let cached = packPeril.get(ctx.pack);
-  if (cached) return cached;
+  return memoOnPack(ctx.pack, 'trick-taking:peril', () => buildPeril(ctx));
+}
+
+function buildPeril(ctx) {
   const scoring = ctx.pack.scoring || {};
   const ladder = rankLadderOf(ctx.pack);
   const peril = new Map();
@@ -450,9 +451,7 @@ function perilOf(ctx) {
     if (!card.suit || value <= 0) continue;
     if (rank > (peril.get(card.suit) ?? -Infinity)) peril.set(card.suit, rank);
   }
-  cached = { peril, topRank, topValue, lowValue, suits };
-  packPeril.set(ctx.pack, cached);
-  return cached;
+  return { peril, topRank, topValue, lowValue, suits };
 }
 
 function perilRankBySuit(ctx) {
@@ -857,15 +856,11 @@ function tricksTakenBy(ctx, seat) {
   return Math.floor(ctx.countIn(ctx.zoneAddr('won', seat)) / ctx.seats);
 }
 
-function sideMembers(ctx, seat) {
-  return sidesOf(ctx.pack, ctx.seats)[sideOfSeat(ctx.pack, ctx.seats, seat)];
-}
-
 /** What this side has promised between them: every positive bid, added up. */
 function sideContract(ctx, seat) {
   let contract = 0;
   let bid = false;
-  for (const s of sideMembers(ctx, seat)) {
+  for (const s of sideMembers(ctx.pack, ctx.seats, seat)) {
     const own = bidOf(ctx, s);
     if (own === null) continue;
     bid = true;
@@ -879,7 +874,7 @@ function sideContract(ctx, seat) {
 /** How many tricks this side has taken so far, between them. */
 function sideTricks(ctx, seat) {
   let tricks = 0;
-  for (const s of sideMembers(ctx, seat)) tricks += tricksTakenBy(ctx, s);
+  for (const s of sideMembers(ctx.pack, ctx.seats, seat)) tricks += tricksTakenBy(ctx, s);
   return tricks;
 }
 
@@ -901,7 +896,7 @@ function sideTricks(ctx, seat) {
  */
 function bagsOf(ctx, seat) {
   if (!ctx.pack.scoring?.bids?.bags) return null;
-  const members = sideMembers(ctx, seat);
+  const members = sideMembers(ctx.pack, ctx.seats, seat);
   let banked = 0;
   for (const s of members) banked += Number(ctx.playerVar(s, 'bags')) || 0;
   const contract = sideContract(ctx, seat);
@@ -2533,13 +2528,7 @@ const trickTaking = {
    * tricks the seat's own score chip already reports.
    */
   seatCounters(ctx, seat) {
-    const hand = ctx.countIn(ctx.zoneAddr('hand', seat));
-    const counters = [{
-      text: String(hand),
-      aria: `${hand} ${hand === 1 ? 'card' : 'cards'}`,
-      label: 'Cards',
-      kind: 'hand',
-    }];
+    const counters = [handCounter(ctx, seat)];
 
     // WHAT A SEAT PROMISED, AND WHAT IT HAS. A bid is public the moment it is
     // made and there is nowhere else on a minimized face to read it; the two
@@ -3007,13 +2996,10 @@ const trickTaking = {
     // is the same sentence at a pack where the points are the prize, which is
     // why the rival is picked by the same sign the whole answer is turned by.
     const prize = prizeSign(ctx);
-    let rival = prize === 1 ? -Infinity : Infinity;
-    for (let s = 0; s < ctx.seats; s++) {
-      if (s === seat) continue;
-      const theirs = handValue(ctx.cardsIn(ctx.zoneAddr('won', s)), scoring);
-      rival = prize === 1 ? Math.max(rival, theirs) : Math.min(rival, theirs);
-    }
-    const total = Number.isFinite(rival) ? score + rival * w.RIVAL_SHARE : score;
+    const rival = rivalExtreme(ctx, seat,
+      (s) => handValue(ctx.cardsIn(ctx.zoneAddr('won', s)), scoring),
+      prize === 1 ? 'max' : 'min');
+    const total = rival === null ? score : score + rival * w.RIVAL_SHARE;
     // Written in the direction the SCORE moves — every term above is a bill —
     // and turned round for a pack whose points are the prize. Hearts is
     // `lowestScore`, so this is the identity there and the measured behaviour
