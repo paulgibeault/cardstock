@@ -16,8 +16,8 @@
 //
 // WHY IT LIVES IN src/templates. The grammar a generated rung is written in has
 // to be the grammar the table enforces, or the generator is free to emit a
-// contract no hand can satisfy. `parseItem`, `rankDomain`, `isWildCard` and
-// `isMeldable` are therefore melds.js's own, not a second copy that could
+// contract no hand can satisfy. `parseItem`, `rankDomain` and `isMeldable`
+// are therefore melds.js's own, not a second copy that could
 // drift — and a module that can only be pointed at a pack with
 // `rules.contracts` is a contract-rummy feature, not an engine one. It sat in
 // src/engine until #210 moved it; the engine is the bottom layer and imports
@@ -34,9 +34,9 @@
 // a human's cards go through.
 
 import { makeRng, dailyDateStr } from '../engine/arcade-rng.js';
-import { rankLadderOf, rankIndexOf } from '../engine/cards.js';
+import { rankLadderOf, rankIndexOf, isWild } from '../engine/cards.js';
 import { isDailyDate, dailySeedFor } from '../arcade/daily.js';
-import { isWildCard, isMeldable, rankDomain, parseItem } from './melds.js';
+import { isMeldable, rankDomain, parseItem } from './melds.js';
 
 /** How many rungs a generated ladder has — the shipped ladder's count. */
 export const DAILY_RUNGS = 10;
@@ -99,15 +99,17 @@ const TWO_NATURALS_ODDS = 0.25;
  * rank positions a run may sit on, how many copies of a rank a set can draw
  * from, and how many cards of a colour a colour group can.
  *
- * Built through the TEMPLATE's own predicates (`rankDomain`, `isWildCard`,
- * `isMeldable`), which take a `{ pack, rules }` shim and nothing else — so what
- * this believes about the deck is what `resolveMeld` believes about it. Wilds
- * are excluded on purpose: a wild can stand in for a missing card at the table,
+ * Built through the TEMPLATE's own predicates (`rankDomain`, `isMeldable`),
+ * which take a ctx and nothing else — so what this believes about the deck is
+ * what `resolveMeld` believes about it. There is no match here to build one
+ * from, so the shim below answers the three things they ask: the pack, its
+ * rules, and `isWild`, which is `makeCtx`'s own one-liner. Wilds are excluded
+ * on purpose: a wild can stand in for a missing card at the table,
  * but a rung whose feasibility DEPENDS on one is a rung that becomes impossible
  * the moment the eight of them are elsewhere.
  */
 export function deckProfile(pack) {
-  const ctx = { pack, rules: pack.rules || {} };
+  const ctx = { pack, rules: pack.rules || {}, isWild: (card) => isWild(card, pack.rules?.wilds) };
   const ladder = rankLadderOf(pack);
   const domain = rankDomain(ctx);
 
@@ -117,7 +119,7 @@ export function deckProfile(pack) {
   let wilds = 0;
 
   for (const card of pack.cardsById.values()) {
-    if (isWildCard(ctx, card)) { wilds++; continue; }
+    if (ctx.isWild(card)) { wilds++; continue; }
     if (!isMeldable(ctx, card)) continue;
     const at = rankIndexOf(ladder, card.rank);
     if (at < domain.min || at > domain.max) continue;

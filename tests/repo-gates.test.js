@@ -139,6 +139,56 @@ test("every rules.* key a manifest declares is read somewhere in src/", () => {
     "declared but read by no line of src/ — implement it or delete it, per the §13 extension policy");
 });
 
+/**
+ * A TEMPLATE TOUCHES STATE THROUGH `ctx` OR NOT AT ALL (#209).
+ *
+ * src/engine/context.js's header says the ctx helpers are the only way a
+ * template touches state, and src/engine/fork.js's field-by-field copy list is
+ * only SOUND while that holds: forkState copies what it knows a move can
+ * change, so a template writing through a field it does not copy makes
+ * lookahead mutate the live match. That was an intention rather than a rule,
+ * and it did not hold — seventeen `ctx.state.` reach-ins, five raw
+ * `zone(addr).cards.push` deals and three `state.js` imports had grown around
+ * ctx, every one of them a method ctx was simply missing.
+ *
+ * Deliberately a grep over the source, for the reason the `rules.*` gate above
+ * gives: the question is "does any line of a template go around ctx", and the
+ * cheapest honest answer is the right one. If a template needs something ctx
+ * does not offer, the fix is a method on context.js — never a reach-in.
+ *
+ * `.js` only: src/templates/CONTRACT.md quotes `ctx.state.roundEnded` in the
+ * very paragraph that forbids it.
+ */
+test("no template reaches past ctx into the state container", () => {
+  const files = tracked.filter((f) => f.startsWith("src/templates/") && f.endsWith(".js"));
+  assert.ok(files.length >= 5, "src/templates/ has stopped being where templates live");
+
+  const offences = [];
+  for (const file of files) {
+    const lines = fs.readFileSync(path.join(ROOT, file), "utf8").split("\n");
+    lines.forEach((line, i) => {
+      const where = `${file}:${i + 1}`;
+      // Comments discuss `state.gameOver` and the old imports at length; only
+      // code counts.
+      if (/^\s*(\/\/|\*|\/\*)/.test(line)) return;
+      if (/\bctx\.state\b/.test(line)) {
+        offences.push(`${where} reaches into ctx.state — add the method to src/engine/context.js`);
+      }
+      if (/from\s*['"][^'"]*engine\/state\.js['"]/.test(line)) {
+        offences.push(`${where} imports src/engine/state.js — templates go through ctx`);
+      }
+      // The raw deal: a zone's card array written behind moveCards/placeDeck's
+      // back, which is also how cardLocation goes stale.
+      if (/\.zone\([^)]*\)\.cards\b/.test(line)) {
+        offences.push(`${where} writes a zone's cards array directly — use ctx.placeDeck / ctx.moveCards`);
+      }
+    });
+  }
+  assert.deepStrictEqual(offences, [],
+    "src/templates/ must touch state only through ctx (src/engine/context.js); "
+    + "src/engine/fork.js's copy list depends on it");
+});
+
 // §10: CI rewrites this line with sed on every deploy. If the shape drifts the
 // rewrite silently stops firing and every fix ships to nobody who has already
 // visited — which has happened twice in this fleet. Assert the SHAPE, not the
