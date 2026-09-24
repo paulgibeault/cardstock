@@ -321,9 +321,9 @@ and reference them from its deck file by name.
 
 ## 8. State, determinism, and P2P sync
 
-> **READ `MULTIPLAYER_PLAN.md` FIRST.** For everything below the
+> **READ `docs/plans/MULTIPLAYER_PLAN.md` FIRST.** For everything below the
 > event-sourcing half — the sync protocol, the frame kinds, the per-seat view
-> delivery — `MULTIPLAYER_PLAN.md` is the authoritative design and this
+> delivery — `docs/plans/MULTIPLAYER_PLAN.md` is the authoritative design and this
 > section is a superseded sketch kept for its reasoning. Two of its
 > assumptions are now wrong, and both are load-bearing enough to mislead an
 > implementer who reads on without knowing:
@@ -334,12 +334,12 @@ and reference them from its deck file by name.
 >   entire shuffle — so the seed and the full log **never leave the host**.
 >   Clients hold a per-seat `ViewState`, a plain serializable object
 >   containing exactly what that seat may see, and **do not run the reducer at
->   all** (`MULTIPLAYER_PLAN.md` §2 D1, §6).
+>   all** (`docs/plans/MULTIPLAYER_PLAN.md` §2 D1, §6).
 > - **There are no `event` frames.** They are `view` frames, and a `view`
 >   carries the seat's **complete fresh state, replacing the last one** —
 >   derived events ride along for animation only and are never authoritative.
 >   This kills incremental desync as a category and makes a snapshot and a
->   normal frame the same payload (`MULTIPLAYER_PLAN.md` §2 D2, §5).
+>   normal frame the same payload (`docs/plans/MULTIPLAYER_PLAN.md` §2 D2, §5).
 >
 > Everything else here carries forward **unchanged**: host authority, the
 > caps gate, the lobby rebroadcast over `onReady`, the `relayed: true` spoof
@@ -348,7 +348,7 @@ and reference them from its deck file by name.
 > smaller staleness: the parenthetical below calling the targeted-send
 > enhancement "implementation underway in the arcade repo" is out of date —
 > E0–E3 all shipped in the launcher SDK long since, plus `peer.party`
-> (`ARCADE_ENHANCEMENTS.md` Appendix B).
+> (`docs/plans/ARCADE_ENHANCEMENTS.md` Appendix B).
 
 > **STATUS: half built.** The event-sourcing half is real and shipped — the
 > reducer, the seeded PRNG, the log-is-the-state save format
@@ -357,7 +357,7 @@ and reference them from its deck file by name.
 > rather than missing (the seams are pre-laid — `serializeMatch` is already the
 > snapshot payload, the bot driver is already extracted for host-side
 > scheduling), but the section below reads as shipped and is not. See
-> ARCADE_ENHANCEMENTS.md Phase 8 for what actually lands when.
+> docs/plans/ARCADE_ENHANCEMENTS.md Phase 8 for what actually lands when.
 >
 > Undo (§8) is also unbuilt. `src/engine/replay.js` carries the cache guard it
 > will need, with a test, so the feature does not arrive on top of a landmine.
@@ -389,7 +389,7 @@ visibility (§3):
   them (played to the table, passed to their hand, discard top).
 
 Delivery uses the arcade's targeted-send enhancement (E1,
-`ARCADE_ENHANCEMENTS.md` — implementation underway in the arcade repo):
+`docs/plans/ARCADE_ENHANCEMENTS.md` — implementation underway in the arcade repo):
 private frames go out as `Arcade.peer.send(payload, { to: deviceId })` and
 the platform routes them so **non-addressee clients never receive them**;
 public events broadcast plainly. Two caveats, both accepted:
@@ -791,7 +791,7 @@ engine primitive. This keeps templates from speculatively bloating.
   `peer.roster` and `peer.meta` are all in the SDK's documented capability
   list, alongside a later `peer.party` that postdates this section. The
   boot-time caps gate below is still correct as a defensive path, but an
-  older launcher is no longer the expected case. `ARCADE_ENHANCEMENTS.md`
+  older launcher is no longer the expected case. `docs/plans/ARCADE_ENHANCEMENTS.md`
   is now the Cardstock-side implementation plan rather than a platform
   spec; its Appendix B keeps the E-labels resolvable.
 - Host migration on host loss (log persistence + resume covers the common
@@ -965,13 +965,13 @@ disagree, the arcade docs win and this section gets updated.
 
 ### 17.4 Identity, seats, lobby
 
-> **`MULTIPLAYER_PLAN.md` is authoritative for 17.4 and 17.5.** The seat
+> **`docs/plans/MULTIPLAYER_PLAN.md` is authoritative for 17.4 and 17.5.** The seat
 > model, the lobby handshake, and the transport facts below all survived into
 > it intact; the frame table in 17.5 did not. `event` frames are `view`
 > frames carrying complete per-seat view replacement, and a client's
 > `snapshot` is that same ViewState — never the seed + log, which is full
 > information and stays on the host. See the §8 banner and
-> `MULTIPLAYER_PLAN.md` §5–§6.
+> `docs/plans/MULTIPLAYER_PLAN.md` §5–§6.
 
 - **Seat = `(deviceId, localIndex)`** — supports hotseat players and
   remote players mixed at one table. `deviceId` comes from
