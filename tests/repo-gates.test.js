@@ -377,9 +377,10 @@ test("no test re-copies a harness helper that now has one home", () => {
       say: "load the pack with loadPackFromDiskSync/readPackJsonSync from tools/lib/packs.mjs",
     },
     {
-      // A hand-built SDK stub — tests/fixtures/arcade.js's job.
-      re: /globalThis\.Arcade\s*=/,
-      allow: new Set(["tests/flight.test.js"]), // saves and restores an arbitrary one
+      // A hand-built SDK stub (an object literal) — tests/fixtures/arcade.js's
+      // job. Saving and restoring whatever was there (`= had`) is not a stub.
+      re: /globalThis\.Arcade\s*=\s*\{/,
+      allow: new Set(),
       say: "stand the SDK up with installArcade() from tests/fixtures/arcade.js",
     },
     {
