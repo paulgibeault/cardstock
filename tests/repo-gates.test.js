@@ -290,6 +290,49 @@ test("the felt's bot driver picks its clock from the match, not from the tab", (
     + "which is the #71 bug restored");
 });
 
+/**
+ * ONE TIMER SEAM (#213).
+ *
+ * `Arcade.session.setTimeout` is a §6c obligation — a timer that freezes with
+ * the frame rather than draining a battery nobody is watching — and it was
+ * being met in nine places at once: four copies of the same wrapper, plus
+ * eleven call sites that reached straight past all of them. One of those
+ * copies had a `node --test` fallback and the others did not, so whether a
+ * module could be exercised at all depended on which spelling its author
+ * happened to pick.
+ *
+ * The seam is `sessionTimeout` in src/match/clock.js. `src/ui/clock.js`'s
+ * `schedule` is the DOM side's `(fn, ms)` spelling of it, and nothing else in
+ * `src/` names the SDK's timer. That is what makes "honour the battery rule"
+ * an edit to one function, and what lets a test build ONE `Arcade.session`
+ * stub and have every timer in the repo answer to it.
+ *
+ * A grep, for the reason the gate above gives: the question is "does anything
+ * reach past the seam", and the cheapest honest answer is the right one.
+ * Comment lines are exempt — several of them discuss the SDK timer by name,
+ * which is the documentation working rather than a leak.
+ */
+test("nothing in src/ reaches for the SDK's session timer but the one seam", () => {
+  const seam = "src/match/clock.js";
+  const leaks = [];
+  for (const f of tracked.filter((f) => f.startsWith("src/") && f.endsWith(".js"))) {
+    if (f === seam) continue;
+    const lines = fs.readFileSync(path.join(ROOT, f), "utf8").split("\n");
+    lines.forEach((line, i) => {
+      if (/^\s*(\/\/|\*|\/\*)/.test(line)) return;
+      // `Arcade.session` at all, not merely `.setTimeout` on it: the namespace
+      // is the session clock, and a second door into it is the same leak by a
+      // different name.
+      if (/\bArcade\s*\??\.\s*session\b/.test(line)) leaks.push(`${f}:${i + 1}`);
+    });
+  }
+  assert.deepStrictEqual(leaks, [],
+    `these sites reach past the timer seam: ${leaks.join(", ")}. `
+    + `Use \`schedule(fn, ms)\` from src/ui/clock.js (DOM) or \`sessionClock()\` `
+    + `from ${seam} — the SDK timer is named in exactly one function so the §6c `
+    + "rule has one place to be honoured and tests have one stub to build.");
+});
+
 test("no frame leaves src/match without going through its stamping helper", () => {
   const allowed = {
     "src/match/host.js": 2,     // sendTo + broadcast, both via stamp()

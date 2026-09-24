@@ -566,7 +566,9 @@ test("the announcement runs as the hold opens, and nothing sweeps until it ends"
   const announced = body.indexOf("announce ? announce()");
   assert.ok(announced > 0, "runTrickReveal no longer makes the announcement at all");
   const openEnded = body.indexOf("if (reveal.holdMs == null)");
-  const armed = body.indexOf("session.revealTimer = Arcade.session.setTimeout");
+  // `schedule` since #213 — the felt's one door onto the session clock, which
+  // is what this used to name directly.
+  const armed = body.indexOf("session.revealTimer = schedule(");
   assert.ok(announced < openEnded && announced < armed,
     "the announcement happens after the hold is set up rather than at the top of it — at a rung "
     + "that waits for a tap that is the whole bug: four cards and nothing saying who won them");
