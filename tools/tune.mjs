@@ -38,7 +38,7 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tournamentPack } from './simulate.mjs';
-import { loadPackFromDisk } from './pack-test.mjs';
+import { loadPackFromDisk } from './lib/packs.mjs';
 import { DIFFICULTIES } from '../src/engine/bot.js';
 
 function flag(args, name, fallback) {

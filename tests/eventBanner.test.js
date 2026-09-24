@@ -8,7 +8,7 @@
 // `bannerBand` is the arithmetic, pulled out of the DOM so it can be argued
 // with here — src/ui/celebrations.js measures the three boxes and hands them
 // over. THE FELTS BELOW ARE MEASURED, not invented: every number came off a
-// headless Chrome probe of the real table (see IMPLEMENTATION_NOTES). The file
+// headless Chrome probe of the real table (see docs/notes/IMPLEMENTATION_NOTES). The file
 // ends with source gates, because a placement function nothing calls is a
 // placement function that is green forever and moves nothing.
 import { test } from "node:test";
@@ -20,6 +20,7 @@ import {
   BANNER_HOLD_MS, BANNER_FADE_MS, TAP_TO_GO_ON, TRICK_BANNER_PRIORITY,
 } from "../src/ui/celebrations.js";
 import { ROOT } from "../tools/stage.mjs";
+import { installArcade } from "./fixtures/arcade.js";
 
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), "utf8");
 
@@ -304,17 +305,7 @@ test("a move that says nothing takes the last sentence down", () => {
  */
 
 /** Every timer the celebrations buy, so a held banner's lack of one is visible. */
-const timers = [];
-
-globalThis.Arcade = {
-  session: {
-    setTimeout(fn, ms) {
-      const t = { fn, ms, cancelled: false, cancel() { this.cancelled = true; } };
-      timers.push(t);
-      return t;
-    },
-  },
-};
+const { timers } = installArcade({ session: true });
 
 // `motionAllowed()` (src/ui/flight.js) reads `window`, and reduced motion is
 // deliberately ON here so the gather stops at its measurement rather than

@@ -49,6 +49,7 @@ import { placements } from "../src/stats/matchStats.js";
 import { sidesOf } from "../src/engine/sides.js";
 import { createRng } from "../src/engine/rng.js";
 import { loadPackFromDisk } from "../tools/pack-test.mjs";
+import { actingSeats } from "./fixtures/engine.js";
 
 /** Every shipped pack, at the seat count its lobby tile suggests. */
 const TABLES = [
@@ -143,9 +144,8 @@ async function walk(packId, seats, visit, limit = 40) {
   const pack = await loadPackFromDisk(packId);
   const state = createState({ pack, seats, seed: `identity:${packId}` });
   pack.template.setup(makeCtx(state));
-  const template = pack.template;
   for (let i = 0; i < limit && !state.gameOver; i++) {
-    const acting = template.actingSeats ? template.actingSeats(makeCtx(state)) : [state.turn.seat];
+    const acting = actingSeats(state);
     let move = null;
     for (const seat of acting) {
       move = chooseBotMove(state, seat, {

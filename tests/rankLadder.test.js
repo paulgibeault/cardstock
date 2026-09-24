@@ -14,8 +14,6 @@
 // to look here instead.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import fs from "node:fs";
-import path from "node:path";
 import {
   RANKS, buildStandardDeck, cardOrder, rankAt, rankIndexOf, rankLadderOf, rankOrder,
 } from "../src/engine/cards.js";
@@ -23,18 +21,12 @@ import { loadPack } from "../src/templates/loadPack.js";
 import { createState } from "../src/engine/state.js";
 import { makeCtx } from "../src/engine/context.js";
 import { resolveMeld, rankDomain } from "../src/templates/melds.js";
-import { ROOT } from "../tools/stage.mjs";
+import { readPackJsonSync } from "../tools/lib/packs.mjs";
 
+/** The pack on disk with `extra` written over its manifest — a declared ladder, say. */
 function packFromDisk(packId, extra = {}) {
-  const dir = path.join(ROOT, "packs", packId);
-  const manifest = {
-    ...JSON.parse(fs.readFileSync(path.join(dir, "manifest.json"), "utf8")),
-    ...extra,
-  };
-  const deckPath = path.join(dir, "deck.json");
-  const deckJson = fs.existsSync(deckPath)
-    ? JSON.parse(fs.readFileSync(deckPath, "utf8")) : undefined;
-  return loadPack(manifest, { deckJson });
+  const { manifest, deckJson } = readPackJsonSync(packId);
+  return loadPack({ ...manifest, ...extra }, { deckJson });
 }
 
 /** A pack over a built-in deck, so a ladder can be declared without a pack on disk. */

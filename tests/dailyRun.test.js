@@ -18,14 +18,10 @@
 
 import { test, beforeEach } from "node:test";
 import assert from "node:assert";
-import fs from "node:fs";
-import path from "node:path";
-import { loadPack } from "../src/templates/loadPack.js";
 import { createState } from "../src/engine/state.js";
 import { makeCtx } from "../src/engine/context.js";
 import { applyMove } from "../src/engine/movePipeline.js";
 import { chooseBotMove } from "../src/engine/bot.js";
-import { ROOT } from "../tools/stage.mjs";
 import { dailyRunFor, applyDailyLadder } from "../src/templates/contract-rummy-daily.js";
 import {
   MATCH_KEY_PREFIX, DAILY_KEY_PREFIX, matchKey, dailyKey, isDailyKey, isMatchKey,
@@ -33,34 +29,16 @@ import {
   readDailyStats, recordDailyResult, dailyStatsCategory, dailyStatus, readStats,
 } from "../src/arcade/storage.js";
 import { createMatchRecord } from "../src/ui/matchRecord.js";
+import { loadPackFromDiskSync } from "../tools/lib/packs.mjs";
+import { installArcade } from "./fixtures/arcade.js";
 
-// The SDK's two synchronous surfaces, as the Maps storage.js actually uses.
-const store = new Map();
-const stats = new Map();
-globalThis.Arcade = {
-  state: {
-    get: (k) => store.get(k),
-    set: (k, v) => { store.set(k, structuredClone(v)); return true; },
-    remove: (k) => store.delete(k),
-    getOrInit: (k, d) => (store.has(k) ? store.get(k) : d),
-  },
-  stats: {
-    get: (c) => stats.get(c),
-    getOrInit: (c, d) => (stats.has(c) ? { ...d, ...stats.get(c) } : d),
-    update: (c, fn) => { stats.set(c, structuredClone(fn(stats.get(c) || {}))); },
-  },
-};
+// The SDK's two synchronous surfaces, as the Maps storage.js actually uses
+// (tests/fixtures/arcade.js).
+const { store, stats } = installArcade({ state: true, stats: true });
 
 beforeEach(() => { store.clear(); stats.clear(); });
 
-function packFromDisk(packId = "milestones") {
-  const dir = path.join(ROOT, "packs", packId);
-  const manifest = JSON.parse(fs.readFileSync(path.join(dir, "manifest.json"), "utf8"));
-  const deckPath = path.join(dir, "deck.json");
-  const deckJson = fs.existsSync(deckPath)
-    ? JSON.parse(fs.readFileSync(deckPath, "utf8")) : undefined;
-  return loadPack(structuredClone(manifest), { deckJson });
-}
+const packFromDisk = (packId = "milestones") => loadPackFromDiskSync(packId);
 
 /** A real match, some moves in — under a seed the caller chooses. */
 function playedMatch(pack, seed, moves = 6) {
@@ -264,8 +242,12 @@ test("finishing a daily writes the daily record and leaves the pack's alone", ()
   assert.strictEqual(record.won, state.winner === 0 ? 1 : 0);
   assert.strictEqual(record.streak, state.winner === 0 ? 1 : 0);
   // The pack's lifetime record is a record of the ladder the pack SHIPS.
-  assert.strictEqual(readStats("milestones").played, 0);
+  // ASKED BEFORE `readStats`, because asking IS a write: the SDK's
+  // `stats.getOrInit` stores its defaults when a category is missing
+  // (arcade-sdk.js:2772), so "the daily never touched this book" has to be read
+  // off the store before the first reader creates it.
   assert.ok(!stats.has("milestones"));
+  assert.strictEqual(readStats("milestones").played, 0);
   // The finished run is not something to walk back into; the casual game is.
   assert.strictEqual(loadMatch("milestones", { slot: "daily" }), null);
   assert.strictEqual(loadMatch("milestones").log.length, casual.log.length);

@@ -18,6 +18,7 @@ import {
   matchTimeline, positionAt, turnAt, handAt, seekTargets, positionLabel, beatAt,
 } from "../src/stats/timeline.js";
 import { reviewMapModel, beatMoment } from "../src/ui/review.js";
+import { actingSeats } from "./fixtures/engine.js";
 
 const label = (seat) => ["You", "Nell", "Ada", "Bo", "Cy", "Di"][seat] ?? `Seat ${seat + 1}`;
 
@@ -28,7 +29,7 @@ async function playedOut(packId, seats, { seed = 5, stopAt = null } = {}) {
   const rng = createRng(seed);
   for (let guard = 0; guard < 6000 && !state.gameOver; guard++) {
     if (stopAt !== null && state.log.length >= stopAt) break;
-    const acting = pack.template.actingSeats ? pack.template.actingSeats(makeCtx(state)) : [state.turn.seat];
+    const acting = actingSeats(state);
     const seat = acting[0] ?? state.turn.seat;
     const move = chooseBotMove(state, seat, { difficulty: 'easy', random: rng.next });
     if (!move) break;

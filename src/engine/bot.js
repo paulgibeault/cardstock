@@ -361,7 +361,7 @@ const MAX_SAMPLES = 400;
  * the bar is optimistically biased and a real statistician would want a
  * correction. It is not trying to publish; it is trying to separate "the sample
  * has an opinion" from "the sample has a coin". One standard error is where the
- * measured behaviour turns: see IMPLEMENTATION_NOTES.md for the sweep.
+ * measured behaviour turns: see docs/notes/IMPLEMENTATION_NOTES.md for the sweep.
  */
 const SAMPLE_CONFIDENCE = 1;
 

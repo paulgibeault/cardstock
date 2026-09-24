@@ -23,6 +23,7 @@ import { chooseBotMove } from '../src/engine/bot.js';
 import { serializeMatch } from '../src/engine/replay.js';
 import { viewFor, eventsFor, cardIdsIn, VIEW_VERSION } from '../src/engine/view.js';
 import { loadPackFromDisk } from '../tools/pack-test.mjs';
+import { actingSeats } from './fixtures/engine.js';
 
 const PACKS = ['crazy-eights', 'wildfire', 'hearts', 'milestones', 'stockpile', 'thirteen', 'pinochle'];
 
@@ -95,10 +96,7 @@ function foreignHands(state, seat) {
 
 /** One step of bot play; returns false when there is nothing legal left. */
 function stepOnce(state) {
-  const template = state.pack.template;
-  const acting = template.actingSeats
-    ? template.actingSeats(makeCtx(state))
-    : [state.turn.seat];
+  const acting = actingSeats(state);
   for (const seat of acting) {
     const move = chooseBotMove(state, seat);
     if (move) {
@@ -453,7 +451,7 @@ async function meldRound(seed = 'pinochle:melds') {
   assert.equal(state.turn.phase, 'bid', 'a Pinochle hand opens in the bidding phase');
   let guard = 0;
   while (state.turn.phase !== 'play' && guard++ < 30) {
-    const acting = pack.template.actingSeats(makeCtx(state));
+    const acting = actingSeats(state);
     let played = false;
     for (const seat of acting) {
       const move = chooseBotMove(state, seat);

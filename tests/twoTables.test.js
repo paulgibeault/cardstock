@@ -25,7 +25,8 @@ import { createSeatTable } from '../src/players/seats.js';
 import { createTableHost } from '../src/match/host.js';
 import { createTableClient } from '../src/match/client.js';
 import { createTableDirectory, tableKeyOf } from '../src/match/tableDirectory.js';
-import { FRAME, PROTOCOL_VERSION, validateFrame, isAuthentic } from '../src/match/protocol.js';
+import { FRAME, validateFrame, isAuthentic } from '../src/match/protocol.js';
+import { lobbyFrame } from '../src/match/frames.js';
 import { createPeerNetwork } from '../tools/peer-stub.mjs';
 import { loadPackFromDisk } from '../tools/pack-test.mjs';
 
@@ -122,17 +123,16 @@ test('a relayed lobby frame is still refused — widening the host is not wideni
   // itself a host. It reaches Kit through the hub, so it arrives relayed.
   const impostorPort = party.net.createDevice('mal', { name: 'Mal' });
   impostorPort.send({
+    ...lobbyFrame({
+      packId: 'crazy-eights',
+      packVersion: '1.0.0',
+      variants: [],
+      hostDeviceId: 'mal',
+      seatCount: 2,
+      seats: [{ seat: 0, kind: 'device', deviceId: 'mal', name: 'Mal', status: 'connected' },
+        { seat: 1, kind: 'empty', name: '', status: 'empty' }],
+    }),
     tableId: 'tbl-mal',
-    k: FRAME.LOBBY,
-    protocol: PROTOCOL_VERSION,
-    packId: 'crazy-eights',
-    packVersion: '1.0.0',
-    variants: [],
-    hostDeviceId: 'mal',
-    seatCount: 2,
-    seats: [{ seat: 0, kind: 'device', deviceId: 'mal', name: 'Mal', status: 'connected' },
-      { seat: 1, kind: 'empty', name: '', status: 'empty' }],
-    started: false,
   });
 
   assert.strictEqual(directory.size, 0, 'a relayed host-role frame advertises nothing');
@@ -194,17 +194,18 @@ test('a frame for OUR table from the wrong device is still a spoof', async () =>
   // Dana claims to be speaking FOR ADA'S TABLE. The table id is right, so the
   // v2 filter lets it through to the check that was always the real defence.
   party.ports.dana.send({
+    ...lobbyFrame({
+      packId: 'crazy-eights',
+      packVersion: '1.0.0',
+      variants: [],
+      hostDeviceId: 'ada',
+      seatCount: 2,
+      seats: [{ seat: 0, kind: 'device', deviceId: 'ada', name: 'Ada', status: 'connected' },
+        { seat: 1, kind: 'empty', name: '', status: 'empty' }],
+    }),
+    // The table id is right, so the v2 filter lets it through to the check that
+    // was always the real defence: Dana is not Ada.
     tableId: 'tbl-ada',
-    k: FRAME.LOBBY,
-    protocol: PROTOCOL_VERSION,
-    packId: 'crazy-eights',
-    packVersion: '1.0.0',
-    variants: [],
-    hostDeviceId: 'ada',
-    seatCount: 2,
-    seats: [{ seat: 0, kind: 'device', deviceId: 'ada', name: 'Ada', status: 'connected' },
-      { seat: 1, kind: 'empty', name: '', status: 'empty' }],
-    started: false,
   }, { to: 'kit' });
 
   assert.ok(problems.some((p) => p.kind === 'spoofed-authority' && p.deviceId === 'dana'),
