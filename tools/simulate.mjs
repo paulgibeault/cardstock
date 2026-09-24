@@ -10,13 +10,10 @@
 // transition, reaction and turn-advance terminate cleanly", which is what this bar is
 // for.
 
-import { readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadPack } from '../src/engine/packLoader.js';
 import { createState } from '../src/engine/state.js';
-import { makeCtx, actingSeats } from '../src/engine/context.js';
-import { applyMove } from '../src/engine/movePipeline.js';
+import { makeCtx } from '../src/engine/context.js';
 import { chooseBotMove, DIFFICULTIES } from '../src/engine/bot.js';
 import { createRng } from '../src/engine/rng.js';
 import { dailyRunFor, applyDailyLadder } from '../src/engine/dailyLadder.js';
@@ -26,10 +23,9 @@ import { createTableHost } from '../src/match/host.js';
 import { createTableClient } from '../src/match/client.js';
 import { cardIdsIn } from '../src/engine/view.js';
 import { createPeerNetwork } from './peer-stub.mjs';
+import { PACKS_DIR, readJson, listPackIds, loadPackFromDisk } from './lib/packs.mjs';
+import { pickMove, stepRound, noMoveReason } from './lib/botLoop.mjs';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const REPO_ROOT = path.resolve(__dirname, '..');
-const PACKS_DIR = path.join(REPO_ROOT, 'packs');
 // ONE CAP FOR EVERY TEMPLATE AGAIN. contract-rummy used to hold a 12,000-move
 // exemption here, justified as "rounds throttled by hitting opportunities, slow
 // but legitimate convergence". That was a misreading of the symptom: the bot
@@ -42,33 +38,11 @@ const PACKS_DIR = path.join(REPO_ROOT, 'packs');
 // live-lock to hide.
 const MAX_MOVES = 4000;
 
-async function readJson(p) {
-  return JSON.parse(await readFile(p, 'utf8'));
-}
-
-/**
- * `variants` is the id list to switch on, or undefined for the pack's own
- * defaults — the same contract tools/pack-test.mjs and src/ui/packSource.js use.
- *
- * VARIANTS WERE NEVER SIMULATED. A house rule is a rule change: `seven-zero`
- * moves whole hands between seats, `draw-until-playable` can drain the pile in
- * one turn, and `no-passing` deletes a phase. Every one of those is exactly the
- * shape of thing this tool exists to find a deadlock in, and none of them had
- * ever been run through it.
- */
-async function loadPackFromDisk(packId, variants) {
-  const dir = path.join(PACKS_DIR, packId);
-  const manifest = await readJson(path.join(dir, 'manifest.json'));
-  let deckJson;
-  try {
-    deckJson = await readJson(path.join(dir, 'deck.json'));
-  } catch {
-    deckJson = undefined;
-  }
-  // Cloned: loadPack patches the manifest it is given, and this one is re-read
-  // per variant set.
-  return loadPack(structuredClone(manifest), { deckJson, variants });
-}
+// `loadPackFromDisk` is tools/lib/packs.mjs's (see its header). VARIANTS WERE
+// NEVER SIMULATED before it took `variants`: a house rule is a rule change —
+// `seven-zero` moves whole hands between seats, `draw-until-playable` can drain
+// the pile in one turn, `no-passing` deletes a phase — and every one of those is
+// exactly the shape of thing this tool exists to find a deadlock in.
 
 /**
  * `choose` is the move policy, so the same loop measures the same games at any
@@ -79,43 +53,8 @@ async function loadPackFromDisk(packId, variants) {
  */
 function playOne(pack, seats, seed, { choose = chooseBotMove } = {}) {
   const state = createState({ pack, seats, seed });
-  const ctx = makeCtx(state);
-  pack.template.setup(ctx);
-
-  let moves = 0;
-  let roundDone = false;
-  let roundScores = null;
-  const effectCounts = {};
-  while (!state.gameOver && !roundDone && moves < MAX_MOVES) {
-    let move = null;
-    let actingSeat = null;
-    for (const seat of actingSeats(state)) {
-      move = choose(state, seat);
-      if (move) {
-        actingSeat = seat;
-        break;
-      }
-    }
-    if (!move) return { outcome: 'stall', moves, reason: `no legal move for seat ${actingSeat ?? state.turn.seat}, phase ${state.turn.phase}` };
-    effectCounts[move.type] = (effectCounts[move.type] || 0) + 1;
-    try {
-      applyMove(state, move);
-    } catch (e) {
-      return { outcome: 'error', moves, reason: e.message };
-    }
-    // The pipeline advances rounds itself now (a finished hand is scored and the
-    // next one dealt inside applyMove), so "did a round complete" is read from
-    // the event window rather than isRoundOver — which is already false again
-    // by the time the redeal has happened.
-    const over = state.events.find((e) => e.type === 'roundOver');
-    if (over) {
-      roundDone = true;
-      roundScores = over.scores;
-    }
-    moves++;
-  }
-  if (moves >= MAX_MOVES) return { outcome: 'stall', moves, reason: 'move cap exceeded (live-lock, or just very slow bot convergence)' };
-  return { outcome: 'complete', moves, effectCounts, roundScores };
+  pack.template.setup(makeCtx(state));
+  return stepRound(state, choose, { maxMoves: MAX_MOVES });
 }
 
 /**
@@ -148,32 +87,23 @@ function playMatch(pack, seats, seed, { choose = chooseBotMove } = {}) {
 
   const rounds = [];
   let moves = 0;
-  let roundMoves = 0;
   while (!state.gameOver) {
-    if (roundMoves >= MAX_MOVES) {
-      return { outcome: 'stall', moves, rounds, reason: `move cap exceeded in round ${rounds.length + 1}` };
-    }
     if (rounds.length >= MAX_ROUNDS) {
       return { outcome: 'stall', moves, rounds, reason: `match still running after ${MAX_ROUNDS} rounds` };
     }
-    let move = null;
-    for (const seat of actingSeats(state)) {
-      move = choose(state, seat);
-      if (move) break;
+    const round = stepRound(state, choose, { maxMoves: MAX_MOVES });
+    moves += round.moves;
+    if (round.outcome !== 'complete') {
+      // Same two stalls, worded for a MATCH: which round ran away, rather than
+      // which seat had nothing to play.
+      const reason = round.stall === 'cap'
+        ? `move cap exceeded in round ${rounds.length + 1}`
+        : `no legal move in round ${rounds.length + 1}, phase ${state.turn.phase}`;
+      return { outcome: round.outcome, moves, rounds, reason: round.outcome === 'error' ? round.reason : reason };
     }
-    if (!move) return { outcome: 'stall', moves, rounds, reason: `no legal move in round ${rounds.length + 1}, phase ${state.turn.phase}` };
-    try {
-      applyMove(state, move);
-    } catch (e) {
-      return { outcome: 'error', moves, rounds, reason: e.message };
-    }
-    moves++;
-    roundMoves++;
-    const over = state.events.find((e) => e.type === 'roundOver');
-    if (over) {
-      rounds.push({ scores: over.scores, moves: roundMoves });
-      roundMoves = 0;
-    }
+    // A match can end without a roundOver event (the pack's game-over rule can
+    // fire mid-hand), and a partial hand is not a round to report.
+    if (round.roundOver) rounds.push({ scores: round.roundScores, moves: round.moves });
   }
   return { outcome: 'complete', moves, rounds, winner: state.winner, totals: state.scores.slice() };
 }
@@ -652,14 +582,11 @@ function playOneOverProtocol(pack, seatCount, seed) {
   let moves = 0;
   let roundDone = false;
   while (!state.gameOver && !roundDone && moves < MAX_MOVES && !faults.length) {
-    let move = null;
-    let actingSeat = null;
-    for (const seat of actingSeats(state)) {
-      move = chooseBotMove(state, seat);
-      if (move) { actingSeat = seat; break; }
-    }
+    // The same seat-picking as the solo loop (tools/lib/botLoop.mjs); only the
+    // APPLY differs here, because a joiner's move has to travel.
+    const { move, seat: actingSeat } = pickMove(state, chooseBotMove);
     if (!move) {
-      return { outcome: 'stall', moves, reason: `no legal move for seat ${actingSeat ?? state.turn.seat}, phase ${state.turn.phase}` };
+      return { outcome: 'stall', moves, reason: noMoveReason(state, actingSeat) };
     }
 
     const before = state.log.length;
@@ -763,13 +690,7 @@ async function main() {
   // pack's available house rules on its own, which is the sweep CI wants.
   const variantSets = variantsArg === undefined ? null
     : (variantsArg === '--variants' ? 'each' : [variantsArg.split('=')[1].split(',').filter(Boolean)]);
-  // Directories only — packs/ also holds index.json (see pack-test.mjs's
-  // listPackIds, which dodges the same trap).
-  const packIds = all
-    ? (await readdir(PACKS_DIR, { withFileTypes: true }))
-      .filter((e) => e.isDirectory() && !e.name.startsWith('.'))
-      .map((e) => e.name)
-    : args.filter((a) => !a.startsWith('--'));
+  const packIds = all ? listPackIds() : args.filter((a) => !a.startsWith('--'));
 
   // `--protocol` plays the same games through host + N clients over the stub
   // transport instead of one in-process state. Slower by roughly the cost of a

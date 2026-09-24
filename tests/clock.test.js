@@ -11,6 +11,7 @@ import assert from 'node:assert';
 
 import { wallClock, sessionClock, feltClock, deadline } from '../src/match/clock.js';
 import { createTurnTimer } from '../src/match/turnTimer.js';
+import { installArcade } from './fixtures/arcade.js';
 
 /**
  * A controllable stand-in for wall time plus setTimeout.
@@ -141,15 +142,10 @@ test('a deadline already in the past fires immediately', () => {
 });
 
 test('the session clock is the SDK timer, untouched', () => {
-  const calls = [];
-  globalThis.Arcade = {
-    session: {
-      setTimeout(fn, ms) { calls.push(ms); return { cancel() {} }; },
-    },
-  };
+  const { timers } = installArcade({ session: true });
   const clock = sessionClock();
   clock.after(750, () => {});
-  assert.deepEqual(calls, [750]);
+  assert.deepEqual(timers.map((t) => t.ms), [750]);
   assert.equal(clock.kind, 'session');
 });
 

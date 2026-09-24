@@ -2,60 +2,24 @@
 // Headless rule-test runner. Builds each test's `setup` state directly (no dealing/
 // play-through), then runs its `assert` sequence. See schema/rules-test.schema.json.
 
-import { readFile } from 'node:fs/promises';
 import fsSync from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadPack, applyPatch } from '../src/engine/packLoader.js';
+import { applyPatch } from '../src/engine/packLoader.js';
 import { createState } from '../src/engine/state.js';
 import { validateMove, applyMove, applyAnnouncementUnlogged, runScoreRound } from '../src/engine/movePipeline.js';
 import { validate } from './schema-check.mjs';
+import { PACKS_DIR, readJson, listPackIds, loadPackFromDisk } from './lib/packs.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..');
-export const PACKS_DIR = path.join(REPO_ROOT, 'packs');
 export const SCHEMA_DIR = path.join(REPO_ROOT, 'schema');
 
-/**
- * Every pack id on disk. One source of truth for the CLI and tests/packs.test.js.
- *
- * Directories only — `packs/` also holds index.json, the list the browser
- * lobby fetches because nothing client-side can read a directory. Without the
- * isDirectory filter that file reads as a pack named "index.json" and every
- * caller here tries to load a manifest out of it.
- */
-export function listPackIds() {
-  return fsSync.readdirSync(PACKS_DIR, { withFileTypes: true })
-    .filter((e) => e.isDirectory() && !e.name.startsWith('.'))
-    .map((e) => e.name)
-    .sort();
-}
-
-async function readJson(p) {
-  return JSON.parse(await readFile(p, 'utf8'));
-}
-
-/**
- * Exported so a test can render a real deck without a second copy of this.
- *
- * `variants` is the id list to switch on, or undefined for the pack's own
- * defaults — the same contract src/ui/packSource.js hands the browser, so a
- * rule test and a real table are loading the pack the same way.
- */
-export async function loadPackFromDisk(packId, variants) {
-  const dir = path.join(PACKS_DIR, packId);
-  const manifest = await readJson(path.join(dir, 'manifest.json'));
-  let deckJson;
-  try {
-    deckJson = await readJson(path.join(dir, 'deck.json'));
-  } catch {
-    deckJson = undefined;
-  }
-  // Cloned, because loadPack patches the manifest it is given and this one is
-  // re-read per variant set — a patch leaking into the next load would make a
-  // variant test contaminate the plain one after it.
-  return loadPack(structuredClone(manifest), { deckJson, variants });
-}
+// Reading a pack off disk is tools/lib/packs.mjs's job now (one copy for the two
+// CLIs and the ten tests that had their own). Re-exported here because 38 test
+// files and tests/packs.test.js import these names from this file, and a rename
+// across all of them would be the whole diff.
+export { PACKS_DIR, listPackIds, loadPackFromDisk };
 
 /* ------------------------------------------------------------------ *
  * The schema gate (design doc §11: "also validates the manifest against the

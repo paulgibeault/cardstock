@@ -265,3 +265,43 @@ test("no frame leaves src/match without going through its stamping helper", () =
       + "If the door count genuinely changed, update this gate deliberately.");
   }
 });
+
+// THE HARNESS HELPERS ARE SHARED NOW, AND STAY SHARED (#207).
+//
+// Each of these three lines was pasted into ten or more test files before it
+// had a home, and each pasted copy had drifted from the thing it was standing
+// in for: a `packFromDisk` that forgot loadPack patches its manifest, an
+// `Arcade.stats` stub that answered a stored category without the defaults the
+// SDK merges under it, an `actingSeats` lambda with no "a finished match acts
+// on nobody" guard. A copy is cheap to write and invisible in review, which is
+// why this is a gate rather than a note in a header.
+test("no test re-copies a harness helper that now has one home", () => {
+  const banned = [
+    {
+      // `packs/<id>/manifest.json` read by hand — tools/lib/packs.mjs's job.
+      re: /readFileSync\([^)]*manifest\.json/,
+      allow: new Set(["tests/dailyLadder.test.js"]), // reads schema/, not a pack
+      say: "load the pack with loadPackFromDiskSync/readPackJsonSync from tools/lib/packs.mjs",
+    },
+    {
+      // A hand-built SDK stub — tests/fixtures/arcade.js's job.
+      re: /globalThis\.Arcade\s*=/,
+      allow: new Set(["tests/flight.test.js"]), // saves and restores an arbitrary one
+      say: "stand the SDK up with installArcade() from tests/fixtures/arcade.js",
+    },
+    {
+      // The felt's own rule, hand-copied — src/engine/context.js's job.
+      re: /\.actingSeats\s*\?/,
+      allow: new Set(),
+      say: "ask actingSeats(state) — tests/fixtures/engine.js re-exports the engine's",
+    },
+  ];
+  for (const f of tracked.filter((f) => /^tests\/.*\.js$/.test(f))) {
+    if (f === "tests/repo-gates.test.js" || f.startsWith("tests/fixtures/")) continue;
+    const src = fs.readFileSync(path.join(ROOT, f), "utf8");
+    for (const { re, allow, say } of banned) {
+      if (allow.has(f)) continue;
+      assert.ok(!re.test(src), `${f} re-copies a shared harness helper (${re}) — ${say}`);
+    }
+  }
+});
