@@ -36,6 +36,11 @@ export const PRECACHE_EXCLUDE = [];
 // `schema/` is here because the JSON Schemas are authoring-time contracts for
 // pack files — nothing fetches them at runtime, and the loader deliberately
 // does not re-validate in the browser (see src/engine/packLoader.js).
+//
+// `docs/` holds the shipped plans and the milestone notes. It is markdown, so
+// EXCLUDE_EXT would drop it anyway; the directory is named here too so that a
+// non-markdown file dropped in beside them (a screenshot, a trace) does not
+// quietly start publishing.
 const EXCLUDE_DIRS = new Set([".github", ".claude", "node_modules",
   "tests", "test", "docs", "scratch", "tools", "scripts", "schema"]);
 const EXCLUDE_ROOT = new Set(["package.json", "package-lock.json",

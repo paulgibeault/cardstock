@@ -1,5 +1,9 @@
 # The new-games feedback plan
 
+**Shipped: see [CHANGELOG.md](../../CHANGELOG.md) #120–#125.** Clusters A–F
+landed one issue each. The "open" column in the triage table below is the plan
+as written, not the state of the code.
+
 Playtest feedback from 2026-09-07 (round 5 in
 [FEEDBACK_INBOX.md](FEEDBACK_INBOX.md), items 18–54), triaged against the
 code. The four packs that shipped in the games workstream (#100) — Thirteen,

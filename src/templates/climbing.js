@@ -1805,8 +1805,15 @@ const climbing = {
    * else's pass, and "the trick is yours" never appeared on the felt at all
    * (#122, round-5 item 22).
    */
-  describeEvent(ev, { seatLabel, viewerSeat }) {
-    const who = (seat) => (seat === viewerSeat ? 'You' : seatLabel(seat));
+  describeEvent(ev, { seatLabel, viewerSeat } = {}) {
+    // `seatLabel` ALREADY SAYS "You" for the reader's own seat (src/ui/table.js)
+    // — rebuilding that here was a second copy of a rule the platform owns, and
+    // the copy is the thing that goes stale when the rule changes. `viewerSeat`
+    // stays for the clauses below that are a DIFFERENT sentence in the second
+    // person rather than merely a different name (CONTRACT.md, "Naming a seat").
+    // The bag is defaulted because both call sites pass it whole and a direct
+    // `describeEvent(ev)` — from a test, or a future caller — should not throw.
+    const who = (seat) => seatLabel?.(seat) ?? `Seat ${seat}`;
     const mine = (seat) => seat === viewerSeat;
     if (ev.type === 'passed') {
       return { text: `${who(ev.seat)} passed`, tone: 'neutral' };

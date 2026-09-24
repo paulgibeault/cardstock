@@ -33,23 +33,14 @@
 // edit something and reload. Ctrl-C closes the browser; `./dev.sh stop` in the
 // launcher checkout stops the server.
 
-import { execFileSync } from 'node:child_process';
-import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { ROOT } from './stage.mjs';
-
-const LAUNCHER = process.env.ARCADE_LAUNCHER || path.resolve(ROOT, '..', 'paulgibeault.github.io');
-const PORT = Number(process.env.ARCADE_PORT || 4791);
-const BASE = `http://127.0.0.1:${PORT}`;
-const GAME_ID = 'cardstock';
+import { LAUNCHER, BASE, GAME_ID, requireLauncher, devSh } from './lib/launcher.mjs';
 
 const joinerCount = Number(process.argv.find((a) => a.startsWith('--joiners='))?.split('=')[1] || 1);
 
-if (!fs.existsSync(path.join(LAUNCHER, 'dev.sh'))) {
-  console.error(`mp-play: no launcher checkout at ${LAUNCHER}`);
-  process.exit(1);
-}
+requireLauncher('mp-play');
 
 // Playwright is the launcher's dependency, not ours — same as mp-acceptance.
 const { chromium } = await import(
@@ -74,7 +65,7 @@ if (await serving()) {
   console.log(`using the dev server already on ${BASE}`);
 } else {
   console.log(`starting dev.sh on ${BASE}…`);
-  execFileSync(path.join(LAUNCHER, 'dev.sh'), [ROOT], { cwd: LAUNCHER, stdio: 'inherit' });
+  devSh(ROOT);
 }
 
 /* ------------------------------------------------------------------ *

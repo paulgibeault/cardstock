@@ -678,7 +678,7 @@ const OUT_WORTH = 1;
  * everything the evaluator scored, so the last wild still goes down to go out.
  *
  * Swept by tools/tune.mjs at two seats over whole matches — the only bar that
- * means anything for a ladder (#92) — see IMPLEMENTATION_NOTES.md.
+ * means anything for a ladder (#92) — see docs/notes/IMPLEMENTATION_NOTES.md.
  */
 const WILD_HOLD = 10;
 

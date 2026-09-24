@@ -1,5 +1,8 @@
 # Lobby & multi-table plan
 
+**Shipped** (branch `lobby-and-visual-refresh`). What the build changed is in
+§"What changed in the build" at the end; the plan above it is kept as written.
+
 The plan for a game-select lobby, resumable per-game tables, and the visual
 pass that goes with it. This is the **solo** lobby — pick a pack, walk away
 from a table, come back to it. It is deliberately not the Phase 8 multiplayer

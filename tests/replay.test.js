@@ -1,6 +1,6 @@
 // Seed + event log really does reconstruct the match.
 //
-// This is the pre-commitment Phase 2 owes Phase 8 (ARCADE_ENHANCEMENTS.md):
+// This is the pre-commitment Phase 2 owes Phase 8 (docs/plans/ARCADE_ENHANCEMENTS.md):
 // `activeMatch` persists a seed and a move log and re-hydrates by replaying
 // the reducer, which is the identical payload a multiplayer `snapshot` frame
 // carries and the identical path an `overflowed` resync takes. If this ever
@@ -9,9 +9,6 @@
 // here rather than left as a comment.
 import { test } from "node:test";
 import assert from "node:assert";
-import fs from "node:fs";
-import path from "node:path";
-import { loadPack } from "../src/templates/loadPack.js";
 import { createState } from "../src/engine/state.js";
 import { makeCtx } from "../src/engine/context.js";
 import { applyMove } from "../src/engine/movePipeline.js";
@@ -19,17 +16,8 @@ import { chooseBotMove } from "../src/engine/bot.js";
 import {
   serializeMatch, rehydrateMatch, isReplayableMatch, invalidateLogCache, MATCH_FORMAT_VERSION,
 } from "../src/engine/replay.js";
-import { ROOT } from "../tools/stage.mjs";
 import { listPackIds } from "../tools/pack-test.mjs";
-
-function packFromDisk(packId) {
-  const dir = path.join(ROOT, "packs", packId);
-  const manifest = JSON.parse(fs.readFileSync(path.join(dir, "manifest.json"), "utf8"));
-  const deckPath = path.join(dir, "deck.json");
-  const deckJson = fs.existsSync(deckPath)
-    ? JSON.parse(fs.readFileSync(deckPath, "utf8")) : undefined;
-  return loadPack(manifest, { deckJson });
-}
+import { loadPackFromDiskSync as packFromDisk } from "../tools/lib/packs.mjs";
 
 /** Play `moves` bot turns from a fresh deal and return the live state. */
 function playOut(pack, seed, seats, moves) {

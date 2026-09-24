@@ -12,7 +12,7 @@
  * There is no DOM in `npm test` (src/ui/table.js touches document at import),
  * so this is a MARKUP, STYLESHEET AND SOURCE gate. It pins the things that
  * would let the regression back in rather than the pixels, which are measured
- * with playwright and written up in IMPLEMENTATION_NOTES:
+ * with playwright and written up in docs/notes/IMPLEMENTATION_NOTES:
  *
  *   1. both controls are in the stack, and neither is in the markup `hidden`;
  *   2. nothing in `renderRail` writes `hidden` — every rung keeps its slot and

@@ -108,7 +108,7 @@ function patternToRegex(pattern) {
  *
  * Compiled once at createState rather than inside checkReactions' loop. The
  * sweep itself is deliberate and stays — it is what fixed the Stockpile recycle
- * deadlock (IMPLEMENTATION_NOTES bug 1) — but it ran `new RegExp` per reaction
+ * deadlock (docs/notes/IMPLEMENTATION_NOTES bug 1) — but it ran `new RegExp` per reaction
  * per sweep iteration per moveCards call, and then tested it against every zone
  * address in the game. Zone addresses are fixed after createState, so the match
  * is a fact about the pack, not about the move.

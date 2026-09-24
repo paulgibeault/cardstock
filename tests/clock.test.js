@@ -11,6 +11,7 @@ import assert from 'node:assert';
 
 import { wallClock, sessionClock, feltClock, deadline } from '../src/match/clock.js';
 import { createTurnTimer } from '../src/match/turnTimer.js';
+import { installArcade } from './fixtures/arcade.js';
 
 /**
  * A controllable stand-in for wall time plus setTimeout.
@@ -141,33 +142,24 @@ test('a deadline already in the past fires immediately', () => {
 });
 
 test('the session clock is the SDK timer, untouched', () => {
-  const calls = [];
-  globalThis.Arcade = {
-    session: {
-      setTimeout(fn, ms) { calls.push(ms); return { cancel() {} }; },
-    },
-  };
+  const { timers } = installArcade({ session: true });
   const clock = sessionClock();
   clock.after(750, () => {});
-  assert.deepEqual(calls, [750]);
+  assert.deepEqual(timers.map((t) => t.ms), [750]);
   assert.equal(clock.kind, 'session');
 });
 
 test('a deadline on the session clock is the duration it implies', () => {
-  const calls = [];
-  globalThis.Arcade = {
-    session: {
-      setTimeout(fn, ms) { calls.push(ms); return { cancel() {} }; },
-    },
-  };
+  const { timers } = installArcade({ session: true });
+  const calls = () => timers.map((t) => t.ms);
   sessionClock().at(Date.now() + 400, () => {});
   // Wall-clock arithmetic, not a wall clock: the delay is whatever is left of
   // the deadline at the moment it is armed, ±the millisecond this test takes.
-  assert.equal(calls.length, 1);
-  assert.ok(calls[0] > 300 && calls[0] <= 400, `expected ~400ms, got ${calls[0]}`);
+  assert.equal(calls().length, 1);
+  assert.ok(calls()[0] > 300 && calls()[0] <= 400, `expected ~400ms, got ${calls()[0]}`);
   // A deadline already past arms a zero rather than a negative.
   sessionClock().at(Date.now() - 5000, () => {});
-  assert.equal(calls[1], 0);
+  assert.equal(calls()[1], 0);
 });
 
 /**

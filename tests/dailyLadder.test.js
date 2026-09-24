@@ -22,7 +22,6 @@ import assert from "node:assert";
 import fs from "node:fs";
 import path from "node:path";
 import { ROOT } from "../tools/stage.mjs";
-import { loadPack } from "../src/templates/loadPack.js";
 import { createState } from "../src/engine/state.js";
 import { makeCtx } from "../src/engine/context.js";
 import { resolveMeld, itemsMatchContract, parseItem } from "../src/templates/melds.js";
@@ -34,15 +33,11 @@ import {
 import {
   dailySeedFor, dateOfDailySeed, isDailyDate, previousDate,
 } from "../src/arcade/daily.js";
+import { loadPackFromDiskSync } from "../tools/lib/packs.mjs";
 
 const PACK_ID = "milestones";
 
-function packFromDisk(packId = PACK_ID) {
-  const dir = path.join(ROOT, "packs", packId);
-  const manifest = JSON.parse(fs.readFileSync(path.join(dir, "manifest.json"), "utf8"));
-  const deckJson = JSON.parse(fs.readFileSync(path.join(dir, "deck.json"), "utf8"));
-  return loadPack(structuredClone(manifest), { deckJson });
-}
+const packFromDisk = (packId = PACK_ID) => loadPackFromDiskSync(packId);
 
 /** The pattern the pack schema holds `rules.contracts` items to. */
 function schemaItemPattern() {

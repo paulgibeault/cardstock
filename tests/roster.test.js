@@ -13,27 +13,15 @@
 //     can, a personality is a second rules engine.
 import { test } from "node:test";
 import assert from "node:assert";
-import fs from "node:fs";
-import path from "node:path";
-import { loadPack } from "../src/templates/loadPack.js";
 import { createState } from "../src/engine/state.js";
 import { makeCtx } from "../src/engine/context.js";
 import { enumerateLegalMoves, validateMove } from "../src/engine/movePipeline.js";
 import { rankOrder } from "../src/engine/cards.js";
 import { chooseBotMove, rankMoves } from "../src/engine/bot.js";
-import { ROOT } from "../tools/stage.mjs";
 import {
   BOT_ROSTER, PERSONAS, buildSeating, pickBotIds, botById, personaOf, thinkTimeMs,
 } from "../src/players/roster.js";
-
-function packFromDisk(packId) {
-  const dir = path.join(ROOT, "packs", packId);
-  const manifest = JSON.parse(fs.readFileSync(path.join(dir, "manifest.json"), "utf8"));
-  const deckPath = path.join(dir, "deck.json");
-  const deckJson = fs.existsSync(deckPath)
-    ? JSON.parse(fs.readFileSync(deckPath, "utf8")) : undefined;
-  return loadPack(manifest, { deckJson });
-}
+import { loadPackFromDiskSync as packFromDisk } from "../tools/lib/packs.mjs";
 
 function dealt(packId, seed) {
   const pack = packFromDisk(packId);

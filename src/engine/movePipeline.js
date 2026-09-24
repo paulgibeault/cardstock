@@ -1,7 +1,7 @@
 // propose -> validate -> apply -> [round boundary] -> log (design doc §5). Engine-level
 // checks run first (cheapest), then the template's rules. Pack-hook validation
 // (logic.js) is not wired yet — none of the five launch packs need it; see
-// IMPLEMENTATION_NOTES.md.
+// docs/notes/IMPLEMENTATION_NOTES.md.
 
 import { makeCtx, actingSeats } from './context.js';
 import { emitEvent, clearAllZones } from './state.js';

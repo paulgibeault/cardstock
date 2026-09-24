@@ -24,9 +24,10 @@ import { validateMove, applyMove, enumerateLegalMoves } from '../engine/movePipe
 import { actingSeats, announcementsFor } from '../engine/context.js';
 import { viewFor, eventsFor } from '../engine/view.js';
 import { baseId } from '../engine/selectors.js';
+import { FRAME, validateFrame, isSafeId, EMOTES } from './protocol.js';
 import {
-  FRAME, PROTOCOL_VERSION, validateFrame, isSafeId, EMOTES,
-} from './protocol.js';
+  lobbyFrame, viewFrame, rejectFrame, emoteFrame, byeFrame,
+} from './frames.js';
 
 /** How many proposals one seat may make per window before we stop reading them. */
 const PROPOSE_BUDGET = 40;
@@ -172,9 +173,7 @@ export function createTableHost({
    */
   function broadcastLobby() {
     const info = packInfo();
-    return broadcast({
-      k: FRAME.LOBBY,
-      protocol: PROTOCOL_VERSION,
+    return broadcast(lobbyFrame({
       packId: info.packId,
       packVersion: info.packVersion,
       variants: info.variants || [],
@@ -183,7 +182,7 @@ export function createTableHost({
       seats: seatRoster(),
       started: !!liveState(),
       graceMs: graceMs(),
-    });
+    }));
   }
 
   /**
@@ -210,7 +209,7 @@ export function createTableHost({
    * follows. Only a host announces a departure, as of protocol v3.
    */
   function sendBye(why, { to = null } = {}) {
-    const frame = { k: FRAME.BYE, why };
+    const frame = byeFrame(why);
     return to ? sendTo(to, frame) : broadcast(frame);
   }
 
@@ -241,7 +240,7 @@ export function createTableHost({
    */
   function announceEmote(index, from) {
     if (!Number.isInteger(index) || index < 0 || index >= EMOTES.length) return false;
-    const frame = { k: FRAME.EMOTE, i: index, seat: seats.seatsOfDevice(from)[0] };
+    const frame = emoteFrame(index, seats.seatsOfDevice(from)[0]);
     let announced = false;
     for (const entry of peer.peers()) {
       if (entry.deviceId === from) continue;
@@ -255,8 +254,8 @@ export function createTableHost({
     const state = liveState();
     if (!state) return false;
     const acting = actingSeats(state).includes(seat);
-    return sendTo(deviceId, {
-      k: kind,
+    return sendTo(deviceId, viewFrame({
+      kind,
       seq,
       view: viewFor(state, seat, {
         moves: acting ? enumerateLegalMoves(state, seat) : [],
@@ -269,7 +268,7 @@ export function createTableHost({
         seq,
       }),
       events: eventsFor(state, seat, events),
-    });
+    }));
   }
 
   /**
@@ -353,16 +352,12 @@ export function createTableHost({
     // The authority check: the seat comes from the AUTHENTICATED sender, never
     // from the move's own `actor` field.
     if (!held.includes(move.actor)) {
-      return void sendTo(fromDeviceId, {
-        k: FRAME.REJECT, pid: frame.pid, rule: 'not-your-seat',
-        reason: 'That is not your seat.',
-      });
+      return void sendTo(fromDeviceId,
+        rejectFrame(frame.pid, 'not-your-seat', 'That is not your seat.'));
     }
     if (!cardsExist(state, move)) {
-      return void sendTo(fromDeviceId, {
-        k: FRAME.REJECT, pid: frame.pid, rule: 'unknown-card',
-        reason: 'That card is not in this deck.',
-      });
+      return void sendTo(fromDeviceId,
+        rejectFrame(frame.pid, 'unknown-card', 'That card is not in this deck.'));
     }
 
     // THE FULL VALIDATOR, AND VALIDATE-THEN-APPLY RATHER THAN TRY/CATCH.
@@ -372,11 +367,11 @@ export function createTableHost({
     // pins.
     const check = validateMove(state, move);
     if (!check.legal) {
-      return void sendTo(fromDeviceId, {
-        k: FRAME.REJECT, pid: frame.pid,
-        rule: isSafeId(check.rule) ? check.rule : 'illegal',
-        reason: check.reason || 'That move is not legal.',
-      });
+      return void sendTo(fromDeviceId, rejectFrame(
+        frame.pid,
+        isSafeId(check.rule) ? check.rule : 'illegal',
+        check.reason || 'That move is not legal.',
+      ));
     }
 
     applyLocal(move);
