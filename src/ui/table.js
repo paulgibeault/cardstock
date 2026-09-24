@@ -3894,10 +3894,8 @@ async function endMatchFromSummary() {
   } else {
     recordForfeit(state.pack.id, session.seating);
   }
-  session.roundSummaryOpen = false;
-  session.reopenSummary = null;
-  session.roundBeat = false;
-  session.roundFinalState = null;
+  closeRoundSummary();
+  releaseRoundEnding();
   hideRoundSummary();
   exitToLobby();
 }
@@ -3915,8 +3913,7 @@ function dismissRoundSummary(message) {
   // which made a DOM attribute the only record of a game-state fact — and one
   // that any other code path hiding the overlay would silently erase.
   if (!session || !session.roundSummaryOpen || !liveState()) return;
-  session.roundSummaryOpen = false;
-  session.reopenSummary = null;
+  closeRoundSummary();
   // A TAP BEATS THE CLOCK, and the clock must not fire behind it. This is also
   // what makes the door idempotent under the panel's two listeners: the second
   // call finds `roundSummaryOpen` false and returns above.
@@ -3925,8 +3922,7 @@ function dismissRoundSummary(message) {
   // round-ending move; until this line the felt has been showing where the
   // round ended (runRoundBeat), which is why the render below is the first
   // sight of the new cards and why it deals them with the full stagger.
-  session.roundBeat = false;
-  session.roundFinalState = null;
+  releaseRoundEnding();
   hideRoundSummary();
   session.dealAnimation = true;
   playDeal(liveState().seats);
@@ -4545,6 +4541,88 @@ function posedForShow(finalState, plan) {
   }
 }
 
+/**
+ * EVERYTHING A MOVE THAT ENDED A ROUND DECIDES, IN ONE PLACE (#202).
+ *
+ * Two paths apply a move that can end a round — `afterMove`, and
+ * `performAnnouncement`, which deliberately does not re-enter it (re-scheduling
+ * the turn would restart a bot's think time every time anybody spoke). Both
+ * then owe the round ending the same four answers, and they were two copies of
+ * them that drifted: the announcement's plan was built without `shared`, so a
+ * round ended by Wildfire's last-card call at a HOSTED table walked the Manual
+ * rung's held count with no clock on it and gated that device's queue while
+ * three other players kept playing — the exact thing #181 put the cap there to
+ * stop. One builder is the fix; `tests/pace.test.js` pins it as the only one.
+ *
+ * SIDE EFFECT, hence the name: `takeRoundFinal` CONSUMES the pre-move fork,
+ * whether or not this move ended anything, so no fork is ever left behind for
+ * the next move to re-use. Call it after `takeTrickPose`, which forks the same
+ * snapshot and does not consume it.
+ *
+ * @returns { ended, roundOver, finalState, plan, shown } where `ended` is the
+ *   round boundary either way and `roundOver` only the one the match survives
+ *   (#189), `plan` is null unless there is a sheet to hold back, and `shown` is
+ *   what the felt paints — the ending posed for its first count, or the live
+ *   state when there is nothing to pose.
+ */
+function beginRoundEnding(state, move) {
+  const events = state.events;
+  // THE ROUND THAT ENDED, and whether the match survived it. `roundOver` is
+  // the live match's — the sheet's — and null for the hand that ends the match;
+  // `ended` is either, because the ending position is wanted both ways (#189).
+  const ended = events.find((e) => e.type === 'roundOver');
+  const roundOver = ended && !ended.over ? ended : null;
+  // WHERE THE ROUND ENDED, claimed before anything can throw.
+  const finalState = takeRoundFinal(ended ? move : null);
+  const plan = roundOver ? roundBeatPlan(events, {
+    flightMs: currentFlightMs(),
+    // No snapshot means no ending to pose or repaint, so the reveal degrades to
+    // the plain hold — the multiplayer path (afterRemoteMove).
+    narrate: !!finalState,
+    // The rung is read HERE, when the round ends, so a pace changed on the last
+    // sheet is the pace this one runs at.
+    pace: currentPace().id,
+    // AND THE SAME CEILING ON THE SAME GROUNDS (#181). `narrate` above already
+    // covers a REMOTE move, which walks no steps at all; this covers a LOCAL
+    // move at a shared table, which counts its show like any other and is the
+    // only way a count with no clock on it could ever gate this device's queue.
+    shared: !!session?.shared,
+  }) : null;
+  // What the felt paints. The LIVE state everywhere else: it is what is saved,
+  // what the summary reads, and what the next deal is already in.
+  const shown = (plan && finalState) ? posedForShow(finalState, plan) : state;
+  return { ended, roundOver, finalState, plan, shown };
+}
+
+/**
+ * Hold the felt on the ending while the beat runs.
+ *
+ * SET BEFORE THE RENDER, because `render` reads it: while the felt is showing a
+ * position the engine has already moved past, nothing on it is actable. The
+ * kept copy is what anything that repaints for a reason of its own during the
+ * beat repaints (`feltState`) — null on the path with no snapshot, where the
+ * felt is already the live state.
+ */
+function holdRoundEnding(plan, finalState, shown) {
+  if (!session || !plan) return;
+  session.roundBeat = true;
+  session.roundFinalState = finalState ? shown : null;
+}
+
+/** Let the ending go: the felt goes back to painting the live state. */
+function releaseRoundEnding() {
+  if (!session) return;
+  session.roundBeat = false;
+  session.roundFinalState = null;
+}
+
+/** Forget the sheet — it is closed, and nothing is owed to putting it back. */
+function closeRoundSummary() {
+  if (!session) return;
+  session.roundSummaryOpen = false;
+  session.reopenSummary = null;
+}
+
 /** Light the cards a step is counting, and only those. */
 function spotlightZone(address) {
   for (const node of el.screen.querySelectorAll('.pile-stack--counting')) {
@@ -5008,16 +5086,14 @@ function runShowSequence(plan, finalState, openSummary) {
 function runFinalShow(state, plan, finalState, shown, { message, move, from, reveal, closeTrick, done }) {
   cancelRoundBeat();
   const myEpoch = epoch;
-  session.roundBeat = true;
-  session.roundFinalState = shown;
+  holdRoundEnding(plan, finalState, shown);
   render(shown, message);
   if (!reveal) animateMove(shown, move, from);
   closeTrick(shown);
 
   const open = () => {
     if (myEpoch !== epoch || !session || !session.roundBeat) return;
-    session.roundBeat = false;
-    session.roundFinalState = null;
+    releaseRoundEnding();
     render(state);
     done();
   };
@@ -5089,19 +5165,15 @@ function afterMove(state, move, from, message, { publish = true } = {}) {
   if (publish) onLocalMove?.(state, move, events.slice());
   const trick = events.find((e) => e.type === 'trickWon');
   const passed = events.find((e) => e.type === 'cardsPassed');
-  // THE ROUND THAT ENDED, and whether the match survived it. `roundOver` is
-  // the live match's — the sheet's — and null for the hand that ends the match;
-  // `ended` is either, because the ending position is wanted both ways (#189).
-  const ended = events.find((e) => e.type === 'roundOver');
-  const roundOver = ended && !ended.over ? ended : null;
 
   // FOUR CARDS ON THE TABLE, claimed FIRST: `takeRoundFinal` consumes the
   // pre-move snapshot, and the last trick of a hand wants both poses off it.
   const trickPose = trick ? takeTrickPose(move) : null;
-  // WHERE THE ROUND ENDED, claimed before anything can throw. `takeRoundFinal`
-  // consumes the pre-move snapshot whether or not it is wanted, so a fork is
-  // never left behind to be re-used by the next move.
-  const finalState = takeRoundFinal(ended ? move : null);
+  // WHERE THE ROUND ENDED, and the whole schedule for it — the one builder
+  // `performAnnouncement` shares (#202). It consumes the pre-move snapshot
+  // whether or not it is wanted, so a fork is never left behind to be re-used
+  // by the next move.
+  const { ended, finalState, plan, shown } = beginRoundEnding(state, move);
   const reveal = trick ? trickRevealPlan(events, {
     flightMs: currentFlightMs(),
     posed: !!trickPose,
@@ -5115,23 +5187,6 @@ function afterMove(state, move, from, message, { publish = true } = {}) {
     // other and is the only way an indefinite gate could ever be reached here.
     shared: !!session?.shared,
   }) : null;
-  const plan = roundOver ? roundBeatPlan(events, {
-    flightMs: currentFlightMs(),
-    // No snapshot means no ending to pose or repaint, so the reveal degrades to
-    // the plain hold — the multiplayer path (afterRemoteMove).
-    narrate: !!finalState,
-    // The rung is read HERE, when the round ends, so a pace changed on the last
-    // sheet is the pace this one runs at.
-    pace: currentPace().id,
-    // AND THE SAME CEILING ON THE SAME GROUNDS (#181). `narrate` above already
-    // covers a REMOTE move, which walks no steps at all; this covers a LOCAL
-    // move at a shared table, which counts its show like any other and is the
-    // only way a count with no clock on it could ever gate this device's queue.
-    shared: !!session?.shared,
-  }) : null;
-  // What the felt paints. The LIVE state everywhere else: it is what is saved,
-  // what the summary reads, and what the next deal is already in.
-  const shown = (plan && finalState) ? posedForShow(finalState, plan) : state;
 
   // WHAT THE TABLE SAYS ABOUT THE TRICK, AND WHEN (#180).
   //
@@ -5221,16 +5276,7 @@ function afterMove(state, move, from, message, { publish = true } = {}) {
   // turn, a round ending underneath it. Held for one beat behind the four cards
   // when the felt could pose them (#123), and run straight through otherwise.
   const settle = () => {
-    // SET BEFORE THE RENDER, because `render` reads it: while the felt is
-    // showing a position the engine has already moved past, nothing on it is
-    // actable.
-    if (plan) {
-      session.roundBeat = true;
-      // Kept so anything that repaints for a reason of its own during the beat
-      // repaints the ending rather than the deal underneath it (feltState). Null
-      // on the path with no snapshot, where the felt is already the live state.
-      session.roundFinalState = finalState ? shown : null;
-    }
+    holdRoundEnding(plan, finalState, shown);
     render(shown, message);
     // The played card has already flown onto the posed trick; flying it again
     // here would be the same card arriving twice.
@@ -5575,19 +5621,15 @@ function performAnnouncement(state, move, myEpoch = epoch) {
   // and the summary is `afterMove`'s job, which this path deliberately does not
   // re-enter (re-scheduling the turn would restart a bot's think time every
   // time anybody spoke). So the ONE thing it has to notice for itself is that.
-  const roundOver = state.events.find((e) => e.type === 'roundOver' && !e.over);
-  const finalState = takeRoundFinal(roundOver ? move : null);
-  const plan = roundOver ? roundBeatPlan(state.events, {
-    flightMs: currentFlightMs(),
-    narrate: !!finalState,
-    pace: currentPace().id,
-  }) : null;
-  if (plan) {
-    session.roundBeat = true;
-    session.roundFinalState = plan && finalState ? finalState : null;
-  }
+  //
+  // THROUGH THE SAME BUILDER `afterMove` USES (#202). This was a second copy of
+  // it, and the copy had lost `shared`: a round ended by an announcement at a
+  // hosted table then counted its show with no clock on it and gated this
+  // device's queue on taps nobody else could make.
+  const { finalState, plan, shown } = beginRoundEnding(state, move);
+  holdRoundEnding(plan, finalState, shown);
 
-  render(plan && finalState ? finalState : state, message);
+  render(shown, message);
   // After the render, so the hand the cards are flying INTO is the one on
   // screen. A catch costs cards exactly the way a Draw 2 does, and it is the
   // same flight for the same reason — the number in the banner is the whole

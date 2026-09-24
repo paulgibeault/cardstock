@@ -490,13 +490,48 @@ test("the felt builds its trick plan with the player's rung and its own shared f
   // both for the same two reasons, and a call that dropped the shared flag here
   // would gate a shared device's queue on three taps rather than one.
   const round = table.match(/roundBeatPlan\(events, \{[\s\S]*?\}\) : null/);
-  assert.ok(round, "afterMove must be the one place a round ending is planned");
+  assert.ok(round, "beginRoundEnding must be the one place a round ending is planned");
   assert.match(round[0], /pace: currentPace\(\)\.id/,
     "without the rung the show is counted at the default for everybody, whatever "
     + "dial the player set");
   assert.match(round[0], /shared: !!session\?\.shared/,
     "without the shared flag a count with no clock on it stalls one device's queue "
     + "three times a hand while the other players keep playing");
+});
+
+// AND IT HAS TO BE THE ONLY ONE (#202). The assertion above was true of
+// `afterMove` and had nothing to say about the SECOND copy of the same tail in
+// `performAnnouncement`, which was built without `shared` — so a round ended by
+// an announcement (Wildfire's last-card call is the one that does this today)
+// at a HOSTED table walked the Manual rung's clockless count and gated that
+// device's queue while three other players kept playing. A copy is what broke
+// it, so a copy is what this forbids.
+test("both paths that end a round plan it through the one shared builder", () => {
+  const table = read("src/ui/table.js");
+  const calls = table.match(/roundBeatPlan\(/g) || [];
+  assert.strictEqual(calls.length, 1,
+    `${calls.length} round-beat plans are built in table.js; a second builder is how the `
+    + "announcement path lost `shared` in the first place — call `beginRoundEnding`");
+
+  const builder = table.match(/function beginRoundEnding\([\s\S]*?\n\}/);
+  assert.ok(builder, "beginRoundEnding must exist — it is the shared round-ending tail");
+  assert.match(builder[0], /shared: !!session\?\.shared/,
+    "the shared builder must carry the table's own shared flag, or EVERY path that "
+    + "ends a round leaves a hosted device gated on taps nobody else can make");
+
+  // AND BOTH PATHS MUST ACTUALLY REACH IT. `performAnnouncement` deliberately
+  // does not re-enter `afterMove` (re-scheduling the turn would restart a bot's
+  // think time every time anybody spoke), which is exactly why it is the one
+  // that drifted.
+  const body = (name) => {
+    const at = table.indexOf(`function ${name}(`);
+    assert.ok(at >= 0, `${name} must still exist`);
+    return table.slice(at, table.indexOf("\n}\n", at));
+  };
+  for (const name of ["afterMove", "performAnnouncement"]) {
+    assert.match(body(name), /beginRoundEnding\(state, move\)/,
+      `${name} must plan its round ending through the shared builder, not a copy of it`);
+  }
 });
 
 // THE RUNG HAS TO BE READ WHERE IT IS WRITTEN, AND IT WAS NOT (#181). `settings`

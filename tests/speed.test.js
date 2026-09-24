@@ -293,9 +293,11 @@ test("the speed is read from storage, not from a snapshot the lobby cannot refre
     "the duration must come off the live number");
   // More than the five flights since the review workstream (#196): the trick
   // reveal's and the round beat's plans, the final show's plan and the final
-  // look's beat ask too — plus the definition. Exact, not a floor: a site left
-  // on the snapshot is a card that still flies at the stale rung.
-  assert.strictEqual((src.match(/currentFlightMs\(\)/g) || []).length, 8,
+  // look's beat ask too — plus the definition. One fewer since #202, which put
+  // the round beat's plan in a single builder both the move and the
+  // announcement path call. Exact, not a floor: a site left on the snapshot is
+  // a card that still flies at the stale rung.
+  assert.strictEqual((src.match(/currentFlightMs\(\)/g) || []).length, 7,
     "every flight-duration call site must ask currentFlightMs, plus its own definition — "
     + "a site left on the snapshot is a card that still flies at the stale rung");
   assert.match(src, /botDelayMs: \(\) => currentDelayMs\(\)/,
