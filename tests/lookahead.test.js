@@ -67,10 +67,19 @@ function walk(state, limit, visit) {
 test("a template with evaluateState ranks positions, not moves", async () => {
   // The proof that the hook is REACHED. Ripping `evaluateState` out has to
   // change what the bot plays; if it does not, nothing below it is running.
-  for (const [packId, seats] of [["milestones", 4], ["hearts", 4], ["crazy-eights", 4], ["thirteen", 4]]) {
+  //
+  // The third column is HOW MANY HANDS, and it defaults to three. The walk
+  // stops at `roundOver`, so a table's decision count is its round length —
+  // and a cribbage round is the deal, two throws each, the play and the show:
+  // ten decisions, so three hands land on exactly the thirty this bar wants
+  // more than. That is a fact about the length of a cribbage hand, not about
+  // its evaluator, so cribbage plays more hands for the same evidence (#206).
+  const TABLES = [["milestones", 4], ["hearts", 4], ["crazy-eights", 4], ["thirteen", 4],
+    ["pinochle", 4], ["cribbage", 2, 6]];
+  for (const [packId, seats, games = 3] of TABLES) {
     let turns = 0;
     let differed = 0;
-    for (let game = 0; game < 3; game++) {
+    for (let game = 0; game < games; game++) {
       const state = await dealt(packId, seats, `lookahead:${packId}:${game}`);
       assert.strictEqual(typeof state.pack.template.evaluateState, "function",
         `${packId}: no evaluateState to exercise`);

@@ -33,7 +33,12 @@ const TABLES = [["milestones", 3], ["hearts", 4], ["wildfire", 3], ["team-spades
   // bag of its own (#160). Its table is the one where the rival term is a fact
   // rather than an inference — every seat's stock top is face up — so a weight
   // that reads the opposition has somewhere to be exercised.
-  ["stockpile", 4]];
+  ["stockpile", 4],
+  // Cribbage was missing from this list for its whole life (#206), so its six
+  // weights had never been through any of the three rules below. Two seats is
+  // not a choice — the pack is `min: 2, max: 2` — and it is the seat count the
+  // template's crib arithmetic is written for.
+  ["cribbage", 2]];
 
 async function dealt(packId, seats, seed) {
   const pack = await loadPackFromDisk(packId);
