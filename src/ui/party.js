@@ -56,6 +56,7 @@ import {
   adoptSharedView, leaveSharedTable, tableContext, setSeating, dealHostedTable, resumeHostedTable,
   setLocalMoveListener, afterRemoteMove, setTablePaused, rerenderTable,
 } from './table.js';
+import { motionAllowed } from './flight.js';
 import { createSeatTable, createSeatLens, deserializeSeatTable } from '../players/seats.js';
 import { sidesOf } from '../engine/sides.js';
 import { createTableSightings } from './tableSightings.js';
@@ -1380,9 +1381,10 @@ function burst(glyph) {
   node.textContent = glyph;
   el.burst.append(node);
   // reducedMotion is a promise the whole table keeps (Phase 3): the emote still
-  // arrives, it simply does not fly.
-  const reduced = document.documentElement.dataset.reducedMotion === 'true'
-    || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+  // arrives, it simply does not fly. Asked of flight.js so the lobby's answer
+  // and the felt's answer are the same answer — they used to be two, and the
+  // launcher setting reached the confetti while card travel flew on regardless.
+  const reduced = !motionAllowed();
   if (reduced) node.classList.add('emote-burst--still');
   Arcade.session.setTimeout(() => node.remove(), reduced ? 1200 : 1600);
 }

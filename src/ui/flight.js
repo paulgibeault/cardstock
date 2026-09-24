@@ -12,9 +12,17 @@
 // copy lands on top of it.
 //
 // Motion gating is checked HERE rather than at each call site, so a new call
-// site cannot forget it. Two independent signals, both required:
-//   - the launcher's reduced-motion setting (§5), which the SDK also enforces
-//     for CSS animations but cannot enforce for a JS-driven one; and
+// site cannot forget it, and `motionAllowed()` below is the ONLY answer to "is
+// motion allowed?" in this codebase — src/ui/party.js asks it too. Three
+// signals, any one of which turns motion off:
+//   - the launcher's reduced-motion setting (§5) read off the SDK, which the
+//     SDK also enforces for CSS animations but cannot enforce for a JS-driven
+//     one;
+//   - the same setting read off `<html data-reduced-motion>`, which is how the
+//     SDK publishes it to CSS. Belt and braces on purpose: the SDK object is
+//     missing from a bare `?pack=` visit, and an SDK too old for
+//     `settings.reducedMotion()` can still be new enough to set the attribute,
+//     so neither read subsumes the other; and
 //   - the OS preference, which is the only signal a standalone visit has.
 
 /* ------------------------------------------------------------------ *
@@ -177,12 +185,25 @@ export function flightDurationMs(botDelayMs) {
   return Math.round(Math.min(FLIGHT_MAX_MS, Math.max(FLIGHT_MIN_MS, FLIGHT_MS * scale)));
 }
 
-/** Both reduced-motion signals, either of which disables travel. */
+/**
+ * Every reduced-motion signal, any of which disables travel. The one answer:
+ * see the header — nothing else in src/ui may read these three directly.
+ *
+ * Written to survive each signal being absent rather than to assume a browser,
+ * because "is motion allowed?" is asked from a bare `?pack=` visit with no SDK,
+ * and because a Node test can then ask it at all (tests/flight.test.js).
+ */
 export function motionAllowed() {
   try {
     if (window.Arcade && Arcade.settings && Arcade.settings.reducedMotion()) return false;
   } catch { /* an SDK too old to have the setting is not a reason to freeze the table */ }
-  return !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  // The launcher setting as the SDK publishes it to CSS. `dataset` is a string
+  // map, so the comparison is against the STRING 'true' — an absent attribute
+  // reads undefined, which is not the setting being off but the setting not
+  // being published, and either way there is nothing here to obey.
+  if (globalThis.document?.documentElement?.dataset?.reducedMotion === 'true') return false;
+  const mq = globalThis.window?.matchMedia?.('(prefers-reduced-motion: reduce)');
+  return !mq?.matches;
 }
 
 /**
