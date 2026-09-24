@@ -24,7 +24,7 @@ import { test, beforeEach } from "node:test";
 import assert from "node:assert";
 
 import { createTableSightings } from "../src/ui/tableSightings.js";
-import { FRAME, PROTOCOL_VERSION } from "../src/match/protocol.js";
+import { lobbyFrame, byeFrame } from "../src/match/frames.js";
 import { PRUNE_GRACE_MS } from "../src/ui/tableSightings.js";
 
 // The SDK's synchronous state surface is a key/value store; a Map is the whole
@@ -46,19 +46,19 @@ const T2 = "t2b2b2b2b2b2b2b2b2b";
 
 function lobby({ tableId = T1, hostDeviceId = ADA, packId = "hearts", seats = null, started = false } = {}) {
   return {
-    k: FRAME.LOBBY,
-    protocol: PROTOCOL_VERSION,
+    ...lobbyFrame({
+      hostDeviceId,
+      packId,
+      variants: [],
+      graceMs: 60_000,
+      started,
+      seatCount: 2,
+      seats: seats || [
+        { seat: 0, kind: "device", deviceId: hostDeviceId, name: "Ada" },
+        { seat: 1, kind: "device", deviceId: ME, name: "Me" },
+      ],
+    }),
     tableId,
-    hostDeviceId,
-    packId,
-    variants: [],
-    graceMs: 60_000,
-    started,
-    seatCount: 2,
-    seats: seats || [
-      { seat: 0, kind: "device", deviceId: hostDeviceId, name: "Ada" },
-      { seat: 1, kind: "device", deviceId: ME, name: "Me" },
-    ],
   };
 }
 
@@ -205,7 +205,7 @@ test("only a host's own unrelayed 'closed' retires a table", () => {
   deliver(lobby(), {});
   assert.strictEqual(sightings.tables.all().length, 1);
 
-  const bye = (why, tableId = T1) => ({ k: FRAME.BYE, tableId, why });
+  const bye = (why, tableId = T1) => ({ ...byeFrame(why), tableId });
 
   // A joiner standing up, relayed through the hub. Not a table ending.
   deliver(bye("leave"), { relayed: true });

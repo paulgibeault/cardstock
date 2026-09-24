@@ -15,23 +15,24 @@ import { test } from 'node:test';
 import assert from 'node:assert';
 
 import { createTableDirectory, tableKeyOf } from '../src/match/tableDirectory.js';
-import { FRAME, PROTOCOL_VERSION } from '../src/match/protocol.js';
+import { FRAME } from '../src/match/protocol.js';
+import { lobbyFrame } from '../src/match/frames.js';
 
 /** A lobby frame of the shape src/match/host.js broadcasts. */
 function lobby({ hostDeviceId = 'ada', packId = 'crazy-eights', started = false, seats = [], tableId = null } = {}) {
   return {
+    ...lobbyFrame({
+      packId,
+      variants: [],
+      hostDeviceId,
+      seatCount: seats.length || 2,
+      seats,
+      started,
+    }),
     // A table is named by ITSELF from protocol v2 on. Defaulting it to the host
     // keeps every existing case reading the same way — one table per host — and
     // lets the cases that care about two tables on one device say so.
     tableId: tableId || `tbl-${hostDeviceId}`,
-    k: FRAME.LOBBY,
-    protocol: PROTOCOL_VERSION,
-    packId,
-    variants: [],
-    hostDeviceId,
-    seatCount: seats.length || 2,
-    seats,
-    started,
   };
 }
 
