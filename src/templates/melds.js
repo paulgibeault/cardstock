@@ -12,11 +12,7 @@
 // wild became.
 
 import { selectorMatches } from '../engine/selectors.js';
-import { distinctValues, isWild, rankAt, rankIndexOf, rankLadderOf } from '../engine/cards.js';
-
-export function isWildCard(ctx, card) {
-  return isWild(card, ctx.rules.wilds);
-}
+import { distinctValues, rankAt, rankIndexOf, rankLadderOf } from '../engine/cards.js';
 
 export function parseItem(item) {
   const m = /^(\w+)\((\d+)\)$/.exec(item || '');
@@ -94,7 +90,7 @@ export function rankDomain(ctx) {
     let min = Infinity;
     let max = -Infinity;
     for (const card of ctx.pack.cardsById.values()) {
-      if (isWildCard(ctx, card) || !isMeldable(ctx, card)) continue;
+      if (ctx.isWild(card) || !isMeldable(ctx, card)) continue;
       const i = rankIndexOf(ladder, card.rank);
       if (i < 0) continue;
       if (i < min) min = i;
@@ -166,7 +162,7 @@ export function entriesOf(ctx, cardIds) {
 // assigned, which is a state no laid-down meld is allowed to be in.
 export function meldValue(ctx, entry, kind, wilds) {
   const attr = pinnedAttr(kind);
-  if (!isWildCard(ctx, entry.card)) return entry.card[attr];
+  if (!ctx.isWild(entry.card)) return entry.card[attr];
   return wilds?.[entry.id]?.[attr];
 }
 
@@ -198,14 +194,14 @@ export function assignWilds(ctx, kind, size, entries, pinned = {}) {
   const wilds = {};
   const unassigned = [];
   for (const entry of entries) {
-    if (!isWildCard(ctx, entry.card)) continue;
+    if (!ctx.isWild(entry.card)) continue;
     const value = pinned[entry.id]?.[attr];
     if (value === undefined) unassigned.push(entry);
     else wilds[entry.id] = { [attr]: value };
   }
   if (!unassigned.length) return { ok: true, wilds };
 
-  const naturals = entries.filter((e) => !isWildCard(ctx, e.card));
+  const naturals = entries.filter((e) => !ctx.isWild(e.card));
   const noValue = {
     ok: false,
     rule: 'wild-value-required',
@@ -265,7 +261,7 @@ export function checkMeldQuota(ctx, parsed, entries) {
     return { ok: false, rule: 'invalid-meld', reason: 'Card count does not match the meld size.' };
   }
   const wildsCfg = ctx.rules.wilds || {};
-  const naturals = entries.filter((e) => !isWildCard(ctx, e.card));
+  const naturals = entries.filter((e) => !ctx.isWild(e.card));
   const wildCount = entries.length - naturals.length;
   if (naturals.length < (wildsCfg.minNaturals ?? 0)) {
     return { ok: false, rule: 'min-naturals', reason: 'A meld needs at least one natural (non-wild) card.' };
@@ -406,7 +402,7 @@ export function getMeldGroups(ctx, seat) {
 export function meldKindOf(ctx, group) {
   const parsed = parseItem(group.item);
   if (parsed) return parsed.kind;
-  return inferKind(group.cards.map((id) => ctx.cardById(id)).filter((c) => !isWildCard(ctx, c)));
+  return inferKind(group.cards.map((id) => ctx.cardById(id)).filter((c) => !ctx.isWild(c)));
 }
 
 // What a meld's wilds are ALREADY standing for. A group laid down through
@@ -502,7 +498,7 @@ export function meldDisplayOrder(ctx, group, kind) {
     const decorated = entries.map((entry, i) => ({
       id: entry.id,
       i,
-      wild: isWildCard(ctx, entry.card),
+      wild: ctx.isWild(entry.card),
       value: meldValue(ctx, entry, meldKind, wilds),
     }));
 

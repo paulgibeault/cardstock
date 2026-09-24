@@ -2,12 +2,30 @@
 // scoreRound function receives. Read helpers are plain functions; mutation helpers
 // (moveCards, setVar, advanceTurn, ...) are the only way templates touch state, so all
 // state changes funnel through one place.
+//
+// AND THAT IS NOW A RULE RATHER THAN AN INTENTION. `tests/repo-gates.test.js`
+// refuses a `ctx.state.` reach-in or a `src/engine/state.js` import anywhere in
+// src/templates/, so a template that needs something this file does not offer
+// has to come here and add it. Every reader and writer below that looks
+// oddly specific — `roundEnded()`, `roundNumber()`, `placeDeck`,
+// `resetPlayerVars` — is a reach-in that used to go around this object, and
+// src/engine/fork.js's copy list is only sound while none do.
 
 import { baseId } from './selectors.js';
-import { moveCards as moveCardsInState, emitEvent } from './state.js';
+import { isWild } from './cards.js';
+import { moveCards as moveCardsInState, emitEvent, zoneAddress } from './state.js';
 
-export function zoneAddr(id, seat) {
-  return seat === undefined || seat === null ? id : `${id}.${seat}`;
+/**
+ * A zone address, spelled the one way the state container spells it.
+ *
+ * `n` is the numbered form (`build.3`, and with a seat `discard.3.0`), which
+ * sequencing built with template literals in nine places because this helper
+ * only took a seat. It is the same `zoneAddress` ZoneSet.define uses to NAME
+ * its instances, so an address built here cannot drift from an address that
+ * exists.
+ */
+export function zoneAddr(id, seat, n) {
+  return zoneAddress(id, { n, seat });
 }
 
 export function makeCtx(state) {
@@ -31,6 +49,17 @@ export function makeCtx(state) {
     cardById: (id) => pack.cardsById.get(baseId(id)),
     locationOf: (cardId) => state.cardLocation.get(cardId),
 
+    /**
+     * A card that stands in for another. The pack's own answer — a declared
+     * `wilds.tag`, or the card's effect — and not the template's guess at it.
+     *
+     * This predicate was written out verbatim as a module-level `isWildCard`
+     * in melds.js, shedding.js and sequencing.js. Three copies of one line is
+     * three chances for a pack's wilds to mean something different depending
+     * on which template is asking.
+     */
+    isWild: (card) => isWild(card, pack.rules?.wilds),
+
     var: (name) => state.vars[name],
     setVar: (name, value) => {
       state.vars[name] = value;
@@ -38,6 +67,27 @@ export function makeCtx(state) {
     playerVar: (seat, name) => state.playerVars[seat]?.[name],
     setPlayerVar: (seat, name, value) => {
       state.playerVars[seat][name] = value;
+    },
+
+    /**
+     * Wipe every seat's vars for a new hand, carrying only the named ones.
+     *
+     * The round boundary's default is a total wipe (movePipeline's
+     * maybeFinishRound), which is right for a bid and wrong for anything that
+     * outlives a hand by definition. The two templates that have such a thing
+     * — trick-taking's `bags`, cribbage's `backPeg` — each read the array out,
+     * replaced it by hand and wrote the survivors back, in the same four
+     * lines. A name with no value on a seat stays absent rather than becoming
+     * `undefined`, so a carried-over sheet is the same shape a fresh one is.
+     */
+    resetPlayerVars: ({ keep = [] } = {}) => {
+      state.playerVars = state.playerVars.map((own) => {
+        const carried = {};
+        for (const name of keep) {
+          if (own?.[name] !== undefined) carried[name] = own[name];
+        }
+        return carried;
+      });
     },
 
     score: (seat) => state.scores[seat],
@@ -67,6 +117,28 @@ export function makeCtx(state) {
       return dealt;
     },
 
+    /**
+     * Cards straight into a zone, with their locations stamped — THE DEAL, and
+     * the one sanctioned way to put a card somewhere it did not come from.
+     *
+     * Called with no `ids` it shuffles the pack's whole deck in, which is what
+     * `state.js initializeDeckInto` was for and what cribbage's setup had
+     * copied out line for line. Called with ids it is the raw
+     * `zone(addr).cards.push(id); cardLocation.set(id, addr)` pair that
+     * climbing's two deals and trick-taking's wrote by hand.
+     *
+     * NO REACTIONS FIRE, deliberately and unlike `moveCards`: a deal is cards
+     * arriving from outside the table, and a zone that is briefly empty
+     * mid-deal is not a pile that has run out.
+     */
+    placeDeck: (address, ids = state.rng.shuffle([...pack.cardsById.keys()])) => {
+      const zone = state.zones.get(address);
+      for (const id of ids) {
+        zone.cards.push(id);
+        state.cardLocation.set(id, address);
+      }
+    },
+
     /** `n` cards to every seat's `to` zone, seat 0 first — the opening deal. */
     dealEach: (n, { to = 'hand', from = 'draw' } = {}) => {
       for (let seat = 0; seat < state.seats; seat++) {
@@ -88,6 +160,9 @@ export function makeCtx(state) {
      * permanently seat 0 in contradiction of the design doc's `dealer: rotate`.
      */
     openingSeat: () => (state.roundNumber - 1) % state.seats,
+
+    /** Which hand this is, counting from 1 — what a passing schedule rotates on. */
+    roundNumber: () => state.roundNumber,
 
     nextSeat: (from = state.turn.seat, dir = state.direction) => (((from + dir) % state.seats) + state.seats) % state.seats,
     setTurnSeat: (seat) => {
@@ -122,11 +197,22 @@ export function makeCtx(state) {
       state.roundWinner = winner;
     },
 
+    /**
+     * Has this hand finished? The answer `isRoundOver` gives back, and the
+     * guard every step that can be reached AFTER a hand ends has to ask —
+     * cribbage's peg, its play-out and its show all check it, because a game
+     * decided mid-count must stop counting.
+     */
+    roundEnded: () => state.roundEnded,
+
     /** The MATCH is over. Distinct from endRound above, deliberately. */
     setGameOver: (winner) => {
       state.gameOver = true;
       state.winner = winner;
     },
+
+    /** Is the MATCH over? Again distinct from `roundEnded` above. */
+    gameOver: () => state.gameOver,
 
     // Derived events for the UI (state.events) — a trick resolving, a lay-down
     // landing. Never part of the persisted log; see state.js.
