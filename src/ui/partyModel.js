@@ -43,16 +43,35 @@
 
 import { botById, initialsOf, pickBotIds } from '../players/roster.js';
 import { seatStatus } from '../match/host.js';
+import { seatOfSelf } from '../match/frames.js';
 import { sidesFor } from '../engine/sides.js';
 
-/** The grace a table falls back to when its host never chose (party.js §7). */
-const DEFAULT_GRACE_MS = 60_000;
+/**
+ * HOW LONG A SEAT GETS WHEN ITS HOST NEVER CHOSE — one number, one home.
+ *
+ * It was written twice: here, as the fallback a tile draws its countdown from,
+ * and in party.js as `TURN_TIMEOUT_MS`, the default the host's own turn timer
+ * runs on and the middle entry of `GRACE_CHOICES`. Two constants that had to
+ * stay equal and nothing making them: a host who never opened the grace menu
+ * would have run a 45-second timer while every tile promised a minute.
+ *
+ * IT LIVES ON THIS SIDE BECAUSE THE DEPENDENCY ONLY RUNS ONE WAY. party.js is
+ * a DOM module and this one is pure — importable by a Node test, which is the
+ * whole of #75 — so the model can never import the screen, and the screen
+ * imports the model already.
+ *
+ * GENEROUS ON PURPOSE. This is not a chess clock; it exists so that one person
+ * putting their phone down does not stop the game for everybody else. A minute
+ * is long enough that nobody thinking about a real decision ever meets it, and
+ * short enough that a table does not die of one distraction.
+ */
+export const DEFAULT_GRACE_MS = 60_000;
 
 /**
  * How long a WORSE reading has to hold before the screen repeats it.
  *
  * A PRODUCT DECISION, NOT A TUNING KNOB, so it is written down with its
- * reasoning like `TURN_TIMEOUT_MS` and `GRACE_CHOICES` in party.js.
+ * reasoning like `DEFAULT_GRACE_MS` above and `GRACE_CHOICES` in party.js.
  *
  * The number has to clear the two interruptions that cost a player nothing.
  * A data channel blipping and recovering is one — the transport queues sends
@@ -283,12 +302,6 @@ function openSeatsOf(frame) {
   return (frame?.seats || []).filter((s) => s.kind !== 'device').length;
 }
 
-/** Which seat this device holds at a table, per the host's own roster. */
-function seatOfSelf(frame, self) {
-  const mine = (frame?.seats || []).find((s) => s.kind === 'device' && s.deviceId === self);
-  return mine ? mine.seat : null;
-}
-
 /**
  * What we are to a table, in one word.
  *
@@ -383,7 +396,7 @@ function viewOf({ tableId, frame, stub, session, lastSeenAt }, ctx) {
     // A SEAT WE HOLD IS NOT THE SAME AS A CLIENT THAT HOLDS IT. The tile asks
     // the second question — tapping a seat we are really sitting at goes to the
     // felt rather than to the panel — and only a live client can answer it.
-    seatedHere: session?.client?.seat?.() != null,
+    seatedHere: session?.seatedAt() != null,
     // A hosted table that has been dealt and is running behind the felt: the
     // "Back to the table" door, which is a different offer from "Deal".
     hasState: hosted ? !!session.state : false,

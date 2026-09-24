@@ -46,10 +46,21 @@ export async function fetchPackIndex() {
 // five parallel lobby fetches if anything asks twice mid-flight.
 const manifestCache = new Map();
 
+// AND THE SETTLED ANSWER, for the callers that cannot await one.
+//
+// src/ui/party.js kept two Maps of its own — `packNames` and `packTeams` —
+// filled from this very fetch and refilled by hand at the one call site that
+// awaited it, because a repaint is synchronous and a promise is not. Two
+// caches of one fetch is one cache too many: the second was written in three
+// places, could be refilled out of step with the first, and remembered a
+// failed fetch as the answer forever, which this one deliberately does not.
+const settled = new Map();
+
 export function fetchPackManifest(packId) {
   assertPackId(packId);
   if (!manifestCache.has(packId)) {
     const pending = fetchJson(`packs/${packId}/manifest.json`);
+    pending.then((manifest) => settled.set(packId, manifest), () => {});
     // A failed fetch must not be remembered as the answer: the player can go
     // back to the lobby and try again, and offline-then-online is the ordinary
     // case for a PWA.
@@ -57,6 +68,30 @@ export function fetchPackManifest(packId) {
     manifestCache.set(packId, pending);
   }
   return manifestCache.get(packId);
+}
+
+/**
+ * The manifest we already hold, or null — NEVER A FETCH.
+ *
+ * For a synchronous reader: a repaint asking what a pack is called cannot
+ * await, and the honest answer before the fetch lands is "I do not know yet"
+ * rather than a request nobody is waiting on. Pair it with `askedForManifest`
+ * to decide whether to start one.
+ */
+export function knownManifest(packId) {
+  return settled.get(packId) || null;
+}
+
+/**
+ * Has this manifest been asked for yet (settled or still in flight)?
+ *
+ * The in-flight half is the important one: it is what makes "never ask twice"
+ * a property of the cache rather than a sentinel value a caller has to
+ * remember to write — party.js wrote `packNames.set(packId, null)` for exactly
+ * this and then had to treat null as a third state everywhere it read.
+ */
+export function askedForManifest(packId) {
+  return manifestCache.has(packId);
 }
 
 /**
