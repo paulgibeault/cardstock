@@ -93,8 +93,9 @@ function maybeFinishRound(state) {
     template.startRound(ctx);
   } else {
     // Default: a fresh deal with nothing carried over. Templates with meta-state
-    // that outlives a round (contract progression) implement startRound.
-    state.playerVars = state.playerVars.map(() => ({}));
+    // that outlives a round (contract progression) implement startRound, and
+    // say what survives with the same call plus a keep-list.
+    ctx.resetPlayerVars();
     template.setup(makeCtx(state));
   }
   emitEvent(state, 'roundStart', { round: state.roundNumber });

@@ -2006,7 +2006,7 @@ function passTarget(ctx, seat, direction) {
 function passDirectionForRound(ctx) {
   const passing = ctx.rules.passing;
   if (!passing) return null;
-  const idx = (ctx.state.roundNumber - 1) % passing.schedule.length;
+  const idx = (ctx.roundNumber() - 1) % passing.schedule.length;
   return passing.schedule[idx];
 }
 
@@ -2094,10 +2094,7 @@ function dealAll(ctx) {
   const count = ctx.rules.dealAll === true ? ids.length : ids.length - (ids.length % ctx.seats);
   let seat = ctx.openingSeat();
   for (let i = 0; i < count; i++) {
-    const id = ids[i];
-    const addr = ctx.zoneAddr('hand', seat);
-    ctx.zone(addr).cards.push(id);
-    ctx.state.cardLocation.set(id, addr);
+    ctx.placeDeck(ctx.zoneAddr('hand', seat), [ids[i]]);
     seat = ctx.nextSeat(seat, 1);
   }
 }
@@ -2164,13 +2161,17 @@ const trickTaking = {
    * that does not bid gets the round boundary it always had. Hearts' seats end
    * a round with no `bags` at all, so this carries nothing and its serialised
    * bytes are unchanged (tests/replayIdentity.test.js).
+   *
+   * A BANKED ZERO NOW SURVIVES THE BOUNDARY, where the four lines this replaced
+   * dropped it (`if (carried[seat])`). `roundScoreBidsAndBags` writes a literal
+   * 0 to every non-banker seat, so those seats used to arrive at the next hand
+   * with no `bags` key rather than with a zero one. Every reader coerces
+   * (`Number(...) || 0`, `bagsOf`), so the count a seat plays and the badge it
+   * draws are identical either way; the sheet simply says "none" instead of
+   * saying nothing.
    */
   startRound(ctx) {
-    const carried = Array.from({ length: ctx.seats }, (unused, seat) => ctx.playerVar(seat, 'bags'));
-    ctx.state.playerVars = ctx.state.playerVars.map(() => ({}));
-    for (let seat = 0; seat < ctx.seats; seat++) {
-      if (carried[seat]) ctx.setPlayerVar(seat, 'bags', carried[seat]);
-    }
+    ctx.resetPlayerVars({ keep: ['bags'] });
     trickTaking.setup(ctx);
   },
 
@@ -2532,7 +2533,7 @@ const trickTaking = {
    * tricks the seat's own score chip already reports.
    */
   seatCounters(ctx, seat) {
-    const hand = ctx.countIn(`hand.${seat}`);
+    const hand = ctx.countIn(ctx.zoneAddr('hand', seat));
     const counters = [{
       text: String(hand),
       aria: `${hand} ${hand === 1 ? 'card' : 'cards'}`,
