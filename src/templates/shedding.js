@@ -26,13 +26,44 @@ const DEADWOOD_WORTH = 0.05;
 /** How much the nearest opponent's hand discounts your own position. */
 const RIVAL_SHARE = 2;
 
+/* ------------------------------------------------------------------ *
+ * What a MOVE is worth (see `botHeuristic`)
+ * ------------------------------------------------------------------ *
+ *
+ * The move scorer is three BANDS and two opinions, and only the opinions are
+ * anybody's to turn.
+ *
+ * THE BANDS ARE STRUCTURE, NOT AN OPINION, and they stay out of `WEIGHTS` for
+ * the same reason sequencing's tiers do (src/templates/sequencing.js): a tuner
+ * handed them would eventually find a set that reorders them, and every one of
+ * those orderings is a bot playing a different game.
+ *
+ *   −1  a holding move — draw, or keep the card you drew.
+ *    0  a wild, which is the last card out of the hand and not the first. The
+ *       comment in `botHeuristic` is the record of what that zero cost to
+ *       learn; a knob that could lift it back above a natural would put the
+ *       bug straight back.
+ *    1  every natural play, and the floor the two opinions below sit on top of.
+ *
+ * THE OPINIONS ARE THE TIE-BREAK INSIDE THE TOP BAND — which natural to spend
+ * first — and they ARE a tuner's to turn, so they are bagged (#206). Both are
+ * sized to stay inside the band: the biggest value in either shedding pack is
+ * Wildfire's 50, so the value term tops out at half a point and the two
+ * together cannot lift a natural to 2 or drop one to the wild's zero.
+ */
+/** How much a point of end-of-round value argues for dumping the card now. */
+const DUMP_VALUE_SHARE = 0.01;
+/** What an action card is worth spending ahead of a plain one of equal value. */
+const DUMP_EFFECT_WORTH = 0.5;
+
 /**
- * The five numbers above, gathered, so a caller can hand `evaluateState` a
- * different set (src/templates/CONTRACT.md, `weights`). The constants keep
- * their comments; this is the shipped value of each, frozen.
+ * The seven numbers above, gathered, so a caller can hand `botHeuristic` and
+ * `evaluateState` a different set (src/templates/CONTRACT.md, `weights`). The
+ * constants keep their comments; this is the shipped value of each, frozen.
  */
 export const WEIGHTS = Object.freeze({
   CARD_IN_HAND, EXIT_WORTH, WILD_WORTH, DEADWOOD_WORTH, RIVAL_SHARE,
+  DUMP_VALUE_SHARE, DUMP_EFFECT_WORTH,
 });
 
 /**
@@ -853,7 +884,7 @@ const shedding = {
     ];
   },
 
-  botHeuristic(ctx, move) {
+  botHeuristic(ctx, move, w = WEIGHTS) {
     // Keeping a drawn card costs the same as drawing one: both decline to
     // commit a card, and both are what a bot does when nothing better is on
     // offer. A persona's `patience` already reads them as one family
@@ -879,8 +910,10 @@ const shedding = {
     // (Wildfire's wild-draw4) are held on the same terms: the four cards it
     // costs somebody are worth less than the turn it buys you later.
     if (isWildCard(ctx, card)) return 0;
-    // Prefer dumping high-value / action cards first — simple, deliberately dumb.
-    return 1 + (card.value ?? 0) * 0.01 + (effectOf(card) ? 0.5 : 0);
+    // Prefer dumping high-value / action cards first — simple, deliberately
+    // dumb, and the one part of this function a tuner may reach (see the
+    // WEIGHTS block's note on bands versus opinions).
+    return 1 + (card.value ?? 0) * w.DUMP_VALUE_SHARE + (effectOf(card) ? w.DUMP_EFFECT_WORTH : 0);
   },
 
   /**

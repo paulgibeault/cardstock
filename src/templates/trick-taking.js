@@ -613,19 +613,12 @@ const CONTRACT_HELD_WORTH = 0.025;
 /** How much the best opposing side's contract discounts your own. */
 const CONTRACT_RIVAL_SHARE = 0.5;
 
-/**
- * Every number the evaluator and the pass scorer are made of, gathered, so a
- * caller can hand the hooks a different set (src/templates/CONTRACT.md,
- * `weights`). The constants keep their comments; this is the shipped value of
- * each, frozen. It sits here because this is the first line after the last of
- * them is declared.
- */
-export const WEIGHTS = Object.freeze({
-  TAKEN_WORTH, AT_RISK_WORTH, HELD_VALUE_WORTH, LOOSE_POINT_RISK, HELD_LIABILITY_WORTH,
-  RIVAL_SHARE, PASS_VALUE_WORTH, PASS_LIABILITY_WORTH, PASS_VOID_WORTH,
-  CONTRACT_TRICK_WORTH, BAG_COST, SHORTFALL_COST, NIL_WORTH, CONTRACT_HELD_WORTH,
-  CONTRACT_RIVAL_SHARE,
-});
+// `WEIGHTS` used to be gathered here, because this was the first line after the
+// last of the numbers was declared. The auction's numbers and the points
+// evaluator's joined it (#206), so the bag now sits after `HELD_RANK_WORTH`
+// further down, which is the first line after the last of THEM is declared.
+// Every reader of it is a default argument, evaluated per call, so the move is
+// invisible to everything but the order of declarations.
 
 function scorePass(ctx, move, w = WEIGHTS) {
   const scoring = ctx.pack.scoring || {};
@@ -1204,23 +1197,23 @@ const PARTNER_SHARE = 0.66;
  */
 const TRICK_CONFIDENCE = 0.55;
 
-function expectedPoints(ctx, seat, trump) {
+function expectedPoints(ctx, seat, trump, w) {
   const meld = ctx.rules.melds
     ? detectDeclaredMelds(ctx, ctx.cardIdsIn(ctx.zoneAddr('hand', seat)), trump).points
     : 0;
-  const mine = meld + expectedTricks(ctx, seat, trump) * pointsPerTrick(ctx) * TRICK_CONFIDENCE;
-  return mine * (1 + PARTNER_SHARE);
+  const mine = meld + expectedTricks(ctx, seat, trump) * pointsPerTrick(ctx) * w.TRICK_CONFIDENCE;
+  return mine * (1 + w.PARTNER_SHARE);
 }
 
 /** How far a points bid may sit above the count before the bot will not say it. */
 const POINTS_OVER_COST = 1.6;
 const POINTS_UNDER_COST = 1;
 
-function scorePointsBid(ctx, move) {
+function scorePointsBid(ctx, move, w) {
   const seat = move.actor;
   const bid = bidValueOf(move);
   const step = bidIncrementOf(ctx);
-  const worth = expectedPoints(ctx, seat, bidTrumpOf(move));
+  const worth = expectedPoints(ctx, seat, bidTrumpOf(move), w);
 
   // A PASS IS PRICED AGAINST THE CHEAPEST BID THAT IS STILL AVAILABLE, not
   // against zero. Passing is right exactly when the hand cannot afford the
@@ -1232,17 +1225,17 @@ function scorePointsBid(ctx, move) {
     if (!levels.length) return 0;
     // Worth what declining the cheapest contract is worth: nothing when the
     // hand could have made it, and the shortfall when it could not.
-    return Math.max(0, levels[0] - worth) * POINTS_UNDER_COST / step - 0.5;
+    return Math.max(0, levels[0] - worth) * w.POINTS_UNDER_COST / step - 0.5;
   }
   const gap = (bid - worth) / step;
-  return -(gap > 0 ? gap * POINTS_OVER_COST : -gap * POINTS_UNDER_COST);
+  return -(gap > 0 ? gap * w.POINTS_OVER_COST : -gap * w.POINTS_UNDER_COST);
 }
 
 function scoreBid(ctx, move, w = WEIGHTS) {
   const seat = move.actor;
   const bid = bidValueOf(move);
   if (bid === null) return -Infinity;
-  if (bidUnitOf(ctx) === 'points') return scorePointsBid(ctx, move);
+  if (bidUnitOf(ctx) === 'points') return scorePointsBid(ctx, move, w);
 
   if (bid === 0) {
     // A NIL IS A GATE, NOT A CANDIDATE. Priced on the same scale as the gaps
@@ -1251,14 +1244,14 @@ function scoreBid(ctx, move, w = WEIGHTS) {
     // cut of this came to bid nil on three hands in ten and lose a hundred on
     // most of them. So the two sides of the bar are separated: a hand that can
     // duck is worth more than any bid, and one that cannot is worth less.
-    const margin = NIL_RISK_BAR - nilRisk(ctx, seat);
+    const margin = w.NIL_RISK_BAR - nilRisk(ctx, seat);
     const worth = margin >= 0 ? w.NIL_WORTH * (1 + margin) : -w.NIL_WORTH * (1 - margin);
     // A BLIND nil is the same judgement at twice the stakes, which is why it is
     // only ever offered to a side that needs the swing (`mayBidBlind`).
     return bidIsBlindMove(move) ? worth * 2 : worth;
   }
   const gap = bid - expectedTricks(ctx, seat);
-  return -(gap > 0 ? gap * BID_OVER_COST : -gap * BID_UNDER_COST);
+  return -(gap > 0 ? gap * w.BID_OVER_COST : -gap * w.BID_UNDER_COST);
 }
 
 function startBiddingPhase(ctx) {
@@ -1495,6 +1488,40 @@ function holdsUp(ctx, taking) {
 const HELD_PRIZE_WORTH = 1;
 const HELD_RANK_WORTH = 4;
 
+/**
+ * EVERY NUMBER THE HOOKS ARE MADE OF, gathered, so a caller can hand them a
+ * different set (src/templates/CONTRACT.md, `weights`). The constants keep
+ * their comments; this is the shipped value of each, frozen. It sits here
+ * because this is the first line after the last of them is declared.
+ *
+ * THE AUCTION'S NUMBERS AND THE POINTS EVALUATOR'S JOINED IT IN #206, and
+ * before that they were nine literals `tools/tune.mjs` had no way to reach —
+ * so the trick-taking half of Pinochle's and Team Spades' strategy was
+ * untunable and, worse, invisible to tests/weights.test.js, which only ever
+ * checks what is IN the bag. Every value and every piece of arithmetic is
+ * unchanged; the numbers are the same numbers, read through `w`.
+ *
+ * WHAT IS STILL DELIBERATELY OUT, which is the rest of this file's literals:
+ * the shapes inside `nilRisk` and `expectedTricks` — "a trump within three of
+ * the top wins whatever is led", "four or more of a suit makes the second card
+ * a winner". Those are not opinions about how much something is worth, they
+ * are a model of how a trick is taken, and a tuner that moved them would be
+ * rewriting the count rather than the policy that spends it. `evaluateContract`
+ * and this function are the policy, and the policy is here.
+ */
+export const WEIGHTS = Object.freeze({
+  TAKEN_WORTH, AT_RISK_WORTH, HELD_VALUE_WORTH, LOOSE_POINT_RISK, HELD_LIABILITY_WORTH,
+  RIVAL_SHARE, PASS_VALUE_WORTH, PASS_LIABILITY_WORTH, PASS_VOID_WORTH,
+  CONTRACT_TRICK_WORTH, BAG_COST, SHORTFALL_COST, NIL_WORTH, CONTRACT_HELD_WORTH,
+  CONTRACT_RIVAL_SHARE,
+  // The auction (#206): what a nil demands of a hand, and what the two
+  // directions of missing the count are worth against each other.
+  NIL_RISK_BAR, BID_OVER_COST, BID_UNDER_COST, POINTS_OVER_COST, POINTS_UNDER_COST,
+  TRICK_CONFIDENCE, PARTNER_SHARE,
+  // The points evaluator's held-card term (#206).
+  HELD_PRIZE_WORTH, HELD_RANK_WORTH,
+});
+
 function evaluatePointsContract(ctx, seat, w = WEIGHTS) {
   if (ctx.turn.phase === 'bid' || ctx.turn.phase === 'meld') return null;
   if (ctx.var('trickNumber') === 1 && ctx.countIn('trick') === 0) return null;
@@ -1544,12 +1571,12 @@ function evaluatePointsContract(ctx, seat, w = WEIGHTS) {
   let held = 0;
   for (const id of ctx.cardIdsIn(ctx.zoneAddr('hand', seat))) {
     const card = ctx.cardById(id);
-    held += cardValue(card, scoring) + rankOrder(card, ladder) * HELD_RANK_WORTH;
+    held += cardValue(card, scoring) + rankOrder(card, ladder) * w.HELD_RANK_WORTH;
   }
 
   const valueOfSide = (side) => {
     let value = bankedBy(side);
-    if (side === mine) value += held * HELD_PRIZE_WORTH;
+    if (side === mine) value += held * w.HELD_PRIZE_WORTH;
     // The pile on the table, discounted by how well the winning card holds —
     // the term the no-trump evaluator's own comment calls "the whole signal".
     if (takingSide === side) value += onTable * holds;
