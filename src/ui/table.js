@@ -5684,13 +5684,14 @@ function adoptMatch(pack, state, message, {
   // flight duration is the `render` at the bottom of this function.
   //
   // WHAT ELSE GETS FRESHER: NOTHING, TODAY, AND THAT IS WORTH SAYING OUT LOUD.
-  // The other four things in the blob are not read off this snapshot at all.
+  // The other three things in the blob are not read off this snapshot at all.
   // `botDifficulty` and `pace` are read from storage at the moment they are used
   // (the driver's `difficulty` below, and `currentPace`); `hands` goes through
-  // `loadHandPrefs`, which `createSession` just below calls fresh for this pack;
-  // `showLegalHints` has no reader anywhere. So the only value this line can
-  // change under a running table is the one the sheet just set, and a match that
-  // is opening has nothing in flight to be surprised by it.
+  // `loadHandPrefs`, which `createSession` just below calls fresh for this pack.
+  // So the only value this line can change under a running table is the one the
+  // sheet just set, and a match that is opening has nothing in flight to be
+  // surprised by it. (There was a fourth, `showLegalHints`, which had no reader
+  // anywhere — #212 deleted the default rather than keep admitting that here.)
   settings = loadSettings();
   stopSession(session);
   // A pre-move copy belongs to the match it was taken in, and this is a
