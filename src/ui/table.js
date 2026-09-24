@@ -41,7 +41,7 @@
 // the hand, and the loop that turns a move into sound, motion and a save.
 
 import { createState } from '../engine/state.js';
-import { makeCtx } from '../engine/context.js';
+import { makeCtx, actingSeats, announcementsFor as enumerateAnnouncementsFor } from '../engine/context.js';
 import { validateMove, applyMove, legalMovesFor } from '../engine/movePipeline.js';
 import { forkState } from '../engine/fork.js';
 import { rehydrateMatch, packVersionChanged } from '../engine/replay.js';
@@ -347,18 +347,12 @@ function seatVerb(seat, verb) {
 }
 
 /**
- * Who may act right now. Usually just turn.seat; a simultaneous-commit phase
- * (Hearts' passing) is every seat that has not committed yet — the template
- * says so via actingSeats, the same hook tools/simulate.mjs consults. This is
- * what un-stalls the pass phase: the bot driver below schedules whichever
- * bot may act, not whoever nominally holds the turn.
+ * Who may act right now — the engine's rule (src/engine/context.js), under the
+ * felt's name so the dozen call sites below read as they always did. This is
+ * what un-stalls the pass phase: the bot driver schedules whichever bot may
+ * act, not whoever nominally holds the turn.
  */
-function actingSeatsOf(state) {
-  if (state.gameOver) return [];
-  const template = state.pack.template;
-  if (template.actingSeats) return template.actingSeats(makeCtx(state));
-  return [state.turn.seat];
-}
+const actingSeatsOf = actingSeats;
 
 function cardById(state, cardId) {
   return state.pack.cardsById.get(baseId(cardId));
@@ -383,9 +377,7 @@ function announcementsFor(state, seat) {
   // seat's options with the view (design decision D3); enumerating here would
   // mean running the template over a state with other people's hands missing.
   if (state.isView) return state.announcements;
-  const template = state.pack.template;
-  if (!template.enumerateAnnouncements) return [];
-  return template.enumerateAnnouncements(makeCtx(state), seat) || [];
+  return enumerateAnnouncementsFor(state, seat);
 }
 
 /**

@@ -10,6 +10,42 @@ export function zoneAddr(id, seat) {
   return seat === undefined || seat === null ? id : `${id}.${seat}`;
 }
 
+/**
+ * Who may act right now. Usually just `turn.seat`; a simultaneous-commit phase
+ * (Hearts' passing) is every seat that has not committed yet, and the template
+ * says so through the optional `actingSeats` hook (CONTRACT.md §hooks).
+ *
+ * A FINISHED MATCH ACTS ON NOBODY. That guard used to be written in some copies
+ * of this line and not others — notably the party turn timer's, which could
+ * therefore re-arm a deadline against `turn.seat` after the match was over.
+ * It is the rule, so it lives here and everyone inherits it.
+ *
+ * Pure over `state` and the template, which is why this is an engine export and
+ * not a felt helper: the felt, the party host, the headless bot driver, the
+ * rollout and tools/simulate.mjs all need the same answer.
+ */
+export function actingSeats(state) {
+  if (state.gameOver) return [];
+  const template = state.pack.template;
+  return template.actingSeats ? template.actingSeats(makeCtx(state)) : [state.turn.seat];
+}
+
+/**
+ * What a seat may SAY right now, out of turn (§E2) — never enumerated as a play.
+ *
+ * Absent the hook the answer is "nothing", and a hook that returns nothing at
+ * all is normalised to `[]` so callers can iterate without a guard.
+ *
+ * Callers holding a CLIENT VIEW must not ask this: a view has other people's
+ * hands missing, so the host ships the acting seat's announcements with the
+ * frame (design decision D3) and the felt reads `state.announcements` instead.
+ */
+export function announcementsFor(state, seat) {
+  const template = state.pack.template;
+  if (!template.enumerateAnnouncements) return [];
+  return template.enumerateAnnouncements(makeCtx(state), seat) || [];
+}
+
 export function makeCtx(state) {
   const pack = state.pack;
   return {
