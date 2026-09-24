@@ -15,7 +15,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadPack } from '../src/engine/packLoader.js';
 import { createState } from '../src/engine/state.js';
-import { makeCtx } from '../src/engine/context.js';
+import { makeCtx, actingSeats } from '../src/engine/context.js';
 import { applyMove } from '../src/engine/movePipeline.js';
 import { chooseBotMove, DIFFICULTIES } from '../src/engine/bot.js';
 import { createRng } from '../src/engine/rng.js';
@@ -70,14 +70,6 @@ async function loadPackFromDisk(packId, variants) {
   return loadPack(structuredClone(manifest), { deckJson, variants });
 }
 
-// Which seats may currently act. Defaults to just the nominal turn.seat; a template
-// may override this for simultaneous-commit phases (design doc §4) where turn.seat
-// doesn't advance until every seat has committed — Hearts' passing phase, notably.
-function actingSeats(ctx) {
-  const template = ctx.pack.template;
-  return template.actingSeats ? template.actingSeats(ctx) : [ctx.turn.seat];
-}
-
 /**
  * `choose` is the move policy, so the same loop measures the same games at any
  * difficulty. The default is the plain deterministic chooser — every existing
@@ -97,7 +89,7 @@ function playOne(pack, seats, seed, { choose = chooseBotMove } = {}) {
   while (!state.gameOver && !roundDone && moves < MAX_MOVES) {
     let move = null;
     let actingSeat = null;
-    for (const seat of actingSeats(makeCtx(state))) {
+    for (const seat of actingSeats(state)) {
       move = choose(state, seat);
       if (move) {
         actingSeat = seat;
@@ -165,7 +157,7 @@ function playMatch(pack, seats, seed, { choose = chooseBotMove } = {}) {
       return { outcome: 'stall', moves, rounds, reason: `match still running after ${MAX_ROUNDS} rounds` };
     }
     let move = null;
-    for (const seat of actingSeats(makeCtx(state))) {
+    for (const seat of actingSeats(state)) {
       move = choose(state, seat);
       if (move) break;
     }
@@ -662,7 +654,7 @@ function playOneOverProtocol(pack, seatCount, seed) {
   while (!state.gameOver && !roundDone && moves < MAX_MOVES && !faults.length) {
     let move = null;
     let actingSeat = null;
-    for (const seat of actingSeats(makeCtx(state))) {
+    for (const seat of actingSeats(state)) {
       move = chooseBotMove(state, seat);
       if (move) { actingSeat = seat; break; }
     }
