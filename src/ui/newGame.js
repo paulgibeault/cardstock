@@ -6,7 +6,7 @@
 // of seats are inputs the replay must be given exactly as they were — change
 // either mid-match and every card after the change deals differently. Storage
 // already pins them per match; what was missing was any way for a player to
-// pick them, which is the deferred "L4 new-game sheet" in LOBBY_PLAN.md.
+// pick them, which is the deferred "L4 new-game sheet" in docs/plans/LOBBY_PLAN.md.
 //
 // The variant machinery itself is entirely in the pack: `manifest.variants`
 // declares each one with its own prose and a patch of dotted rule paths, and

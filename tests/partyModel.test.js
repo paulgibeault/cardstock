@@ -1,6 +1,6 @@
 // THE FIRST UNIT COVERAGE ANY PARTY-SIDE CODE HAS EVER HAD.
 //
-// TABLES_PLAN §11 records the gap and what it cost: "src/ui/party.js, table.js
+// docs/plans/TABLES_PLAN §11 records the gap and what it cost: "src/ui/party.js, table.js
 // and lobby.js still have no unit coverage. Every bug listed above was found by
 // driving the real thing" — three browsers, a real transport, and a scenario
 // written after each bug rather than before it.

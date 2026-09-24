@@ -1,5 +1,8 @@
 # Game Chrome Plan (v1 — 2026-08-05) — **SHIPPED**
 
+**Shipped 2026-08-05.** All three phases landed together; what reality added on
+top of the plan is in the status block below, and the plan is kept as written.
+
 > **Status: implemented.** All three phases landed together. The plan below is
 > kept as written so the reasoning stays legible next to the outcome; three
 > things reality added on top of it:
@@ -45,45 +48,45 @@ The complaints, verbatim:
 ## What the code actually says (findings)
 
 - **The "95" is the score chip, and its white coat is a bug.**
-  `#status-bar button { background: var(--button-bg) }` ([table.css:198](src/ui/table.css:198))
+  `#status-bar button { background: var(--button-bg) }` ([table.css:198](../../src/ui/table.css:198))
   is an ID+element selector (1-0-1) and beats `.score-chip`'s themed pill
-  (0-1-0) at [table.css:237](src/ui/table.css:237). The ghost buttons were
+  (0-1-0) at [table.css:237](../../src/ui/table.css:237). The ghost buttons were
   rescued with a `#status-bar .ghost-button` override at
-  [table.css:254](src/ui/table.css:254); the score chip never was. The chip
+  [table.css:254](../../src/ui/table.css:254); the score chip never was. The chip
   *already has* a themed design — translucent pill, `--chip-bg`, gold hover,
   matching the seat-score pills — it just never gets to wear it.
 
 - **The wrap is `flex-wrap: wrap` doing its job on too much content.**
-  `#status-bar` ([table.css:160](src/ui/table.css:160)) wraps, and on a phone
+  `#status-bar` ([table.css:160](../../src/ui/table.css:160)) wraps, and on a phone
   the right side (status text + chip + Forfeit) drops to a second line whenever
   the text lengthens ("Delphine's turn" vs "Your turn"). The table screen is a
   `100dvh` flex column, so a taller bar shoves the whole felt down mid-game.
 
 - **Forfeit already lives in the lobby.** The resume tile's "Start over"
-  button ([lobby.js:157–190](src/ui/lobby.js:157)) confirm-gates and records a
+  button ([lobby.js:157–190](../../src/ui/lobby.js:157)) confirm-gates and records a
   forfeit through the *same* `recordResult` contract as the table's button —
   the code comment there says explicitly the two doors must not disagree.
   Removing the table button loses nothing, and it makes the table's entire
   `forfeited` flag machinery dead code (the flag's only setter is
-  `forfeitMatch`, [table.js:1962](src/ui/table.js:1962)).
+  `forfeitMatch`, [table.js:1962](../../src/ui/table.js:1962)).
 
 - **Both titles are ours.** The launcher bar shows what
   `Arcade.ui.setTitle('Cardstock — ' + pack.manifest.name)` sets
-  ([table.js:2464](src/ui/table.js:2464)); the status bar repeats the name in
-  `#game-name` ([index.html:53](index.html:53)). The lobby sets plain
-  `'Cardstock'` ([main.js:38](src/main.js:38)) — that stays.
+  ([table.js:2464](../../src/ui/table.js:2464)); the status bar repeats the name in
+  `#game-name` ([index.html:53](../../index.html:53)). The lobby sets plain
+  `'Cardstock'` ([main.js:38](../../src/main.js:38)) — that stays.
 
 - **Back-to-lobby is already universal.** The ← Lobby button is never hidden
-  by any state ([index.html:50](index.html:50), wired at
-  [table.js:2559](src/ui/table.js:2559)), and the game-over overlay has its own
+  by any state ([index.html:50](../../index.html:50), wired at
+  [table.js:2559](../../src/ui/table.js:2559)), and the game-over overlay has its own
   Lobby button. Nothing to add — just don't break it.
 
 - **Every plain-white surface routes through two variables.**
   `--panel-bg`/`--panel-text` are `#ffffff`/near-black **in both themes**
-  ([table.css:38](src/ui/table.css:38), [table.css:87](src/ui/table.css:87)).
-  Consumers: the card/pile/seat inspector ([table.css:967](src/ui/table.css:967)),
-  all five modal panels ([table.css:1783](src/ui/table.css:1783)), and the
-  event banner ([table.css:1366](src/ui/table.css:1366)). Re-value the two
+  ([table.css:38](../../src/ui/table.css:38), [table.css:87](../../src/ui/table.css:87)).
+  Consumers: the card/pile/seat inspector ([table.css:967](../../src/ui/table.css:967)),
+  all five modal panels ([table.css:1783](../../src/ui/table.css:1783)), and the
+  event banner ([table.css:1366](../../src/ui/table.css:1366)). Re-value the two
   variables and every popup re-themes at once — no per-surface work. Panel
   primary buttons use `--action-bg` (blue) and ghost buttons borrow
   `--panel-text`, so both survive a dark panel untouched.
@@ -97,22 +100,22 @@ one line, fixed height.
 
 ### A1. Remove the Forfeit button and its dead machinery — table.js, index.html
 
-- Delete `#forfeit-button` from [index.html:63](index.html:63) and its lookup
-  ([table.js:111](src/ui/table.js:111)), listener
-  ([table.js:2561](src/ui/table.js:2561)), and visibility line
-  ([table.js:1502](src/ui/table.js:1502)).
-- Delete `forfeitMatch()` ([table.js:1962](src/ui/table.js:1962)) and the
+- Delete `#forfeit-button` from [index.html:63](../../index.html:63) and its lookup
+  ([table.js:111](../../src/ui/table.js:111)), listener
+  ([table.js:2561](../../src/ui/table.js:2561)), and visibility line
+  ([table.js:1502](../../src/ui/table.js:1502)).
+- Delete `forfeitMatch()` ([table.js:1962](../../src/ui/table.js:1962)) and the
   `forfeited` flag plus every `|| forfeited` guard and the
   `'Game forfeited.'` status line — with no setter left they are all
   unreachable (lines ~207–210, 273, 286, 1491, 1506, 1963–1972, 2278, 2342,
   2392, 2510).
 - Simplify `concludeMatch` / `opponentOutcomes`
-  ([table.js:1897–1952](src/ui/table.js:1897)): drop the `forfeit` parameter
+  ([table.js:1897–1952](../../src/ui/table.js:1897)): drop the `forfeit` parameter
   (its only truthy caller was `forfeitMatch`). **Keep** the `forfeit`/`won`
   fields in the `recordResult` payload — that storage contract is shared with
   the lobby's forfeit path and covered by `tests/stats.test.js`.
 - Delete the Forfeit CSS: `.ghost-button--quiet`
-  ([table.css:228–234](src/ui/table.css:228)) and its "Forfeit lives in the
+  ([table.css:228–234](../../src/ui/table.css:228)) and its "Forfeit lives in the
   chrome" comment — the comment's claim moves to the lobby tile, where the
   code already documents it.
 - Lobby check: the tile's "Start over" already covers abandonment. Optional
@@ -122,44 +125,44 @@ one line, fixed height.
 
 ### A2. One name, in the launcher bar — table.js, index.html, main.js
 
-- [table.js:2464](src/ui/table.js:2464):
+- [table.js:2464](../../src/ui/table.js:2464):
   `Arcade.ui.setTitle(pack.manifest.name)` — the launcher bar reads
   "WILDFIRE", full stop. The lobby's `setTitle('Cardstock')`
-  ([main.js:38](src/main.js:38)) is untouched, so the wordmark identity
+  ([main.js:38](../../src/main.js:38)) is untouched, so the wordmark identity
   survives everywhere except at a live table, where the variant is the only
   name that matters.
-- Delete `#game-name` ([index.html:53](index.html:53)), its lookup and both
-  writes ([table.js:107](src/ui/table.js:107), 2454, 2465), and
-  `.status-bar__game` ([table.css:180](src/ui/table.css:180)).
+- Delete `#game-name` ([index.html:53](../../index.html:53)), its lookup and both
+  writes ([table.js:107](../../src/ui/table.js:107), 2454, 2465), and
+  `.status-bar__game` ([table.css:180](../../src/ui/table.css:180)).
 
 ### A3. The bar can no longer change height — table.css
 
 - `#status-bar`: `flex-wrap: wrap` → `nowrap`
-  ([table.css:167](src/ui/table.css:167)).
+  ([table.css:167](../../src/ui/table.css:167)).
 - `#status-text`: `flex: 1; min-width: 0; white-space: nowrap; overflow:
   hidden; text-overflow: ellipsis;` — the one elastic item. Status strings are
   short ("Delphine's turn"); ellipsis is a fallback, not the normal state.
 - The `.status-bar__side` wrappers already carry `min-width: 0`; with three
   items total, consider flattening to direct children — but only if the
   handedness rule (`[data-handedness="left"] #status-bar { flex-direction:
-  row-reverse }`, [table.css:275](src/ui/table.css:275)) still flips cleanly.
+  row-reverse }`, [table.css:275](../../src/ui/table.css:275)) still flips cleanly.
   If the two-sides structure makes that simpler, keep it. Simplicity over
   novelty.
 
 ## Phase B — The score chip earns its keep (complaint 4, the "95")
 
 - **Delete the `#status-bar button { … }` block**
-  ([table.css:198–211](src/ui/table.css:198)). After Phase A the bar holds only
+  ([table.css:198–211](../../src/ui/table.css:198)). After Phase A the bar holds only
   the ghost Lobby button and the score chip, both of which style themselves;
   the white-button default serves nothing. This one deletion un-breaks the
   chip — it immediately renders as the translucent themed pill it was written
   to be, twin to the seat-score pills. The `#status-bar .ghost-button` rescue
-  at [table.css:254](src/ui/table.css:254) also becomes redundant — fold what
+  at [table.css:254](../../src/ui/table.css:254) also becomes redundant — fold what
   it sets into `.ghost-button` if nothing else needed the escape hatch.
 - **Say what it is.** "I don't even know why it is there" is a discoverability
   bug: it's *your* score, and tapping it opens the score sheet. Prefix the
   value with a quiet label so it reads `You 95` (in `renderStatusBar`,
-  [table.js:1494–1501](src/ui/table.js:1494) — the Phase-10 packs already
+  [table.js:1494–1501](../../src/ui/table.js:1494) — the Phase-10 packs already
   render `Ph 4 · 95` there, so a short prefix is established vocabulary). The
   `aria-label` already explains the rest.
 
@@ -168,21 +171,21 @@ one line, fixed height.
 All in the two `:root` palette blocks plus one shared rule — no per-surface
 edits, and card faces stay fixed (design rule §2 at the top of table.css).
 
-- **Dark theme** ([table.css:38](src/ui/table.css:38)): `--panel-bg: #16281f`
+- **Dark theme** ([table.css:38](../../src/ui/table.css:38)): `--panel-bg: #16281f`
   (the existing `--tile-bg` — the lobby tiles already prove this surface),
   `--panel-text: #f0ede3` (warm off-white, matching the gold accent family).
-- **Light theme** ([table.css:87](src/ui/table.css:87)): `--panel-bg: #f7f4ec`
+- **Light theme** ([table.css:87](../../src/ui/table.css:87)): `--panel-bg: #f7f4ec`
   (warm paper, not device-white), `--panel-text: #14261c` (unchanged).
 - **One shared framing rule**: add `border: 1px solid var(--tile-border)` to
-  the panel selector group ([table.css:1778](src/ui/table.css:1778)) and the
-  inspector ([table.css:961](src/ui/table.css:961)) so the surfaces read as
+  the panel selector group ([table.css:1778](../../src/ui/table.css:1778)) and the
+  inspector ([table.css:961](../../src/ui/table.css:961)) so the surfaces read as
   the same material as the lobby tiles — chrome of this game, not a browser
-  default. The event banner ([table.css:1366](src/ui/table.css:1366)) inherits
+  default. The event banner ([table.css:1366](../../src/ui/table.css:1366)) inherits
   the new colours automatically and needs no border (it's a floating pill).
 - Sweep the panel's dependents once: `.panel .ghost-button` borrows
   `--panel-text` (fine on both new surfaces), primary buttons are `--action-bg`
   blue (fine), `.round-history` row tint uses `color-mix` off `--panel-text`
-  ([table.css:1902](src/ui/table.css:1902)) (fine). Check contrast in both
+  ([table.css:1902](../../src/ui/table.css:1902)) (fine). Check contrast in both
   themes at the end, nothing else should need touching.
 
 ## What deliberately does NOT change

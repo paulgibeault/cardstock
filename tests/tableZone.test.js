@@ -9,7 +9,7 @@
 // The flag says only that. Everything below is either the flag as the engine
 // resolves it, or a SOURCE GATE on the three places that have to agree about
 // it: a flag nothing reads is a flag that is green forever and draws nothing.
-// The felt itself was verified in a browser (see IMPLEMENTATION_NOTES) —
+// The felt itself was verified in a browser (see docs/notes/IMPLEMENTATION_NOTES) —
 // src/ui/table.js touches `document` on its first line and no Node test can
 // load it.
 import { test } from "node:test";

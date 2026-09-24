@@ -26,18 +26,11 @@ import assert from "node:assert";
 import { createTableSightings } from "../src/ui/tableSightings.js";
 import { lobbyFrame, byeFrame } from "../src/match/frames.js";
 import { PRUNE_GRACE_MS } from "../src/ui/tableSightings.js";
+import { installArcade } from "./fixtures/arcade.js";
 
 // The SDK's synchronous state surface is a key/value store; a Map is the whole
-// of what storage.js uses (the same stub tests/storage.test.js stands up).
-const store = new Map();
-globalThis.Arcade = {
-  state: {
-    get: (k) => store.get(k),
-    set: (k, v) => { store.set(k, structuredClone(v)); return true; },
-    remove: (k) => store.delete(k),
-    getOrInit: (k, d) => (store.has(k) ? store.get(k) : d),
-  },
-};
+// of what storage.js uses (tests/fixtures/arcade.js, shared with storage.test.js).
+const { store } = installArcade({ state: true });
 
 const ME = "device-me";
 const ADA = "device-ada";

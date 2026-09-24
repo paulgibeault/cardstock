@@ -237,7 +237,7 @@ function partsOf(breakdown, scored) {
  * every caller checks, and that check is what implements "the show stops".
  */
 function peg(ctx, seat, points, reason) {
-  if (ctx.state.roundEnded || ctx.state.gameOver) return false;
+  if (ctx.roundEnded() || ctx.gameOver()) return false;
   if (points <= 0) return true;
   ctx.setPlayerVar(seat, 'backPeg', ctx.score(seat));
   ctx.addScore(seat, points);
@@ -373,7 +373,7 @@ function advancePlay(ctx, from) {
     // The last card down is worth a point unless it made thirty-one, which was
     // already worth two and must not be paid for twice.
     if ((ctx.var('count') ?? 0) < limit) peg(ctx, from, ctx.rules.lastCard, 'last-card');
-    if (ctx.state.roundEnded) return;
+    if (ctx.roundEnded()) return;
     theShow(ctx);
     return;
   }
@@ -613,11 +613,7 @@ const cribbage = {
   },
 
   setup(ctx) {
-    const ids = ctx.rng.shuffle([...ctx.pack.cardsById.keys()]);
-    for (const id of ids) {
-      ctx.zone('draw').cards.push(id);
-      ctx.state.cardLocation.set(id, 'draw');
-    }
+    ctx.placeDeck('draw');
     ctx.setVar('dealer', ctx.openingSeat());
     ctx.dealEach(ctx.rules.deal);
     ctx.setVar('count', 0);
@@ -636,9 +632,7 @@ const cribbage = {
    * before your last score, and a hand boundary is not a score.
    */
   startRound(ctx) {
-    const back = Array.from({ length: ctx.seats }, (_, s) => ctx.playerVar(s, 'backPeg') ?? 0);
-    ctx.state.playerVars = ctx.state.playerVars.map(() => ({}));
-    for (let s = 0; s < ctx.seats; s++) ctx.setPlayerVar(s, 'backPeg', back[s]);
+    ctx.resetPlayerVars({ keep: ['backPeg'] });
     cribbage.setup(ctx);
   },
 
@@ -682,7 +676,7 @@ const cribbage = {
         if (ctx.countIn(handAddr(ctx, s)) > kept) return;
       }
       cutStarter(ctx);
-      if (ctx.state.roundEnded) return;
+      if (ctx.roundEnded()) return;
       startPlay(ctx);
       return;
     }
@@ -738,7 +732,7 @@ const cribbage = {
   },
 
   isRoundOver(ctx) {
-    return ctx.state.roundEnded;
+    return ctx.roundEnded();
   },
 
   /**

@@ -1,6 +1,6 @@
 // TWO SESSIONS AT ONCE, HEADLESSLY — the net that goes under T3 (#48).
 //
-// T3 rewires session ownership in src/ui/table.js, which MULTIPLAYER_PLAN.md
+// T3 rewires session ownership in src/ui/table.js, which docs/plans/MULTIPLAYER_PLAN.md
 // names as the one code path in this repo with no unit coverage. Everything
 // here is written against the CURRENT code, so it passes before that refactor
 // and keeps passing after it; the point is that a refactor which breaks one of

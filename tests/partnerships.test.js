@@ -11,7 +11,7 @@ import { test } from "node:test";
 import assert from "node:assert";
 import fs from "node:fs";
 import path from "node:path";
-import { loadPack } from "../src/engine/packLoader.js";
+import { loadPack } from "../src/templates/loadPack.js";
 import { createState } from "../src/engine/state.js";
 import { makeCtx } from "../src/engine/context.js";
 import { applyMove, runScoreRound } from "../src/engine/movePipeline.js";
@@ -29,6 +29,7 @@ import { placements, sideStandings } from "../src/stats/matchStats.js";
 import { PARTNERS_MANIFEST, SOLO_MANIFEST } from "./fixtures/partnersPack.js";
 import { validate } from "../tools/schema-check.mjs";
 import { ROOT } from "../tools/stage.mjs";
+import { actingSeats } from "./fixtures/engine.js";
 
 const partners = () => loadPack(structuredClone(PARTNERS_MANIFEST));
 const solo = () => loadPack(structuredClone(SOLO_MANIFEST));
@@ -225,9 +226,8 @@ test("a partner's hand is as hidden as an opponent's", () => {
 
 /** Walk a bot-vs-bot game, calling `visit(state, seat)` before each move. */
 function walk(state, limit, visit) {
-  const template = state.pack.template;
   for (let i = 0; i < limit && !state.gameOver; i++) {
-    const acting = template.actingSeats ? template.actingSeats(makeCtx(state)) : [state.turn.seat];
+    const acting = actingSeats(state);
     let move = null;
     let actor = null;
     for (const seat of acting) {
@@ -421,10 +421,9 @@ test("a side's standing is the sum over its seats, so a teamless pack is unchang
 test("a partnership match plays out and is won by a side", () => {
   const pack = partners();
   const state = dealt(pack, "endtoend");
-  const template = pack.template;
   let moves = 0;
   while (!state.gameOver && moves < 4000) {
-    const acting = template.actingSeats ? template.actingSeats(makeCtx(state)) : [state.turn.seat];
+    const acting = actingSeats(state);
     let move = null;
     for (const seat of acting) {
       move = chooseBotMove(state, seat);

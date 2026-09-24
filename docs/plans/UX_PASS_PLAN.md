@@ -1,8 +1,12 @@
 # UX Pass Plan (v1 — 2026-08-04) — **SHIPPED**
 
+**Shipped 2026-08-04.** The build is written up in
+[docs/notes/IMPLEMENTATION_NOTES.md](../notes/IMPLEMENTATION_NOTES.md) §"The UX
+pass (2026-08)"; the plan below is kept as written.
+
 > **Status: implemented.** All five phases landed together. What the work
 > actually changed, and the three places reality corrected this plan, are
-> recorded in `IMPLEMENTATION_NOTES.md` under "The UX pass"; the plan below is
+> recorded in `docs/notes/IMPLEMENTATION_NOTES.md` under "The UX pass"; the plan below is
 > kept as written so the reasoning stays legible next to the outcome.
 >
 > The three corrections, in short: `animation.finished` turned out to be an

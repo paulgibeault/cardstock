@@ -6,7 +6,7 @@
 // lobby tile must not cost a deck parse, or opening the front door would get
 // slower every time a pack ships.
 
-import { loadPack } from '../engine/packLoader.js';
+import { loadPack } from '../templates/loadPack.js';
 import { isValidPackId } from '../arcade/storage.js';
 
 // Relative, not root-relative — this must work whether the page sits at the

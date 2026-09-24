@@ -1,4 +1,4 @@
-// Untrusted-input gates (GAME_INTEGRATION §7b, ARCADE_COMPLIANCE.md C1–C4).
+// Untrusted-input gates (GAME_INTEGRATION §7b, docs/plans/ARCADE_COMPLIANCE.md C1–C4).
 //
 // Card fields are pack-supplied. Today every pack is ours, but the design's own
 // roadmap points at pack SHARING (§7d config exchange) and Phase 8 puts card

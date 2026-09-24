@@ -1,7 +1,7 @@
-// The Definition-of-Done checklist for multiplayer (MULTIPLAYER_PLAN.md §11),
+// The Definition-of-Done checklist for multiplayer (docs/plans/MULTIPLAYER_PLAN.md §11),
 // one exported scenario per numbered item — plus the ones the checklist grew.
 // 7 and 8 came from the hardening and rejoin work; 9 is the two-table case
-// TABLES_PLAN.md §10 asked for, and is the only automated evidence that a
+// docs/plans/TABLES_PLAN.md §10 asked for, and is the only automated evidence that a
 // device can host two packs at once. 10 is the 2026-08-16 field test that
 // produced the framework's open-game redesign, replayed from a cold start: the
 // shape the party model got wrong, and the proof it no longer is.

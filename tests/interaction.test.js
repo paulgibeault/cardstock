@@ -12,14 +12,10 @@
 // comparing what a drop offers against what the engine actually allows.
 import { test } from "node:test";
 import assert from "node:assert";
-import fs from "node:fs";
-import path from "node:path";
-import { loadPack } from "../src/engine/packLoader.js";
 import { rankLadderOf } from "../src/engine/cards.js";
 import { createState } from "../src/engine/state.js";
 import { makeCtx } from "../src/engine/context.js";
 import { validateMove, enumerateLegalMoves, applyMove } from "../src/engine/movePipeline.js";
-import { ROOT } from "../tools/stage.mjs";
 import {
   interactionMode, stagingPhase, gathers, buildUiModel, dropCandidates, draggableSources,
   pruneSelection, toggleHandSelection, stagedSelection, smartSelection,
@@ -32,15 +28,8 @@ import {
   fanLayout, handRows,
   classifyHandGesture,
 } from "../src/ui/handOrder.js";
-
-function packFromDisk(packId) {
-  const dir = path.join(ROOT, "packs", packId);
-  const manifest = JSON.parse(fs.readFileSync(path.join(dir, "manifest.json"), "utf8"));
-  const deckPath = path.join(dir, "deck.json");
-  const deckJson = fs.existsSync(deckPath)
-    ? JSON.parse(fs.readFileSync(deckPath, "utf8")) : undefined;
-  return loadPack(manifest, { deckJson });
-}
+import { loadPackFromDiskSync as packFromDisk } from "../tools/lib/packs.mjs";
+import { actingSeats } from "./fixtures/engine.js";
 
 /** A dealt match with the turn handed to seat 0, so "the human" can act. */
 function tableFor(packId, seed = "interaction") {
@@ -53,8 +42,7 @@ function tableFor(packId, seed = "interaction") {
 /** Advance until seat 0 may act, so the model has something to answer. */
 function untilHumansTurn(state, limit = 200) {
   for (let i = 0; i < limit && !state.gameOver; i++) {
-    const template = state.pack.template;
-    const acting = template.actingSeats ? template.actingSeats(makeCtx(state)) : [state.turn.seat];
+    const acting = actingSeats(state);
     if (acting.includes(0)) return true;
     const moves = enumerateLegalMoves(state, acting[0]);
     if (!moves.length) return false;

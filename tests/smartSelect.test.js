@@ -12,23 +12,11 @@
 // cleanly when there is no group?" — both below, against the real pack.
 import { test } from "node:test";
 import assert from "node:assert";
-import fs from "node:fs";
-import path from "node:path";
-import { loadPack } from "../src/engine/packLoader.js";
 import { createState, moveCards } from "../src/engine/state.js";
 import { makeCtx } from "../src/engine/context.js";
 import { validateMove } from "../src/engine/movePipeline.js";
-import { ROOT } from "../tools/stage.mjs";
 import { smartSelection, buildUiModel, handAddress } from "../src/ui/interaction.js";
-
-function packFromDisk(packId) {
-  const dir = path.join(ROOT, "packs", packId);
-  const manifest = JSON.parse(fs.readFileSync(path.join(dir, "manifest.json"), "utf8"));
-  const deckPath = path.join(dir, "deck.json");
-  const deckJson = fs.existsSync(deckPath)
-    ? JSON.parse(fs.readFileSync(deckPath, "utf8")) : undefined;
-  return loadPack(manifest, { deckJson });
-}
+import { loadPackFromDiskSync as packFromDisk } from "../tools/lib/packs.mjs";
 
 /**
  * A Milestones table with seat 0 holding exactly `wanted`, in the meld phase

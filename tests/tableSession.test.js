@@ -2,7 +2,7 @@
 //
 // These are deliberately about ownership and policy rather than about play:
 // whether a table survives the felt walking away from it, and whether the two
-// TABLES_PLAN.md §1 invariants are answered in one place. The wire-level nets
+// docs/plans/TABLES_PLAN.md §1 invariants are answered in one place. The wire-level nets
 // for two concurrent tables live in tests/twoSessions.test.js and
 // tests/twoTables.test.js; this file is the layer above them.
 

@@ -26,6 +26,7 @@ import { createRng } from "../src/engine/rng.js";
 import { loadPackFromDisk } from "../tools/pack-test.mjs";
 import { suggestMove, SUGGESTION_MAX_CHARS } from "../src/ui/hint.js";
 import { SKILL_LEVELS } from "../src/ui/difficulty.js";
+import { actingSeats } from "./fixtures/engine.js";
 
 // Pinochle and Cribbage joined the list in #206. Both fit this harness as they
 // are: its walk does not stop at the round boundary, so a short cribbage hand
@@ -44,9 +45,8 @@ async function dealt(packId, seats, seed) {
 
 /** Walk a bot-vs-bot game, calling `visit(state, seat)` before each move. */
 function walk(state, limit, visit) {
-  const template = state.pack.template;
   for (let i = 0; i < limit && !state.gameOver; i++) {
-    const acting = template.actingSeats ? template.actingSeats(makeCtx(state)) : [state.turn.seat];
+    const acting = actingSeats(state);
     let move = null;
     let actor = null;
     for (const seat of acting) {

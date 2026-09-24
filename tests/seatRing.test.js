@@ -10,7 +10,7 @@
 // tests/partnerships.test.js.
 import { test } from "node:test";
 import assert from "node:assert";
-import { loadPack } from "../src/engine/packLoader.js";
+import { loadPack } from "../src/templates/loadPack.js";
 import {
   opponentRing, partnerSeat, scoreBearers, defaultScoreChip, seatSideMarks, sideSeats,
 } from "../src/ui/seatRing.js";

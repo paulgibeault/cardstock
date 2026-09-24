@@ -1,5 +1,8 @@
 # Feedback Pass Plan
 
+**Shipped.** All ten items landed on `feat/playtest-feedback-pass`; the plan
+below is kept as written for its root-cause analysis.
+
 Playtest feedback from 2026-08-05, triaged against the code. Ten items,
 organized into three workstreams: **correctness bugs** (small, independent,
 do first), **game feel** (the experience improvements), and **platform
@@ -186,7 +189,7 @@ anywhere on the table.
 1. **Engine:** emit derived events from `applyEffect` — `skipped {seat}`,
    `reversed {direction}`, `drewPenalty {seat, n}`, `wildPlayed {color}`.
    This is the established channel (`state.events`, transient, replay-safe
-   — see `IMPLEMENTATION_NOTES.md:171`), and `laidDown`/`hit` from contract
+   — see `docs/notes/IMPLEMENTATION_NOTES.md:171`), and `laidDown`/`hit` from contract
    rummy already sit there un-consumed, so the consumer below picks those
    up for Milestones for free.
 2. **UI consumer:** extend `afterMove` (`src/ui/table.js:1979`) alongside
@@ -311,7 +314,7 @@ last two are actually implemented by the template.
    `rules.jumpIn` are declared, schema'd, and read by nothing. Implement
    stacking first (most-loved variant, purely template-side); jump-in
    needs an out-of-turn input surface — the announcement pipeline
-   ("announcements are moves", `IMPLEMENTATION_NOTES.md:233`) is the
+   ("announcements are moves", `docs/notes/IMPLEMENTATION_NOTES.md:233`) is the
    precedent. Also either implement or un-declare `challengeable` on the
    wild-draw-4, and fix the latent `swapHands choose:"player"` crash in
    `promptChoice` (`src/ui/table.js:2089`) before any variant exposes it.

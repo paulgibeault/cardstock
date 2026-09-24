@@ -139,6 +139,56 @@ test("every rules.* key a manifest declares is read somewhere in src/", () => {
     "declared but read by no line of src/ — implement it or delete it, per the §13 extension policy");
 });
 
+/**
+ * A TEMPLATE TOUCHES STATE THROUGH `ctx` OR NOT AT ALL (#209).
+ *
+ * src/engine/context.js's header says the ctx helpers are the only way a
+ * template touches state, and src/engine/fork.js's field-by-field copy list is
+ * only SOUND while that holds: forkState copies what it knows a move can
+ * change, so a template writing through a field it does not copy makes
+ * lookahead mutate the live match. That was an intention rather than a rule,
+ * and it did not hold — seventeen `ctx.state.` reach-ins, five raw
+ * `zone(addr).cards.push` deals and three `state.js` imports had grown around
+ * ctx, every one of them a method ctx was simply missing.
+ *
+ * Deliberately a grep over the source, for the reason the `rules.*` gate above
+ * gives: the question is "does any line of a template go around ctx", and the
+ * cheapest honest answer is the right one. If a template needs something ctx
+ * does not offer, the fix is a method on context.js — never a reach-in.
+ *
+ * `.js` only: src/templates/CONTRACT.md quotes `ctx.state.roundEnded` in the
+ * very paragraph that forbids it.
+ */
+test("no template reaches past ctx into the state container", () => {
+  const files = tracked.filter((f) => f.startsWith("src/templates/") && f.endsWith(".js"));
+  assert.ok(files.length >= 5, "src/templates/ has stopped being where templates live");
+
+  const offences = [];
+  for (const file of files) {
+    const lines = fs.readFileSync(path.join(ROOT, file), "utf8").split("\n");
+    lines.forEach((line, i) => {
+      const where = `${file}:${i + 1}`;
+      // Comments discuss `state.gameOver` and the old imports at length; only
+      // code counts.
+      if (/^\s*(\/\/|\*|\/\*)/.test(line)) return;
+      if (/\bctx\.state\b/.test(line)) {
+        offences.push(`${where} reaches into ctx.state — add the method to src/engine/context.js`);
+      }
+      if (/from\s*['"][^'"]*engine\/state\.js['"]/.test(line)) {
+        offences.push(`${where} imports src/engine/state.js — templates go through ctx`);
+      }
+      // The raw deal: a zone's card array written behind moveCards/placeDeck's
+      // back, which is also how cardLocation goes stale.
+      if (/\.zone\([^)]*\)\.cards\b/.test(line)) {
+        offences.push(`${where} writes a zone's cards array directly — use ctx.placeDeck / ctx.moveCards`);
+      }
+    });
+  }
+  assert.deepStrictEqual(offences, [],
+    "src/templates/ must touch state only through ctx (src/engine/context.js); "
+    + "src/engine/fork.js's copy list depends on it");
+});
+
 // §10: CI rewrites this line with sed on every deploy. If the shape drifts the
 // rewrite silently stops firing and every fix ships to nobody who has already
 // visited — which has happened twice in this fleet. Assert the SHAPE, not the
@@ -186,7 +236,7 @@ test("sw.js keeps the CI-owned APP_VERSION line shape", () => {
 const OURTABLE_DEFAULT = /\([^()]*\b[A-Za-z_$][\w$]*\s*=\s*ourTable\(\)/;
 
 test("party.js takes its session, never defaults to the focused table", () => {
-  // The regex has to bite, or a green run means nothing (TABLES_PLAN.md §11).
+  // The regex has to bite, or a green run means nothing (docs/plans/TABLES_PLAN.md §11).
   assert.match("function refreshSeats(session = ourTable()) {", OURTABLE_DEFAULT);
   assert.match("function askAboutSeat(seat, session = ourTable()) {", OURTABLE_DEFAULT);
   assert.doesNotMatch("  const session = ourTable();", OURTABLE_DEFAULT);
@@ -344,6 +394,78 @@ test("no frame leaves src/match without going through its stamping helper", () =
       + "A new one means a frame that skips the stamp — give it to send()/broadcast() instead. "
       + "If the door count genuinely changed, update this gate deliberately.");
   }
+});
+
+// THE HARNESS HELPERS ARE SHARED NOW, AND STAY SHARED (#207).
+//
+// Each of these three lines was pasted into ten or more test files before it
+// had a home, and each pasted copy had drifted from the thing it was standing
+// in for: a `packFromDisk` that forgot loadPack patches its manifest, an
+// `Arcade.stats` stub that answered a stored category without the defaults the
+// SDK merges under it, an `actingSeats` lambda with no "a finished match acts
+// on nobody" guard. A copy is cheap to write and invisible in review, which is
+// why this is a gate rather than a note in a header.
+test("no test re-copies a harness helper that now has one home", () => {
+  const banned = [
+    {
+      // `packs/<id>/manifest.json` read by hand — tools/lib/packs.mjs's job.
+      re: /readFileSync\([^)]*manifest\.json/,
+      allow: new Set(["tests/dailyLadder.test.js"]), // reads schema/, not a pack
+      say: "load the pack with loadPackFromDiskSync/readPackJsonSync from tools/lib/packs.mjs",
+    },
+    {
+      // A hand-built SDK stub (an object literal) — tests/fixtures/arcade.js's
+      // job. Saving and restoring whatever was there (`= had`) is not a stub.
+      re: /globalThis\.Arcade\s*=\s*\{/,
+      allow: new Set(),
+      say: "stand the SDK up with installArcade() from tests/fixtures/arcade.js",
+    },
+    {
+      // The felt's own rule, hand-copied — src/engine/context.js's job.
+      re: /\.actingSeats\s*\?/,
+      allow: new Set(),
+      say: "ask actingSeats(state) — tests/fixtures/engine.js re-exports the engine's",
+    },
+  ];
+  for (const f of tracked.filter((f) => /^tests\/.*\.js$/.test(f))) {
+    if (f === "tests/repo-gates.test.js" || f.startsWith("tests/fixtures/")) continue;
+    const src = fs.readFileSync(path.join(ROOT, f), "utf8");
+    for (const { re, allow, say } of banned) {
+      if (allow.has(f)) continue;
+      assert.ok(!re.test(src), `${f} re-copies a shared harness helper (${re}) — ${say}`);
+    }
+  }
+});
+
+// THE ENGINE IS THE BOTTOM LAYER, and a layer is only a layer while something
+// checks. `src/engine` is the rules machine: state, moves, scoring, the pack
+// loader. `src/templates` is the per-genre policy that sits ON it and
+// `src/ui` is the felt that sits on both, so an import in this direction is a
+// cycle waiting to close — which is exactly what it was. #210 found two:
+// dailyLadder.js reaching for ../templates/melds.js (a one-pack feature filed
+// in the engine; it is src/templates/contract-rummy-daily.js now) and
+// packLoader.js reaching for ../templates/index.js's `getTemplate` (now
+// injected, and bound in src/templates/loadPack.js).
+//
+// Comment lines are skipped: the modules here discuss the boundary at length,
+// and a gate that fires on prose about itself teaches people to stop writing
+// the prose.
+test("src/engine imports neither src/templates nor src/ui", () => {
+  const offenders = [];
+  for (const f of tracked.filter((f) => /^src\/engine\/[^/]+\.(js|mjs)$/.test(f))) {
+    const lines = fs.readFileSync(path.join(ROOT, f), "utf8").split("\n");
+    lines.forEach((line, i) => {
+      if (/^\s*(\/\/|\*|\/\*)/.test(line)) return;
+      // Static `from '...'` and dynamic `import('...')` alike.
+      for (const m of line.matchAll(/(?:from|import)\s*\(?\s*['"]([^'"]+)['"]/g)) {
+        if (/^\.\.\/(templates|ui)\//.test(m[1])) offenders.push(`${f}:${i + 1} imports ${m[1]}`);
+      }
+    });
+  }
+  assert.deepStrictEqual(offenders, [],
+    "src/engine must not import src/templates or src/ui — the engine is the bottom layer. "
+    + "Inject what the engine needs (packLoader's `resolveTemplate`) or move the module "
+    + "out of the engine (src/templates/contract-rummy-daily.js).");
 });
 
 /* ------------------------------------------------------------------ *

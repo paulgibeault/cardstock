@@ -8,9 +8,15 @@
 // disk and every available variant patch. Until that existed this comment was a
 // claim nothing backed.
 
+// THE TEMPLATE RESOLVER IS INJECTED, not imported (#210). This file used to
+// `import { getTemplate } from '../templates/index.js'`, which made src/engine
+// unloadable without all six templates and closed a
+// `templates → engine → templates/index` cycle. The composition root that
+// binds the two is src/templates/loadPack.js, which is the door every caller
+// goes through; tests/repo-gates.test.js keeps src/engine free of templates
+// and ui imports.
 import { builtinDeckByName, expandDeckFile, applyCardTags } from './cards.js';
 import { resolveSelectorMap } from './selectors.js';
-import { getTemplate } from '../templates/index.js';
 
 function applyVariantPatches(manifest, activeVariantIds) {
   if (!activeVariantIds || activeVariantIds.length === 0) return manifest;
@@ -51,7 +57,14 @@ export function applyPatch(obj, dottedPath, value) {
 
 // deckSource: the raw deck.json content when the manifest references a relative file,
 // or undefined when the manifest names a built-in deck.
-export function loadPack(manifest, { deckJson, variants } = {}) {
+// resolveTemplate: `(id) => template`, i.e. src/templates/index.js's getTemplate.
+// Required, and required loudly: a pack without its template is an object every
+// caller would then fail on further downstream, in a place that says nothing
+// about the load.
+export function loadPack(manifest, { deckJson, variants, resolveTemplate } = {}) {
+  if (typeof resolveTemplate !== 'function') {
+    throw new Error('loadPack: resolveTemplate is required — load packs through src/templates/loadPack.js');
+  }
   const activeVariants = variants ?? defaultVariantIds(manifest);
   const patchedManifest = applyVariantPatches(manifest, activeVariants);
 
@@ -73,7 +86,7 @@ export function loadPack(manifest, { deckJson, variants } = {}) {
   }
 
   const cardsById = new Map(cards.map((c) => [c.id, c]));
-  const template = getTemplate(patchedManifest.template);
+  const template = resolveTemplate(patchedManifest.template);
 
   return {
     id: patchedManifest.id,

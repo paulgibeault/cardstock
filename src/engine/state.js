@@ -108,7 +108,7 @@ function patternToRegex(pattern) {
  *
  * Compiled once at createState rather than inside checkReactions' loop. The
  * sweep itself is deliberate and stays — it is what fixed the Stockpile recycle
- * deadlock (IMPLEMENTATION_NOTES bug 1) — but it ran `new RegExp` per reaction
+ * deadlock (docs/notes/IMPLEMENTATION_NOTES bug 1) — but it ran `new RegExp` per reaction
  * per sweep iteration per moveCards call, and then tested it against every zone
  * address in the game. Zone addresses are fixed after createState, so the match
  * is a fact about the pack, not about the move.
@@ -264,11 +264,7 @@ function applyReaction(state, reaction, triggerAddress) {
   return false;
 }
 
-// Shuffles every card in the pack's deck into the named zone and stamps cardLocation.
-// Used by template setup() to build the initial draw pile / stock.
-export function initializeDeckInto(state, address) {
-  const ids = state.rng.shuffle([...state.pack.cardsById.keys()]);
-  const zone = state.zones.get(address);
-  zone.cards.push(...ids);
-  for (const id of ids) state.cardLocation.set(id, address);
-}
+// Shuffling the deck into the draw pile lives on ctx now — `ctx.placeDeck`
+// (src/engine/context.js), which is the same three lines plus the ability to
+// place a named list. It was here, and imported straight into three templates,
+// which is exactly the door around ctx that context.js's header now forbids.

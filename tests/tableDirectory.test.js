@@ -8,7 +8,7 @@
 //
 // Node-clean by construction — no DOM, no Arcade global, no engine — because
 // the module is one of the pieces a second game inherits whole
-// (TABLES_PLAN.md §10) and a dependency added here would be a dependency it
+// (docs/plans/TABLES_PLAN.md §10) and a dependency added here would be a dependency it
 // carries.
 
 import { test } from 'node:test';

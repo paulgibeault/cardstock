@@ -1,5 +1,10 @@
 # Arcade compliance — evaluation and remediation plan
 
+**Shipped.** This is the evaluation [ARCADE_ENHANCEMENTS.md](ARCADE_ENHANCEMENTS.md)
+came from, and that plan has shipped — see
+[docs/notes/IMPLEMENTATION_NOTES.md](../notes/IMPLEMENTATION_NOTES.md) §"Arcade
+platform enhancements — shipped". Kept for the scorecard and the file:line findings.
+
 Evaluated against the launcher repo's `GAME_INTEGRATION.md` (SDK major **v3**),
 `ARCADE_PLATFORM.md`, `catalog.json`, and `.github/workflows/fleet-ci.yml`, plus
 the shipped fleet apps as reference implementations (`cozy-solitaire` is the
@@ -13,7 +18,7 @@ mostly still right — the places it has drifted are called out in
 ## Verdict
 
 **Cardstock has zero arcade integration today, and that is by design** —
-`src/main.js:1` says so, and `IMPLEMENTATION_NOTES.md` records it as a
+`src/main.js:1` says so, and `docs/notes/IMPLEMENTATION_NOTES.md` records it as a
 deliberate milestone-1 deferral. The engine, templates, and packs are in good
 shape; nothing in the compliance work below requires touching engine logic
 except one RNG swap.
@@ -465,7 +470,7 @@ no `[Arcade SDK]` cache warning in the console.
    npm run acceptance -- http://127.0.0.1:4791/cardstock/
    ```
 3. Consider `launcher: true` in `pages.yml` so acceptance runs in CI on every push.
-4. Update `README.md` and `IMPLEMENTATION_NOTES.md` to reflect the integration;
+4. Update `README.md` and `docs/notes/IMPLEMENTATION_NOTES.md` to reflect the integration;
    update design §17 per Appendix A.
 
 **DoD:** all 14 §13 items pass; the game appears in the launcher grid and boots

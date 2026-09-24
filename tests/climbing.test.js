@@ -31,6 +31,7 @@ import { loadPackFromDisk } from "../tools/pack-test.mjs";
 import { cardOrder, rankLadderOf } from "../src/engine/cards.js";
 import { determinizeState } from "../src/engine/determinize.js";
 import { createRng } from "../src/engine/rng.js";
+import { actingSeats } from "./fixtures/engine.js";
 
 const PACK = "thirteen";
 
@@ -61,11 +62,8 @@ function pickHands(state, limit = 8) {
   return state;
 }
 
-/** Who may act, straight off the template's own hook. */
-function acting(state) {
-  const template = state.pack.template;
-  return template.actingSeats ? template.actingSeats(makeCtx(state)) : [state.turn.seat];
-}
+/** Who may act — the engine's own answer, the one the felt schedules from. */
+const acting = actingSeats;
 
 /* ------------------------------------------------------------------ *
  * 1. The enumeration
