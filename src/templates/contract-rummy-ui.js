@@ -10,7 +10,7 @@
 // They remain part of the template's hook surface (src/templates/CONTRACT.md);
 // contract-rummy.js composes them onto the template object.
 
-import { parseItem, isWildCard } from './melds.js';
+import { parseItem } from './melds.js';
 import { findMeldForItem, permutations } from './contract-rummy-bot.js';
 
 /**
@@ -81,7 +81,7 @@ export function arrangeContract(ctx, seat, cardIds, validate) {
 export function suggestMeld(ctx, seat, cardId, { exclude = [] } = {}) {
   const contract = ctx.rules.contracts?.[ctx.playerVar(seat, 'phase') - 1];
   const pressed = ctx.cardById(cardId);
-  if (!contract || !pressed || isWildCard(ctx, pressed)) return null;
+  if (!contract || !pressed || ctx.isWild(pressed)) return null;
 
   const spent = new Set(exclude);
   spent.delete(cardId);
@@ -91,8 +91,8 @@ export function suggestMeld(ctx, seat, cardId, { exclude = [] } = {}) {
     .filter((c) => c.card);
   if (!hand.some((c) => c.id === cardId)) return null;
 
-  const wilds = hand.filter((c) => isWildCard(ctx, c.card));
-  const naturals = hand.filter((c) => !isWildCard(ctx, c.card) && c.id !== cardId);
+  const wilds = hand.filter((c) => ctx.isWild(c.card));
+  const naturals = hand.filter((c) => !ctx.isWild(c.card) && c.id !== cardId);
   const self = hand.find((c) => c.id === cardId);
   const pressedRank = Number(pressed.rank);
 

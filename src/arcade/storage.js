@@ -18,7 +18,7 @@
 
 import { serializeMatch, isReplayableMatch } from '../engine/replay.js';
 import { dailyDateStr } from '../engine/arcade-rng.js';
-import { isDailyDate, dateOfDailySeed, previousDate } from '../engine/dailyLadder.js';
+import { isDailyDate, dateOfDailySeed, previousDate } from './daily.js';
 // A table id is a SAFE_ID and the key it becomes goes to the launcher, so it is
 // held to the same rule as everything else on the wire — a key is not a place
 // to relax a validator.

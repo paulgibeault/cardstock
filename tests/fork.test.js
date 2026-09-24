@@ -25,6 +25,7 @@ import { forkState } from "../src/engine/fork.js";
 import { chooseBotMove } from "../src/engine/bot.js";
 import { serializeMatch } from "../src/engine/replay.js";
 import { loadPackFromDisk } from "../tools/pack-test.mjs";
+import { actingSeats } from "./fixtures/engine.js";
 
 /**
  * Everything a move can move, as one comparable value.
@@ -71,8 +72,7 @@ function snapshot(state) {
 function playOnFork(fork, limit) {
   let played = 0;
   for (let i = 0; i < limit && !fork.gameOver; i++) {
-    const template = fork.pack.template;
-    const acting = template.actingSeats ? template.actingSeats(makeCtx(fork)) : [fork.turn.seat];
+    const acting = actingSeats(fork);
     let move = null;
     for (const seat of acting) {
       const moves = enumerateLegalMoves(fork, seat);

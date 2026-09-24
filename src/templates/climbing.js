@@ -478,10 +478,11 @@ function advance(ctx, from) {
  * whatever is left over is OUT OF PLAY (D-11: three players see 39 of the 52,
  * which is genuinely how it is played short-handed).
  *
- * Writing the zone arrays directly rather than going through ctx.moveCards is
- * sanctioned for the initial deal only — src/templates/CONTRACT.md — because
- * there is nothing for a zoneEmpty reaction to respond to while the deck is
- * being handed out.
+ * `ctx.placeDeck` rather than ctx.moveCards, because the cards are coming from
+ * outside the table rather than from another zone, and because no reaction
+ * should fire while the deck is being handed out — there is nothing for a
+ * zoneEmpty to respond to mid-deal. Sanctioned for the initial deal only
+ * (src/templates/CONTRACT.md).
  */
 function dealHands(ctx) {
   const per = ctx.rules.deal;
@@ -493,9 +494,7 @@ function dealHands(ctx) {
     for (let n = 0; n < ctx.seats; n++) {
       if (at >= ids.length) return;
       const id = ids[at++];
-      const addr = ctx.zoneAddr('hand', seat);
-      ctx.zone(addr).cards.push(id);
-      ctx.state.cardLocation.set(id, addr);
+      ctx.placeDeck(ctx.zoneAddr('hand', seat), [id]);
       // `nextSeat(from, dir)` — a STEP COUNT was being passed as the direction
       // (`nextSeat(first, n)`), which happened to visit every seat exactly once
       // and so dealt a correct but CLOCKWISE hand at a counter-clockwise table.
@@ -551,16 +550,13 @@ function offerFor(rules, seats) {
  * It goes face down beside the pile nobody takes — out of play, unseen, which
  * is exactly what the flat deal does with its own remainder.
  *
- * Writes the zone arrays directly for the same reason `dealHands` does — the
+ * Goes through `ctx.placeDeck` for the same reason `dealHands` does — the
  * initial deal is sanctioned (src/templates/CONTRACT.md).
  */
 function dealOffer(ctx, offer) {
   const ids = ctx.rng.shuffle([...ctx.pack.cardsById.keys()]);
   const per = Math.floor(ids.length / offer.piles);
-  const put = (addr, id) => {
-    ctx.zone(addr).cards.push(id);
-    ctx.state.cardLocation.set(id, addr);
-  };
+  const put = (addr, id) => ctx.placeDeck(addr, [id]);
   let at = 0;
   for (let n = 1; n <= offer.piles; n++) {
     for (let i = 0; i < per; i++) put(offerAddress(n), ids[at++]);
@@ -1673,7 +1669,7 @@ const climbing = {
   },
 
   isRoundOver(ctx) {
-    return ctx.state.roundEnded;
+    return ctx.roundEnded();
   },
 
   /* ---------------------------------------------------------------- *

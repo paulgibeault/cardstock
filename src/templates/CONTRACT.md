@@ -34,7 +34,7 @@ a degradation.
 | `validateMove` | `(ctx, move) -> {legal, rule?, reason?}` | Through `ctx.ok()` / `ctx.fail(rule, reason)`. The pipeline still accepts a bare `true`; do not write one. |
 | `applyMove` | `(ctx, move) -> void` | Mutates only through `ctx`. |
 | `enumerateLegalMoves` | `(ctx, seat) -> move[]` | The single source of what anybody may do. Bots pick from it; every tap target the table lights up is derived from it. **A move it omits must be one `validateMove` refuses**, or a bot will be offered a move that throws. |
-| `isRoundOver` | `(ctx) -> boolean` | Usually `ctx.state.roundEnded` (see *Ending a round*). |
+| `isRoundOver` | `(ctx) -> boolean` | Usually `ctx.roundEnded()` (see *Ending a round*). |
 
 > **A seat that is not acting enumerates nothing.** The list is what the seat
 > may do *now*, so for any seat outside `actingSeats` (below) — and for every
@@ -238,7 +238,7 @@ commitPrompt(ctx, seat) {
   if (ctx.turn.phase !== 'meld') return null;   // null takes the default
   return {
     action: 'Declare', moveType: 'declareMeld',
-    min: 0, max: ctx.countIn(`hand.${seat}`),
+    min: 0, max: ctx.countIn(ctx.zoneAddr('hand', seat)),
     staging: 'Declare your meld', waiting: 'Waiting for melds…',
   };
 }
@@ -456,7 +456,7 @@ had put away.
 
 ```js
 seatCounters(ctx, seat) {
-  const stock = ctx.countIn(`stock.${seat}`);
+  const stock = ctx.countIn(ctx.zoneAddr('stock', seat));
   return [{ text: String(stock), aria: `${stock} left in stock`, label: 'Stock', kind: 'stock' }];
 }
 ```
@@ -714,6 +714,9 @@ finished is not the template's call: it is the pack's `scoring.gameOver`, or
 used to say "round over" with it and read it back out of `state.gameOver` in
 their own `isRoundOver`, which is why the pipeline had to reset the flag.
 
+Read both back with `ctx.roundEnded()` and `ctx.gameOver()`. **Never
+`ctx.state.roundEnded`** — see *Nothing reaches past ctx* below.
+
 ## Derived events
 
 `ctx.emit(type, payload)` writes to `state.events`, a **transient, never
@@ -756,11 +759,34 @@ the cheapest seam for an effect the platform has never heard of.
 
 ## Setup
 
-Trick-taking's deal writes zone arrays directly rather than going through
-`ctx.moveCards`, which means **reactions do not fire during it**. That is
-sanctioned *for the initial deal only* — there is nothing for a `zoneEmpty`
-reaction to respond to while the deck is being handed out, and the alternative
-is a recycle firing mid-deal. Everything after setup goes through `moveCards`.
+`ctx.placeDeck(address, ids?)` is the deal: cards straight into a zone with
+their locations stamped, and **no reactions fire during it**. Called with no
+`ids` it shuffles the pack's whole deck in, which is the opening draw pile
+every template builds. That is sanctioned *for the initial deal only* — there
+is nothing for a `zoneEmpty` reaction to respond to while the deck is being
+handed out, and the alternative is a recycle firing mid-deal. Everything after
+setup goes through `moveCards`.
+
+`ctx.resetPlayerVars({ keep })` is the other half of a round boundary: every
+seat's vars wiped, except the names in `keep`. The pipeline calls it with no
+keep-list when a template has no `startRound`; a template that has one — to
+carry trick-taking's `bags` or cribbage's `backPeg` across the hand — calls it
+with the names that survive and then its own `setup`.
+
+## Nothing reaches past ctx
+
+**`ctx.state` is not yours, and neither is `src/engine/state.js`.**
+`tests/repo-gates.test.js` refuses either anywhere in `src/templates/`. The
+`ctx` object (`src/engine/context.js`) is the whole surface, and
+`src/engine/fork.js`'s field-by-field copy list is only sound while that holds:
+a template writing through a field `forkState` does not copy makes lookahead
+mutate the live match.
+
+If `ctx` does not offer what a template needs, **add the method to
+`src/engine/context.js`** — that is where `roundEnded()`, `roundNumber()`,
+`isWild()`, `placeDeck()`, `resetPlayerVars()` and the `n` form of `zoneAddr()`
+all came from. Build zone addresses with `ctx.zoneAddr(id, seat, n)` rather
+than a template literal, so an address cannot be spelled a way no zone has.
 
 ---
 

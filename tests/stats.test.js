@@ -9,48 +9,27 @@
 // same log produces.
 import { test, beforeEach } from "node:test";
 import assert from "node:assert";
-import fs from "node:fs";
-import path from "node:path";
-import { loadPack } from "../src/engine/packLoader.js";
 import { createState } from "../src/engine/state.js";
 import { makeCtx } from "../src/engine/context.js";
 import { applyMove } from "../src/engine/movePipeline.js";
 import { chooseBotMove } from "../src/engine/bot.js";
 import { serializeMatch, rehydrateMatch } from "../src/engine/replay.js";
 import { computeMatchStats, statLinesFor, placements } from "../src/stats/matchStats.js";
-import { ROOT } from "../tools/stage.mjs";
+import { loadPackFromDiskSync as packFromDisk } from "../tools/lib/packs.mjs";
+import { installArcade } from "./fixtures/arcade.js";
+import { actingSeats } from "./fixtures/engine.js";
 
-// storage.js talks to the SDK's synchronous key/value surface and nothing else;
-// a Map is the whole of what it needs. Stood up here rather than as a seam in
-// the production module.
-const store = new Map();
-const stats = new Map();
-globalThis.Arcade = {
-  state: {
-    get: (k) => store.get(k),
-    set: (k, v) => { store.set(k, structuredClone(v)); return true; },
-    remove: (k) => store.delete(k),
-    getOrInit: (k, d) => (store.has(k) ? store.get(k) : d),
-  },
-  stats: {
-    getOrInit: (k, d) => (stats.has(k) ? stats.get(k) : d),
-    update: (k, fn) => { stats.set(k, structuredClone(fn(stats.get(k)))); },
-  },
-};
+// storage.js talks to the SDK's two synchronous surfaces and nothing else; Maps
+// are the whole of what it needs. Both come from tests/fixtures/arcade.js, which
+// is the SDK's own getOrInit — the copy that stood here answered a stored
+// category with the stored value alone, ignoring the defaults the SDK merges
+// underneath it.
+const { store, stats } = installArcade({ state: true, stats: true });
 
 const { recordResult, readStats, readHeadToHead, loadHandPrefs, saveHandPrefs } =
   await import("../src/arcade/storage.js");
 
 beforeEach(() => { store.clear(); stats.clear(); });
-
-function packFromDisk(packId) {
-  const dir = path.join(ROOT, "packs", packId);
-  const manifest = JSON.parse(fs.readFileSync(path.join(dir, "manifest.json"), "utf8"));
-  const deckPath = path.join(dir, "deck.json");
-  const deckJson = fs.existsSync(deckPath)
-    ? JSON.parse(fs.readFileSync(deckPath, "utf8")) : undefined;
-  return loadPack(manifest, { deckJson });
-}
 
 /** A real game, bot against bot, to the end or to a move cap. */
 function playOut(packId, { seed = `stats:${packId}`, maxMoves = 600 } = {}) {
@@ -58,8 +37,7 @@ function playOut(packId, { seed = `stats:${packId}`, maxMoves = 600 } = {}) {
   const state = createState({ pack, seats: 3, seed });
   pack.template.setup(makeCtx(state));
   for (let i = 0; i < maxMoves && !state.gameOver; i++) {
-    const template = pack.template;
-    const acting = template.actingSeats ? template.actingSeats(makeCtx(state)) : [state.turn.seat];
+    const acting = actingSeats(state);
     const seat = acting[0];
     if (seat === undefined) break;
     const move = chooseBotMove(state, seat);

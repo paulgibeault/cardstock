@@ -24,28 +24,14 @@
 // only the artifact can catch a staging rule that drops one the game needs at
 // runtime. Pointing dev.sh at the checkout would also mount the CI launcher
 // clone (.launcher/, which lives inside this workspace) underneath the game.
-import { execFileSync, spawn } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { ROOT, stage } from './stage.mjs';
+import { stage } from './stage.mjs';
+import { LAUNCHER, PORT, GAME_ID, requireLauncher, devSh } from './lib/launcher.mjs';
 
-// In CI the pipeline exports ARCADE_LAUNCHER; locally the launcher is the
-// sibling checkout every other workflow in this repo assumes.
-const LAUNCHER = process.env.ARCADE_LAUNCHER || path.resolve(ROOT, '..', 'paulgibeault.github.io');
-const PORT = process.env.ARCADE_PORT || '4791';
-const GAME_ID = 'cardstock';
-
-if (!fs.existsSync(path.join(LAUNCHER, 'dev.sh'))) {
-  console.error(
-    `acceptance: no launcher checkout at ${LAUNCHER}\n` +
-    '  Locally, clone paulgibeault/paulgibeault.github.io as a sibling directory.\n' +
-    '  In CI, ARCADE_LAUNCHER comes from `launcher: true` in .github/workflows/pages.yml.');
-  process.exit(1);
-}
-
-const devSh = (...args) =>
-  execFileSync(path.join(LAUNCHER, 'dev.sh'), args, { cwd: LAUNCHER, stdio: 'inherit' });
+requireLauncher('acceptance');
 
 const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cardstock-acceptance-'));
 let started = false;

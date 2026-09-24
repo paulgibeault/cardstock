@@ -11,7 +11,7 @@
 import { cardValue } from '../engine/scoring.js';
 import { rankAt, rankIndexOf, rankLadderOf } from '../engine/cards.js';
 import {
-  isWildCard, isMeldable, parseItem, resolveMeld, meldKindOf, meldValue,
+  isMeldable, parseItem, resolveMeld, meldKindOf, meldValue,
   getMeldGroups, pinnedAttr, wildHitValues, rankDomain,
 } from './melds.js';
 
@@ -34,8 +34,8 @@ export function groupBy(items, keyFn) {
 // that runs off the end of the deck is rejected here rather than laid down.
 export function findMeldForItem(ctx, parsed, available) {
   const meldable = available.filter((c) => isMeldable(ctx, c.card));
-  const wilds = meldable.filter((c) => isWildCard(ctx, c.card));
-  const naturals = meldable.filter((c) => !isWildCard(ctx, c.card));
+  const wilds = meldable.filter((c) => ctx.isWild(c.card));
+  const naturals = meldable.filter((c) => !ctx.isWild(c.card));
   const minNaturals = ctx.rules.wilds?.minNaturals ?? 0;
   const maxWilds = ctx.rules.wilds?.maxPerMeld;
   const item = `${parsed.kind}(${parsed.n})`;
@@ -140,7 +140,7 @@ export function findHits(ctx, seat, validate) {
       for (const cardId of hand) {
         const card = ctx.cardById(cardId);
         const attr = kind && pinnedAttr(kind);
-        const values = kind && card && isWildCard(ctx, card) ? wildHitValues(ctx, group, kind, cardId) : [null];
+        const values = kind && card && ctx.isWild(card) ? wildHitValues(ctx, group, kind, cardId) : [null];
         for (const value of values) {
           const choice = { seat: targetSeat, meld: meldIndex };
           if (value !== null) choice.wilds = { [cardId]: { [attr]: value } };
@@ -278,7 +278,7 @@ function handShape(ctx, handIds) {
   const colors = new Map();
   for (const id of handIds) {
     const card = ctx.cardById(id);
-    if (!card || isWildCard(ctx, card) || !isMeldable(ctx, card)) continue;
+    if (!card || ctx.isWild(card) || !isMeldable(ctx, card)) continue;
     ranks.set(card.rank, (ranks.get(card.rank) || 0) + 1);
     colors.set(card.color, (colors.get(card.color) || 0) + 1);
   }
@@ -310,7 +310,7 @@ function handShape(ctx, handIds) {
  */
 function keepValue(ctx, card, shape, wants, self) {
   const w = wants.w;
-  if (isWildCard(ctx, card)) return w.WILD_KEEP;
+  if (ctx.isWild(card)) return w.WILD_KEEP;
   // A skip can never enter a meld (rules.meldForbidden) and costs 15 at the
   // end, so it is always the first card out of the hand — below even a card
   // with no friends at all, which is what the negative buys.
@@ -450,7 +450,7 @@ export function scoreDraw(ctx, move, w = WEIGHTS) {
   const reach = meldReach(ctx, seat);
 
   if (ctx.playerVar(seat, 'laidDown')) {
-    if (isWildCard(ctx, card)) return 4;
+    if (ctx.isWild(card)) return 4;
     return reaches(reach.mine, card) || reaches(reach.theirs, card) ? 4 : -1;
   }
 
@@ -541,7 +541,7 @@ export function scoreDiscard(ctx, move, w = WEIGHTS) {
     // (enumeration offers hits first and they outscore any discard), so what is
     // left is judged on whether it can EVER hit: melds grow at the ends, so a
     // card that reaches one today is the card that goes out tomorrow.
-    keep = isWildCard(ctx, card) ? w.WILD_KEEP
+    keep = ctx.isWild(card) ? w.WILD_KEEP
       : (reaches(reach.mine, card) || reaches(reach.theirs, card)) ? 3
         : isMeldable(ctx, card) ? 0 : -1;
   } else {
@@ -724,7 +724,7 @@ export function evaluateState(ctx, seat, w = WEIGHTS) {
   // A wild is not deadwood — see WILD_HOLD, which is where it is priced instead.
   for (const id of handIds) {
     const card = ctx.cardById(id);
-    if (isWildCard(ctx, card)) score += w.WILD_HOLD;
+    if (ctx.isWild(card)) score += w.WILD_HOLD;
     else score -= cardValue(card, scoring) * w.DEADWOOD_WORTH;
   }
 
@@ -749,7 +749,7 @@ export function evaluateState(ctx, seat, w = WEIGHTS) {
     // somebody else's, which is a perfectly good way to go out.
     for (const id of handIds) {
       const card = ctx.cardById(id);
-      if (isWildCard(ctx, card) || reaches(reach.mine, card) || reaches(reach.theirs, card)) {
+      if (ctx.isWild(card) || reaches(reach.mine, card) || reaches(reach.theirs, card)) {
         score += w.OUT_WORTH;
       }
     }
@@ -761,7 +761,7 @@ export function evaluateState(ctx, seat, w = WEIGHTS) {
       // Already counted at WILD_HOLD above, and counted there precisely so it
       // does not come through the cap — `keepValue` says 100 and the cap says
       // 12, and the clamped answer was the bug.
-      if (isWildCard(ctx, card)) continue;
+      if (ctx.isWild(card)) continue;
       const keep = keepValue(ctx, card, shape, wants, id);
       score += Math.min(keep, w.PROGRESS_CAP) * w.PROGRESS_WORTH;
     }

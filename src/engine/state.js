@@ -264,11 +264,7 @@ function applyReaction(state, reaction, triggerAddress) {
   return false;
 }
 
-// Shuffles every card in the pack's deck into the named zone and stamps cardLocation.
-// Used by template setup() to build the initial draw pile / stock.
-export function initializeDeckInto(state, address) {
-  const ids = state.rng.shuffle([...state.pack.cardsById.keys()]);
-  const zone = state.zones.get(address);
-  zone.cards.push(...ids);
-  for (const id of ids) state.cardLocation.set(id, address);
-}
+// Shuffling the deck into the draw pile lives on ctx now — `ctx.placeDeck`
+// (src/engine/context.js), which is the same three lines plus the ability to
+// place a named list. It was here, and imported straight into three templates,
+// which is exactly the door around ctx that context.js's header now forbids.

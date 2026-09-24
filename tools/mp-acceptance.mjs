@@ -74,32 +74,20 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { ROOT, stage } from './stage.mjs';
+import { LAUNCHER, PORT, GAME_ID, requireLauncher, devSh } from './lib/launcher.mjs';
 
 /* ------------------------------------------------------------------ *
  * Where everything lives
  * ------------------------------------------------------------------ */
 
-// In CI the pipeline exports ARCADE_LAUNCHER; locally the launcher is the
-// sibling checkout every other workflow in this repo assumes.
-const LAUNCHER = process.env.ARCADE_LAUNCHER || path.resolve(ROOT, '..', 'paulgibeault.github.io');
-const PORT = Number(process.env.ARCADE_PORT || 4791);
 const DROP_PORT = Number(process.env.ARCADE_MP_DROP_PORT || 4812);
-const GAME_ID = 'cardstock';
 
-const harnessPath = path.join(LAUNCHER, 'tools', 'lib', 'p2p-test-harness.mjs');
-if (!fs.existsSync(harnessPath)) {
-  console.error(
-    `mp-acceptance: no launcher checkout at ${LAUNCHER}\n`
-    + '  Locally, clone paulgibeault/paulgibeault.github.io as a sibling directory.\n'
-    + '  In CI, ARCADE_LAUNCHER comes from `launcher: true` in .github/workflows/pages.yml.');
-  process.exit(1);
-}
+// The launcher's own p2p harness, not one of ours (see the header) — so the
+// file this run needs from the checkout is the harness, not dev.sh.
+const harnessPath = requireLauncher('mp-acceptance', path.join('tools', 'lib', 'p2p-test-harness.mjs'));
 
 const { startP2PHarness, makeCheck, waitFor } = await import(pathToFileURL(harnessPath).href);
 const { check, failed } = makeCheck();
-
-const devSh = (...args) =>
-  execFileSync(path.join(LAUNCHER, 'dev.sh'), args, { cwd: LAUNCHER, stdio: 'inherit' });
 
 /* ------------------------------------------------------------------ *
  * Staging
