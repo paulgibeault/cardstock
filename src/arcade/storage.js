@@ -6,15 +6,15 @@
 // to change when a key's shape moves.
 //
 // Storage posture (ARCADE_ENHANCEMENTS.md Decision 3): `Arcade.state` only.
-// The `Arcade.store` surface is STUBBED below rather than absent, so the
-// replay work can swap implementations without touching a single call site.
 //
 // The lobby's several-tables-at-once did NOT change that posture, and the
 // reasoning is worth keeping: `Arcade.state` is synchronous, which the
 // onSuspend flush contract (§6b) effectively requires, and five packs' worth
 // of match logs is a few KB against the quota. What WOULD need the async
-// store is many tables of the SAME pack, or a browsable replay archive —
-// which is exactly what the stub below is reserved for.
+// `Arcade.store` is many tables of the SAME pack, or a browsable replay
+// archive — neither of which anything asks for yet. This module carried three
+// throwing `Arcade.store` stubs against that day until #212 deleted them: a
+// seam with no consumer is a guess at an interface, not a head start.
 
 import { serializeMatch, isReplayableMatch } from '../engine/replay.js';
 import { dailyDateStr } from '../engine/arcade-rng.js';
@@ -26,6 +26,13 @@ import { isSafeId } from '../match/protocol.js';
 
 // Keys, unprefixed — the SDK adds `arcade.v1.cardstock.`. Named here so the
 // set is greppable and nothing invents a key inline.
+//
+// EXPORTED FOR THE TESTS, and that is a good enough reason: `KEYS`, the
+// `match.`/`daily.` key helpers, `TABLE_ROLL_OFF_MS`, `dailyStatsCategory` and
+// `readHeadToHead` have no importer in `src/`. They are the surface
+// tests/storage.test.js, tests/dailyRun.test.js and tests/stats.test.js assert
+// against — a key's shape is exactly the kind of thing a test should be able to
+// name. Anything with neither a caller nor a test is dead and goes (#212).
 export const KEYS = {
   lastPack: 'lastPack',
   settings: 'settings',
@@ -76,15 +83,12 @@ export const TABLE_ROLL_OFF_MS = 7 * 24 * 60 * 60 * 1000;
 
 // See KEYS.mpTables. `match.` and `mpMatch.` are kept distinct on purpose: a
 // solo save and a hosted table are not the same kind of thing, and the lobby
-// offers only the first.
-export const MP_MATCH_KEY_PREFIX = 'mpMatch.';
+// offers only the first. Private: every reader of an `mpMatch.` slot is in this
+// file, which is what the one-door rule at the top is for.
+const MP_MATCH_KEY_PREFIX = 'mpMatch.';
 
-export function mpMatchKey(tableId) {
+function mpMatchKey(tableId) {
   return `${MP_MATCH_KEY_PREFIX}${tableId}`;
-}
-
-export function isMpMatchKey(key) {
-  return typeof key === 'string' && key.startsWith(MP_MATCH_KEY_PREFIX);
 }
 // The pre-lobby single-match key (`activeMatch`) and its boot-time migration
 // are GONE. They said "delete one release after the lobby ships"; the lobby
@@ -129,34 +133,31 @@ export function isDailyKey(key) {
 }
 
 /**
- * Which of a pack's two solo slots a read or a write means.
- *
- * A name rather than a boolean because the two are not "normal" and "special":
- * they are two saved games, and a caller that says `{ slot: 'daily' }` reads as
- * what it is at the call site.
- */
-/**
  * THE LAST FINISHED MATCH, kept for review (REVIEW_PLAN.md phase 3). One per
  * pack, overwritten by the next finish, the same seed + log as a save: the
  * lobby can offer "review last game" without the table having been kept open.
+ *
+ * Private, unlike its two siblings: nothing outside this file names the key,
+ * because `saveMatch(state, { slot: 'last' })` is how the write is spelled
+ * (src/ui/matchRecord.js concludeMatch).
  */
-export const LAST_KEY_PREFIX = 'last.';
-export function lastKey(packId) {
+const LAST_KEY_PREFIX = 'last.';
+function lastKey(packId) {
   return `${LAST_KEY_PREFIX}${packId}`;
 }
 
 const SLOT_KEY = { match: matchKey, daily: dailyKey, last: lastKey };
 
+/**
+ * Which of a pack's solo slots a read or a write means.
+ *
+ * A name rather than a boolean because they are not "normal" and "special":
+ * they are saved games, and a caller that says `{ slot: 'daily' }` reads as
+ * what it is at the call site.
+ */
 function slotKeyFor(packId, slot) {
   return (SLOT_KEY[slot] || matchKey)(packId);
 }
-
-// Fully-qualified names for the async surfaces, pinned now so the replay work
-// inherits them instead of choosing again. See storeStub below.
-export const STORE_NAMES = {
-  matches: 'arcade.v1.cardstock.store.matches',
-  replays: 'arcade.v1.cardstock.store.replays',
-};
 
 export const SETTINGS_DEFAULTS = {
   // Cardstock's own preferences. Launcher-owned settings (theme, fontScale,
@@ -240,7 +241,6 @@ export const SETTINGS_DEFAULTS = {
   // on a tap anywhere on the felt or on Enter/Space and that the felt says "Tap
   // to go on" for exactly the beats with no clock.
   pace: 'manual',
-  showLegalHints: true,
   // How each pack's hand is arranged, per pack: { mode, order: [cardId, ...] }.
   // PRESENTATION ONLY (src/ui/handOrder.js) — it never reaches the engine, and
   // it lives in settings rather than beside the match because a preference
@@ -357,16 +357,6 @@ export function saveMatch(state, { hints = 0, slot = 'match' } = {}) {
   return Arcade.state.set(slotKeyFor(state.pack.id, slot), { ...serializeMatch(state), hints });
 }
 
-/**
- * The stored match for `packId`, or null when there is none this build can
- * replay.
- *
- * The payload's own `packId` is re-checked against the key it was found under.
- * They can only disagree if a save bundle was hand-edited or written by a
- * build with a different key scheme, and rehydrateMatch would throw on the
- * mismatch anyway — catching it here means the lobby never advertises a
- * resumable game that the table would then refuse to open.
- */
 /**
  * The host's copy of a shared table: the ordinary seed + log payload plus the
  * seat bindings, so a host that reloads can put everybody back in the chair
@@ -491,10 +481,11 @@ export function seatStubs() {
 export function saveSeatStub({ tableId, hostDeviceId, packId, seat, hostName = '' }, { at = Date.now() } = {}) {
   const stub = cleanSeatStub({ tableId, hostDeviceId, packId, seat, hostName, savedAt: at, lastSeenAt: at });
   if (!stub) return false;
-  const rest = seatStubs().filter((s) => s.tableId !== tableId);
+  const stubs = seatStubs();
+  const rest = stubs.filter((s) => s.tableId !== tableId);
   // `savedAt` is when we FIRST sat down, so re-confirming the same seat must
   // not reset it — it is what a "you have been here a while" reading would use.
-  const previous = seatStubs().find((s) => s.tableId === tableId);
+  const previous = stubs.find((s) => s.tableId === tableId);
   if (previous) stub.savedAt = previous.savedAt || at;
   return Arcade.state.set(KEYS.mpSeats, [...rest, stub]);
 }
@@ -539,6 +530,16 @@ export function sweepStaleTables({ now = Date.now(), maxAgeMs = TABLE_ROLL_OFF_M
   return dropped;
 }
 
+/**
+ * The stored match for `packId`, or null when there is none this build can
+ * replay.
+ *
+ * The payload's own `packId` is re-checked against the key it was found under.
+ * They can only disagree if a save bundle was hand-edited or written by a
+ * build with a different key scheme, and rehydrateMatch would throw on the
+ * mismatch anyway — catching it here means the lobby never advertises a
+ * resumable game that the table would then refuse to open.
+ */
 export function loadMatch(packId, { slot = 'match' } = {}) {
   if (!isValidPackId(packId)) return null;
   const stored = Arcade.state.get(slotKeyFor(packId, slot));
@@ -814,41 +815,6 @@ export function registerStorageErrorHandler() {
   });
 }
 
-/* ------------------------------------------------------------------ *
- * Arcade.store — the seam, not the implementation
- * ------------------------------------------------------------------ */
-
-const NOT_YET =
-  'cardstock: Arcade.store not yet adopted — see ARCADE_ENHANCEMENTS.md Decision 3';
-
-/**
- * The replay-oriented surface, stubbed.
- *
- * Decision 3 chose `Arcade.state` only for this pass: it is synchronous, it is
- * enough for one active match, and §3a warns that no catalog app has yet
- * exercised `Arcade.store` end-to-end — the first consumer should budget real
- * verification time, which the compliance pass does not have.
- *
- * These throw rather than being absent so the seam is a fact in the codebase
- * instead of a note in a document: the names, the key namespace (STORE_NAMES)
- * and the async signatures are all pinned, so the replay work swaps the bodies
- * for `Arcade.store.open(...)` calls and every caller keeps compiling. There
- * are no callers yet — that is the point; the first one arrives with the
- * implementation.
- */
-export const matchArchive = {
-  /** @returns {Promise<{get,set,keys,del,each}>} an Arcade.store handle. */
-  async openMatchArchive() {
-    throw new Error(NOT_YET);
-  },
-  /** @param {object} _log a serializeMatch() payload. @returns {Promise<string>} its id. */
-  async saveReplay(_log) {
-    throw new Error(NOT_YET);
-  },
-  /** @returns {Promise<Array<{id, packId, savedAt}>>} newest first. */
-  async listReplays() {
-    throw new Error(NOT_YET);
-  },
-};
-
-export const { openMatchArchive, saveReplay, listReplays } = matchArchive;
+// The `Arcade.store` replay archive that stood here as three throwing stubs is
+// gone (#212): #194 rehydrates a finished match from a snapshot the protocol
+// already carries, so nothing is waiting on an IndexedDB seam.
