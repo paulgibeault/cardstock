@@ -16,6 +16,9 @@
 // next one is tried, which is what every non-action event does.
 
 import { flyCard, motionAllowed, rectOf, cardSizedRect } from './flight.js';
+// Every wait in this file is a session timer (§6c) and none of them reaches for
+// the SDK by name: `schedule` is the felt's one door onto it (#213).
+import { schedule } from './clock.js';
 import { safeCssColor } from './css.js';
 import { handAddress } from './interaction.js';
 import { playTrickTaken, playActionCard } from '../arcade/audio.js';
@@ -246,7 +249,7 @@ export function createCelebrations({
       // Dealt one after another rather than as a fan, because that is what makes
       // four read as FOUR — a single flight of four overlapping copies is one
       // event, and the count is the whole insult.
-      Arcade.session.setTimeout(() => {
+      schedule(() => {
         if (myEpoch !== currentEpoch()) return;
         flyCard(card ? art().face(card) : art().back(), from, to,
           { fade: true, duration: 300 });
@@ -370,7 +373,7 @@ export function createCelebrations({
     }
     el.eventBanner.classList.add('event-banner--in');
     const myEpoch = currentEpoch();
-    session.bannerTimer = Arcade.session.setTimeout(() => {
+    session.bannerTimer = schedule(() => {
       session.bannerTimer = null;
       if (myEpoch !== currentEpoch()) return;
       el.eventBanner.hidden = true;
@@ -397,7 +400,7 @@ export function createCelebrations({
     el.eventBanner.classList.add('event-banner--out');
     if (session.bannerTimer) session.bannerTimer.cancel();
     const myEpoch = currentEpoch();
-    session.bannerTimer = Arcade.session.setTimeout(() => {
+    session.bannerTimer = schedule(() => {
       session.bannerTimer = null;
       if (myEpoch !== currentEpoch()) return;
       el.eventBanner.hidden = true;
@@ -461,7 +464,7 @@ export function createCelebrations({
     ev.cards.forEach((cardId, i) => {
       const card = cardById(state, cardId);
       if (!card) return;
-      Arcade.session.setTimeout(() => {
+      schedule(() => {
         if (myEpoch !== currentEpoch()) return;
         flyCard(art().face(card), from, to, { fade: true, duration: 320 });
       }, 140 + i * 70);
