@@ -315,3 +315,192 @@ test("no frame leaves src/match without going through its stamping helper", () =
       + "If the door count genuinely changed, update this gate deliberately.");
   }
 });
+
+/* ------------------------------------------------------------------ *
+ * THE STYLESHEET (#214)
+ * ------------------------------------------------------------------ *
+ *
+ * src/ui/table.css was the only tracked file class with no check on it at
+ * all, and it showed: ten selector lists written twice in the same context, a
+ * `gap` overridden by a second `gap` eleven lines further down the same block,
+ * seven byte-identical pulse rings, and three `!important`s papering over a
+ * specificity problem in the shared panel rule.
+ *
+ * A linter would catch all of that, and a linter is what the issue asked for.
+ * It is not what this repo is — zero dependencies, and the memory of every
+ * npm tree that ever went stale. So the rules live here, as the source scans
+ * everything else in this file is, over a CSS reader small enough to read in
+ * one sitting. It understands exactly as much as these three questions need:
+ * where a block starts, what its prelude was, which @-rules it is inside, and
+ * what its declarations are. It does not need to understand CSS.
+ */
+
+/** Every style rule in a sheet, with its @-context and its 1-based line. */
+function cssRules(src) {
+  // Comments become spaces rather than disappearing, so line numbers survive
+  // and a `!important` inside a comment cannot be mistaken for a declaration.
+  const clean = src.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " "));
+  const rules = [];
+  const context = [];   // the open @-rule preludes, outermost first
+  let buf = "", line = 1, preludeLine = 1;
+  const norm = (s) => s.replace(/\s+/g, " ").trim();
+  // The at-rules that WRAP other rules. Everything else that opens a brace
+  // (@font-face, @page, @property) holds declarations and is read as a rule.
+  const wraps = (p) => /^@(media|supports|container|layer|scope|document|(-\w+-)?keyframes)\b/i.test(p);
+  for (let i = 0; i < clean.length; i++) {
+    const c = clean[i];
+    if (c === "\n") line++;
+    if (c === "}") { context.pop(); buf = ""; preludeLine = line; continue; }
+    if (c !== "{") {
+      if (!buf && /\s/.test(c)) { preludeLine = line; continue; }
+      buf += c;
+      continue;
+    }
+    const prelude = norm(buf);
+    buf = "";
+    if (wraps(prelude)) { context.push(prelude); preludeLine = line; continue; }
+    // A declaration block: take it whole, to its matching close.
+    let depth = 1, j = i + 1, body = "";
+    for (; j < clean.length && depth; j++) {
+      if (clean[j] === "{") depth++;
+      else if (clean[j] === "}" && !--depth) break;
+      body += clean[j];
+    }
+    rules.push({ prelude, body, line: preludeLine, context: context.join(" >> ") });
+    for (let k = i; k < j; k++) if (clean[k] === "\n") line++;
+    i = j;
+    preludeLine = line;
+  }
+  return rules;
+}
+
+/** Split on the commas that are not inside `:is()`, `:where()`, `[]`, `()`. */
+function topLevelSplit(text, sep) {
+  const out = [];
+  let depth = 0, cur = "";
+  for (const c of text) {
+    if (c === "(" || c === "[") depth++;
+    else if (c === ")" || c === "]") depth--;
+    else if (c === sep && !depth) { out.push(cur); cur = ""; continue; }
+    cur += c;
+  }
+  out.push(cur);
+  return out;
+}
+
+/** A selector list, in a form that ignores whitespace, quoting and order. */
+function selectorKey(prelude) {
+  return topLevelSplit(prelude, ",")
+    .map((s) => s.replace(/\s+/g, " ").trim()
+      .replace(/\[[^\]]*\]/g, (m) => m.replace(/["']/g, "")))
+    .sort().join(",");
+}
+
+function cssDeclarations(body) {
+  return topLevelSplit(body, ";").map((d) => d.trim()).filter(Boolean)
+    .map((d) => ({
+      prop: d.slice(0, d.indexOf(":")).trim(),
+      value: d.slice(d.indexOf(":") + 1).trim(),
+    }))
+    .filter((d) => d.prop);
+}
+
+const stylesheets = () => tracked.filter((f) => f.endsWith(".css"))
+  .map((f) => ({ file: f, rules: cssRules(fs.readFileSync(path.join(ROOT, f), "utf8")) }));
+
+/*
+ * A selector written twice is two answers to one question, and the reader has
+ * to hold six thousand lines in their head to know which one wins. Every pair
+ * this found on its first run was an accident — a PR adding `position:
+ * relative` to a selector that already had a block, a token declared next to
+ * the one rule that used it — except one.
+ */
+const DUPLICATE_SELECTORS_ALLOWED = new Set([
+  // #table-board is deliberately two rules: the container-query declaration
+  // stands apart from the layout block, with a note saying why. Both blocks
+  // must stay where they are; see the comments there.
+  "#table-board",
+]);
+
+test("no stylesheet writes the same selector list twice in one @-context", () => {
+  const offenders = [];
+  for (const { file, rules } of stylesheets()) {
+    const seen = new Map();
+    for (const r of rules) {
+      const key = selectorKey(r.prelude);
+      if (r.context.startsWith("@") && /keyframes/i.test(r.context)) continue; // 0%/100% steps
+      const slot = `${r.context}||${key}`;
+      if (!seen.has(slot)) seen.set(slot, []);
+      seen.get(slot).push(r.line);
+    }
+    for (const [slot, lines] of seen) {
+      const key = slot.split("||")[1];
+      if (lines.length > 1 && !DUPLICATE_SELECTORS_ALLOWED.has(key)) {
+        offenders.push(`${file}:${lines.join(",")} — \`${key}\` ${lines.length} times`);
+      }
+    }
+  }
+  assert.deepStrictEqual(offenders, [],
+    "merge the blocks into the first one, or add the selector to "
+    + "DUPLICATE_SELECTORS_ALLOWED with a comment saying why it is two rules");
+});
+
+/*
+ * The same property twice in one block is either dead code or a fallback. A
+ * fallback is written as a LADDER — the two declarations adjacent, the older
+ * value first, e.g. `max-height: 100vh; max-height: 100dvh;` — and that shape
+ * is allowed. Anything else is one of the two values never taking effect,
+ * which is what `.opponent-row`'s `gap: 1.25rem` was, eleven lines above the
+ * `clamp()` that replaced it.
+ */
+test("no stylesheet declares a property twice in one block", () => {
+  const offenders = [];
+  for (const { file, rules } of stylesheets()) {
+    for (const r of rules) {
+      const decls = cssDeclarations(r.body);
+      decls.forEach((d, i) => {
+        const prev = decls.findLastIndex((o, k) => k < i && o.prop === d.prop);
+        if (prev < 0) return;
+        const ladder = prev === i - 1 && decls[prev].value !== d.value;
+        if (!ladder) {
+          offenders.push(`${file}:${r.line} \`${r.prelude.slice(0, 48)}\` declares `
+            + `\`${d.prop}\` twice`);
+        }
+      });
+    }
+  }
+  assert.deepStrictEqual(offenders, [],
+    "one of the two never takes effect. Delete the dead one — or, if it is a "
+    + "fallback for a value an old browser cannot parse, put the two "
+    + "declarations next to each other so it reads as a ladder");
+});
+
+/*
+ * `!important` is how a rule wins an argument it should have settled with a
+ * selector, and it is unanswerable: the next rule that needs to override it
+ * has to shout too. The only honest use on this table is the kill switch —
+ * under prefers-reduced-motion nothing may move, and that has to beat every
+ * animation in the file including a pack's own. So it is allowed there and
+ * nowhere else.
+ *
+ * Three lived outside it: `.panel--wide` and `.choice-dialog` fighting the
+ * shared panel rule, whose id-and-a-class specificity no modifier could reach.
+ * The fix was the selector (`:where()` on the mounting ids), which is always
+ * what the fix is.
+ */
+test("`!important` appears only under prefers-reduced-motion", () => {
+  const offenders = [];
+  for (const { file, rules } of stylesheets()) {
+    for (const r of rules) {
+      if (/prefers-reduced-motion/i.test(r.context)) continue;
+      for (const d of cssDeclarations(r.body)) {
+        if (/!\s*important/i.test(d.value)) {
+          offenders.push(`${file}:${r.line} \`${r.prelude.slice(0, 48)}\` — ${d.prop}`);
+        }
+      }
+    }
+  }
+  assert.deepStrictEqual(offenders, [],
+    "raise the losing rule's specificity or lower the winning one's "
+    + "(`:where()` costs nothing) instead of shouting");
+});

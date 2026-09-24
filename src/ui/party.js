@@ -36,7 +36,7 @@ import {
 import { createTableHost, needsHostDecision } from '../match/host.js';
 import { createTurnTimer } from '../match/turnTimer.js';
 import { wallClock } from '../match/clock.js';
-import { makeCtx } from '../engine/context.js';
+import { actingSeats, announcementsFor } from '../engine/context.js';
 import { chooseBotMove } from '../engine/bot.js';
 import { enumerateLegalMoves } from '../engine/movePipeline.js';
 import { rehydrateMatch } from '../engine/replay.js';
@@ -1611,10 +1611,7 @@ function openHostSession({ tableId, packId, packName: name, variants, seats }) {
     // Resolved at arm time, so changing it before the deal takes effect
     // without rebuilding the timer.
     timeoutMs: () => graceOf(session),
-    actingSeatsOf: (state) => {
-      const template = state.pack.template;
-      return template.actingSeats ? template.actingSeats(makeCtx(state)) : [state.turn.seat];
-    },
+    actingSeatsOf: actingSeats,
     // ANY DEVICE-HELD SEAT WHOSE DEVICE IS NOT WATCHING THIS TABLE (plan §3).
     //
     // It used to be "every seat but our own", which is right for the table in
@@ -1952,16 +1949,8 @@ function headlessBotsFor(session) {
     me: seatLens,
     identityOf: (seat) => session.seating?.[seat]
       || { seat, name: nameForSeat(seat, session) || `Seat ${seat}`, icon: '', color: '#6b7280', isBot: true },
-    actingSeatsOf: (state) => {
-      if (state.gameOver) return [];
-      const template = state.pack.template;
-      return template.actingSeats ? template.actingSeats(makeCtx(state)) : [state.turn.seat];
-    },
-    announcementsFor: (state, seat) => {
-      const template = state.pack.template;
-      if (!template.enumerateAnnouncements) return [];
-      return template.enumerateAnnouncements(makeCtx(state), seat) || [];
-    },
+    actingSeatsOf: actingSeats,
+    announcementsFor,
     // THE ONLY REAL DIFFERENCE FROM THE FELT'S DRIVER. No animation, no log
     // line, no sound — `applyLocal` applies the move and publishes it, which is
     // the same door every other move at this table goes through.

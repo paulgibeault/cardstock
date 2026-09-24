@@ -36,6 +36,16 @@ a degradation.
 | `enumerateLegalMoves` | `(ctx, seat) -> move[]` | The single source of what anybody may do. Bots pick from it; every tap target the table lights up is derived from it. **A move it omits must be one `validateMove` refuses**, or a bot will be offered a move that throws. |
 | `isRoundOver` | `(ctx) -> boolean` | Usually `ctx.roundEnded()` (see *Ending a round*). |
 
+> **A seat that is not acting enumerates nothing.** The list is what the seat
+> may do *now*, so for any seat outside `actingSeats` (below) — and for every
+> seat once the match is over — the answer is `[]`. You do not have to write
+> that guard: `src/engine/movePipeline.js` asks `actingSeats` before it calls
+> you, and both engine enumerators (`enumerateLegalMoves`, `legalMovesFor`) go
+> through it, so a template that lists off-turn moves anyway is never seen doing
+> it. Templates that already check `seat === ctx.turn.seat` are welcome to keep
+> the check; new ones need not. Callers may rely on the rule: `view.moves`, hint
+> offers and the felt's tap targets all read it as "this seat may act".
+
 ## Optional — every call site is guarded
 
 Absent means "the platform's default", which is always a real behaviour rather
@@ -807,7 +817,7 @@ It cost **six files, not two** — and one of them is a genuine platform edit:
 | `src/templates/index.js` | an import and a map entry | **the contract forgot this one.** It is the module that turns an id into a template; nothing can load without it, and it is not `registry.js`. Two entries, not one. |
 | `src/ui/interaction.js` | one new mode in `INTERACTION_MODES`, its `buildUiModel` and `dropCandidates` branches, and `selectionLegality` | **a real platform edit, and the contract already predicted it**: "the vocabulary is the platform's; which phase means which mode is the template's". A genre with a genuinely new input shape has to add one. A genre reusing an existing shape adds nothing. |
 | `schema/manifest.schema.json` | the `template` enum, a `$defs.rules-climbing`, a fifth `allOf` clause | mechanical, and the schema is normative, so it is not optional |
-| `src/templates/melds.js` | `groupByRank` and `rankWindow` lifted out and shared | a choice, not a cost — the alternative was a second definition of "consecutive" |
+| `src/templates/melds.js` | `groupByRank` and `rankWindow` lifted out and shared | a choice, not a cost — the alternative was a second definition of "consecutive". Cribbage later made it a fourth genre asking, so **#211 moved both into `src/engine/cards.js`** beside `rankLadderOf`; the template → template import this row describes is gone. |
 
 And what it did **not** cost is the part that says the contract is mostly
 working. **`src/ui/table.js` — three thousand lines, and the file this document
