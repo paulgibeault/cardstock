@@ -193,6 +193,31 @@ test('clear ends every table', () => {
   assert.equal(two.stopped.client, true);
 });
 
+/**
+ * ONE ANSWER TO "AM I SITTING HERE" (#218).
+ *
+ * It was two: `heldSeat` in src/match/sessionRegistry.js and a
+ * `session?.client?.seat?.() != null` in src/ui/partyModel.js, and both had to
+ * know that the answer lives on the client rather than on the session. That is
+ * the session's own business, so the session says it.
+ */
+test('a session answers which seat it holds, and undefined is not a seat', () => {
+  const { session: joiner } = sessionFor(ID.eights, 'eights', 'joiner', { seat: 0 });
+  assert.strictEqual(joiner.seatedAt(), 0, 'seat zero is a chair like any other');
+
+  const { session: watching } = sessionFor(ID.other, 'other', 'joiner');
+  assert.strictEqual(watching.seatedAt(), null, 'a client with no seat holds none');
+
+  // A HOST HAS NO CLIENT AT ALL, and `undefined` from a missing object means
+  // the same thing as `undefined` from a seatless one.
+  const host = createTableSession({ tableId: ID.hearts, packId: 'hearts', role: 'host' });
+  assert.strictEqual(host.seatedAt(), null);
+
+  // And it is live, not captured: standing up is a change of answer.
+  joiner.client = { seat: () => undefined };
+  assert.strictEqual(joiner.seatedAt(), null);
+});
+
 test('hosted and joined split the same registry', () => {
   const reg = createSessionRegistry();
   reg.add(sessionFor(ID.hearts, 'hearts', 'host').session);
@@ -218,7 +243,7 @@ test('seat zero is a held seat, not a falsy one', () => {
   const reg = createSessionRegistry();
   reg.add(sessionFor(ID.eights, 'eights', 'joiner', { seat: 0 }).session);
 
-  // `seat() === 0` is the whole reason heldSeat compares against undefined
+  // `seat() === 0` is the whole reason `seatedAt()` compares against undefined
   // rather than testing truthiness: seat 0 is a chair like any other.
   assert.match(reg.refusalToHost('eights'), /Leave it to host your own/);
 });

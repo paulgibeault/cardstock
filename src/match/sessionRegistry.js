@@ -52,12 +52,7 @@ export function createSessionRegistry() {
    * anything, which is the distinction party.js spells `seatedHere()`.
    */
   const seatedForPack = (packId) =>
-    all().find((s) => !s.hosting() && s.packId === packId && heldSeat(s) !== null) || null;
-
-  function heldSeat(session) {
-    const seat = session.client?.seat?.();
-    return seat === undefined ? null : seat;
-  }
+    all().find((s) => !s.hosting() && s.packId === packId && s.seatedAt() !== null) || null;
 
   return {
     all,
