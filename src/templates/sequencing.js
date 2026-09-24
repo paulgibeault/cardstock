@@ -4,19 +4,13 @@
 // by discarding one card to an own numbered discard pile.
 
 import { selectorMatchesAny } from '../engine/selectors.js';
-import { initializeDeckInto } from '../engine/state.js';
 import { resolveByPlayers } from '../engine/deal.js';
-import { isWild } from '../engine/cards.js';
 
 // Zone addresses this template cares about are always `<kind>[.n].<seat>` for
 // per-player zones (hand/stock/discard) — the seat is always the last segment.
 function zoneKindAndSeat(address) {
   const parts = address.split('.');
   return { kind: parts[0], seat: Number(parts[parts.length - 1]) };
-}
-
-function isWildCard(ctx, card) {
-  return isWild(card, ctx.rules.wilds);
 }
 
 // The rank a build pile needs next is just its current length offset from buildRule.from
@@ -28,7 +22,7 @@ function requiredRank(ctx, buildAddr) {
 
 function cardPlayableOn(ctx, card, buildAddr) {
   if (ctx.countIn(buildAddr) === 0) return selectorMatchesAny(card, ctx.rules.buildStart);
-  return isWildCard(ctx, card) || Number(card.rank) === requiredRank(ctx, buildAddr);
+  return ctx.isWild(card) || Number(card.rank) === requiredRank(ctx, buildAddr);
 }
 
 /* ------------------------------------------------------------------ *
@@ -64,7 +58,7 @@ function stockTopRank(ctx, seat) {
   const top = ctx.topOf(ctx.zoneAddr('stock', seat));
   if (top === undefined) return null;
   const card = ctx.cardById(top);
-  if (isWildCard(ctx, card)) return null;
+  if (ctx.isWild(card)) return null;
   const rank = Number(card.rank);
   return Number.isFinite(rank) ? rank : null;
 }
@@ -116,7 +110,7 @@ function replenishDrawFromBuried(ctx) {
   const buried = [];
   for (let seat = 0; seat < ctx.seats; seat++) {
     for (let n = 1; n <= ctx.rules.discardPiles; n++) {
-      const pile = `discard.${n}.${seat}`;
+      const pile = ctx.zoneAddr('discard', seat, n);
       const ids = ctx.cardIdsIn(pile);
       for (const id of ids.slice(0, -1)) buried.push({ id, pile });
     }
@@ -138,7 +132,7 @@ function replenishDrawFromBuried(ctx) {
 function neededRanks(ctx) {
   const ranks = new Set();
   for (let n = 1; n <= ctx.rules.buildPiles; n++) {
-    const addr = `build.${n}`;
+    const addr = ctx.zoneAddr('build', null, n);
     // An empty pile takes whatever `buildStart` says, which is the bottom of
     // the count (and a wild); NaN would never match a card.
     ranks.add(ctx.countIn(addr) === 0 ? ctx.rules.buildRule.from : requiredRank(ctx, addr));
@@ -181,7 +175,7 @@ function tableIsStuck(ctx) {
   const needed = neededRanks(ctx);
   const playable = (id) => {
     const card = ctx.cardById(id);
-    return isWildCard(ctx, card) || needed.has(Number(card.rank));
+    return ctx.isWild(card) || needed.has(Number(card.rank));
   };
   const buriedCirculate = ctx.rules.drawExhausted === 'buried-discards';
   for (const shared of ['draw', 'recycled']) {
@@ -192,7 +186,7 @@ function tableIsStuck(ctx) {
     const top = ctx.topOf(ctx.zoneAddr('stock', seat));
     if (top !== undefined && playable(top)) return false;
     for (let n = 1; n <= ctx.rules.discardPiles; n++) {
-      const ids = ctx.cardIdsIn(`discard.${n}.${seat}`);
+      const ids = ctx.cardIdsIn(ctx.zoneAddr('discard', seat, n));
       if (!ids.length) continue;
       if (buriedCirculate ? ids.some(playable) : playable(ids[ids.length - 1])) return false;
     }
@@ -233,7 +227,7 @@ function endStuckTable(ctx, from) {
  */
 function maybeEndStuckTable(ctx, from) {
   if (ctx.rules.whenStuck !== 'shortest-stock-wins') return;
-  if (ctx.state.roundEnded) return;
+  if (ctx.roundEnded()) return;
   if (tableIsStuck(ctx)) endStuckTable(ctx, from);
 }
 
@@ -359,7 +353,7 @@ function scorePlayMove(ctx, move) {
   // top gets its pile when nothing natural will do it. Burning one to advance
   // a pile toward nothing in particular is spending the key to open a door
   // that was not locked.
-  if (kind !== 'stock' && isWildCard(ctx, ctx.cardById(move.cards[0]))) score -= SPENDS_WILD_PLAY;
+  if (kind !== 'stock' && ctx.isWild(ctx.cardById(move.cards[0]))) score -= SPENDS_WILD_PLAY;
   return score;
 }
 
@@ -370,7 +364,7 @@ function scoreDiscardMove(ctx, move) {
   // it is the card that plays your stock onto any pile at all. When the hand
   // is nothing but wilds every discard takes this and the penalty cancels,
   // which is the only case where one of them is right.
-  if (isWildCard(ctx, card)) return DISCARD_BASE - DISCARD_WILD;
+  if (ctx.isWild(card)) return DISCARD_BASE - DISCARD_WILD;
 
   const topId = ctx.topOf(move.to);
   // An empty pile costs nothing and buries nothing; it is only ever beaten by
@@ -509,7 +503,7 @@ const sequencing = {
   },
 
   setup(ctx) {
-    initializeDeckInto(ctx.state, 'draw');
+    ctx.placeDeck('draw');
     ctx.dealEach(resolveByPlayers(ctx.rules.stockSize, ctx.seats), { to: 'stock' });
     for (let s = 0; s < ctx.seats; s++) topUpHand(ctx, s);
     ctx.setPhase('play');
@@ -592,7 +586,7 @@ const sequencing = {
     }
     if (ctx.rules.playableFrom.includes('discard')) {
       for (let n = 1; n <= ctx.rules.discardPiles; n++) {
-        const from = `discard.${n}.${seat}`;
+        const from = ctx.zoneAddr('discard', seat, n);
         const top = ctx.topOf(from);
         if (top !== undefined) sources.push({ cardId: top, from });
       }
@@ -601,7 +595,7 @@ const sequencing = {
     for (const { cardId, from } of sources) {
       const card = ctx.cardById(cardId);
       for (let n = 1; n <= ctx.rules.buildPiles; n++) {
-        const to = `build.${n}`;
+        const to = ctx.zoneAddr('build', null, n);
         if (cardPlayableOn(ctx, card, to)) moves.push({ actor: seat, type: 'playCard', cards: [cardId], from, to });
       }
     }
@@ -609,7 +603,7 @@ const sequencing = {
     const handAddr = ctx.zoneAddr('hand', seat);
     for (const cardId of ctx.cardIdsIn(handAddr)) {
       for (let n = 1; n <= ctx.rules.discardPiles; n++) {
-        moves.push({ actor: seat, type: 'discard', cards: [cardId], from: handAddr, to: `discard.${n}.${seat}` });
+        moves.push({ actor: seat, type: 'discard', cards: [cardId], from: handAddr, to: ctx.zoneAddr('discard', seat, n) });
       }
     }
 
@@ -618,7 +612,7 @@ const sequencing = {
   },
 
   isRoundOver(ctx) {
-    return ctx.state.roundEnded;
+    return ctx.roundEnded();
   },
 
   // ONE ROUND, AND IT IS THE MATCH. Stockpile's own declaration is
@@ -661,7 +655,7 @@ const sequencing = {
    * redundancy this flag exists for.
    */
   seatCounters(ctx, seat) {
-    const stock = ctx.countIn(`stock.${seat}`);
+    const stock = ctx.countIn(ctx.zoneAddr('stock', seat));
     const hand = ctx.countIn(ctx.zoneAddr('hand', seat));
     return [{
       text: String(stock),
@@ -779,7 +773,7 @@ const sequencing = {
     const mine = stockTopRank(ctx, seat);
     const rivals = rivalStockRanks(ctx, seat);
     for (let n = 1; n <= ctx.rules.buildPiles; n++) {
-      const need = requiredRank(ctx, `build.${n}`);
+      const need = requiredRank(ctx, ctx.zoneAddr('build', null, n));
       if (mine !== null && need === mine) score += w.STOCK_OUT;
       // A pile left sitting on the rank somebody's stock is waiting for is a
       // turn handed to them, and it is the same fact from either side of the
@@ -807,12 +801,12 @@ const sequencing = {
     score -= (ctx.playerVar(seat, 'swept') ?? 0) * w.HELD_CARD;
     for (const id of hand) {
       const card = ctx.cardById(id);
-      if (isWildCard(ctx, card)) score += w.WILD_IN_HAND;
+      if (ctx.isWild(card)) score += w.WILD_IN_HAND;
       else if (mine !== null && Number(card.rank) === mine - 1) score += w.BRIDGE_WORTH;
     }
 
     for (let n = 1; n <= ctx.rules.discardPiles; n++) {
-      const ids = ctx.cardIdsIn(`discard.${n}.${seat}`);
+      const ids = ctx.cardIdsIn(ctx.zoneAddr('discard', seat, n));
       score -= ids.length * w.HELD_CARD;
       if (ids.length === 0) { score += w.OPEN_PILE; continue; }
       // Everything but the top card of the pile is out of the game until the

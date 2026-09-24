@@ -649,7 +649,9 @@ test("every round-ending timer is held on the session and cancelled with it", ()
       + 'playing a match nobody is looking at');
   }
   const table = read("src/ui/table.js");
-  assert.doesNotMatch(table, /\n  Arcade\.session\.setTimeout\(\(\) => \{\n    if \(myEpoch !== epoch \|\| !session\?\.roundBeat\)/,
+  // `schedule(` since #213: the raw `Arcade.session.setTimeout` this named is
+  // gone from src/ui/ entirely, so the shape to refuse is the seam's.
+  assert.doesNotMatch(table, /\n  schedule\(\(\) => \{\n    if \(myEpoch !== epoch \|\| !session\?\.roundBeat\)/,
     "the round beat must not schedule an unheld timer");
 });
 

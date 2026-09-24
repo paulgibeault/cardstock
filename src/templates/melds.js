@@ -12,11 +12,9 @@
 // wild became.
 
 import { selectorMatches } from '../engine/selectors.js';
-import { distinctValues, isWild, rankAt, rankIndexOf, rankLadderOf } from '../engine/cards.js';
-
-export function isWildCard(ctx, card) {
-  return isWild(card, ctx.rules.wilds);
-}
+import {
+  distinctValues, groupByRank, rankAt, rankIndexOf, rankLadderOf, rankWindow,
+} from '../engine/cards.js';
 
 export function parseItem(item) {
   const m = /^(\w+)\((\d+)\)$/.exec(item || '');
@@ -94,7 +92,7 @@ export function rankDomain(ctx) {
     let min = Infinity;
     let max = -Infinity;
     for (const card of ctx.pack.cardsById.values()) {
-      if (isWildCard(ctx, card) || !isMeldable(ctx, card)) continue;
+      if (ctx.isWild(card) || !isMeldable(ctx, card)) continue;
       const i = rankIndexOf(ladder, card.rank);
       if (i < 0) continue;
       if (i < min) min = i;
@@ -112,43 +110,16 @@ export function rankDomain(ctx) {
  * The two shapes every melding template has, over the pack's ladder
  * ------------------------------------------------------------------ *
  *
- * Neither of these knows anything about wilds, contracts or item strings, and
- * that is why they live at the top of the file rather than inside the run
- * branch that used to hold them: a SET is "these cards share a rank" and a RUN
- * is "these ladder positions are an unbroken window", in any template that has
- * either. src/templates/climbing.js is the second caller — a pair, a triple and
- * a four of a kind are sets of 2, 3 and 4, and both a run and a strip of
- * consecutive pairs are rank windows — and it reaches them here rather than
- * writing a second copy that could disagree about what consecutive means.
+ * `groupByRank` and `rankWindow` used to be written out here, because melding
+ * was the only caller: a SET is "these cards share a rank" and a RUN is "these
+ * ladder positions are an unbroken window", and neither knows anything about
+ * wilds, contracts or item strings. Then climbing wanted both (a pair, a triple
+ * and a four of a kind are sets of 2, 3 and 4; a run and a strip of consecutive
+ * pairs are rank windows) and reached across for them, and cribbage's scoring
+ * table re-derived the window inline. Four genres asking one question is the
+ * engine's business, so #211 moved both beside `rankLadderOf` in
+ * src/engine/cards.js and this file now imports them like everybody else.
  */
-
-/** The cards of `cards` grouped by rank, in first-seen order. */
-export function groupByRank(cards) {
-  const groups = new Map();
-  for (const card of cards) {
-    const rank = card?.rank;
-    if (!groups.has(rank)) groups.set(rank, []);
-    groups.get(rank).push(card);
-  }
-  return groups;
-}
-
-/**
- * Are these ladder positions an unbroken window with no repeats?
- *
- * @returns { ok: true, low, high } | { ok: false, why: 'repeat' | 'gap' }
- *          — the two failures are separated because they are different
- *          sentences to a player: a run that repeats a rank and a run with a
- *          hole in it are not the same mistake.
- */
-export function rankWindow(indices) {
-  if (!indices.length) return { ok: false, why: 'gap' };
-  if (new Set(indices).size !== indices.length) return { ok: false, why: 'repeat' };
-  const low = Math.min(...indices);
-  const high = Math.max(...indices);
-  if (high - low + 1 !== indices.length) return { ok: false, why: 'gap' };
-  return { ok: true, low, high };
-}
 
 // A run or a set pins a wild's RANK; a colour group pins its COLOUR. Nothing
 // else about the card is decided — a run in this template never constrains
@@ -166,7 +137,7 @@ export function entriesOf(ctx, cardIds) {
 // assigned, which is a state no laid-down meld is allowed to be in.
 export function meldValue(ctx, entry, kind, wilds) {
   const attr = pinnedAttr(kind);
-  if (!isWildCard(ctx, entry.card)) return entry.card[attr];
+  if (!ctx.isWild(entry.card)) return entry.card[attr];
   return wilds?.[entry.id]?.[attr];
 }
 
@@ -198,14 +169,14 @@ export function assignWilds(ctx, kind, size, entries, pinned = {}) {
   const wilds = {};
   const unassigned = [];
   for (const entry of entries) {
-    if (!isWildCard(ctx, entry.card)) continue;
+    if (!ctx.isWild(entry.card)) continue;
     const value = pinned[entry.id]?.[attr];
     if (value === undefined) unassigned.push(entry);
     else wilds[entry.id] = { [attr]: value };
   }
   if (!unassigned.length) return { ok: true, wilds };
 
-  const naturals = entries.filter((e) => !isWildCard(ctx, e.card));
+  const naturals = entries.filter((e) => !ctx.isWild(e.card));
   const noValue = {
     ok: false,
     rule: 'wild-value-required',
@@ -265,7 +236,7 @@ export function checkMeldQuota(ctx, parsed, entries) {
     return { ok: false, rule: 'invalid-meld', reason: 'Card count does not match the meld size.' };
   }
   const wildsCfg = ctx.rules.wilds || {};
-  const naturals = entries.filter((e) => !isWildCard(ctx, e.card));
+  const naturals = entries.filter((e) => !ctx.isWild(e.card));
   const wildCount = entries.length - naturals.length;
   if (naturals.length < (wildsCfg.minNaturals ?? 0)) {
     return { ok: false, rule: 'min-naturals', reason: 'A meld needs at least one natural (non-wild) card.' };
@@ -406,7 +377,7 @@ export function getMeldGroups(ctx, seat) {
 export function meldKindOf(ctx, group) {
   const parsed = parseItem(group.item);
   if (parsed) return parsed.kind;
-  return inferKind(group.cards.map((id) => ctx.cardById(id)).filter((c) => !isWildCard(ctx, c)));
+  return inferKind(group.cards.map((id) => ctx.cardById(id)).filter((c) => !ctx.isWild(c)));
 }
 
 // What a meld's wilds are ALREADY standing for. A group laid down through
@@ -502,7 +473,7 @@ export function meldDisplayOrder(ctx, group, kind) {
     const decorated = entries.map((entry, i) => ({
       id: entry.id,
       i,
-      wild: isWildCard(ctx, entry.card),
+      wild: ctx.isWild(entry.card),
       value: meldValue(ctx, entry, meldKind, wilds),
     }));
 
@@ -564,8 +535,8 @@ export function wildHitValues(ctx, group, kind, cardId) {
  * moves; the only thing that happens is that a number goes on the sheet.
  *
  * So none of `resolveMeld` fits, and none of it is reused. What IS reused is
- * the two shapes at the top of this file (`groupByRank`, `rankWindow`), which
- * is the whole reason this lives here rather than in a file of its own: a run
+ * the two shapes this file shares with every other melding genre (`groupByRank`
+ * and `rankWindow`, in src/engine/cards.js since #211): a run
  * is a rank window on the pack's ladder in either genre, and Pinochle's ladder
  * is what makes A-10-K-Q-J one — `9 J Q K 10 A` puts those five ranks in the
  * top five slots, consecutively, which they are on no other deck in the repo.

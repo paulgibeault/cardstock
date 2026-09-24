@@ -139,6 +139,56 @@ test("every rules.* key a manifest declares is read somewhere in src/", () => {
     "declared but read by no line of src/ — implement it or delete it, per the §13 extension policy");
 });
 
+/**
+ * A TEMPLATE TOUCHES STATE THROUGH `ctx` OR NOT AT ALL (#209).
+ *
+ * src/engine/context.js's header says the ctx helpers are the only way a
+ * template touches state, and src/engine/fork.js's field-by-field copy list is
+ * only SOUND while that holds: forkState copies what it knows a move can
+ * change, so a template writing through a field it does not copy makes
+ * lookahead mutate the live match. That was an intention rather than a rule,
+ * and it did not hold — seventeen `ctx.state.` reach-ins, five raw
+ * `zone(addr).cards.push` deals and three `state.js` imports had grown around
+ * ctx, every one of them a method ctx was simply missing.
+ *
+ * Deliberately a grep over the source, for the reason the `rules.*` gate above
+ * gives: the question is "does any line of a template go around ctx", and the
+ * cheapest honest answer is the right one. If a template needs something ctx
+ * does not offer, the fix is a method on context.js — never a reach-in.
+ *
+ * `.js` only: src/templates/CONTRACT.md quotes `ctx.state.roundEnded` in the
+ * very paragraph that forbids it.
+ */
+test("no template reaches past ctx into the state container", () => {
+  const files = tracked.filter((f) => f.startsWith("src/templates/") && f.endsWith(".js"));
+  assert.ok(files.length >= 5, "src/templates/ has stopped being where templates live");
+
+  const offences = [];
+  for (const file of files) {
+    const lines = fs.readFileSync(path.join(ROOT, file), "utf8").split("\n");
+    lines.forEach((line, i) => {
+      const where = `${file}:${i + 1}`;
+      // Comments discuss `state.gameOver` and the old imports at length; only
+      // code counts.
+      if (/^\s*(\/\/|\*|\/\*)/.test(line)) return;
+      if (/\bctx\.state\b/.test(line)) {
+        offences.push(`${where} reaches into ctx.state — add the method to src/engine/context.js`);
+      }
+      if (/from\s*['"][^'"]*engine\/state\.js['"]/.test(line)) {
+        offences.push(`${where} imports src/engine/state.js — templates go through ctx`);
+      }
+      // The raw deal: a zone's card array written behind moveCards/placeDeck's
+      // back, which is also how cardLocation goes stale.
+      if (/\.zone\([^)]*\)\.cards\b/.test(line)) {
+        offences.push(`${where} writes a zone's cards array directly — use ctx.placeDeck / ctx.moveCards`);
+      }
+    });
+  }
+  assert.deepStrictEqual(offences, [],
+    "src/templates/ must touch state only through ctx (src/engine/context.js); "
+    + "src/engine/fork.js's copy list depends on it");
+});
+
 // §10: CI rewrites this line with sed on every deploy. If the shape drifts the
 // rewrite silently stops firing and every fix ships to nobody who has already
 // visited — which has happened twice in this fleet. Assert the SHAPE, not the
@@ -240,6 +290,49 @@ test("the felt's bot driver picks its clock from the match, not from the tab", (
     + "which is the #71 bug restored");
 });
 
+/**
+ * ONE TIMER SEAM (#213).
+ *
+ * `Arcade.session.setTimeout` is a §6c obligation — a timer that freezes with
+ * the frame rather than draining a battery nobody is watching — and it was
+ * being met in nine places at once: four copies of the same wrapper, plus
+ * eleven call sites that reached straight past all of them. One of those
+ * copies had a `node --test` fallback and the others did not, so whether a
+ * module could be exercised at all depended on which spelling its author
+ * happened to pick.
+ *
+ * The seam is `sessionTimeout` in src/match/clock.js. `src/ui/clock.js`'s
+ * `schedule` is the DOM side's `(fn, ms)` spelling of it, and nothing else in
+ * `src/` names the SDK's timer. That is what makes "honour the battery rule"
+ * an edit to one function, and what lets a test build ONE `Arcade.session`
+ * stub and have every timer in the repo answer to it.
+ *
+ * A grep, for the reason the gate above gives: the question is "does anything
+ * reach past the seam", and the cheapest honest answer is the right one.
+ * Comment lines are exempt — several of them discuss the SDK timer by name,
+ * which is the documentation working rather than a leak.
+ */
+test("nothing in src/ reaches for the SDK's session timer but the one seam", () => {
+  const seam = "src/match/clock.js";
+  const leaks = [];
+  for (const f of tracked.filter((f) => f.startsWith("src/") && f.endsWith(".js"))) {
+    if (f === seam) continue;
+    const lines = fs.readFileSync(path.join(ROOT, f), "utf8").split("\n");
+    lines.forEach((line, i) => {
+      if (/^\s*(\/\/|\*|\/\*)/.test(line)) return;
+      // `Arcade.session` at all, not merely `.setTimeout` on it: the namespace
+      // is the session clock, and a second door into it is the same leak by a
+      // different name.
+      if (/\bArcade\s*\??\.\s*session\b/.test(line)) leaks.push(`${f}:${i + 1}`);
+    });
+  }
+  assert.deepStrictEqual(leaks, [],
+    `these sites reach past the timer seam: ${leaks.join(", ")}. `
+    + `Use \`schedule(fn, ms)\` from src/ui/clock.js (DOM) or \`sessionClock()\` `
+    + `from ${seam} — the SDK timer is named in exactly one function so the §6c `
+    + "rule has one place to be honoured and tests have one stub to build.");
+});
+
 test("no frame leaves src/match without going through its stamping helper", () => {
   const allowed = {
     "src/match/host.js": 2,     // sendTo + broadcast, both via stamp()
@@ -304,4 +397,193 @@ test("no test re-copies a harness helper that now has one home", () => {
       assert.ok(!re.test(src), `${f} re-copies a shared harness helper (${re}) — ${say}`);
     }
   }
+});
+
+/* ------------------------------------------------------------------ *
+ * THE STYLESHEET (#214)
+ * ------------------------------------------------------------------ *
+ *
+ * src/ui/table.css was the only tracked file class with no check on it at
+ * all, and it showed: ten selector lists written twice in the same context, a
+ * `gap` overridden by a second `gap` eleven lines further down the same block,
+ * seven byte-identical pulse rings, and three `!important`s papering over a
+ * specificity problem in the shared panel rule.
+ *
+ * A linter would catch all of that, and a linter is what the issue asked for.
+ * It is not what this repo is — zero dependencies, and the memory of every
+ * npm tree that ever went stale. So the rules live here, as the source scans
+ * everything else in this file is, over a CSS reader small enough to read in
+ * one sitting. It understands exactly as much as these three questions need:
+ * where a block starts, what its prelude was, which @-rules it is inside, and
+ * what its declarations are. It does not need to understand CSS.
+ */
+
+/** Every style rule in a sheet, with its @-context and its 1-based line. */
+function cssRules(src) {
+  // Comments become spaces rather than disappearing, so line numbers survive
+  // and a `!important` inside a comment cannot be mistaken for a declaration.
+  const clean = src.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " "));
+  const rules = [];
+  const context = [];   // the open @-rule preludes, outermost first
+  let buf = "", line = 1, preludeLine = 1;
+  const norm = (s) => s.replace(/\s+/g, " ").trim();
+  // The at-rules that WRAP other rules. Everything else that opens a brace
+  // (@font-face, @page, @property) holds declarations and is read as a rule.
+  const wraps = (p) => /^@(media|supports|container|layer|scope|document|(-\w+-)?keyframes)\b/i.test(p);
+  for (let i = 0; i < clean.length; i++) {
+    const c = clean[i];
+    if (c === "\n") line++;
+    if (c === "}") { context.pop(); buf = ""; preludeLine = line; continue; }
+    if (c !== "{") {
+      if (!buf && /\s/.test(c)) { preludeLine = line; continue; }
+      buf += c;
+      continue;
+    }
+    const prelude = norm(buf);
+    buf = "";
+    if (wraps(prelude)) { context.push(prelude); preludeLine = line; continue; }
+    // A declaration block: take it whole, to its matching close.
+    let depth = 1, j = i + 1, body = "";
+    for (; j < clean.length && depth; j++) {
+      if (clean[j] === "{") depth++;
+      else if (clean[j] === "}" && !--depth) break;
+      body += clean[j];
+    }
+    rules.push({ prelude, body, line: preludeLine, context: context.join(" >> ") });
+    for (let k = i; k < j; k++) if (clean[k] === "\n") line++;
+    i = j;
+    preludeLine = line;
+  }
+  return rules;
+}
+
+/** Split on the commas that are not inside `:is()`, `:where()`, `[]`, `()`. */
+function topLevelSplit(text, sep) {
+  const out = [];
+  let depth = 0, cur = "";
+  for (const c of text) {
+    if (c === "(" || c === "[") depth++;
+    else if (c === ")" || c === "]") depth--;
+    else if (c === sep && !depth) { out.push(cur); cur = ""; continue; }
+    cur += c;
+  }
+  out.push(cur);
+  return out;
+}
+
+/** A selector list, in a form that ignores whitespace, quoting and order. */
+function selectorKey(prelude) {
+  return topLevelSplit(prelude, ",")
+    .map((s) => s.replace(/\s+/g, " ").trim()
+      .replace(/\[[^\]]*\]/g, (m) => m.replace(/["']/g, "")))
+    .sort().join(",");
+}
+
+function cssDeclarations(body) {
+  return topLevelSplit(body, ";").map((d) => d.trim()).filter(Boolean)
+    .map((d) => ({
+      prop: d.slice(0, d.indexOf(":")).trim(),
+      value: d.slice(d.indexOf(":") + 1).trim(),
+    }))
+    .filter((d) => d.prop);
+}
+
+const stylesheets = () => tracked.filter((f) => f.endsWith(".css"))
+  .map((f) => ({ file: f, rules: cssRules(fs.readFileSync(path.join(ROOT, f), "utf8")) }));
+
+/*
+ * A selector written twice is two answers to one question, and the reader has
+ * to hold six thousand lines in their head to know which one wins. Every pair
+ * this found on its first run was an accident — a PR adding `position:
+ * relative` to a selector that already had a block, a token declared next to
+ * the one rule that used it — except one.
+ */
+const DUPLICATE_SELECTORS_ALLOWED = new Set([
+  // #table-board is deliberately two rules: the container-query declaration
+  // stands apart from the layout block, with a note saying why. Both blocks
+  // must stay where they are; see the comments there.
+  "#table-board",
+]);
+
+test("no stylesheet writes the same selector list twice in one @-context", () => {
+  const offenders = [];
+  for (const { file, rules } of stylesheets()) {
+    const seen = new Map();
+    for (const r of rules) {
+      const key = selectorKey(r.prelude);
+      if (r.context.startsWith("@") && /keyframes/i.test(r.context)) continue; // 0%/100% steps
+      const slot = `${r.context}||${key}`;
+      if (!seen.has(slot)) seen.set(slot, []);
+      seen.get(slot).push(r.line);
+    }
+    for (const [slot, lines] of seen) {
+      const key = slot.split("||")[1];
+      if (lines.length > 1 && !DUPLICATE_SELECTORS_ALLOWED.has(key)) {
+        offenders.push(`${file}:${lines.join(",")} — \`${key}\` ${lines.length} times`);
+      }
+    }
+  }
+  assert.deepStrictEqual(offenders, [],
+    "merge the blocks into the first one, or add the selector to "
+    + "DUPLICATE_SELECTORS_ALLOWED with a comment saying why it is two rules");
+});
+
+/*
+ * The same property twice in one block is either dead code or a fallback. A
+ * fallback is written as a LADDER — the two declarations adjacent, the older
+ * value first, e.g. `max-height: 100vh; max-height: 100dvh;` — and that shape
+ * is allowed. Anything else is one of the two values never taking effect,
+ * which is what `.opponent-row`'s `gap: 1.25rem` was, eleven lines above the
+ * `clamp()` that replaced it.
+ */
+test("no stylesheet declares a property twice in one block", () => {
+  const offenders = [];
+  for (const { file, rules } of stylesheets()) {
+    for (const r of rules) {
+      const decls = cssDeclarations(r.body);
+      decls.forEach((d, i) => {
+        const prev = decls.findLastIndex((o, k) => k < i && o.prop === d.prop);
+        if (prev < 0) return;
+        const ladder = prev === i - 1 && decls[prev].value !== d.value;
+        if (!ladder) {
+          offenders.push(`${file}:${r.line} \`${r.prelude.slice(0, 48)}\` declares `
+            + `\`${d.prop}\` twice`);
+        }
+      });
+    }
+  }
+  assert.deepStrictEqual(offenders, [],
+    "one of the two never takes effect. Delete the dead one — or, if it is a "
+    + "fallback for a value an old browser cannot parse, put the two "
+    + "declarations next to each other so it reads as a ladder");
+});
+
+/*
+ * `!important` is how a rule wins an argument it should have settled with a
+ * selector, and it is unanswerable: the next rule that needs to override it
+ * has to shout too. The only honest use on this table is the kill switch —
+ * under prefers-reduced-motion nothing may move, and that has to beat every
+ * animation in the file including a pack's own. So it is allowed there and
+ * nowhere else.
+ *
+ * Three lived outside it: `.panel--wide` and `.choice-dialog` fighting the
+ * shared panel rule, whose id-and-a-class specificity no modifier could reach.
+ * The fix was the selector (`:where()` on the mounting ids), which is always
+ * what the fix is.
+ */
+test("`!important` appears only under prefers-reduced-motion", () => {
+  const offenders = [];
+  for (const { file, rules } of stylesheets()) {
+    for (const r of rules) {
+      if (/prefers-reduced-motion/i.test(r.context)) continue;
+      for (const d of cssDeclarations(r.body)) {
+        if (/!\s*important/i.test(d.value)) {
+          offenders.push(`${file}:${r.line} \`${r.prelude.slice(0, 48)}\` — ${d.prop}`);
+        }
+      }
+    }
+  }
+  assert.deepStrictEqual(offenders, [],
+    "raise the losing rule's specificity or lower the winning one's "
+    + "(`:where()` costs nothing) instead of shouting");
 });

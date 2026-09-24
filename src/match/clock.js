@@ -38,6 +38,34 @@
 const WAKE_INTERVAL_MS = 250;
 
 /**
+ * THE ONE PLACE THIS REPO ASKS THE SDK FOR A TIMER (#213).
+ *
+ * TIMERS MUST FREEZE WITH THE FRAME (§6c): a forgotten timer in a hidden
+ * iframe is the fleet's number one battery drain, and `Arcade.session` is the
+ * answer — it stops while the frame is suspended and cancels itself when a
+ * save import replaces the state.
+ *
+ * THE FALLBACK IS WHAT LETS THE CALLERS BE TESTED, not a second policy. Two
+ * kinds of caller cannot promise the SDK is there: modules that are
+ * game-agnostic by design (src/ui/dragController.js takes its timer from
+ * src/ui/clock.js precisely so it need not import the SDK), and modules
+ * exercised under `node --test`, where there is no `Arcade` at all. A plain
+ * `setTimeout` wearing the same `{ cancel() }` handle is the honest answer for
+ * both; in a shipped frame the SDK always answers first.
+ *
+ * `globalThis` rather than `window` so the same line reads in a browser and in
+ * Node — the same door `src/match/peerPort.js` uses for `Arcade.peer`.
+ *
+ * @returns { cancel() } — cancellable, whichever clock answered.
+ */
+function sessionTimeout(fn, ms) {
+  const session = globalThis.Arcade?.session;
+  if (session && typeof session.setTimeout === 'function') return session.setTimeout(fn, ms);
+  const id = setTimeout(fn, ms);
+  return { cancel: () => clearTimeout(id) };
+}
+
+/**
  * The solo clock: the SDK's session timers, unchanged.
  *
  * Deliberately a thin wrapper rather than a re-implementation — the freezing
@@ -49,13 +77,13 @@ export function sessionClock() {
     kind: 'session',
     now: () => Date.now(),
     after(ms, fn) {
-      return Arcade.session.setTimeout(fn, ms);
+      return sessionTimeout(fn, ms);
     },
     at(expiresAt, fn) {
       // The session clock freezes anyway, so the remaining-time arithmetic
       // that makes `at` honest on the wall clock would be theatre here. One
       // timer, the duration it implies.
-      return Arcade.session.setTimeout(fn, Math.max(0, expiresAt - Date.now()));
+      return sessionTimeout(fn, Math.max(0, expiresAt - Date.now()));
     },
   };
 }

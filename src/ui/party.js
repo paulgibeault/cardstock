@@ -36,6 +36,9 @@ import {
 import { createTableHost, needsHostDecision } from '../match/host.js';
 import { createTurnTimer } from '../match/turnTimer.js';
 import { wallClock } from '../match/clock.js';
+// The lobby's own waits are session timers (§6c); `schedule` is the one door
+// onto them, and it is the same door the felt uses (#213).
+import { schedule } from './clock.js';
 import { actingSeats, announcementsFor } from '../engine/context.js';
 import { chooseBotMove } from '../engine/bot.js';
 import { enumerateLegalMoves } from '../engine/movePipeline.js';
@@ -421,7 +424,7 @@ function model() {
 function armBeliefs(at) {
   if (settling) { settling.cancel(); settling = null; }
   if (at === null || at === undefined) return;
-  settling = Arcade.session.setTimeout(() => { settling = null; repaint(); },
+  settling = schedule(() => { settling = null; repaint(); },
     Math.max(0, at - Date.now()));
 }
 
@@ -441,7 +444,7 @@ function prune() {
   const dueAt = sightings.pruneDead();
   if (pruning) { pruning.cancel(); pruning = null; }
   if (dueAt === null) return;
-  pruning = Arcade.session.setTimeout(() => { pruning = null; prune(); repaint(); },
+  pruning = schedule(() => { pruning = null; prune(); repaint(); },
     Math.max(0, dueAt - Date.now()));
 }
 
@@ -1386,7 +1389,7 @@ function burst(glyph) {
   // launcher setting reached the confetti while card travel flew on regardless.
   const reduced = !motionAllowed();
   if (reduced) node.classList.add('emote-burst--still');
-  Arcade.session.setTimeout(() => node.remove(), reduced ? 1200 : 1600);
+  schedule(() => node.remove(), reduced ? 1200 : 1600);
 }
 
 /* ------------------------------------------------------------------ *
