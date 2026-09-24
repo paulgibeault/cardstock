@@ -137,8 +137,8 @@ through the shared fleet pipeline on every push to `main`.
   cannot list a directory. Its order is the grid's order;
   `tests/repo-gates.test.js` keeps its contents matching `packs/`.
 - **`src/arcade/`** — the launcher-facing edge: `storage.js` (the only
-  module that touches `Arcade.state`, and where the `Arcade.store` seam is
-  stubbed) and `audio.js` (the single sound-registration site).
+  module that touches `Arcade.state`) and `audio.js` (the single
+  sound-registration site).
 - **`js/soundpack.js`** — the sound design: graph cues built from the
   launcher's shared physical-gesture elements.
 - **`sw.js`, `manifest.json`, `icon.png`** — the PWA and the catalog card

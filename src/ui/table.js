@@ -84,7 +84,7 @@ import { showCardModel, renderShowCard } from './showCard.js';
 import { createContractLadder } from './contractLadder.js';
 import { createContractStrip } from './contractStrip.js';
 import {
-  createSeatLens, soloSeatTable, createSeatTable, deserializeSeatTable,
+  createSeatLens, soloSeatTable, createSeatTable,
   LOCAL_DEVICE as LOCAL_VIEWER,
 } from '../players/seats.js';
 import { modelFromView } from './tableModel.js';
@@ -261,7 +261,11 @@ let sharedTable = null;
 let onLocalMove = null;
 
 // The screen's own furniture, not the match's.
-let settings = null;
+//
+// THERE IS DELIBERATELY NO COPY OF THE PREFERENCES BLOB HERE (#203). The felt
+// used to keep one — see `currentDelayMs` for the story — and by the end every
+// consumer read storage instead, so the snapshot was write-only.
+//
 // Where the seat row is smooth-scrolling TO, and when it set off:
 // { row, left, at }. Read by pendingSeatShift so a rect measured while the row
 // is still gliding can be corrected to where it is headed — see
@@ -2964,16 +2968,18 @@ function renderStatusBar(state, acting) {
  * ------------------------------------------------------------------ */
 
 /**
- * The number behind the rung, read LIVE — from storage, never from `settings`.
+ * The number behind the rung, read LIVE — from storage, every single time.
  *
- * THE NEW-GAME SHEET CANNOT REFRESH THAT SNAPSHOT, which is the whole reason
- * this reads past it. `settings` is assigned in exactly two places — `initTable`
- * at boot, and `rerenderTable` on a resume or a change to the SDK's own
- * settings — and the sheet is neither: src/ui/lobby.js writes the chosen rung to
- * storage and then opens the table. A snapshot read therefore hands the first
- * match of a session the rung from before the sheet, so a table dealt at Slow
- * flies at Brisk until the tab is reloaded. The bot driver's `difficulty` was
- * fixed this way in #91, and `currentPace` for the same reason in #181.
+ * THE FELT KEEPS NO COPY OF IT, and that is a decision rather than an omission.
+ * It used to: a module-level snapshot of the preferences blob, assigned in
+ * exactly two places — at boot, and on a re-render after a resume or a change to
+ * the SDK's own settings. THE NEW-GAME SHEET IS NEITHER: src/ui/lobby.js writes
+ * the chosen rung to storage and then opens the table. So a snapshot read handed
+ * the first match of a session the rung from before the sheet, and a table dealt
+ * at Slow flew at Brisk until the tab was reloaded. The bot driver's
+ * `difficulty` was moved to a live read for this in #91, this number in #184 and
+ * `currentPace` in #181 — which left the snapshot with no readers at all, so
+ * #203 deleted it.
  *
  * THE STORED NUMBER, NOT THE TREAD IT LIGHTS. `speedForDelay` snaps to the
  * NEAREST rung on purpose, so a save hand-edited to 700 lights Brisk while
@@ -3022,7 +3028,8 @@ function paintSpeedChip() {
  * `currentDelayMs` asks storage as the card launches. There is deliberately no
  * snapshot to update in the same breath: a second copy of this number is a
  * second thing to forget, and forgetting it is the bug this control shipped on
- * top of.
+ * top of. (#203 removed the felt's last snapshot entirely; this was already the
+ * rule here.)
  *
  * NOTHING IN FLIGHT IS RESTARTED. Unlike the pace control, which cancels and
  * re-arms a countdown it may have shortened, this changes nothing that has
@@ -4775,38 +4782,37 @@ function roundContractLines(finalState) {
 /**
  * The player's rung, read LIVE — and now actually live (#181).
  *
- * IT READ THE SNAPSHOT, AND THE SNAPSHOT IS NOT REFRESHED BY THE ONE SHEET THAT
- * SETS THIS. `settings` is loaded by `initTable` at boot and again by
- * `rerenderTable`, which runs on a resume or an SDK settings change — and the
- * NEW-GAME SHEET is neither. So a player who opened the lobby, picked Quick and
- * dealt got a table still running at whatever rung the tab booted on, for the
- * whole match: `botDriver`'s `difficulty` already reads fresh for exactly this
- * reason and says so in its own comment ("deal a Sharp game straight after a
- * Steady one and the snapshot would still say Steady"), and the pace never got
+ * IT READ THE FELT'S SNAPSHOT OF THE PREFERENCES BLOB, AND THE SNAPSHOT WAS NOT
+ * REFRESHED BY THE ONE SHEET THAT SETS THIS. That copy was loaded at boot and
+ * again on a re-render, which runs on a resume or an SDK settings change — and
+ * the NEW-GAME SHEET is neither. So a player who opened the lobby, picked Quick
+ * and dealt got a table still running at whatever rung the tab booted on, for
+ * the whole match: `botDriver`'s `difficulty` already read fresh for exactly
+ * this reason and says so in its own comment ("deal a Sharp game straight after
+ * a Steady one and the snapshot would still say Steady"), and the pace never got
  * the same treatment (that one is #91).
  *
  * FOUND BY TRYING TO WATCH THE TIMED RUNG COUNT ITSELF. #181's acceptance is
  * that Quick is paced exactly as it always was, and a browser at Quick sat there
  * waiting for a tap — because the rung reaching the arithmetic was Manual, the
  * rung the tab had booted on. The mid-match control was never affected, which is
- * why this survived: `cyclePace` writes storage AND the snapshot in one breath,
+ * why this survived: `cyclePace` wrote storage AND the snapshot in one breath,
  * so the dial appeared to work everywhere it was watched.
  *
  * ONE READ PER ROUND ENDING is what this costs, which is one `JSON.parse` of a
  * small object per hand — the same price `difficulty` pays per bot turn.
  *
- * AND IT STAYS A STORAGE READ NOW THAT THE ROOT CAUSE IS FIXED (#184), which is
- * a decision rather than an oversight, so here is the reasoning. #184 refreshed
- * the snapshot in `adoptMatch`, so `settings.pace` would now be as fresh as this
- * is at every call site the felt has — the two really are the same value, and
- * one of them is redundant. The redundant one is kept HERE, because the two are
- * not the same KIND of correct: a value read at the instant it is used cannot
- * go stale by construction, while a snapshot is only as fresh as the last
- * person to remember the line that refreshes it, and this fault has now been
- * found twice by watching a rung fail to do anything. Card speed cannot take
- * that deal — five call sites on the flight path, several of them per trick —
- * which is exactly why it has a snapshot and this has not. `difficulty` makes
- * the same trade next door for the same reason.
+ * AND IT STAYED A STORAGE READ ONCE THE ROOT CAUSE WAS FIXED (#184), which was a
+ * decision rather than an oversight, so here is the reasoning. #184 refreshed the
+ * snapshot where a match opens, so the snapshotted pace would have been as fresh
+ * as this is at every call site the felt has — the two really were the same
+ * value, and one of them was redundant. The redundant one was kept HERE, because
+ * the two are not the same KIND of correct: a value read at the instant it is
+ * used cannot go stale by construction, while a snapshot is only as fresh as the
+ * last person to remember the line that refreshes it, and this fault was found
+ * twice by watching a rung fail to do anything. `difficulty` and the card-speed
+ * number made the same trade next door for the same reason — and once all three
+ * had, nothing read the snapshot at all, so #203 removed it.
  */
 function currentPace() {
   return paceLevel(loadSettings().pace);
@@ -4925,10 +4931,11 @@ function roundResultLine(state, ev) {
 function cyclePace() {
   const level = paceLevel(nextSummaryPace(currentPace().id));
   const stored = loadSettings();
+  // STORAGE IS THE ONLY WRITE, BECAUSE STORAGE IS THE ONLY READ (#203).
+  // `currentPace` asks storage as the round ends, so the NEXT round reads the
+  // new rung without waiting for a settings event to come back round through
+  // main.js — and without a second copy of the answer to keep in step.
   saveSettings({ ...stored, pace: level.id });
-  // The snapshot too, so the NEXT round reads the new rung without waiting for
-  // a settings event to come back round through main.js.
-  if (settings) settings.pace = level.id;
   paintRoundPace(paceView(level));
   // RESTARTED, NOT RESUMED, and the ring is redrawn to match: a player who
   // reaches for this at 2.4s of a 2.5s countdown is asking for more time, and
@@ -5694,46 +5701,13 @@ function adoptMatch(pack, state, message, {
   dealing = false, seats = null, seating = null, shared = false, hints = 0, daily = null,
 } = {}) {
   epoch += 1;
-  // THE PREFERENCE SNAPSHOT IS REFRESHED HERE, BECAUSE A MATCH OPENING IS THE
-  // MOMENT THE NEW-GAME SHEET'S ANSWERS EXIST (#184).
-  //
-  // WHY THERE IS A SNAPSHOT AT ALL: `settings` is the felt's own copy of the
-  // preferences blob, and it exists for ONE number read on hot paths — how fast
-  // a card crosses the table. `currentFlightMs()` is asked
-  // at five call sites and the bot driver's `botDelayMs` is asked once a turn,
-  // so a storage read per use would be a `JSON.parse` per flight, per trick
-  // reveal and per round beat to answer a question whose answer only a person
-  // can change.
-  //
-  // AND WHY IT WAS STALE: it was assigned in exactly two places — `initTable`
-  // at boot, and `rerenderTable` on a resume or an SDK settings change — and
-  // THE NEW-GAME SHEET IS NEITHER OF THEM. The sheet's answers are written to
-  // storage by `rememberPreferences` (src/ui/lobby.js) on the very gesture that
-  // deals, which then calls straight into `openTable`; nothing between there and
-  // here re-renders. So a player who picked Slow in the lobby got a table still
-  // flying at whatever rung the tab had booted on, for the whole match. The
-  // status bar's chip hid it, exactly the way the summary's dial hid the same
-  // fault for the pace (#181): `cycleSpeed` writes the snapshot in the same
-  // breath as storage, so the setting worked on every surface anybody tested it
-  // on and on none of the ones they did not.
-  //
-  // HERE RATHER THAN IN `openTable`, because this is the only place a session is
-  // born and so the one point downstream of every door into a match — a lobby
-  // deal, a resumed save, Play again, and the host's `dealHostedTable` and
-  // `resumeHostedTable`. It is downstream of the sheet, whose write is already
-  // on disk (`Arcade.state` is synchronous) before the pack fetch that precedes
-  // this even starts, and upstream of every reader: the first thing to ask for a
-  // flight duration is the `render` at the bottom of this function.
-  //
-  // WHAT ELSE GETS FRESHER: NOTHING, TODAY, AND THAT IS WORTH SAYING OUT LOUD.
-  // The other four things in the blob are not read off this snapshot at all.
-  // `botDifficulty` and `pace` are read from storage at the moment they are used
-  // (the driver's `difficulty` below, and `currentPace`); `hands` goes through
-  // `loadHandPrefs`, which `createSession` just below calls fresh for this pack;
-  // `showLegalHints` has no reader anywhere. So the only value this line can
-  // change under a running table is the one the sheet just set, and a match that
-  // is opening has nothing in flight to be surprised by it.
-  settings = loadSettings();
+  // NOTHING ABOUT THE PREFERENCES BLOB IS SNAPSHOTTED HERE (#184, then #203).
+  // #184 refreshed the felt's copy of it on this line, because a match opening is
+  // the moment the new-game sheet's answers exist. Every reader has since moved
+  // to a live storage read — `currentDelayMs`, `currentPace`, the driver's
+  // `difficulty` — which is the stronger version of the same fix, so #203 deleted
+  // the copy and this line with it. `hands` goes through `loadHandPrefs`, which
+  // `createSession` just below calls fresh for this pack.
   stopSession(session);
   // A pre-move copy belongs to the match it was taken in, and this is a
   // different one (see notePreMove).
@@ -5972,32 +5946,6 @@ export function setSeating(seating) {
   if (liveState()) render(feltState());
 }
 
-/**
- * Re-answer "which of these seats is me" against a real device id.
- *
- * A SOLO SEAT TABLE CALLS ITSELF `@local` (src/players/seats.js), which is
- * exactly right until the moment somebody else is at the table: the host
- * publishes seat ownership by deviceId, and a roster claiming that seat 0
- * belongs to "@local" names a device no joiner can address. So hosting rebases
- * the table onto the id the transport actually knows us by — the ownership is
- * unchanged, only the name we go by.
- */
-export function rebaseSeats(localDeviceId) {
-  if (!session || !localDeviceId) return null;
-  const payload = session.seats.serialize();
-  for (const owner of payload.owners) {
-    if (owner.kind === 'device' && owner.deviceId === LOCAL_VIEWER) owner.deviceId = localDeviceId;
-  }
-  // The pairing is not in the payload (src/players/seats.js says why), so it is
-  // re-derived from the pack the session is already holding.
-  const rebased = deserializeSeatTable(payload, {
-    localDeviceId, sides: sidesOf(session.pack, payload.seats),
-  });
-  if (!rebased) return null;
-  session.seats = rebased;
-  return rebased;
-}
-
 function startGame(pack, seats, { seed, daily = null } = {}) {
   cancelBotTurn();
   cancelAnnouncementBeats();
@@ -6165,13 +6113,11 @@ export function isTableOpen() {
 
 /** Re-render in place — onResume, and after a settings change. */
 export function rerenderTable() {
-  settings = loadSettings();
   if (liveState()) render(feltState());
 }
 
 export function initTable({ onExit }) {
   exitToLobby = onExit;
-  settings = loadSettings();
 
   // THE HELP MARK (#155). Two questions about the game — how is this played,
   // and what would a good player do here — behind one `?` in the felt's

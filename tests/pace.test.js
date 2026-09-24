@@ -534,28 +534,39 @@ test("both paths that end a round plan it through the one shared builder", () =>
   }
 });
 
-// THE RUNG HAS TO BE READ WHERE IT IS WRITTEN, AND IT WAS NOT (#181). `settings`
-// in table.js is a snapshot taken by `initTable` at boot and refreshed by
-// `rerenderTable` — a resume, or an SDK settings change. The NEW-GAME SHEET is
-// neither: it writes storage and deals. So picking Quick in the lobby left the
-// table running at whatever rung the tab had booted on, for the whole match, and
-// the only door that worked was the summary's own control, which writes the
-// snapshot itself and therefore hid this everywhere anybody looked.
+// THE RUNG HAS TO BE READ WHERE IT IS WRITTEN, AND IT WAS NOT (#181). table.js
+// used to keep a snapshot of the preferences blob, taken by `initTable` at boot
+// and refreshed by `rerenderTable` — a resume, or an SDK settings change. The
+// NEW-GAME SHEET is neither: it writes storage and deals. So picking Quick in the
+// lobby left the table running at whatever rung the tab had booted on, for the
+// whole match, and the only door that worked was the summary's own control, which
+// wrote the snapshot itself and therefore hid this everywhere anybody looked.
 //
 // FOUND BY TRYING TO WATCH QUICK COUNT ITSELF in a browser: a table dealt at
 // Quick sat waiting for a tap, because the rung that reached the arithmetic was
 // Manual. `botDriver`'s `difficulty` has read fresh since #91 for exactly this
 // reason and says so in its own comment.
-test("the pace is read from storage, not from a snapshot the lobby cannot refresh", () => {
+//
+// AND THE SNAPSHOT IS GONE (#203), which is what the second half now pins. Once
+// the pace, the card speed and the difficulty all read storage at the moment they
+// are used, nothing read the copy at all — it was assigned in four places and
+// read in none. The guard that matters is no longer "this function reads past the
+// snapshot" but "there is no snapshot to read past": a felt-side copy of the blob
+// is the shape of this bug, whoever reintroduces it and for whichever setting.
+test("the pace is read from storage, and the felt keeps no copy to go stale", () => {
   const src = read("src/ui/table.js");
   const fn = src.match(/function currentPace\(\) \{[\s\S]*?\n\}/);
   assert.ok(fn, "currentPace must exist — it is the one place the felt asks for the rung");
   assert.match(fn[0], /loadSettings\(\)\.pace/,
     "the rung must be read fresh at the moment it is needed");
   assert.doesNotMatch(fn[0], /settings \?/,
-    "reading the module snapshot first is the bug: the new-game sheet writes storage "
-    + "and never touches that snapshot, so a rung picked in the lobby does not reach "
+    "reading a module snapshot first is the bug: the new-game sheet writes storage "
+    + "and never touches such a snapshot, so a rung picked in the lobby does not reach "
     + "the felt until the tab is reloaded");
+  assert.doesNotMatch(src, /^let settings\b/m,
+    "src/ui/table.js must not hold its own copy of the preferences blob — every reader "
+    + "asks storage at the moment it needs the answer, and a second copy is only a "
+    + "second thing to forget to refresh (#181, #184, #203)");
 });
 
 test("an unknown rung runs the default schedule rather than no schedule", () => {

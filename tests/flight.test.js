@@ -25,7 +25,7 @@ import path from "node:path";
 import { ROOT } from "../tools/stage.mjs";
 
 import {
-  flightDurationMs, scrollCorrectedRect,
+  flightDurationMs, scrollCorrectedRect, motionAllowed,
   FLIGHT_MS, FLIGHT_MIN_MS, FLIGHT_MAX_MS, SCROLL_SETTLE_MS,
 } from "../src/ui/flight.js";
 
@@ -69,6 +69,128 @@ test("nonsense out of storage lands on the default rather than on a broken fligh
   assert.equal(flightDurationMs(undefined), FLIGHT_MS, "absent reads as the default 600");
   assert.equal(flightDurationMs(0), FLIGHT_MS, "so does zero — same rule as thinkTimeMs");
   assert.equal(flightDurationMs(-100), FLIGHT_MIN_MS, "a negative delay is not a negative flight");
+});
+
+/* ------------------------------------------------------------------ *
+ * Is motion allowed? — ONE answer
+ * ------------------------------------------------------------------ *
+ *
+ * There used to be two. flight.js asked the SDK and the OS; the party confetti
+ * (src/ui/party.js) asked `<html data-reduced-motion>` and the OS. A player who
+ * turned reduced motion on in the LAUNCHER but not in the OS therefore got a
+ * still emote burst and full card flight in the same match — the setting half
+ * obeyed, which is worse than either answer on its own. `motionAllowed()` is
+ * now the only reader of all three signals and party.js imports it.
+ *
+ * Each signal is exercised ALONE, with the other two explicitly permissive, so
+ * a case that passes does so because the signal under test was read.
+ */
+
+/**
+ * Run `fn` against a stubbed browser, then put the globals back as they were.
+ *
+ * `Arcade` goes on BOTH `window` and the global object because in a browser
+ * those are the same object, and the SDK check reads it through each of them —
+ * `window.Arcade` as the existence test, bare `Arcade` for the call. Stubbing
+ * only one of the two is how the first draft of this helper made the SDK case
+ * pass for the wrong reason: the bare read threw and the catch swallowed it.
+ */
+function withEnv({ reduceQuery = false, dataset = undefined, arcade = undefined }, fn) {
+  const had = (k) => k in globalThis;
+  const saved = { window: globalThis.window, document: globalThis.document, Arcade: globalThis.Arcade };
+  const present = { window: had('window'), document: had('document'), Arcade: had('Arcade') };
+  globalThis.window = { matchMedia: () => ({ matches: reduceQuery }) };
+  globalThis.document = { documentElement: { dataset: dataset ?? {} } };
+  if (arcade !== undefined) {
+    globalThis.window.Arcade = arcade;
+    globalThis.Arcade = arcade;
+  } else {
+    delete globalThis.Arcade;
+  }
+  try {
+    return fn();
+  } finally {
+    for (const k of ['window', 'document', 'Arcade']) {
+      if (present[k]) globalThis[k] = saved[k]; else delete globalThis[k];
+    }
+  }
+}
+
+test("nothing asking for less motion means cards fly", () => {
+  assert.equal(withEnv({}, motionAllowed), true);
+});
+
+test("the launcher setting on <html> turns motion off on its own", () => {
+  // THE BUG. The OS is happy, there is no SDK object to ask — a framed visit
+  // where `data-reduced-motion` is all the game gets — and the player has still
+  // said no to motion. party.js honoured this and flight.js did not.
+  assert.equal(
+    withEnv({ reduceQuery: false, dataset: { reducedMotion: 'true' } }, motionAllowed),
+    false,
+  );
+});
+
+test("the <html> attribute is read as a string, not as truthiness", () => {
+  // `dataset` hands back strings. `'false'` is truthy in JS, so a check written
+  // as `if (dataset.reducedMotion)` would freeze the table for every player the
+  // SDK publishes the setting to, whichever way they set it.
+  assert.equal(withEnv({ dataset: { reducedMotion: 'false' } }, motionAllowed), true);
+  assert.equal(withEnv({ dataset: {} }, motionAllowed), true, "absent is not 'on'");
+});
+
+test("the SDK setting turns motion off on its own", () => {
+  assert.equal(
+    withEnv({ arcade: { settings: { reducedMotion: () => true } } }, motionAllowed),
+    false,
+  );
+  assert.equal(
+    withEnv({ arcade: { settings: { reducedMotion: () => false } } }, motionAllowed),
+    true,
+  );
+});
+
+test("the OS preference turns motion off on its own", () => {
+  // The only signal a standalone `?pack=` visit has.
+  assert.equal(withEnv({ reduceQuery: true }, motionAllowed), false);
+});
+
+test("an SDK with no reducedMotion setting is not a reason to freeze the table", () => {
+  // An older launcher: `Arcade` exists, `settings.reducedMotion` does not, so
+  // asking throws. Answering "no motion" there would strip animation from every
+  // player on that build, none of whom asked for it.
+  assert.equal(withEnv({ arcade: { settings: {} } }, motionAllowed), true);
+  assert.equal(
+    withEnv({ arcade: { settings: { reducedMotion() { throw new Error("gone"); } } } }, motionAllowed),
+    true,
+  );
+});
+
+test("party.js asks flight.js rather than keeping its own answer", () => {
+  // The whole point of the fix, and the thing a future edit to `burst` would
+  // undo silently: src/ui/party.js is a DOM module no Node test can import, so
+  // the guard is on its source.
+  const party = fs.readFileSync(path.join(ROOT, "src/ui/party.js"), "utf8");
+  assert.match(party, /import \{ motionAllowed \} from '\.\/flight\.js'/,
+    "party.js must import the one answer");
+  assert.match(party, /const reduced = !motionAllowed\(\)/,
+    "the emote burst must gate on it");
+  assert.doesNotMatch(party, /prefers-reduced-motion|dataset\.reducedMotion/,
+    "party.js must not read a reduced-motion signal for itself again");
+});
+
+test("flight.js is the only place in src/ui that reads a reduced-motion signal", () => {
+  // Derived rather than listed: a new module that grows its own third answer is
+  // exactly the kind of thing nobody re-reads a list to catch. CSS is excluded
+  // — the SDK's kill-switch rule covers the launcher setting there for free,
+  // and the `@media` blocks in table.css are the standalone fallback.
+  const files = execSync("git ls-files src/ui", { cwd: ROOT, encoding: "utf8" })
+    .split("\n").filter((f) => f.endsWith(".js"));
+  assert.ok(files.length > 10, `expected src/ui modules, got ${files.length}`);
+  const offenders = files.filter((f) => f !== "src/ui/flight.js"
+    && /prefers-reduced-motion:\s*reduce|dataset\.reducedMotion|settings\.reducedMotion\(\)/
+      .test(fs.readFileSync(path.join(ROOT, f), "utf8")));
+  assert.deepEqual(offenders, [],
+    "these read reduced motion directly; import motionAllowed() from src/ui/flight.js instead");
 });
 
 /* ------------------------------------------------------------------ *
