@@ -16,7 +16,7 @@ import { createState } from '../src/engine/state.js';
 import { makeCtx } from '../src/engine/context.js';
 import { chooseBotMove, DIFFICULTIES } from '../src/engine/bot.js';
 import { createRng } from '../src/engine/rng.js';
-import { dailyRunFor, applyDailyLadder } from '../src/engine/dailyLadder.js';
+import { dailyRunFor, applyDailyLadder } from '../src/templates/contract-rummy-daily.js';
 import { dailyDateStr } from '../src/engine/arcade-rng.js';
 import { createSeatTable } from '../src/players/seats.js';
 import { createTableHost } from '../src/match/host.js';

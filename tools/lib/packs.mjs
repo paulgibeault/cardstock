@@ -17,7 +17,7 @@ import { readFile } from 'node:fs/promises';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadPack } from '../../src/engine/packLoader.js';
+import { loadPack } from '../../src/templates/loadPack.js';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 export const PACKS_DIR = path.join(REPO_ROOT, 'packs');
