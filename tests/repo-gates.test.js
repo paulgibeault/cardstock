@@ -359,6 +359,47 @@ test("no frame leaves src/match without going through its stamping helper", () =
   }
 });
 
+// THE HARNESS HELPERS ARE SHARED NOW, AND STAY SHARED (#207).
+//
+// Each of these three lines was pasted into ten or more test files before it
+// had a home, and each pasted copy had drifted from the thing it was standing
+// in for: a `packFromDisk` that forgot loadPack patches its manifest, an
+// `Arcade.stats` stub that answered a stored category without the defaults the
+// SDK merges under it, an `actingSeats` lambda with no "a finished match acts
+// on nobody" guard. A copy is cheap to write and invisible in review, which is
+// why this is a gate rather than a note in a header.
+test("no test re-copies a harness helper that now has one home", () => {
+  const banned = [
+    {
+      // `packs/<id>/manifest.json` read by hand — tools/lib/packs.mjs's job.
+      re: /readFileSync\([^)]*manifest\.json/,
+      allow: new Set(["tests/dailyLadder.test.js"]), // reads schema/, not a pack
+      say: "load the pack with loadPackFromDiskSync/readPackJsonSync from tools/lib/packs.mjs",
+    },
+    {
+      // A hand-built SDK stub (an object literal) — tests/fixtures/arcade.js's
+      // job. Saving and restoring whatever was there (`= had`) is not a stub.
+      re: /globalThis\.Arcade\s*=\s*\{/,
+      allow: new Set(),
+      say: "stand the SDK up with installArcade() from tests/fixtures/arcade.js",
+    },
+    {
+      // The felt's own rule, hand-copied — src/engine/context.js's job.
+      re: /\.actingSeats\s*\?/,
+      allow: new Set(),
+      say: "ask actingSeats(state) — tests/fixtures/engine.js re-exports the engine's",
+    },
+  ];
+  for (const f of tracked.filter((f) => /^tests\/.*\.js$/.test(f))) {
+    if (f === "tests/repo-gates.test.js" || f.startsWith("tests/fixtures/")) continue;
+    const src = fs.readFileSync(path.join(ROOT, f), "utf8");
+    for (const { re, allow, say } of banned) {
+      if (allow.has(f)) continue;
+      assert.ok(!re.test(src), `${f} re-copies a shared harness helper (${re}) — ${say}`);
+    }
+  }
+});
+
 // THE ENGINE IS THE BOTTOM LAYER, and a layer is only a layer while something
 // checks. `src/engine` is the rules machine: state, moves, scoring, the pack
 // loader. `src/templates` is the per-genre policy that sits ON it and

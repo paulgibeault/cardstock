@@ -34,6 +34,7 @@ import { determinizeState } from "../src/engine/determinize.js";
 import { visibleCardIds } from "../src/engine/view.js";
 import { createRng } from "../src/engine/rng.js";
 import { loadPackFromDisk } from "../tools/pack-test.mjs";
+import { actingSeats } from "./fixtures/engine.js";
 
 /**
  * Every pack this file's probes can be asked of, at the seat count its lobby
@@ -73,9 +74,8 @@ async function dealt(packId, seats, seed) {
 
 /** Walk a plain bot-vs-bot game, calling `visit(state, seat)` before each move. */
 function walk(state, limit, visit) {
-  const template = state.pack.template;
   for (let i = 0; i < limit && !state.gameOver; i++) {
-    const acting = template.actingSeats ? template.actingSeats(makeCtx(state)) : [state.turn.seat];
+    const acting = actingSeats(state);
     let move = null;
     let actor = null;
     for (const seat of acting) {

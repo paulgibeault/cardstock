@@ -9,23 +9,11 @@
 // off the enumeration. This file is where the three agree.
 import { test } from "node:test";
 import assert from "node:assert";
-import fs from "node:fs";
-import path from "node:path";
-import { loadPack } from "../src/templates/loadPack.js";
 import { createState } from "../src/engine/state.js";
 import { makeCtx } from "../src/engine/context.js";
 import { enumerateLegalMoves, applyMove } from "../src/engine/movePipeline.js";
 import { buildUiModel, commitPromptFor, handAddress } from "../src/ui/interaction.js";
-import { ROOT } from "../tools/stage.mjs";
-
-function packFromDisk(packId) {
-  const dir = path.join(ROOT, "packs", packId);
-  const manifest = JSON.parse(fs.readFileSync(path.join(dir, "manifest.json"), "utf8"));
-  const deckPath = path.join(dir, "deck.json");
-  const deckJson = fs.existsSync(deckPath)
-    ? JSON.parse(fs.readFileSync(deckPath, "utf8")) : undefined;
-  return loadPack(manifest, { deckJson });
-}
+import { loadPackFromDiskSync as packFromDisk } from "../tools/lib/packs.mjs";
 
 function dealt(packId, seats, seed) {
   const pack = packFromDisk(packId);

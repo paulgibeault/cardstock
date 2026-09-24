@@ -7,15 +7,11 @@
 // where nobody is watching. Both are cheap to assert and expensive to discover.
 import { test, beforeEach } from "node:test";
 import assert from "node:assert";
-import fs from "node:fs";
-import path from "node:path";
-import { loadPack } from "../src/templates/loadPack.js";
 import { createState } from "../src/engine/state.js";
 import { makeCtx } from "../src/engine/context.js";
 import { applyMove } from "../src/engine/movePipeline.js";
 import { chooseBotMove } from "../src/engine/bot.js";
 import { serializeMatch } from "../src/engine/replay.js";
-import { ROOT } from "../tools/stage.mjs";
 import { soloSeatTable } from "../src/players/seats.js";
 import {
   KEYS, MATCH_KEY_PREFIX, matchKey, isMatchKey, saveMatch, loadMatch, clearMatch,
@@ -23,30 +19,15 @@ import {
   saveSeatStub, seatStubs, clearSeatStub, touchSeatStub, sweepStaleTables, TABLE_ROLL_OFF_MS,
   listMatchSummaries, lastPlayedPack, rememberPack,
 } from "../src/arcade/storage.js";
+import { loadPackFromDiskSync as packFromDisk } from "../tools/lib/packs.mjs";
+import { installArcade } from "./fixtures/arcade.js";
 
 // The SDK's synchronous state surface is a key/value store; a Map is the whole
-// of what storage.js uses. Standing this up here rather than importing a stub
-// from src/ keeps the production module free of a test seam.
-const store = new Map();
-globalThis.Arcade = {
-  state: {
-    get: (k) => store.get(k),
-    set: (k, v) => { store.set(k, structuredClone(v)); return true; },
-    remove: (k) => store.delete(k),
-    getOrInit: (k, d) => (store.has(k) ? store.get(k) : d),
-  },
-};
+// of what storage.js uses. The stub is tests/fixtures/arcade.js — one copy of
+// the SDK's real semantics, rather than a reading of them per test file.
+const { store } = installArcade({ state: true });
 
 beforeEach(() => store.clear());
-
-function packFromDisk(packId) {
-  const dir = path.join(ROOT, "packs", packId);
-  const manifest = JSON.parse(fs.readFileSync(path.join(dir, "manifest.json"), "utf8"));
-  const deckPath = path.join(dir, "deck.json");
-  const deckJson = fs.existsSync(deckPath)
-    ? JSON.parse(fs.readFileSync(deckPath, "utf8")) : undefined;
-  return loadPack(manifest, { deckJson });
-}
 
 /** A real match, some moves in — the thing that actually gets stored. */
 function playedMatch(packId, moves = 6) {
