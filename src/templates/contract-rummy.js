@@ -16,6 +16,7 @@
 import { selectorMatches } from '../engine/selectors.js';
 import { resolveByPlayers, recycleDiscardIntoDraw } from '../engine/deal.js';
 import { applyEffect as runEffect, hasKnownEffect } from '../engine/effects.js';
+import { handCounter } from '../engine/templateKit.js';
 import {
   resolveMeld, resolveHit, itemsMatchContract,
   getMeldGroups, meldKindOf, pinnedAttr, wildHitValues,
@@ -447,13 +448,7 @@ const contractRummy = {
    * has laid down.
    */
   seatCounters(ctx, seat) {
-    const hand = ctx.countIn(ctx.zoneAddr('hand', seat));
-    const counters = [{
-      text: String(hand),
-      aria: `${hand} ${hand === 1 ? 'card' : 'cards'}`,
-      label: 'Cards',
-      kind: 'hand',
-    }];
+    const counters = [handCounter(ctx, seat)];
     const melds = getMeldGroups(ctx, seat).length;
     if (melds > 0) {
       counters.push({

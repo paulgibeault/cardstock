@@ -36,12 +36,7 @@
 // scoring, the bot's standing and `placements` be rewritten in terms of sides
 // without a single existing pack changing what it does.
 
-/**
- * Memoized per (pack, seat count). `sidesOf` is asked inside the rollout loop —
- * `terminalValue` calls `standingOf` twice per seat per sample — and the answer
- * is a fact about the manifest, not about the position.
- */
-const tables = new WeakMap();
+import { memoOnPack } from './templateKit.js';
 
 /**
  * How many sides a pack declares, or null for a pack that declares none.
@@ -98,19 +93,32 @@ export function sidesFor(teams, seats) {
  *
  * ALWAYS AN ANSWER. A teamless pack gets one side per seat, which is what makes
  * every caller below able to speak sides and nothing else.
+ *
+ * Memoized per (pack, seat count) — `sidesOf` is asked inside the rollout loop,
+ * `terminalValue` calls `standingOf` twice per seat per sample, and the answer
+ * is a fact about the manifest, not about the position. The seat count is part
+ * of the key rather than a nested map of its own (`memoOnPack`, #216): a table
+ * is re-seated between matches and both answers are worth keeping.
  */
 export function sidesOf(pack, seats) {
   if (!pack || typeof pack !== 'object') return sidesFor(null, seats);
-  let byCount = tables.get(pack);
-  if (!byCount) {
-    byCount = new Map();
-    tables.set(pack, byCount);
-  }
-  const cached = byCount.get(seats);
-  if (cached) return cached;
-  const built = sidesFor(teamCount(pack, seats), seats);
-  byCount.set(seats, built);
-  return built;
+  return memoOnPack(pack, `sides:${seats}`, () => sidesFor(teamCount(pack, seats), seats));
+}
+
+/**
+ * The seats on the side `seat` plays for — the seat's own side read off the
+ * table, which is the shape three callers wrote out for themselves (#183).
+ *
+ * `[seat]` is the fallback, and it is the guard `src/ui/scoreDirection.js` had
+ * while the felt's bot driver and the trick-taking template went without: a
+ * seat outside the table (a spectator's index, a seat count of zero behind the
+ * lobby) indexes past the end of the table and the two unguarded copies read
+ * `undefined` and then threw on it. Every other answer here is total — that is
+ * what `sidesOf` promises — so the one place it could not be should return the
+ * seat playing for itself rather than crash the felt.
+ */
+export function sideMembers(pack, seats, seat) {
+  return sidesOf(pack, seats)[sideOfSeat(pack, seats, seat)] || [seat];
 }
 
 /** Which side a seat plays for. A teamless seat is its own side. */
@@ -121,7 +129,7 @@ export function sideOfSeat(pack, seats, seat) {
 
 /** The OTHER seats on this seat's side — empty for a teamless pack. */
 export function partnersOf(pack, seats, seat) {
-  return sidesOf(pack, seats)[sideOfSeat(pack, seats, seat)].filter((s) => s !== seat);
+  return sideMembers(pack, seats, seat).filter((s) => s !== seat);
 }
 
 /** Are these two seats on the same side? False for a seat and itself's absence. */

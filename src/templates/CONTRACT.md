@@ -567,6 +567,13 @@ captions and their spoken sentences, so nothing is lost where there is width to
 lose it in. A caller that wants the template's whole declaration rather than
 either face — the round summary does — asks `seatCountersFor(state, seat, { all: true })`.
 
+**To keep the default AND add to it, ask for it** — `handCounter(ctx, seat)`
+from `src/engine/templateKit.js` returns the platform's own hand counter, which
+is the entry six templates used to write out by hand so they could push a
+second counter after it (#216). `handCounter(ctx, seat, { suffix: ' left' })`
+appends to the spoken phrase without touching its singular; anything else in
+that object (`kind`, `minimizedOnly`, `openOnly`) is spread onto the counter.
+
 Return `null` or `[]` to take the default.
 
 ### A counter that is a POSITION — the track kinds

@@ -67,7 +67,7 @@ import { makeCtx, actingSeats } from './context.js';
 import { forkState } from './fork.js';
 import { determinizeState } from './determinize.js';
 import { visibleCardIds } from './view.js';
-import { sidesOf, sideOfSeat } from './sides.js';
+import { sidesOf, sideOfSeat, sideMembers } from './sides.js';
 import { prizeSign } from './contracts.js';
 
 function defaultHeuristic(ctx, move) {
@@ -437,7 +437,7 @@ function sideStandingOf(state, side) {
  * tests/partnerships.test.js.
  */
 export function sideStanding(state, seat) {
-  return sideStandingOf(state, sidesOf(state.pack, state.seats)[sideOfSeat(state.pack, state.seats, seat)]);
+  return sideStandingOf(state, sideMembers(state.pack, state.seats, seat));
 }
 
 /**

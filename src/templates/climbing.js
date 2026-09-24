@@ -34,6 +34,7 @@
 
 import { cardOrder, groupByRank, rankIndexOf, rankLadderOf, rankWindow } from '../engine/cards.js';
 import { selectorMatches } from '../engine/selectors.js';
+import { handCounter, kCombinations, memoOnPack } from '../engine/templateKit.js';
 
 /* ------------------------------------------------------------------ *
  * What a greedy bot thinks a move is worth (see `botHeuristic`)
@@ -115,8 +116,6 @@ function parseShape(entry) {
  */
 const FIXED_SIZE = Object.freeze({ single: 1, pair: 2, triple: 3, quad: 4 });
 
-const VOCABULARIES = new WeakMap();
-
 /**
  * The pack's `rules.combinations`, resolved to `kind -> { min }`.
  *
@@ -129,16 +128,15 @@ const VOCABULARIES = new WeakMap();
  * list and nothing else.
  */
 function vocabularyOf(ctx) {
-  let vocab = VOCABULARIES.get(ctx.pack);
-  if (vocab) return vocab;
-  vocab = new Map();
-  for (const entry of ctx.rules.combinations || []) {
-    const shape = parseShape(entry);
-    if (!shape) continue;
-    vocab.set(shape.kind, { min: FIXED_SIZE[shape.kind] ?? shape.size ?? 1 });
-  }
-  VOCABULARIES.set(ctx.pack, vocab);
-  return vocab;
+  return memoOnPack(ctx.pack, 'climbing:vocabulary', () => {
+    const vocab = new Map();
+    for (const entry of ctx.rules.combinations || []) {
+      const shape = parseShape(entry);
+      if (!shape) continue;
+      vocab.set(shape.kind, { min: FIXED_SIZE[shape.kind] ?? shape.size ?? 1 });
+    }
+    return vocab;
+  });
 }
 
 /**
@@ -839,21 +837,6 @@ function extendSuited(chains, here) {
   return chains;
 }
 
-function combinationsFrom(cards, k) {
-  if (k > cards.length) return [];
-  const out = [];
-  const pick = (start, chosen) => {
-    if (chosen.length === k) { out.push(chosen.slice()); return; }
-    for (let i = start; i < cards.length; i++) {
-      chosen.push(cards[i]);
-      pick(i + 1, chosen);
-      chosen.pop();
-    }
-  };
-  pick(0, []);
-  return out;
-}
-
 /** Every combination the seat could form, as card-id lists. Shape-bounded. */
 function candidateSets(ctx, seat, { kind = null, size = null } = {}) {
   const ladder = rankLadderOf(ctx.pack);
@@ -879,7 +862,7 @@ function candidateSets(ctx, seat, { kind = null, size = null } = {}) {
     const group = byRank.get(at);
     for (const [k, n] of Object.entries(FIXED_SIZE)) {
       if (!vocab.has(k) || group.length < n || !wants(k, n)) continue;
-      for (const chosen of combinationsFrom(group, n)) out.push(chosen.map((e) => e.id));
+      for (const chosen of kCombinations(group, n)) out.push(chosen.map((e) => e.id));
     }
   }
 
@@ -938,7 +921,7 @@ function candidateSets(ctx, seat, { kind = null, size = null } = {}) {
         if (here.length < 2) break;
         const pairs = j - i + 1;
         if (pairs >= strip.min && wants('consecutive-pairs', pairs)) {
-          for (const topPair of combinationsFrom(here, 2)) {
+          for (const topPair of kCombinations(here, 2)) {
             out.push([...cardsSoFar.map((e) => e.id), ...topPair.map((e) => e.id)]);
           }
         }
@@ -1731,12 +1714,7 @@ const climbing = {
    */
   seatCounters(ctx, seat) {
     const hand = ctx.countIn(ctx.zoneAddr('hand', seat));
-    const counters = [{
-      text: String(hand),
-      aria: `${hand} ${hand === 1 ? 'card' : 'cards'} left`,
-      label: 'Cards',
-      kind: 'hand',
-    }];
+    const counters = [handCounter(ctx, seat, { suffix: ' left' })];
 
     // WHO IS STILL IN THIS TRICK (#148). The whole shape of a climbing trick is
     // that seats drop out of it one at a time and the last one standing leads

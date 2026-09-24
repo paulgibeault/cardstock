@@ -15,6 +15,7 @@ import { selectorMatches } from '../engine/selectors.js';
 import {
   distinctValues, groupByRank, rankAt, rankIndexOf, rankLadderOf, rankWindow,
 } from '../engine/cards.js';
+import { memoOnPack } from '../engine/templateKit.js';
 
 export function parseItem(item) {
   const m = /^(\w+)\((\d+)\)$/.exec(item || '');
@@ -65,8 +66,6 @@ export function isMeldable(ctx, card) {
  * derived by applyMove from the logged move, so a replay rebuilds it exactly.
  */
 
-const RANK_DOMAINS = new WeakMap();
-
 /**
  * The ranks a run may occupy, as POSITIONS ON THE PACK'S LADDER
  * (src/engine/cards.js). A frozen value has to be one a card could have had —
@@ -86,8 +85,7 @@ const RANK_DOMAINS = new WeakMap();
  * per-pack memo still holds.
  */
 export function rankDomain(ctx) {
-  let domain = RANK_DOMAINS.get(ctx.pack);
-  if (!domain) {
+  return memoOnPack(ctx.pack, 'melds:rankDomain', () => {
     const ladder = rankLadderOf(ctx.pack);
     let min = Infinity;
     let max = -Infinity;
@@ -100,10 +98,8 @@ export function rankDomain(ctx) {
     }
     // An empty range for a deck with no run-able ranks: every window is then
     // wider than the domain, so runs are rejected rather than mis-frozen.
-    domain = min <= max ? { min, max } : { min: 0, max: -1 };
-    RANK_DOMAINS.set(ctx.pack, domain);
-  }
-  return domain;
+    return min <= max ? { min, max } : { min: 0, max: -1 };
+  });
 }
 
 /* ------------------------------------------------------------------ *
@@ -557,15 +553,8 @@ export function wildHitValues(ctx, group, kind, cardId) {
  */
 
 /** The suits the deck actually holds, in deck order. Memoised on the pack. */
-const PACK_SUITS = new WeakMap();
-
 function suitsOf(ctx) {
-  let suits = PACK_SUITS.get(ctx.pack);
-  if (!suits) {
-    suits = distinctValues(ctx.pack.cardsById, 'suit');
-    PACK_SUITS.set(ctx.pack, suits);
-  }
-  return suits;
+  return memoOnPack(ctx.pack, 'melds:suits', () => distinctValues(ctx.pack.cardsById, 'suit'));
 }
 
 /** `{ rank, suit }` as one bucket key. Both are pack strings; neither is a card id. */

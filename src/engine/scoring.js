@@ -4,6 +4,7 @@
 
 import { resolveSelectorMap, selectorMatches } from './selectors.js';
 import { sidesOf, sideOfSeat, foldToSides, representativeSeat } from './sides.js';
+import { seatsAfter } from './templateKit.js';
 import {
   tricksOf, contractSeatOf, sideContract, sideTricks, bankedBagsOf, bankedOf,
 } from './contracts.js';
@@ -75,14 +76,6 @@ function heldParts(cards, scoring) {
     .map(([each, at]) => ({ kind: 'held', n: at.length, each, points: each * at.length, at }));
 }
 
-/** Seats in table order starting after `from` — the order a reveal reads round the table. */
-function seatsAfter(ctx, from) {
-  const start = Number.isInteger(from) ? from : -1;
-  const out = [];
-  for (let k = 1; k <= ctx.seats; k++) out.push((start + k + ctx.seats) % ctx.seats);
-  return out;
-}
-
 /**
  * `ids` are the ZONE's ids and `cards` the records they resolve to, in the same
  * order — two lists because a two-deck pack's second copy is `blue-1#2` in the
@@ -121,7 +114,7 @@ export function roundScoreHandValuesToWinner(ctx) {
   }
   if (winnerSeat !== null) {
     let total = 0;
-    for (const s of seatsAfter(ctx, winnerSeat)) {
+    for (const s of seatsAfter(ctx.seats, winnerSeat)) {
       if (s === winnerSeat) continue;
       const { ids, cards } = zoneCards(ctx, ctx.zoneAddr('hand', s));
       total += handValue(cards, scoring);
@@ -138,7 +131,7 @@ export function roundScoreHandValuesToWinner(ctx) {
 export function roundScoreLeftoverHandValues(ctx) {
   const scoring = ctx.pack.scoring;
   const result = {};
-  for (const s of seatsAfter(ctx, ctx.state.roundWinner)) {
+  for (const s of seatsAfter(ctx.seats, ctx.state.roundWinner)) {
     const { ids, cards } = zoneCards(ctx, ctx.zoneAddr('hand', s));
     result[s] = handValue(cards, scoring);
     if (ids.length) emitReveal(ctx, s, ids, cards, { reason: 'leftover' });
@@ -183,7 +176,7 @@ export function roundScorePenaltyCardsTaken(ctx) {
     }
   }
   // The reveal, round the table from whoever took the last trick.
-  for (const s of seatsAfter(ctx, ctx.var('leader'))) {
+  for (const s of seatsAfter(ctx.seats, ctx.var('leader'))) {
     if (!priced[s].ids.length) continue;
     emitReveal(ctx, s, priced[s].ids, priced[s].cards, {
       reason: 'taken',

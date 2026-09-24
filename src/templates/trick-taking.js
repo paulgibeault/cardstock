@@ -10,6 +10,7 @@ import {
   tricksOf, contractSeatOf, sideContract, sideTricks, bagsOf, bankedOf, prizeSign,
 } from '../engine/contracts.js';
 import { sidesOf, sideOfSeat, arePartners } from '../engine/sides.js';
+import { handCounter, memoOnPack, rivalExtreme } from '../engine/templateKit.js';
 import { detectDeclaredMelds } from './melds.js';
 
 /* ------------------------------------------------------------------ *
@@ -418,11 +419,11 @@ function rejectPlayCard(ctx, seat, cardId, hand) {
  * per candidate card per turn, which is the point at which a per-pack answer
  * recomputed per call stops being free.
  */
-const packPeril = new WeakMap();
-
 function perilOf(ctx) {
-  let cached = packPeril.get(ctx.pack);
-  if (cached) return cached;
+  return memoOnPack(ctx.pack, 'trick-taking:peril', () => buildPeril(ctx));
+}
+
+function buildPeril(ctx) {
   const scoring = ctx.pack.scoring || {};
   const ladder = rankLadderOf(ctx.pack);
   const peril = new Map();
@@ -453,9 +454,7 @@ function perilOf(ctx) {
     if (!card.suit || value <= 0) continue;
     if (rank > (peril.get(card.suit) ?? -Infinity)) peril.set(card.suit, rank);
   }
-  cached = { peril, topRank, topValue, lowValue, suits };
-  packPeril.set(ctx.pack, cached);
-  return cached;
+  return { peril, topRank, topValue, lowValue, suits };
 }
 
 function perilRankBySuit(ctx) {
@@ -2438,13 +2437,7 @@ const trickTaking = {
    * tricks the seat's own score chip already reports.
    */
   seatCounters(ctx, seat) {
-    const hand = ctx.countIn(ctx.zoneAddr('hand', seat));
-    const counters = [{
-      text: String(hand),
-      aria: `${hand} ${hand === 1 ? 'card' : 'cards'}`,
-      label: 'Cards',
-      kind: 'hand',
-    }];
+    const counters = [handCounter(ctx, seat)];
 
     // WHAT A SEAT PROMISED, AND WHAT IT HAS. A bid is public the moment it is
     // made and there is nowhere else on a minimized face to read it; the two
@@ -2916,13 +2909,10 @@ const trickTaking = {
     // is the same sentence at a pack where the points are the prize, which is
     // why the rival is picked by the same sign the whole answer is turned by.
     const prize = prizeSign(ctx.pack);
-    let rival = prize === 1 ? -Infinity : Infinity;
-    for (let s = 0; s < ctx.seats; s++) {
-      if (s === seat) continue;
-      const theirs = handValue(ctx.cardsIn(ctx.zoneAddr('won', s)), scoring);
-      rival = prize === 1 ? Math.max(rival, theirs) : Math.min(rival, theirs);
-    }
-    const total = Number.isFinite(rival) ? score + rival * w.RIVAL_SHARE : score;
+    const rival = rivalExtreme(ctx, seat,
+      (s) => handValue(ctx.cardsIn(ctx.zoneAddr('won', s)), scoring),
+      prize === 1 ? 'max' : 'min');
+    const total = rival === null ? score : score + rival * w.RIVAL_SHARE;
     // Written in the direction the SCORE moves — every term above is a bill —
     // and turned round for a pack whose points are the prize. Hearts is
     // `lowestScore`, so this is the identity there and the measured behaviour

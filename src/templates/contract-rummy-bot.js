@@ -10,6 +10,7 @@
 
 import { cardValue } from '../engine/scoring.js';
 import { rankAt, rankIndexOf, rankLadderOf } from '../engine/cards.js';
+import { rivalExtreme } from '../engine/templateKit.js';
 import {
   isMeldable, parseItem, resolveMeld, meldKindOf, meldValue,
   getMeldGroups, pinnedAttr, wildHitValues, rankDomain,
@@ -770,12 +771,8 @@ export function evaluateState(ctx, seat, w = WEIGHTS) {
   // The race is against whoever is furthest along, not against the average of
   // the table: a seat about to go out is the one that decides how much time
   // this hand has left.
-  let rival = -Infinity;
-  for (let s = 0; s < ctx.seats; s++) {
-    if (s === seat) continue;
-    rival = Math.max(rival, publicStanding(ctx, s, w));
-  }
-  return Number.isFinite(rival) ? score - w.RIVAL_SHARE * rival : score;
+  const rival = rivalExtreme(ctx, seat, (s) => publicStanding(ctx, s, w), 'max');
+  return rival === null ? score : score - w.RIVAL_SHARE * rival;
 }
 
 /**
