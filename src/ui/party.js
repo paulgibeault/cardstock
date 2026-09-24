@@ -36,7 +36,7 @@ import {
 import { createTableHost, needsHostDecision } from '../match/host.js';
 import { createTurnTimer } from '../match/turnTimer.js';
 import { wallClock } from '../match/clock.js';
-import { makeCtx } from '../engine/context.js';
+import { actingSeats, announcementsFor } from '../engine/context.js';
 import { chooseBotMove } from '../engine/bot.js';
 import { enumerateLegalMoves } from '../engine/movePipeline.js';
 import { rehydrateMatch } from '../engine/replay.js';
@@ -56,6 +56,7 @@ import {
   adoptSharedView, leaveSharedTable, tableContext, setSeating, dealHostedTable, resumeHostedTable,
   setLocalMoveListener, afterRemoteMove, setTablePaused, rerenderTable,
 } from './table.js';
+import { motionAllowed } from './flight.js';
 import { createSeatTable, createSeatLens, deserializeSeatTable } from '../players/seats.js';
 import { sidesOf } from '../engine/sides.js';
 import { createTableSightings } from './tableSightings.js';
@@ -1380,9 +1381,10 @@ function burst(glyph) {
   node.textContent = glyph;
   el.burst.append(node);
   // reducedMotion is a promise the whole table keeps (Phase 3): the emote still
-  // arrives, it simply does not fly.
-  const reduced = document.documentElement.dataset.reducedMotion === 'true'
-    || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+  // arrives, it simply does not fly. Asked of flight.js so the lobby's answer
+  // and the felt's answer are the same answer — they used to be two, and the
+  // launcher setting reached the confetti while card travel flew on regardless.
+  const reduced = !motionAllowed();
   if (reduced) node.classList.add('emote-burst--still');
   Arcade.session.setTimeout(() => node.remove(), reduced ? 1200 : 1600);
 }
@@ -1609,10 +1611,7 @@ function openHostSession({ tableId, packId, packName: name, variants, seats }) {
     // Resolved at arm time, so changing it before the deal takes effect
     // without rebuilding the timer.
     timeoutMs: () => graceOf(session),
-    actingSeatsOf: (state) => {
-      const template = state.pack.template;
-      return template.actingSeats ? template.actingSeats(makeCtx(state)) : [state.turn.seat];
-    },
+    actingSeatsOf: actingSeats,
     // ANY DEVICE-HELD SEAT WHOSE DEVICE IS NOT WATCHING THIS TABLE (plan §3).
     //
     // It used to be "every seat but our own", which is right for the table in
@@ -1950,16 +1949,8 @@ function headlessBotsFor(session) {
     me: seatLens,
     identityOf: (seat) => session.seating?.[seat]
       || { seat, name: nameForSeat(seat, session) || `Seat ${seat}`, icon: '', color: '#6b7280', isBot: true },
-    actingSeatsOf: (state) => {
-      if (state.gameOver) return [];
-      const template = state.pack.template;
-      return template.actingSeats ? template.actingSeats(makeCtx(state)) : [state.turn.seat];
-    },
-    announcementsFor: (state, seat) => {
-      const template = state.pack.template;
-      if (!template.enumerateAnnouncements) return [];
-      return template.enumerateAnnouncements(makeCtx(state), seat) || [];
-    },
+    actingSeatsOf: actingSeats,
+    announcementsFor,
     // THE ONLY REAL DIFFERENCE FROM THE FELT'S DRIVER. No animation, no log
     // line, no sound — `applyLocal` applies the move and publishes it, which is
     // the same door every other move at this table goes through.
@@ -1974,10 +1965,18 @@ function headlessBotsFor(session) {
  *
  * A no-op while the felt is bound, because then the felt is already doing it
  * and two drivers scheduling against one state would move the same bot twice.
+ *
+ * AND NO PAUSE GATE, which is a decision rather than an omission (#203). "Wait
+ * for them" is the felt's pause — `setTablePaused` holds the table the felt is
+ * showing, and the felt's own scheduler is the only thing that reads it. There
+ * is no per-table pause for an unbound table to be held by, so this used to read
+ * a `session.paused` that nothing ever wrote: a gate that was always open,
+ * wearing the look of one that was not. See the note in `askAboutSeat` for the
+ * gap that leaves.
  */
 function driveBots(session) {
   if (!session?.hosting() || !session.bots || !session.state) return;
-  if (session.bound || session.paused) return;
+  if (session.bound) return;
   session.bots.scheduleNextTurn(session, session.epoch);
   session.bots.scheduleAnnouncementBeats(session, session.epoch);
 }
@@ -2127,6 +2126,12 @@ function askAboutSeat(seat, session) {
       setTablePaused(false);
       afterSeatChange(session);
     } else if (choice === 'pause') {
+      // THE FELT'S PAUSE, WHICH IS THE ONE THE FELT IS SHOWING. `setTablePaused`
+      // is not per-table: answering "wait for them" about a table the felt is
+      // not bound to holds whichever table it IS showing, and leaves the one
+      // that lost a player being played on by the headless driver. Noted with
+      // #203, which removed the `session.paused` that looked like a fix for this
+      // and never was; the fix itself is a per-table pause and is its own job.
       setTablePaused(true);
       setNotice(`Paused — waiting for ${who}.`);
       afterSeatChange(session);

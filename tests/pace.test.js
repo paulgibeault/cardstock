@@ -490,7 +490,7 @@ test("the felt builds its trick plan with the player's rung and its own shared f
   // both for the same two reasons, and a call that dropped the shared flag here
   // would gate a shared device's queue on three taps rather than one.
   const round = table.match(/roundBeatPlan\(events, \{[\s\S]*?\}\) : null/);
-  assert.ok(round, "afterMove must be the one place a round ending is planned");
+  assert.ok(round, "beginRoundEnding must be the one place a round ending is planned");
   assert.match(round[0], /pace: currentPace\(\)\.id/,
     "without the rung the show is counted at the default for everybody, whatever "
     + "dial the player set");
@@ -499,28 +499,74 @@ test("the felt builds its trick plan with the player's rung and its own shared f
     + "three times a hand while the other players keep playing");
 });
 
-// THE RUNG HAS TO BE READ WHERE IT IS WRITTEN, AND IT WAS NOT (#181). `settings`
-// in table.js is a snapshot taken by `initTable` at boot and refreshed by
-// `rerenderTable` — a resume, or an SDK settings change. The NEW-GAME SHEET is
-// neither: it writes storage and deals. So picking Quick in the lobby left the
-// table running at whatever rung the tab had booted on, for the whole match, and
-// the only door that worked was the summary's own control, which writes the
-// snapshot itself and therefore hid this everywhere anybody looked.
+// AND IT HAS TO BE THE ONLY ONE (#202). The assertion above was true of
+// `afterMove` and had nothing to say about the SECOND copy of the same tail in
+// `performAnnouncement`, which was built without `shared` — so a round ended by
+// an announcement (Wildfire's last-card call is the one that does this today)
+// at a HOSTED table walked the Manual rung's clockless count and gated that
+// device's queue while three other players kept playing. A copy is what broke
+// it, so a copy is what this forbids.
+test("both paths that end a round plan it through the one shared builder", () => {
+  const table = read("src/ui/table.js");
+  const calls = table.match(/roundBeatPlan\(/g) || [];
+  assert.strictEqual(calls.length, 1,
+    `${calls.length} round-beat plans are built in table.js; a second builder is how the `
+    + "announcement path lost `shared` in the first place — call `beginRoundEnding`");
+
+  const builder = table.match(/function beginRoundEnding\([\s\S]*?\n\}/);
+  assert.ok(builder, "beginRoundEnding must exist — it is the shared round-ending tail");
+  assert.match(builder[0], /shared: !!session\?\.shared/,
+    "the shared builder must carry the table's own shared flag, or EVERY path that "
+    + "ends a round leaves a hosted device gated on taps nobody else can make");
+
+  // AND BOTH PATHS MUST ACTUALLY REACH IT. `performAnnouncement` deliberately
+  // does not re-enter `afterMove` (re-scheduling the turn would restart a bot's
+  // think time every time anybody spoke), which is exactly why it is the one
+  // that drifted.
+  const body = (name) => {
+    const at = table.indexOf(`function ${name}(`);
+    assert.ok(at >= 0, `${name} must still exist`);
+    return table.slice(at, table.indexOf("\n}\n", at));
+  };
+  for (const name of ["afterMove", "performAnnouncement"]) {
+    assert.match(body(name), /beginRoundEnding\(state, move\)/,
+      `${name} must plan its round ending through the shared builder, not a copy of it`);
+  }
+});
+
+// THE RUNG HAS TO BE READ WHERE IT IS WRITTEN, AND IT WAS NOT (#181). table.js
+// used to keep a snapshot of the preferences blob, taken by `initTable` at boot
+// and refreshed by `rerenderTable` — a resume, or an SDK settings change. The
+// NEW-GAME SHEET is neither: it writes storage and deals. So picking Quick in the
+// lobby left the table running at whatever rung the tab had booted on, for the
+// whole match, and the only door that worked was the summary's own control, which
+// wrote the snapshot itself and therefore hid this everywhere anybody looked.
 //
 // FOUND BY TRYING TO WATCH QUICK COUNT ITSELF in a browser: a table dealt at
 // Quick sat waiting for a tap, because the rung that reached the arithmetic was
 // Manual. `botDriver`'s `difficulty` has read fresh since #91 for exactly this
 // reason and says so in its own comment.
-test("the pace is read from storage, not from a snapshot the lobby cannot refresh", () => {
+//
+// AND THE SNAPSHOT IS GONE (#203), which is what the second half now pins. Once
+// the pace, the card speed and the difficulty all read storage at the moment they
+// are used, nothing read the copy at all — it was assigned in four places and
+// read in none. The guard that matters is no longer "this function reads past the
+// snapshot" but "there is no snapshot to read past": a felt-side copy of the blob
+// is the shape of this bug, whoever reintroduces it and for whichever setting.
+test("the pace is read from storage, and the felt keeps no copy to go stale", () => {
   const src = read("src/ui/table.js");
   const fn = src.match(/function currentPace\(\) \{[\s\S]*?\n\}/);
   assert.ok(fn, "currentPace must exist — it is the one place the felt asks for the rung");
   assert.match(fn[0], /loadSettings\(\)\.pace/,
     "the rung must be read fresh at the moment it is needed");
   assert.doesNotMatch(fn[0], /settings \?/,
-    "reading the module snapshot first is the bug: the new-game sheet writes storage "
-    + "and never touches that snapshot, so a rung picked in the lobby does not reach "
+    "reading a module snapshot first is the bug: the new-game sheet writes storage "
+    + "and never touches such a snapshot, so a rung picked in the lobby does not reach "
     + "the felt until the tab is reloaded");
+  assert.doesNotMatch(src, /^let settings\b/m,
+    "src/ui/table.js must not hold its own copy of the preferences blob — every reader "
+    + "asks storage at the moment it needs the answer, and a second copy is only a "
+    + "second thing to forget to refresh (#181, #184, #203)");
 });
 
 test("an unknown rung runs the default schedule rather than no schedule", () => {

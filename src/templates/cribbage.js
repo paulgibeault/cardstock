@@ -72,8 +72,24 @@ const LEAD_WORTH = 0.25;
 /** A card left in hand during the play is an option; an empty hand is not. */
 const OPTION_WORTH = 0.15;
 
+/**
+ * WHAT LEAVING THE COUNT SOMEWHERE DANGEROUS COSTS, per hole the card pegged.
+ *
+ * `botHeuristic` prices the gift by the share of the deck that would score off
+ * the count it leaves behind, and then by how much that share matters against
+ * the holes the card just took. Two, because the count the opponent reaches is
+ * usually worth two — a fifteen or a thirty-one — so a card that hands over a
+ * certainty is a card whose own pegging has to beat that certainty twice over
+ * before it is worth playing.
+ *
+ * It was a bare `* 2` beside `PEGGED_WORTH` and therefore unreachable by
+ * tools/tune.mjs (#206); the value and the arithmetic are unchanged.
+ */
+const EXPOSURE_SHARE = 2;
+
 export const WEIGHTS = Object.freeze({
   CRIB_WORTH, CRIB_THROW_SHARE, PEGGED_WORTH, PROMISE_WORTH, LEAD_WORTH, OPTION_WORTH,
+  EXPOSURE_SHARE,
 });
 
 /* ------------------------------------------------------------------ *
@@ -956,7 +972,7 @@ const cribbage = {
       const after = count + valueOf(card);
       if (after === 15 || after === limit) exposure++;
     }
-    score -= (exposure / ctx.pack.cardsById.size) * w.PEGGED_WORTH * 2;
+    score -= (exposure / ctx.pack.cardsById.size) * w.PEGGED_WORTH * w.EXPOSURE_SHARE;
     score += ctx.countIn(handAddr(ctx, move.actor)) * w.OPTION_WORTH;
     return score;
   },

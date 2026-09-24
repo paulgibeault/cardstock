@@ -55,6 +55,19 @@ function dealRound(ctx) {
 /**
  * A rung of the contract ladder, in `matchStanding`'s units: more than the
  * points any round can cost, so a rung is never traded for them.
+ *
+ * DELIBERATELY NOT IN `WEIGHTS`, for two independent reasons (#206), and
+ * `src/templates/sequencing.js` says the first one at greater length:
+ *
+ *   * `matchStanding` is `(ctx, seat) -> number` (src/templates/CONTRACT.md).
+ *     It is never handed a weights bag — the rollout layer calls it through
+ *     `standingOf` in src/engine/bot.js — so a weight here would be a knob
+ *     tools/tune.mjs could turn to no effect, which is the one thing
+ *     tests/weights.test.js exists to forbid.
+ *   * It is not an opinion. It is the separator that keeps a rung above any
+ *     round score (ten cards of wilds is 250), and a tuner that pushed it under
+ *     that ceiling would produce a bot that trades the ladder — the match
+ *     itself — for points that never decide anything.
  */
 const RUNG_WORTH = 1000;
 
@@ -560,6 +573,17 @@ const contractRummy = {
    * scored in ./contract-rummy-bot.js beside the rest of this template's
    * strategy, where they can read the contract, the melds on the felt and the
    * table's memory of who has been taking from the pile.
+   *
+   * THE 100 AND THE 50 ARE BANDS AND STAY OUT OF `WEIGHTS` (#206), on the same
+   * grounds sequencing states for its tiers (src/templates/sequencing.js): what
+   * they encode is not an opinion but an ORDER — every lay-down above every
+   * hit, every hit above every draw and every discard, which `scoreDraw` and
+   * `scoreDiscard` keep well inside single digits. A tuner handed them would
+   * eventually find a set where a seat holding its whole contract prefers to
+   * throw a card away, and a table of seats that would all rather not lay down
+   * is a match that never reaches the top of the ladder. The gap between the
+   * two is the same claim once more: a hit shrinks the hand by one card, a
+   * lay-down can end the round.
    */
   botHeuristic(ctx, move, w) {
     if (move.type === 'draw') return scoreDraw(ctx, move, w);

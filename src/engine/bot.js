@@ -63,7 +63,7 @@
 // which pack is on the table to spend the same amount of effort on it.
 
 import { legalMovesFor, enumerateLegalMoves, applyMove } from './movePipeline.js';
-import { makeCtx } from './context.js';
+import { makeCtx, actingSeats } from './context.js';
 import { forkState } from './fork.js';
 import { determinizeState } from './determinize.js';
 import { visibleCardIds } from './view.js';
@@ -537,10 +537,9 @@ function rollout(world, move, seat, spent, depth, weights) {
  */
 function advance(run, spent, depth, weights) {
   const sim = run.sim;
-  const template = sim.pack.template;
   while (!run.finished && !sim.gameOver && run.played < ROLLOUT_MOVE_CAP) {
     if (run.played >= depth) return true;
-    const acting = template.actingSeats ? template.actingSeats(makeCtx(sim)) : [sim.turn.seat];
+    const acting = actingSeats(sim);
     let next = null;
     for (const s of acting) {
       // THE DECIDING SEAT'S WEIGHTS PLAY EVERY CHAIR. A rollout is this seat's

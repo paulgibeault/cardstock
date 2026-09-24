@@ -259,12 +259,13 @@ test("the chip cycles the rung, and the very next flight uses it", () => {
 // the lobby cannot refresh" (#181), and the same bug in the same module: the
 // new-game sheet is the ONLY surface that offers these four rungs before a
 // match exists, and it was the one surface whose choice never arrived. The
-// snapshot is written in exactly two places — `initTable` at boot and
+// snapshot was written in exactly two places — `initTable` at boot and
 // `rerenderTable`, which main.js calls on a resume and on a change to the SDK's
 // OWN settings — and src/ui/lobby.js writes storage and then opens the table,
 // which is neither. So the first match of a session flew at the rung from
 // before the sheet. Verified in a browser on #175's own dial: a table dealt at
-// Slow ran at Brisk.
+// Slow ran at Brisk. (#203 deleted the snapshot once the last reader had moved
+// off it; these assertions are the guard against a new one arriving.)
 //
 // A SOURCE GREP, because src/ui/table.js reaches for `document` at import time
 // and no Node test can load it — the same constraint every "the wiring the
@@ -293,9 +294,17 @@ test("the speed is read from storage, not from a snapshot the lobby cannot refre
     "the duration must come off the live number");
   // More than the five flights since the review workstream (#196): the trick
   // reveal's and the round beat's plans, the final show's plan and the final
-  // look's beat ask too — plus the definition. Exact, not a floor: a site left
-  // on the snapshot is a card that still flies at the stale rung.
-  assert.strictEqual((src.match(/currentFlightMs\(\)/g) || []).length, 8,
+  // look's beat ask too — plus the definition. One fewer since #202, which put
+  // the round beat's plan in a single builder both the move and the
+  // announcement path call. Exact, not a floor: a site left on the snapshot is
+  // a card that still flies at the stale rung.
+  //
+  // COUNTED OVER THE CODE, NOT THE PROSE (#203). This counted the raw file and
+  // so counted a comment that happened to quote `currentFlightMs()` — the tally
+  // was 8 for 7 call sites, and deleting a paragraph failed a test about flight
+  // timing. The neighbour gate below strips comments for exactly this reason.
+  const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  assert.strictEqual((code.match(/currentFlightMs\(\)/g) || []).length, 6,
     "every flight-duration call site must ask currentFlightMs, plus its own definition — "
     + "a site left on the snapshot is a card that still flies at the stale rung");
   assert.match(src, /botDelayMs: \(\) => currentDelayMs\(\)/,
