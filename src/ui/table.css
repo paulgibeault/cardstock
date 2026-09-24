@@ -88,6 +88,15 @@
      taken, it is just not the one that was promised. */
   --pip-edge: rgba(255, 255, 255, 0.55);
   --pip-bag: rgba(255, 255, 255, 0.82);
+
+  /* The board's rail (#138). BOTH THEMES ARE PAINTED, not one plus a tint —
+     the same rule .seat__track carries. The rail is a groove either way: its
+     marks are white ink over the dark felt's chip and near-black ink over the
+     light theme's paper, and a street mark is twice the weight of a five in
+     both. Declared here with the rest of the vocabulary rather than beside
+     .board, which is where a pack looks for the properties it may override. */
+  --board-tick-ink: rgba(255, 255, 255, 0.22);
+  --board-street-ink: rgba(255, 255, 255, 0.5);
 }
 
 [data-theme="light"] {
@@ -145,6 +154,9 @@
 
   --pip-edge: rgba(20, 38, 28, 0.45);
   --pip-bag: rgba(20, 38, 28, 0.68);
+
+  --board-tick-ink: rgba(20, 38, 28, 0.24);
+  --board-street-ink: rgba(20, 38, 28, 0.5);
 }
 
 * { box-sizing: border-box; }
@@ -177,6 +189,13 @@
   -webkit-user-select: none;
   user-select: none;
   -webkit-touch-callout: none;
+
+  /* The review drawer's width. A layout constant rather than a theme token —
+     it is the same in both themes — but it is read by three rules six
+     thousand lines apart (#review-drawer, and the felt and the reel that give
+     up the room for it), so it is declared once, here, where the other
+     document-wide values are. */
+  --review-drawer-w: 24rem;
 }
 
 body {
@@ -442,11 +461,18 @@ body {
     radial-gradient(ellipse at 50% 30%, var(--felt-sheen), transparent 62%),
     repeating-linear-gradient(45deg, var(--felt-weave) 0 2px, transparent 2px 9px),
     var(--felt);
+  /* The containing block for everything drawn OVER the felt rather than in
+     its flow: the action wash (#table::after), the seat-collapse toggle, an
+     open seat plate. */
+  position: relative;
 }
 
 .opponent-row {
   display: flex;
   justify-content: center;
+  /* The containing block for a seat's plate and its badges, which hang off
+     the row rather than sitting in it. */
+  position: relative;
   /* NOT the default stretch, and NOT centred either.
      Stretch made a collapsed seat a tall empty box with the face at the top
      and its corner count badge stranded at the bottom. Centring fixed that and
@@ -456,7 +482,6 @@ body {
      tracking. Pinned to the top, a face is in the same place all game and only
      the seat that is actually playing changes shape. */
   align-items: flex-start;
-  gap: 1.25rem;
   /* NOT wrap. Seats wrapping to a second row is how the felt loses its height
      to the players and pushes the piles under the hand — and with the seat
      picker a table can now be eight-handed. One row, always; when it will not
@@ -781,6 +806,8 @@ body {
   margin-bottom: 0.35rem;
 }
 
+/* An emoji face rather than initials: it ships no asset, and it is the same
+   mark the score sheet and the stats panel use for that player. */
 .seat__avatar {
   width: 1.55rem;
   height: 1.55rem;
@@ -788,7 +815,7 @@ body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 0.65rem;
+  font-size: 0.95rem;
   font-weight: 700;
   letter-spacing: 0.02em;
   color: #fff;
@@ -797,6 +824,45 @@ body {
 }
 
 .seat__name { font-size: 0.8rem; }
+
+/* ------------------------------------------------------------------ *
+ * EVERY RING ON THIS TABLE, IN ONE BLOCK
+ * ------------------------------------------------------------------ *
+ *
+ * Seven places pulse — the acting seat's name, a targeted seat, the catch
+ * button, a ready pile, the announce button, the turn token, a ready meld
+ * chip — and each of them was its own copy of the same eight declarations
+ * with only the duration changed. They are one rule now, and a site says only
+ * what makes it different: its --ring-duration, and the shape of the ring
+ * itself (inset, radius, the static shadow that is being faded in and out).
+ *
+ * WHY THAT MATTERS BEYOND THE LINE COUNT: the last declaration here is the
+ * battery rule (#24 — nothing on this table pulses forever), and seven copies
+ * of a rule is seven chances for the eighth ring to be added without it. One
+ * block is one place to keep it honest. The long note over @keyframes
+ * ring-pulse below is why the animation has this shape at all; the
+ * prefers-reduced-motion block at the foot of the file hides all seven, and
+ * its list must stay in step with the one here.
+ *
+ * IT IS FIRST ON PURPOSE. Every site below overrides something in it — the
+ * acting seat's name re-declares `content` and drops the ring to the top-left
+ * corner — so this rule has to lose the ties, which at equal specificity
+ * means coming first. */
+.seat--active .seat__name::after,
+.seat--target::before,
+.seat__catch::after,
+.pile-stack--ready .pile-stack__top::after,
+.announce-button::after,
+.turn-token::before,
+.meld-chip--ready::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  pointer-events: none;
+  animation: ring-pulse var(--ring-duration, 1.6s) ease-in-out;
+  animation-iteration-count: var(--arcade-pulse-count, 3);
+}
 
 /* THE ACTIVE SEAT'S NAME — the last animation on this table that still
  * repainted. `pulse-glow` animated `text-shadow` blur from 4px to 10px, and a
@@ -823,21 +889,14 @@ body {
      a peer-supplied name is as safe here as it is in textContent (§7b);
      buildSeatRow (src/ui/table.js) sets data-name beside it. */
   content: attr(data-name);
-  position: absolute;
-  left: 0;
-  top: 0;
+  /* The only ring that is not inset in its host: this one is the name itself,
+     so it hangs off the top-left corner and takes the name's own width. */
+  inset: 0 auto auto 0;
   white-space: nowrap;
   color: transparent;
   text-shadow: 0 0 10px var(--glow-strong);
-  pointer-events: none;
-  opacity: 0;
-  animation: ring-pulse 1.6s ease-in-out;
-  animation-iteration-count: var(--arcade-pulse-count, 3);
+  --ring-duration: 1.6s;
 }
-
-/* An emoji face rather than initials: it reads at 1.5rem, ships no asset, and
-   is the same mark the score sheet and the stats panel use for that player. */
-.seat__avatar { font-size: 0.95rem; }
 
 /* The opponent's running score, beside their name. Pushed left of the card
    count so the two numbers never swap places between games. */
@@ -1278,15 +1337,10 @@ body {
   border-color: var(--accent);
 }
 .seat--target::before {
-  content: "";
-  position: absolute;
   inset: -2px;
   border-radius: 14px;
   box-shadow: 0 0 0 2px var(--accent);
-  opacity: 0;
-  pointer-events: none;
-  animation: ring-pulse 1.4s ease-in-out;
-  animation-iteration-count: var(--arcade-pulse-count, 3);
+  --ring-duration: 1.4s;
 }
 
 /* The plate itself: everything the seat would have shown inline, in a card
@@ -1353,10 +1407,18 @@ body {
 }
 
 /* The melds are the reason the plate was opened, so they get room to be read
-   rather than the squeezed strip the seat wore. */
+   rather than the squeezed strip the seat wore.
+
+   The gap is also what a finger needs. When a card is being carried the plate
+   is a DROP surface (see .is-dragging .seat__plate below), and room around the
+   chips is what stops a finger with a card under it from landing between two.
+   Kept unconditional rather than scoped to the drag: a strip that re-spaced
+   itself the moment a card was picked up would move the target it is being
+   aimed at. */
 .seat__plate .meld-strip {
   flex-wrap: wrap;
   justify-content: center;
+  gap: 0.5rem;
 }
 
 /* A plate is a considered look, not a glance — the fan may be full width. */
@@ -1373,9 +1435,8 @@ body {
 
 /* Carrying a card to a seat that is put away: the plate is a DROP surface now,
    not just something to read, so it says so. The ring is the same one every
-   other drop target on the felt wears (.drop-target), and the room around the
-   chips is what stops a finger with a card under it from landing between two. */
-.seat__plate .meld-strip { gap: 0.5rem; }
+   other drop target on the felt wears (.drop-target); the room around the
+   chips is the plate's own (see .seat__plate .meld-strip above). */
 .is-dragging .seat__plate {
   border-color: var(--accent);
   box-shadow: 0 0 0 2px var(--accent), 0 12px 30px var(--panel-shadow);
@@ -1410,15 +1471,9 @@ body {
 .seat__catch:hover { background: var(--danger-bg-hover); }
 
 .seat__catch::after {
-  content: "";
-  position: absolute;
-  inset: 0;
   border-radius: 999px;
   box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.22);
-  opacity: 0;
-  pointer-events: none;
-  animation: ring-pulse 1s ease-in-out;
-  animation-iteration-count: var(--arcade-pulse-count, 3);
+  --ring-duration: 1s;
 }
 
 /* ------------------------------------------------------------------ *
@@ -1451,6 +1506,9 @@ body {
  *    stops, expressed declaratively. So every emphasis animation here declares
  *
  *        animation-iteration-count: var(--arcade-pulse-count, 3);
+ *
+ *    — the seven rings in ONE rule (see "Every ring on this table" above), and
+ *    each element-level pulse beside its own keyframes.
  *
  *    The launcher's SDK owns that token (§5, SDK 3.13.0+): 3 normally, 1 when
  *    the player has turned power saver on, 0 under reduced motion — where the
@@ -1780,19 +1838,9 @@ body {
   opacity: 0.9;
 }
 
-/* BOTH THEMES ARE PAINTED, not one plus a tint — the same rule .seat__track
-   carries. The rail is a groove either way: its marks are white ink over the
-   dark felt's chip and near-black ink over the light theme's paper, and a
-   street mark is twice the weight of a five in both. */
-:root,
-[data-theme="dark"] {
-  --board-tick-ink: rgba(255, 255, 255, 0.22);
-  --board-street-ink: rgba(255, 255, 255, 0.5);
-}
-[data-theme="light"] {
-  --board-tick-ink: rgba(20, 38, 28, 0.24);
-  --board-street-ink: rgba(20, 38, 28, 0.5);
-}
+/* The rail's two inks are theme vocabulary and live with the rest of it, in
+   the theme blocks at the head of this file — both themes painted, neither a
+   tint of the other. */
 
 /* A NARROW BOARD, NOT A NARROW WINDOW, and the difference is the whole reason
    this is a container query. Because the board sits beside the piles wherever
@@ -2277,15 +2325,9 @@ button.pile-stack:focus-visible { outline: 2px solid var(--accent); outline-offs
   box-shadow: 0 0 0 3px var(--accent);
 }
 .pile-stack--ready .pile-stack__top::after {
-  content: "";
-  position: absolute;
-  inset: 0;
   border-radius: 8px;
   box-shadow: 0 0 0 5px var(--glow);
-  opacity: 0;
-  pointer-events: none;
-  animation: ring-pulse 1.8s ease-in-out;
-  animation-iteration-count: var(--arcade-pulse-count, 3);
+  --ring-duration: 1.8s;
 }
 
 /* A pile whose top card can be picked up as a SOURCE (Stockpile's stock and
@@ -3153,15 +3195,9 @@ body.is-dragging .card-face { cursor: grabbing; }
   50% { transform: scale(1.05); }
 }
 .announce-button::after {
-  content: "";
-  position: absolute;
-  inset: 0;
   border-radius: 999px;
   box-shadow: 0 0 18px 2px var(--accent);
-  opacity: 0;
-  pointer-events: none;
-  animation: ring-pulse 1.1s ease-in-out;
-  animation-iteration-count: var(--arcade-pulse-count, 3);
+  --ring-duration: 1.1s;
 }
 
 /* ------------------------------------------------------------------ *
@@ -3189,15 +3225,9 @@ body.is-dragging .card-face { cursor: grabbing; }
    3px static glow above are the resting treatment, and they are what "whose
    turn is it" is actually read from. */
 .turn-token::before {
-  content: "";
-  position: absolute;
-  inset: 0;
   border-radius: 50%;
   box-shadow: 0 0 12px var(--accent);
-  opacity: 0;
-  pointer-events: none;
-  animation: ring-pulse 1.6s ease-in-out;
-  animation-iteration-count: var(--arcade-pulse-count, 3);
+  --ring-duration: 1.6s;
 }
 .turn-token::after {
   content: "\25B6"; /* ▶ */
@@ -3593,15 +3623,9 @@ body.is-dragging .card-face { cursor: grabbing; }
    highest-multiplicity of the four box-shadow animations. The accent
    border-color above is the resting treatment once the ring has run out. */
 .meld-chip--ready::after {
-  content: "";
-  position: absolute;
-  inset: 0;
   border-radius: 8px;
   box-shadow: 0 0 0 5px var(--glow);
-  opacity: 0;
-  pointer-events: none;
-  animation: ring-pulse 1.8s ease-in-out;
-  animation-iteration-count: var(--arcade-pulse-count, 3);
+  --ring-duration: 1.8s;
 }
 .meld-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
@@ -4189,8 +4213,6 @@ body.is-dragging .card-face { cursor: grabbing; }
   pointer-events: none;
 }
 
-.opponent-row { position: relative; }
-
 /* An action card washing across the felt.
  *
  * The pack-level "background effect": a skip, a reverse or a Draw 4 changes
@@ -4201,9 +4223,10 @@ body.is-dragging .card-face { cursor: grabbing; }
  *
  * --flash-tint is set per event (a wild washes in the colour that was chosen)
  * and falls back to the theme accent. A pack that wants a different flourish
- * restyles .table-flash; one that wants none sets its animation to none. */
-#table { position: relative; }
-
+ * restyles .table-flash; one that wants none sets its animation to none.
+ *
+ * #table is already `position: relative` (see the rail block above), which is
+ * what this is inset in. */
 #table::after {
   content: "";
   position: absolute;
@@ -4662,15 +4685,27 @@ body.is-dragging .card-face { cursor: grabbing; }
 #party-overlay[hidden],
 #new-game-overlay[hidden] { display: none; }
 
-#choice-modal .panel,
-#confirm-modal .panel,
-#round-overlay .panel,
-#scoreboard-overlay .panel,
-#game-over-overlay .panel,
-#rules-overlay .panel,
-#party-decision .panel,
-#party-overlay .panel,
-#new-game-overlay .panel {
+/* THE SHARED SHEET, AND WHY ITS OWN IDS ARE IN `:where()`.
+ *
+ * `.panel` is a component; the nine ids are only the nine places one is
+ * mounted. Written plainly the list scored id-and-a-class, which beat every
+ * modifier a panel could wear — `.panel--wide` and `.choice-dialog` are one
+ * class each — so both of them carried `!important` to win an argument they
+ * should never have been in, and a third joined them on the review sheet.
+ * `:where()` contributes nothing to specificity, so this reads as the
+ * one-class rule it always meant to be and a modifier below simply overrides
+ * it. No `!important` outside the reduced-motion kill switch. */
+:where(
+  #choice-modal,
+  #confirm-modal,
+  #round-overlay,
+  #scoreboard-overlay,
+  #game-over-overlay,
+  #rules-overlay,
+  #party-decision,
+  #party-overlay,
+  #new-game-overlay
+) .panel {
   background: var(--panel-bg);
   color: var(--panel-text);
   border: 1px solid var(--panel-border);
@@ -4684,7 +4719,7 @@ body.is-dragging .card-face { cursor: grabbing; }
 }
 
 /* The panels that carry a table rather than a sentence. */
-.panel--wide { max-width: min(34rem, 100%) !important; }
+.panel--wide { max-width: min(34rem, 100%); }
 
 .panel__title {
   font-size: 1.05rem;
@@ -4989,13 +5024,14 @@ body.is-dragging .card-face { cursor: grabbing; }
  * (.table--flash) and the discard badge keeps a dot of it afterwards. */
 .choice-dialog {
   /* Out-ranks the shared panel width cap: four cards two-up need the room, and
-     a 26rem panel squeezed them to slivers. */
-  max-width: min(22rem, 100%) !important;
-  border-color: color-mix(in srgb, var(--choice-tint, var(--panel-border)) 60%, var(--panel-border)) !important;
+     a 26rem panel squeezed them to slivers. One class over one class, settled
+     by source order — see the `:where()` note on that cap. */
+  max-width: min(22rem, 100%);
+  border-color: color-mix(in srgb, var(--choice-tint, var(--panel-border)) 60%, var(--panel-border));
   box-shadow:
     0 0 0 1px color-mix(in srgb, var(--choice-tint, transparent) 40%, transparent),
     0 0 34px color-mix(in srgb, var(--choice-tint, transparent) 28%, transparent),
-    0 20px 60px var(--panel-shadow) !important;
+    0 20px 60px var(--panel-shadow);
   transition: box-shadow 0.18s ease, border-color 0.18s ease;
 }
 
@@ -6134,7 +6170,9 @@ button.tile__daily:hover { background: var(--ghost-hover); }
   animation: settle-in 0.3s ease-out;
   margin: auto;
   width: 100%;
-  max-width: min(38rem, 100%) !important;
+  /* Wider than .panel--wide, which this panel also wears: an id beats a class
+     without having to shout about it. */
+  max-width: min(38rem, 100%);
   display: flex;
   flex-direction: column;
   max-height: calc(100dvh - 2rem);
@@ -6259,8 +6297,9 @@ button.tile__daily:hover { background: var(--ghost-hover); }
 
 /* THE DRAWER: the map beside the felt at a wide window. The felt gives up
    the drawer's width (margin on #table-screen) and the reel moves over with
-   it, so nothing the player taps is under anything else. */
-:root { --review-drawer-w: 24rem; }
+   it, so nothing the player taps is under anything else. Its width is
+   --review-drawer-w, declared with the other document-wide values at the top
+   of this file. */
 #review-drawer {
   position: fixed;
   top: 0;
@@ -6291,14 +6330,12 @@ body.review-drawer #review-bar { right: var(--review-drawer-w); }
 /* THE MAP INSIDE THE RESULTS: the same accordion, scrolling on its own inside
    a sheet that must still fit the window with it open. */
 #game-over-overlay .panel { max-height: calc(100dvh - 2rem); overflow: auto; }
-#game-over-map { margin: 0.5rem 0; }
 #game-over-map[hidden] { display: none; }
 #game-over-map .review-map { max-height: min(46dvh, 22rem); }
 
 /* The map on the round sheet, scrolling on its own inside a sheet that must
    still fit the window with it open. */
 #round-overlay .panel { max-height: calc(100dvh - 2rem); overflow: auto; }
-#round-map { margin: 0.5rem 0; }
 #round-map[hidden] { display: none; }
 #round-map .review-map { max-height: min(46dvh, 22rem); }
 
@@ -6353,9 +6390,11 @@ body.review-drawer #review-bar { right: var(--review-drawer-w); }
 .sheet-disclosure__body + .panel__actions,
 .sheet-disclosure + .panel__actions { border-top: 1px solid var(--panel-border); padding-top: 1rem; }
 
-/* On the round sheet the target line sits directly on the first fold. */
+/* On the round sheet the target line sits directly on the first fold, and a
+   map inside a fold is tighter than one standing on its own — this is the
+   only margin either map has. */
 #round-panel .round-target { margin-bottom: 0.6rem; }
 #round-panel .sheet-disclosure { margin-top: 0.2rem; }
-#round-map { margin: 0.4rem 0 0.2rem; }
+#round-map,
 #game-over-map { margin: 0.4rem 0 0.2rem; }
 #game-over-overlay .round-history.sheet-disclosure__body { margin-top: 0.4rem; }
