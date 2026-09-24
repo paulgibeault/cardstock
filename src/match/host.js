@@ -21,7 +21,7 @@
 // rather than something the table does to a seat.
 
 import { validateMove, applyMove, enumerateLegalMoves } from '../engine/movePipeline.js';
-import { makeCtx } from '../engine/context.js';
+import { actingSeats, announcementsFor } from '../engine/context.js';
 import { viewFor, eventsFor } from '../engine/view.js';
 import { baseId } from '../engine/selectors.js';
 import {
@@ -291,18 +291,6 @@ export function createTableHost({
       sent.add(`${owner.deviceId}:${seat}`);
       sendViewTo(seat, owner.deviceId, { events });
     }
-  }
-
-  function actingSeats(state) {
-    const template = state.pack.template;
-    if (state.gameOver) return [];
-    return template.actingSeats ? template.actingSeats(makeCtx(state)) : [state.turn.seat];
-  }
-
-  function announcementsFor(state, seat) {
-    const template = state.pack.template;
-    if (!template.enumerateAnnouncements) return [];
-    return template.enumerateAnnouncements(makeCtx(state), seat) || [];
   }
 
   /* ---------------------------------------------------------------- *
