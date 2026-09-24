@@ -29,7 +29,8 @@ import { TEMPLATE_INFO } from "../src/templates/registry.js";
 import { INTERACTION_MODES } from "../src/ui/interaction.js";
 import { COUNTER_TRACK_KINDS, COUNTER_PIP_KINDS, counterPips } from "../src/ui/counterTrack.js";
 import { createState } from "../src/engine/state.js";
-import { makeCtx } from "../src/engine/context.js";
+import { makeCtx, actingSeats } from "../src/engine/context.js";
+import { applyMove, enumerateLegalMoves, legalMovesFor } from "../src/engine/movePipeline.js";
 import { loadPackFromDisk, listPackIds } from "../tools/pack-test.mjs";
 
 const REQUIRED = [
@@ -318,6 +319,80 @@ test("a pendingChoice, where one is offered, is answerable and lands a legal mov
       }
     };
     for (const bare of bares.values()) walk(bare, 0);
+  }
+});
+
+/* ------------------------------------------------------------------ *
+ * Enumeration answers for acting seats only (#205)
+ * ------------------------------------------------------------------ */
+
+// Asked of the ENGINE's enumerators, not the templates' — the gate is one line
+// in src/engine/movePipeline.js and the whole point is that a template cannot
+// get it wrong. Three of the six wrote the guard themselves and three did not.
+test("no seat that is not acting is offered a single move", async () => {
+  let nonActingSeatsSeen = 0;
+  for (const packId of listPackIds()) {
+    const pack = await loadPackFromDisk(packId);
+    const state = createState({ pack, seats: 4, seed: `offturn:${packId}` });
+    pack.template.setup(makeCtx(state));
+
+    // TWICE, BECAUSE A DEAL IS NOT EVERY PHASE. Milestones' enumerator filters
+    // the draw phase through its own validateMove (which refuses off-turn) and
+    // then stops filtering: the moves it hands a bystander appear only once
+    // somebody has drawn. One applied move is enough to reach that phase, and
+    // enough to leave the pass/bid phases the other packs open with.
+    for (const when of ["at the deal", "one move in"]) {
+      const acting = actingSeats(state);
+      assert.ok(acting.length, `${packId} ${when}: nobody acts, so this pack proves nothing`);
+      for (const seat of acting) {
+        assert.ok(legalMovesFor(state, seat).length,
+          `${packId} ${when}: seat ${seat} is acting and has nothing to do`);
+      }
+
+      for (let seat = 0; seat < 4; seat += 1) {
+        if (acting.includes(seat)) continue;
+        nonActingSeatsSeen += 1;
+        assert.deepStrictEqual(enumerateLegalMoves(state, seat), [],
+          `${packId} ${when}: seat ${seat} is not acting (acting: ${JSON.stringify(acting)}) `
+          + "yet enumerateLegalMoves offered it moves its own validateMove refuses on 'turn'");
+        assert.deepStrictEqual(legalMovesFor(state, seat), [],
+          `${packId} ${when}: seat ${seat} is not acting yet legalMovesFor offered it moves`);
+      }
+
+      if (when === "at the deal") applyMove(state, enumerateLegalMoves(state, acting[0])[0]);
+    }
+
+    // A FINISHED MATCH ACTS ON NOBODY, so it enumerates for nobody either.
+    state.gameOver = true;
+    for (let seat = 0; seat < 4; seat += 1) {
+      assert.deepStrictEqual(enumerateLegalMoves(state, seat), [],
+        `${packId}: seat ${seat} was offered moves after the match ended`);
+    }
+  }
+  assert.ok(nonActingSeatsSeen > 0, "no pack had an off-turn seat, so this test asserted nothing");
+});
+
+// The gate reads `actingSeats`, NOT `turn.seat`. Written down separately because
+// the cheap wrong version of it — "the turn seat and nobody else" — passes the
+// test above and silently empties every simultaneous-commit phase: nobody but
+// the dealer could discard to the crib, and three of four hearts seats could not
+// choose a pass.
+test("a simultaneous-commit phase enumerates for every seat that has not committed", async () => {
+  for (const packId of ["cribbage", "hearts"]) {
+    const pack = await loadPackFromDisk(packId);
+    const state = createState({ pack, seats: 4, seed: `simul:${packId}` });
+    pack.template.setup(makeCtx(state));
+
+    const acting = actingSeats(state);
+    assert.ok(acting.length > 1,
+      `${packId}: expected more than one acting seat in its ${state.turn.phase} phase, got `
+      + JSON.stringify(acting));
+    const offTurn = acting.filter((seat) => seat !== state.turn.seat);
+    assert.ok(offTurn.length, `${packId}: every acting seat is the turn seat, so this proves nothing`);
+    for (const seat of offTurn) {
+      assert.ok(enumerateLegalMoves(state, seat).length,
+        `${packId}: seat ${seat} may act (turn.seat is ${state.turn.seat}) but was offered nothing`);
+    }
   }
 });
 
