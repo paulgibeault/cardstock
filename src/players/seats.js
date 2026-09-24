@@ -9,7 +9,7 @@
 // settled on — or a bot, or nobody yet. `localIndex` tells two players sharing
 // one device apart (hotseat) and is 0 for every remote seat. It exists NOW,
 // before anything reads it, because the alternative is a save-format break the
-// day hotseat ships: MULTIPLAYER_PLAN.md §4 lists it among the pre-commitments
+// day hotseat ships: docs/plans/MULTIPLAYER_PLAN.md §4 lists it among the pre-commitments
 // this package owes the protocol.
 //
 // DEVICE IDS ARE OPAQUE HERE, AND THE LOCAL ONE IS A PARAMETER. This module

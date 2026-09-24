@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // THREE REAL LAUNCHERS, THREE REAL BROWSER PROFILES, ONE REAL RTCPeerConnection.
 //
-// This is WP-C6's Definition of Done (MULTIPLAYER_PLAN.md §11) and the tier
+// This is WP-C6's Definition of Done (docs/plans/MULTIPLAYER_PLAN.md §11) and the tier
 // above tests/protocol.test.js. That file drives the same modules over an
 // in-memory star and is where the nasty cases live — a spoofed authority frame,
 // a dropped view, a proposal from the wrong seat — because every one of them is

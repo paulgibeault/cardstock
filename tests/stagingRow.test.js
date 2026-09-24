@@ -9,7 +9,7 @@
  * There is no DOM in `npm test` (src/ui/table.js touches document at import),
  * so this is a MARKUP AND STYLESHEET GATE. It pins the four things that make
  * the row safe rather than the numbers it produces — the geometry is measured
- * with playwright, and is in IMPLEMENTATION_NOTES:
+ * with playwright, and is in docs/notes/IMPLEMENTATION_NOTES:
  *
  *   1. the wrapper really wraps both halves, or there is no row to share;
  *   2. its resting state is `display: contents`, which is what makes the felt

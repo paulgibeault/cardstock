@@ -16,7 +16,7 @@
 // This replaced a hand-rolled mulberry32 with a custom seed hash. The two
 // produce different streams from the same string seed, so the swap happened
 // before any seed was persisted — afterwards it would have been a save-compat
-// break (ARCADE_COMPLIANCE.md finding D).
+// break (docs/plans/ARCADE_COMPLIANCE.md finding D).
 import { makeRng } from './arcade-rng.js';
 
 export function createRng(seed) {
