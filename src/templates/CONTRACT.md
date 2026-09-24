@@ -791,7 +791,7 @@ It cost **six files, not two** — and one of them is a genuine platform edit:
 | `src/templates/index.js` | an import and a map entry | **the contract forgot this one.** It is the module that turns an id into a template; nothing can load without it, and it is not `registry.js`. Two entries, not one. |
 | `src/ui/interaction.js` | one new mode in `INTERACTION_MODES`, its `buildUiModel` and `dropCandidates` branches, and `selectionLegality` | **a real platform edit, and the contract already predicted it**: "the vocabulary is the platform's; which phase means which mode is the template's". A genre with a genuinely new input shape has to add one. A genre reusing an existing shape adds nothing. |
 | `schema/manifest.schema.json` | the `template` enum, a `$defs.rules-climbing`, a fifth `allOf` clause | mechanical, and the schema is normative, so it is not optional |
-| `src/templates/melds.js` | `groupByRank` and `rankWindow` lifted out and shared | a choice, not a cost — the alternative was a second definition of "consecutive" |
+| `src/templates/melds.js` | `groupByRank` and `rankWindow` lifted out and shared | a choice, not a cost — the alternative was a second definition of "consecutive". Cribbage later made it a fourth genre asking, so **#211 moved both into `src/engine/cards.js`** beside `rankLadderOf`; the template → template import this row describes is gone. |
 
 And what it did **not** cost is the part that says the contract is mostly
 working. **`src/ui/table.js` — three thousand lines, and the file this document

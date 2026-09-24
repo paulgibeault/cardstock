@@ -3,7 +3,7 @@
 // constraints relax automatically when they'd leave the actor with zero legal cards
 // (design doc §5).
 
-import { rankLadderOf, rankOrder } from '../engine/cards.js';
+import { distinctValues, rankLadderOf, rankOrder } from '../engine/cards.js';
 import { selectorMatches } from '../engine/selectors.js';
 import { cardValue, handValue } from '../engine/scoring.js';
 import { sidesOf, sideOfSeat, arePartners } from '../engine/sides.js';
@@ -423,10 +423,13 @@ function perilOf(ctx) {
   const scoring = ctx.pack.scoring || {};
   const ladder = rankLadderOf(ctx.pack);
   const peril = new Map();
-  // The deck's suits, gathered on the same sweep: the bidding heuristic asks
-  // "which suits am I VOID in", and the answer is a fact about the deck that a
-  // per-call sweep would recompute once per candidate bid.
-  const suits = new Set();
+  // The deck's suits: the bidding heuristic asks "which suits am I VOID in",
+  // and the answer is a fact about the deck that a per-call sweep would
+  // recompute once per candidate bid. `distinctValues` is the engine's answer
+  // to "every value of one attribute this deck holds, in deck order" (#211);
+  // this used to gather them by hand on the sweep below, which is the same
+  // walk written twice.
+  const suits = new Set(distinctValues(ctx.pack.cardsById, 'suit'));
   let topRank = 0;
   // And the priciest and the cheapest card in the deck, on the same sweep.
   // `botHeuristic` needs both to know how wide its own ranking is — see
@@ -444,7 +447,6 @@ function perilOf(ctx) {
     const value = cardValue(card, scoring);
     if (value > topValue) topValue = value;
     if (value < lowValue) lowValue = value;
-    if (card.suit !== undefined && card.suit !== null) suits.add(card.suit);
     if (!card.suit || value <= 0) continue;
     if (rank > (peril.get(card.suit) ?? -Infinity)) peril.set(card.suit, rank);
   }

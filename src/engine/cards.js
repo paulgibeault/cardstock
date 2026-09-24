@@ -359,6 +359,55 @@ export function cardOrder(card, ladder) {
   return rank * suits.length + (suit === undefined ? OFF_LADDER : suit);
 }
 
+/* ------------------------------------------------------------------ *
+ * The two shapes every template that reads the ladder asks for
+ * ------------------------------------------------------------------ *
+ *
+ * A SET is "these cards share a rank" and a RUN is "these ladder positions are
+ * an unbroken window", and neither sentence belongs to any one genre: contract
+ * rummy melds them, climbing plays them, Pinochle declares them, cribbage
+ * scores them. They lived at the top of src/templates/melds.js while melding
+ * was the only caller and climbing reached across to them there — a
+ * template → template import that src/templates/CONTRACT.md flags. By the
+ * extension policy (CARD_PLATFORM_DESIGN.md §13) a thing several templates need
+ * is an engine primitive, so they sit here beside `rankLadderOf`, the #101
+ * primitive they are both stated over. The alternative was four definitions of
+ * "consecutive" that could disagree.
+ *
+ * Both are ctx-free and pack-free on purpose. `rankWindow` takes LADDER
+ * POSITIONS rather than cards, which is what lets src/templates/cribbage-score.js
+ * — a pure scoring table that is handed an `orderOf` and never sees a pack —
+ * ask the same question the melding templates ask.
+ */
+
+/** The cards of `cards` grouped by rank, in first-seen order. */
+export function groupByRank(cards) {
+  const groups = new Map();
+  for (const card of cards) {
+    const rank = card?.rank;
+    if (!groups.has(rank)) groups.set(rank, []);
+    groups.get(rank).push(card);
+  }
+  return groups;
+}
+
+/**
+ * Are these ladder positions an unbroken window with no repeats?
+ *
+ * @returns { ok: true, low, high } | { ok: false, why: 'repeat' | 'gap' }
+ *          — the two failures are separated because they are different
+ *          sentences to a player: a run that repeats a rank and a run with a
+ *          hole in it are not the same mistake.
+ */
+export function rankWindow(indices) {
+  if (!indices.length) return { ok: false, why: 'gap' };
+  if (new Set(indices).size !== indices.length) return { ok: false, why: 'repeat' };
+  const low = Math.min(...indices);
+  const high = Math.max(...indices);
+  if (high - low + 1 !== indices.length) return { ok: false, why: 'gap' };
+  return { ok: true, low, high };
+}
+
 export function applyCardTags(cards, cardTagsMap) {
   if (!cardTagsMap) return cards;
   return cards.map((card) => {

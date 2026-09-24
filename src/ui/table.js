@@ -616,9 +616,10 @@ const IDLE_NUDGE_MS = 10000;
  *     which makes it exactly the "ambient effect" §5 says to gate off. It is
  *     re-evaluated on every settings change for free, because main.js
  *     re-renders on onSettingsChange.
- *   - Frozen while hidden. schedule() is Arcade.session.setTimeout when the
- *     SDK is there (src/ui/clock.js), so a suspended frame does not wake up
- *     owing itself a nudge, and stopSession cancels whatever is in flight.
+ *   - Frozen while hidden. schedule() is the session clock when the SDK is
+ *     there (src/ui/clock.js onto src/match/clock.js), so a suspended frame
+ *     does not wake up owing itself a nudge, and stopSession cancels whatever
+ *     is in flight.
  */
 function scheduleIdleNudge(humanActs) {
   if (!session) return;
@@ -3722,8 +3723,8 @@ function animateLayDown(state, move, from, duration) {
     const to = liveRect(landing) || fallback;
     if (!card || !to) return;
     landOn(landing, new Promise((resolve) => {
-      // A PLAIN setTimeout, NOT Arcade.session.setTimeout, which is what the
-      // rest of this file staggers with. The session clock stops with a
+      // A PLAIN setTimeout, NOT `schedule` — which is the session clock, and
+      // what the rest of this file staggers with. The session clock stops with a
       // suspended frame, and a stagger that never fires here is not a missing
       // flight — it is a meld card left at opacity 0 for the rest of the round.
       // Same rule as animationSettled's backstop: the honest timer is the one
@@ -4061,7 +4062,7 @@ function offerFinalLook(state, move, ending, { ended = null, now = false } = {})
   // this beat waits out landed three taps ago.
   if (now) { ask(); return; }
   const beat = Math.max(700, currentFlightMs() + 280);
-  Arcade.session.setTimeout(ask, beat);
+  schedule(ask, beat);
 }
 
 /* ------------------------------------------------------------------ *
@@ -4477,7 +4478,7 @@ function runTrickReveal(poseState, move, from, reveal, resume, announce) {
   // HELD ON THE SESSION (#150), not merely epoch-checked. The epoch guard stops
   // a timer that has already fired from doing damage; a handle is what lets
   // `stopSession` stop it firing at all — and now also what a tap cancels.
-  session.revealTimer = Arcade.session.setTimeout(() => {
+  session.revealTimer = schedule(() => {
     if (myEpoch !== epoch || !session) return;
     session.revealTimer = null;
     release();
@@ -4852,7 +4853,7 @@ function armAutoAdvance(ms) {
   if (!(ms > 0)) return;
   const myEpoch = epoch;
   if (session.advanceTimer) session.advanceTimer.cancel();
-  session.advanceTimer = Arcade.session.setTimeout(() => {
+  session.advanceTimer = schedule(() => {
     if (myEpoch !== epoch || !session) return;
     session.advanceTimer = null;
     dismissRoundSummary();
@@ -4884,7 +4885,7 @@ function cancelRoundBeat() {
 /** A beat timer that cancels with the session rather than only checking its epoch. */
 function beatTimer(fn, at) {
   const myEpoch = epoch;
-  const handle = Arcade.session.setTimeout(() => {
+  const handle = schedule(() => {
     if (myEpoch !== epoch || !session) return;
     session.beatTimers = session.beatTimers.filter((t) => t !== handle);
     fn();

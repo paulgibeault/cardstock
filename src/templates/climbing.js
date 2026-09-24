@@ -32,9 +32,8 @@
 // `runUpgrade` and `laterLead: "lowest"` are the two adjustments Thirteen
 // asked for after the round-6 playtest.
 
-import { cardOrder, rankIndexOf, rankLadderOf } from '../engine/cards.js';
+import { cardOrder, groupByRank, rankIndexOf, rankLadderOf, rankWindow } from '../engine/cards.js';
 import { selectorMatches } from '../engine/selectors.js';
-import { groupByRank, rankWindow } from './melds.js';
 
 /* ------------------------------------------------------------------ *
  * What a greedy bot thinks a move is worth (see `botHeuristic`)
@@ -1043,8 +1042,13 @@ function takeFrom(entry, k, field = null) {
 
 /**
  * Maximal windows of CONSECUTIVE ladder positions holding at least `each`
- * cards apiece — the same walk `candidateSets` does, over counts rather than
+ * cards apiece — the same question `classify` asks, over counts rather than
  * over card ids, because a hand being measured does not need the ids back.
+ *
+ * "Consecutive" is `rankWindow` (src/engine/cards.js) and not a hand-written
+ * `at === last + 1` beside it: each group is grown for exactly as long as it
+ * stays a window, so a maximal group here is a run there, by construction
+ * rather than by two pieces of arithmetic agreeing.
  */
 function windows(counts, each, pick) {
   const positions = [...counts.keys()].sort((a, b) => a - b)
@@ -1052,7 +1056,7 @@ function windows(counts, each, pick) {
   const out = [];
   let group = [];
   for (const at of positions) {
-    if (group.length && at !== group[group.length - 1] + 1) {
+    if (group.length && !rankWindow([...group, at]).ok) {
       out.push(group);
       group = [];
     }

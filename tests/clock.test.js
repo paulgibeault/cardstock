@@ -153,6 +153,51 @@ test('the session clock is the SDK timer, untouched', () => {
   assert.equal(clock.kind, 'session');
 });
 
+test('a deadline on the session clock is the duration it implies', () => {
+  const calls = [];
+  globalThis.Arcade = {
+    session: {
+      setTimeout(fn, ms) { calls.push(ms); return { cancel() {} }; },
+    },
+  };
+  sessionClock().at(Date.now() + 400, () => {});
+  // Wall-clock arithmetic, not a wall clock: the delay is whatever is left of
+  // the deadline at the moment it is armed, ±the millisecond this test takes.
+  assert.equal(calls.length, 1);
+  assert.ok(calls[0] > 300 && calls[0] <= 400, `expected ~400ms, got ${calls[0]}`);
+  // A deadline already past arms a zero rather than a negative.
+  sessionClock().at(Date.now() - 5000, () => {});
+  assert.equal(calls[1], 0);
+});
+
+/**
+ * THE FALLBACK IS WHAT MAKES THE CALLERS TESTABLE (#213).
+ *
+ * It used to live in src/ui/clock.js, so `sessionClock` threw a ReferenceError
+ * with no SDK in the room and `schedule` did not — the same obligation met two
+ * ways, and which one a module got depended on which import its author picked.
+ * There is one now, and this is the half that answers under `node --test`.
+ */
+test('with no SDK in the room the session clock still answers, cancellably', async () => {
+  const had = globalThis.Arcade;
+  delete globalThis.Arcade;
+  try {
+    let fired = 0;
+    const handle = sessionClock().after(1, () => { fired += 1; });
+    assert.equal(typeof handle.cancel, 'function',
+      'the fallback must wear the same { cancel() } handle as the SDK timer, or a caller '
+      + 'that holds one has to know which clock issued it');
+    handle.cancel();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(fired, 0, 'a cancelled fallback timer still fired');
+
+    await new Promise((resolve) => { sessionClock().after(1, resolve); });
+  } finally {
+    if (had === undefined) delete globalThis.Arcade;
+    else globalThis.Arcade = had;
+  }
+});
+
 /* ------------------------------------------------------------------ *
  * The felt's clock — which of the two, asked per timer (#71)
  * ------------------------------------------------------------------ */
