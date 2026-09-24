@@ -1266,6 +1266,12 @@
           "type": "integer",
           "default": 4
         },
+        "drawExhausted": {
+          "enum": [
+            "buried-discards"
+          ],
+          "description": "What happens when a hand top-up finds the draw pile AND its recycled backlog of completed build piles both empty. 'buried-discards' shuffles every card lying under the top of a discard pile into a new draw pile, leaving each pile's top (the playable card) in place. Left out, the top-up simply comes up short, and a table whose face-up cards nothing will take is stuck: the deck is 162 cards and the deal leaves only 22 in the draw at four seats, so a table that discards faster than it completes piles drains it in a few rounds."
+        },
         "playableFrom": {
           "type": "array",
           "items": {
@@ -1282,6 +1288,12 @@
             "first-empty-stock"
           ],
           "description": "DECLARATIVE ONLY. Win detection is fixed (first empty stock); this drives the wording on the rules page."
+        },
+        "whenStuck": {
+          "enum": [
+            "shortest-stock-wins"
+          ],
+          "description": "What happens when the table is STUCK: no card outside the locked part of a stock — hands, draw, recycled backlog, stock tops, discard piles (their tops only, unless `drawExhausted` recycles the rest) — is a wild or a rank any build pile is waiting for, so no move anybody will ever have can advance a pile. 'shortest-stock-wins' ends the round there, the race standing where it stopped, and the seat with the fewest cards in stock wins; a tie goes to the seat nearest the turn. Left out, a stuck table passes forever: one four-seat game in thirty reached that at the move cap, and one at a real table was abandoned."
         }
       }
     },
@@ -1417,7 +1429,7 @@
             "trick-winner",
             "lowest"
           ],
-          "description": "Who leads hand TWO onward. 'trick-winner' is the seat that went out, free to lead anything. 'lowest' declines that and re-applies `firstLead` to every deal, so the holder of the lowest card in play opens every hand and owes that card every time (THIRTEEN_RULES.md D-3). Within a hand the trick always clears to the last player to have played, whatever this says — that is the genre rather than a declaration, so it has no key."
+          "description": "Who leads hand TWO onward. 'trick-winner' is the seat that went out, free to lead anything. 'lowest' declines that and re-applies `firstLead` to every deal, so the holder of the lowest card in play opens every hand — and, under `firstLead.mustInclude`, owes that card every time (THIRTEEN_RULES.md D-3). Within a hand the trick always clears to the last player to have played, whatever this says — that is the genre rather than a declaration, so it has no key."
         },
         "direction": {
           "enum": [

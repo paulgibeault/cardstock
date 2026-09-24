@@ -155,10 +155,11 @@ whoever still has cards and has not passed.
 
 ### 1.6 The first lead, and later ones
 
-* **Every hand:** the holder of the **lowest card in play** leads, and the
-  combination they lead **must contain it** (see D-2). It may be the bare
-  single, or that card inside a pair, a run, anything legal. At a full table
-  the lowest card in play is the 3♠ and this is the rule everybody states;
+* **Every hand:** the holder of the **lowest card in play** leads, free to
+  lead anything legal (see D-2 — the traditional "and the lead must contain
+  it" is the variant `lead-must-include`, off by default; switched on, the
+  card may be the bare single, or inside a pair, a run, anything legal). At a
+  full table the lowest card in play is the 3♠ and this is the rule everybody states;
   short-handed the deal leaves a third or a half of the deck out of play (D-11)
   and the 3♠ is frequently not among the cards dealt at all, so the rule has to
   be written as what it means rather than as the card it usually names. The
@@ -213,7 +214,7 @@ intent without offering a switch that changes nothing.
 | # | Question | Default here | Why |
 |---|---|---|---|
 | **D-1** | Turn direction | **counter-clockwise** | The traditional Vietnamese direction. Cosmetic for solo-vs-bots, but it is a real fact about the game and the seat ring should honour it. |
-| **D-2** | Must the opening lead contain the lowest card? | **yes** | Removes the whole opening decision from the hand — every hand, since D-3 — and is the near-universal rule. Worth a variant for the casual "lead anything" table. The card is named as `"lowest"` rather than as `spades-3`, because at 2 and 3 seats (D-11) the 3♠ is often not dealt — half the deck is never dealt at two seats and a quarter of it at three, and the card is out of play in 50.7% and 25.8% of deals over 400 seeded deals each — and a nominated card that is out of play names no seat, so the lead fell to the rotating opening seat, which on hand one is the human. |
+| **D-2** | Must the opening lead contain the lowest card? | **no, shipped as a variant that is OFF** | Reversed after play. The card still names the SEAT (`firstLead.card: "lowest"`), and the traditional "and you have to play it" is the variant `lead-must-include`, which patches `rules.firstLead.mustInclude` to `true`. It went because, every hand since D-3, an opening turn with exactly one shape to it read as the deal playing the first card rather than the player — and a free lead keeps the 3♠ as a card worth holding rather than a card you are made to spend. The card is named as `"lowest"` rather than as `spades-3`, because at 2 and 3 seats (D-11) the 3♠ is often not dealt — half the deck is never dealt at two seats and a quarter of it at three, and the card is out of play in 50.7% and 25.8% of deals over 400 seeded deals each — and a nominated card that is out of play names no seat, so the lead fell to the rotating opening seat, which on hand one is the human. |
 | **D-3** | Who leads later hands | **the holder of the lowest card in play, every hand** | Reversed from this document's first draft, which took the previous hand's winner on the grounds that the alternative "rewards the deal rather than the play". Both are played; what settled it is that one rule for every hand is one rule to learn, and the opening constraint (D-2) is the most characteristic thing about the game's first turn — spending it once a match and never again made it feel like a quirk of the deal rather than the game. `rules.laterLead: "lowest"`, and the old rule ships as the variant `winner-leads`. Note the two halves are separate: the TRICK still clears to the last player to have played (§1.6), which is the genre and has no key. |
 | **D-4** | Can you win by playing a 2? | **yes** | The "no ending on a pig" rule is a real house rule and a good variant, but it turns a won position into a trap in a way that needs the UI to warn about it. |
 | **D-5** | Pair/triple comparison | **by highest card, suit included** | `9♥9♦` beats `9♣9♠`. Follows from the total order (§1.2); the alternative (rank only, ties impossible in practice for triples) is a special case nobody needs. |
@@ -404,8 +405,9 @@ The ones that would catch a wrong build, in the order they are worth writing:
 4. Three consecutive pairs chops a single 2 and does **not** chop a pair of 2s.
 5. Four of a kind chops the three consecutive pairs that just chopped a pig.
 6. A seat that passed is offered no moves for the rest of the trick.
-7. The opening lead of a hand is refused unless it contains the lowest card
-   in play — every hand, not only the first.
+7. Under `lead-must-include`, the opening lead of a hand is refused unless it
+   contains the lowest card in play — every hand, not only the first. On the
+   default table the same seat leads and any legal combination is accepted.
 8. A trick clears and the last player to have played leads next.
 9. A run all of one suit upgrades the trick, a mixed run no longer answers it,
    and the upgrade dies with the trick.
