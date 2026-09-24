@@ -27,7 +27,13 @@ import { loadPackFromDisk } from "../tools/pack-test.mjs";
 import { suggestMove, SUGGESTION_MAX_CHARS } from "../src/ui/hint.js";
 import { SKILL_LEVELS } from "../src/ui/difficulty.js";
 
-const TABLES = [["crazy-eights", 3], ["wildfire", 3], ["hearts", 4], ["milestones", 3], ["stockpile", 3]];
+// Pinochle and Cribbage joined the list in #206. Both fit this harness as they
+// are: its walk does not stop at the round boundary, so a short cribbage hand
+// is no obstacle, and every suggestion either pack can produce — a bid, a meld
+// declaration, a throw into the crib, a card onto the count — has to be legal,
+// has to name its level and has to fit the action bar like any other.
+const TABLES = [["crazy-eights", 3], ["wildfire", 3], ["hearts", 4], ["milestones", 3], ["stockpile", 3],
+  ["pinochle", 4], ["cribbage", 2]];
 
 async function dealt(packId, seats, seed) {
   const pack = await loadPackFromDisk(packId);

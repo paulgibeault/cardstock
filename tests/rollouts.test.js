@@ -35,10 +35,33 @@ import { visibleCardIds } from "../src/engine/view.js";
 import { createRng } from "../src/engine/rng.js";
 import { loadPackFromDisk } from "../tools/pack-test.mjs";
 
-/** Every pack, at the seat count its lobby tile suggests. */
+/**
+ * Every pack this file's probes can be asked of, at the seat count its lobby
+ * tile suggests.
+ *
+ * CRIBBAGE IS DELIBERATELY ABSENT, and it is the harness that excludes it, not
+ * an oversight (#206 added it, measured it, and took it back out):
+ *
+ *   * The fairness probe trades the hands of two seats that are neither the
+ *     deciding seat nor each other. Cribbage is `min: 2, max: 2`, so at every
+ *     position there is exactly ONE other seat and `tradeTwoHiddenHands`
+ *     returns null every time — 0 positions probed, and a bar of 8 that no
+ *     deal could ever clear.
+ *   * The units walk stops at `roundOver`, and a cribbage round is the six-card
+ *     deal, two throws, the play and the show — ten bot decisions, against a
+ *     bar of 20.
+ *
+ * Neither is a property of cribbage's rollouts; both are the shape of the
+ * walk. The rollout layer over cribbage is instead covered where the shape does
+ * fit — `tests/weights.test.js` ranks it at `hard` under a seeded budget, and
+ * `tests/lookahead.test.js` holds its evaluator.
+ */
 const TABLES = [
   ["crazy-eights", 4], ["milestones", 4], ["hearts", 4],
   ["wildfire", 4], ["stockpile", 4], ["thirteen", 4],
+  // Pinochle shares trick-taking with Hearts but is the meld-and-bid half of
+  // it, so its rollouts end on a different currency (#206).
+  ["pinochle", 4],
 ];
 
 async function dealt(packId, seats, seed) {
