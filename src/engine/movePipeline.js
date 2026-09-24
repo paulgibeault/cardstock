@@ -3,7 +3,7 @@
 // (logic.js) is not wired yet — none of the five launch packs need it; see
 // IMPLEMENTATION_NOTES.md.
 
-import { makeCtx } from './context.js';
+import { makeCtx, actingSeats } from './context.js';
 import { emitEvent, clearAllZones } from './state.js';
 import { evaluateGameOver, runRoundScore } from './scoring.js';
 
@@ -118,10 +118,32 @@ export function applyAnnouncementUnlogged(state, announcement) {
   template.applyAnnouncement(ctx, announcement);
 }
 
+/**
+ * THE OFF-TURN GATE, WRITTEN ONCE. A seat that is not acting has nothing to
+ * enumerate: every move a template could list for it is one its own
+ * `validateMove` refuses on `'turn'`. Three of the six templates wrote that
+ * guard themselves and three did not, so a joiner at a Wildfire / Stockpile /
+ * Milestones table was handed a full list of moves it would be rejected for,
+ * and everything that trusts the answer — the view's per-seat `moves`, hint
+ * offers, the felt's tap targets, a joiner's bot — was reading a lie.
+ *
+ * It lives HERE rather than in the templates because it is the engine's rule,
+ * not a genre's: `actingSeats` (src/engine/context.js) is the one place that
+ * knows who may act, including the simultaneous-commit phases (cribbage's
+ * discard, trick-taking's bidding, climbing's answerers) where more than one
+ * seat may, and including a finished match, which acts on nobody.
+ *
+ * Both exported enumerators go through it, so no caller can pick the ungated
+ * one by accident.
+ */
+function enumerationFor(state, seat) {
+  if (!actingSeats(state).includes(seat)) return [];
+  return state.pack.template.enumerateLegalMoves(makeCtx(state), seat);
+}
+
 /** The exact answer, computed every time. Always correct; never cached. */
 export function enumerateLegalMoves(state, seat) {
-  const ctx = makeCtx(state);
-  return state.pack.template.enumerateLegalMoves(ctx, seat);
+  return enumerationFor(state, seat);
 }
 
 /**
@@ -159,7 +181,7 @@ export function legalMovesFor(state, seat) {
   const key = `${state.log.length}:${state.roundNumber}:${state.turn.seat}:${state.turn.phase}:${seat}`;
   const cached = enumerationMemo.get(state);
   if (cached && cached.key === key) return cached.moves;
-  const moves = state.pack.template.enumerateLegalMoves(makeCtx(state), seat);
+  const moves = enumerationFor(state, seat);
   enumerationMemo.set(state, { key, moves });
   return moves;
 }

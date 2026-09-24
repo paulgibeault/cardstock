@@ -36,6 +36,16 @@ a degradation.
 | `enumerateLegalMoves` | `(ctx, seat) -> move[]` | The single source of what anybody may do. Bots pick from it; every tap target the table lights up is derived from it. **A move it omits must be one `validateMove` refuses**, or a bot will be offered a move that throws. |
 | `isRoundOver` | `(ctx) -> boolean` | Usually `ctx.state.roundEnded` (see *Ending a round*). |
 
+> **A seat that is not acting enumerates nothing.** The list is what the seat
+> may do *now*, so for any seat outside `actingSeats` (below) — and for every
+> seat once the match is over — the answer is `[]`. You do not have to write
+> that guard: `src/engine/movePipeline.js` asks `actingSeats` before it calls
+> you, and both engine enumerators (`enumerateLegalMoves`, `legalMovesFor`) go
+> through it, so a template that lists off-turn moves anyway is never seen doing
+> it. Templates that already check `seat === ctx.turn.seat` are welcome to keep
+> the check; new ones need not. Callers may rely on the rule: `view.moves`, hint
+> offers and the felt's tap targets all read it as "this seat may act".
+
 ## Optional — every call site is guarded
 
 Absent means "the platform's default", which is always a real behaviour rather
