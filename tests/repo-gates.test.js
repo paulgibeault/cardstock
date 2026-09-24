@@ -359,6 +359,37 @@ test("no frame leaves src/match without going through its stamping helper", () =
   }
 });
 
+// THE ENGINE IS THE BOTTOM LAYER, and a layer is only a layer while something
+// checks. `src/engine` is the rules machine: state, moves, scoring, the pack
+// loader. `src/templates` is the per-genre policy that sits ON it and
+// `src/ui` is the felt that sits on both, so an import in this direction is a
+// cycle waiting to close — which is exactly what it was. #210 found two:
+// dailyLadder.js reaching for ../templates/melds.js (a one-pack feature filed
+// in the engine; it is src/templates/contract-rummy-daily.js now) and
+// packLoader.js reaching for ../templates/index.js's `getTemplate` (now
+// injected, and bound in src/templates/loadPack.js).
+//
+// Comment lines are skipped: the modules here discuss the boundary at length,
+// and a gate that fires on prose about itself teaches people to stop writing
+// the prose.
+test("src/engine imports neither src/templates nor src/ui", () => {
+  const offenders = [];
+  for (const f of tracked.filter((f) => /^src\/engine\/[^/]+\.(js|mjs)$/.test(f))) {
+    const lines = fs.readFileSync(path.join(ROOT, f), "utf8").split("\n");
+    lines.forEach((line, i) => {
+      if (/^\s*(\/\/|\*|\/\*)/.test(line)) return;
+      // Static `from '...'` and dynamic `import('...')` alike.
+      for (const m of line.matchAll(/(?:from|import)\s*\(?\s*['"]([^'"]+)['"]/g)) {
+        if (/^\.\.\/(templates|ui)\//.test(m[1])) offenders.push(`${f}:${i + 1} imports ${m[1]}`);
+      }
+    });
+  }
+  assert.deepStrictEqual(offenders, [],
+    "src/engine must not import src/templates or src/ui — the engine is the bottom layer. "
+    + "Inject what the engine needs (packLoader's `resolveTemplate`) or move the module "
+    + "out of the engine (src/templates/contract-rummy-daily.js).");
+});
+
 /* ------------------------------------------------------------------ *
  * THE STYLESHEET (#214)
  * ------------------------------------------------------------------ *

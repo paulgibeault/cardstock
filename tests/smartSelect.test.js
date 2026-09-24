@@ -14,7 +14,7 @@ import { test } from "node:test";
 import assert from "node:assert";
 import fs from "node:fs";
 import path from "node:path";
-import { loadPack } from "../src/engine/packLoader.js";
+import { loadPack } from "../src/templates/loadPack.js";
 import { createState, moveCards } from "../src/engine/state.js";
 import { makeCtx } from "../src/engine/context.js";
 import { validateMove } from "../src/engine/movePipeline.js";

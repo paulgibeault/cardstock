@@ -14,13 +14,17 @@
 // on the same date therefore see the same ten rungs and the same hands, and a
 // save written this morning still replays this evening.
 //
-// WHY IT IMPORTS ../templates/melds.js. The grammar a generated rung is written
-// in has to be the grammar the table enforces, or the generator is free to emit
-// a contract no hand can satisfy. `parseItem`, `rankDomain` and `isMeldable`
-// are therefore the template's own, not a second copy that could drift;
-// src/engine/packLoader.js already reaches into src/templates for
-// `getTemplate`, so the direction is established. Nothing in src/templates
-// imports this file, so there is no cycle.
+// WHY IT LIVES IN src/templates. The grammar a generated rung is written in has
+// to be the grammar the table enforces, or the generator is free to emit a
+// contract no hand can satisfy. `parseItem`, `rankDomain` and `isMeldable`
+// are therefore melds.js's own, not a second copy that could
+// drift — and a module that can only be pointed at a pack with
+// `rules.contracts` is a contract-rummy feature, not an engine one. It sat in
+// src/engine until #210 moved it; the engine is the bottom layer and imports
+// neither templates nor ui, which tests/repo-gates.test.js now gates.
+//
+// The calendar half of the daily — what a day is called, and the seed string
+// that name becomes — is a platform concern and lives in src/arcade/daily.js.
 //
 // FEASIBILITY IS PROVEN, NOT ASSUMED. Every rung this module returns has had a
 // concrete lay-down found for it in the pack's actual deck (`findDeckLayDown`),
@@ -29,9 +33,10 @@
 // lay-down one step further and pushes it through `resolveMeld` — the same door
 // a human's cards go through.
 
-import { makeRng, dailyDateStr } from './arcade-rng.js';
-import { rankLadderOf, rankIndexOf, isWild } from './cards.js';
-import { isMeldable, rankDomain, parseItem } from '../templates/melds.js';
+import { makeRng, dailyDateStr } from '../engine/arcade-rng.js';
+import { rankLadderOf, rankIndexOf, isWild } from '../engine/cards.js';
+import { isDailyDate, dailySeedFor } from '../arcade/daily.js';
+import { isMeldable, rankDomain, parseItem } from './melds.js';
 
 /** How many rungs a generated ladder has — the shipped ladder's count. */
 export const DAILY_RUNGS = 10;
@@ -84,47 +89,6 @@ const TOTAL_CEILING = 9;
  * a day the eight wilds stop being a substitute for having the cards.
  */
 const TWO_NATURALS_ODDS = 0.25;
-
-/* ------------------------------------------------------------------ *
- * The seed
- * ------------------------------------------------------------------ */
-
-/** A YYYY-MM-DD string, or null. Structural: this reaches a storage key. */
-export function isDailyDate(value) {
-  return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value);
-}
-
-/**
- * The day's seed: `<packId>|<YYYY-MM-DD>`, on the player's own calendar.
- *
- * DEVICE-LOCAL, which is the platform rule (`dailyDateStr` says why): a daily
- * rolls at the player's midnight, not at UTC's. It seeds the ladder AND the
- * deal, so "the same puzzle everywhere" is one string rather than two
- * agreements.
- *
- * @param date a Date, a YYYY-MM-DD string, or nothing for today.
- */
-export function dailySeedFor(packId, date) {
-  const day = isDailyDate(date) ? date : dailyDateStr(date);
-  return `${packId}|${day}`;
-}
-
-/** The calendar day a `dailySeedFor` string names, or null for anything else. */
-export function dateOfDailySeed(seed) {
-  if (typeof seed !== 'string') return null;
-  const day = seed.slice(seed.indexOf('|') + 1);
-  return isDailyDate(day) ? day : null;
-}
-
-/** The calendar day before `dateStr`. Date-only arithmetic, so UTC is safe here. */
-export function previousDate(dateStr) {
-  if (!isDailyDate(dateStr)) return null;
-  const [y, m, d] = dateStr.split('-').map(Number);
-  const at = new Date(Date.UTC(y, m - 1, d));
-  at.setUTCDate(at.getUTCDate() - 1);
-  const p = (n) => (n < 10 ? '0' : '') + n;
-  return `${at.getUTCFullYear()}-${p(at.getUTCMonth() + 1)}-${p(at.getUTCDate())}`;
-}
 
 /* ------------------------------------------------------------------ *
  * What the deck can actually supply
