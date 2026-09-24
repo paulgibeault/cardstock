@@ -646,13 +646,15 @@ test("the lowest card IN PLAY leads hand one at every seat count the pack offers
       assert.strictEqual(state.turn.seat, holder,
         `${seats} seats, deal ${game}: the lead went to ${state.turn.seat}, `
         + `not to ${holder} who holds ${lowest}`);
-      assert.strictEqual(state.playerVars[holder].__mustInclude, lowest,
-        `${seats} seats, deal ${game}: the opening lead does not owe ${lowest}`);
+      // ...AND OWES NOTHING. The card names the seat; the lead itself is free
+      // by default, and the traditional "and you have to play it" is the
+      // variant `lead-must-include` (D-2).
+      assert.ok(!state.playerVars[holder].__mustInclude,
+        `${seats} seats, deal ${game}: the opening lead owes ${lowest} on the default table`);
       const spare = state.zones.cards(handAddress(holder)).filter((id) => id !== lowest);
-      assert.strictEqual(
-        validateMove(state, { actor: holder, type: "playCard", cards: [spare[0]] }).rule,
-        "first-lead",
-        `${seats} seats, deal ${game}: the opening lead was allowed without ${lowest}`);
+      assert.ok(
+        validateMove(state, { actor: holder, type: "playCard", cards: [spare[0]] }).legal,
+        `${seats} seats, deal ${game}: the opening lead was refused without ${lowest}`);
       if (![...Array(seats).keys()]
         .some((s) => state.zones.cards(handAddress(s)).includes("spades-3"))) missing[seats] += 1;
     }
@@ -952,7 +954,7 @@ test("the deal walks the table in the direction of play", async () => {
   }
 });
 
-test("the 3 of spades leads hand one, and the lowest card in play leads hand two", async () => {
+test("the 3 of spades leads hand one and the lowest card in play leads hand two — and the lead is free", async () => {
   const state = await dealt(4, "leads");
   const holder = [0, 1, 2, 3].find((s) => state.zones.cards(handAddress(s)).includes("spades-3"));
   // At a FULL table the lowest card in play is the 3♠, so the general rule and
@@ -960,6 +962,48 @@ test("the 3 of spades leads hand one, and the lowest card in play leads hand two
   assert.strictEqual(lowestInPlay(state), "spades-3",
     "a four-seat deal's lowest card in play is not the 3 of spades");
   assert.strictEqual(state.turn.seat, holder, "hand one did not open on the 3 of spades");
+
+  // THE LEAD IS FREE (D-2). The 3♠ says WHO opens; it no longer says WITH WHAT.
+  // The table asked: an opening turn with exactly one shape to it read as the
+  // deal playing the first card rather than the player. The traditional rule
+  // is the variant `lead-must-include`, asserted against the same seed below.
+  assert.ok(!state.playerVars[holder].__mustInclude,
+    "the default table puts a requirement on the seat holding the 3 of spades");
+  const other = state.zones.cards(handAddress(holder)).filter((id) => id !== "spades-3");
+  assert.ok(validateMove(state, { actor: holder, type: "playCard", cards: [other[0]] }).legal,
+    "the opening lead was refused without the 3 of spades");
+  assert.ok(validateMove(state, { actor: holder, type: "playCard", cards: ["spades-3"] }).legal);
+  assert.ok(enumerateLegalMoves(state, holder).some((m) => !m.cards.includes("spades-3")),
+    "every opening lead offered contains the 3 of spades");
+
+  for (let step = 0; step < 1000 && state.roundNumber === 1 && !state.gameOver; step++) {
+    applyMove(state, chooseBotMove(state, acting(state)[0]));
+  }
+  assert.strictEqual(state.roundNumber, 2, "the first hand never ended");
+  // AND HAND TWO OPENS THE SAME WAY (`laterLead: "lowest"`). The old rule gave
+  // the lead to whoever went out; this asserts the new one against the cards
+  // actually dealt rather than against the 3♠, because a fresh deal is a fresh
+  // deal and at four seats the lowest card in play happens to be the 3♠ again —
+  // an assertion on the card would pass in a build that had simply kept the
+  // nominated-card rule.
+  const next = lowestInPlay(state);
+  const opener = [0, 1, 2, 3].find((s) => state.zones.cards(handAddress(s)).includes(next));
+  assert.strictEqual(state.turn.seat, opener,
+    `hand two opened on ${state.turn.seat}, not on ${opener} who holds ${next}`);
+  assert.strictEqual(state.vars.leader, opener);
+  assert.ok(!state.playerVars[opener].__mustInclude,
+    "hand two's opening lead owes the lowest card in play on the default table");
+  const held = state.zones.cards(handAddress(opener)).filter((id) => id !== next);
+  assert.ok(validateMove(state, { actor: opener, type: "playCard", cards: [held[0]] }).legal,
+    "hand two's opening lead was refused without the lowest card in play");
+});
+
+test("lead-must-include: the traditional rule is one toggle away, every hand", async () => {
+  // The same seed as the default above, so the only thing that differs between
+  // the two runs is the declaration: `rules.firstLead.mustInclude`.
+  const state = await dealt(4, "leads", ["lead-must-include", "pass-stays-in"]);
+  const holder = [0, 1, 2, 3].find((s) => state.zones.cards(handAddress(s)).includes("spades-3"));
+  assert.strictEqual(state.turn.seat, holder);
   assert.strictEqual(state.playerVars[holder].__mustInclude, "spades-3",
     "the requirement is not on the seat holding the card");
 
@@ -977,17 +1021,9 @@ test("the 3 of spades leads hand one, and the lowest card in play leads hand two
     applyMove(state, chooseBotMove(state, acting(state)[0]));
   }
   assert.strictEqual(state.roundNumber, 2, "the first hand never ended");
-  // AND HAND TWO OPENS THE SAME WAY (`laterLead: "lowest"`). The old rule gave
-  // the lead to whoever went out; this asserts the new one against the cards
-  // actually dealt rather than against the 3♠, because a fresh deal is a fresh
-  // deal and at four seats the lowest card in play happens to be the 3♠ again —
-  // an assertion on the card would pass in a build that had simply kept the
-  // nominated-card rule.
   const next = lowestInPlay(state);
   const opener = [0, 1, 2, 3].find((s) => state.zones.cards(handAddress(s)).includes(next));
-  assert.strictEqual(state.turn.seat, opener,
-    `hand two opened on ${state.turn.seat}, not on ${opener} who holds ${next}`);
-  assert.strictEqual(state.vars.leader, opener);
+  assert.strictEqual(state.turn.seat, opener);
   assert.strictEqual(state.playerVars[opener].__mustInclude, next,
     "hand two's opening lead does not owe the lowest card in play");
   const held = state.zones.cards(handAddress(opener)).filter((id) => id !== next);
@@ -1177,11 +1213,11 @@ test("a pile taken is a hand of 17, and the one nobody took leaves the table", a
   assert.strictEqual(state.zones.count("discard"), 0);
 
   // And then the ordinary rule: the lowest card of the thirty-four in play
-  // leads, and owes that card (#156).
+  // leads (#156) — and, on the default table, owes nothing (D-2).
   const lowest = lowestInPlay(state);
   const holder = [0, 1].find((s) => state.zones.cards(handAddress(s)).includes(lowest));
   assert.strictEqual(state.turn.seat, holder);
-  assert.strictEqual(state.playerVars[holder].__mustInclude, lowest);
+  assert.ok(!state.playerVars[holder].__mustInclude, "the two-handed opening lead owes the lowest card");
   assert.strictEqual(interactionMode(state), "combination", "the mode never left the pick");
 });
 
@@ -1217,8 +1253,8 @@ test("the loser of a hand picks first, and the lowest card leads once the picks 
       const opener = [0, 1].find((s) => state.zones.cards(handAddress(s)).includes(lowest));
       assert.strictEqual(state.turn.seat, opener,
         `round ${round + 1} opened on ${state.turn.seat}, not on ${opener} who holds ${lowest}`);
-      assert.strictEqual(state.playerVars[opener].__mustInclude, lowest,
-        `round ${round + 1} does not owe the lowest card of the thirty-four in play`);
+      assert.ok(!state.playerVars[opener].__mustInclude,
+        `round ${round + 1} owes the lowest card of the thirty-four in play on the default table`);
     }
   }
   assert.ok(boundaries > 20, `only ${boundaries} hands finished — the sweep proved little`);

@@ -262,7 +262,7 @@
       ]
     },
     {
-      "name": "the opening lead is refused unless it contains the lowest card in play, 3 of spades or not",
+      "name": "lead-must-include: the opening lead is refused unless it contains the lowest card in play, 3 of spades or not",
       "setup": {
         "seats": 3,
         "turn": { "seat": 2, "phase": "play" },
@@ -285,7 +285,7 @@
       ]
     },
     {
-      "name": "the first lead of hand one is refused unless it contains the 3 of spades",
+      "name": "lead-must-include: the first lead of hand one is refused unless it contains the 3 of spades",
       "setup": {
         "seats": 4,
         "turn": { "seat": 0, "phase": "play" },
@@ -564,7 +564,7 @@
       ]
     },
     {
-      "name": "two-handed: the hand nobody took leaves the table, and the lowest card in play leads",
+      "name": "two-handed: the hand nobody took leaves the table, and the lowest card in play leads — free to lead anything",
       "setup": {
         "seats": 2,
         "turn": { "seat": 1, "phase": "choose" },
@@ -584,7 +584,32 @@
         { "expect": {
           "turn": { "seat": 1, "phase": "play" },
           "zones": { "hand.0": ["spades-5", "hearts-9"], "hand.1": ["clubs-4", "diamonds-K"],
-                     "offer.1": 0, "offer.2": 0, "offer.3": 0, "aside": ["spades-7", "hearts-2"] },
+                     "offer.1": 0, "offer.2": 0, "offer.3": 0, "aside": ["spades-7", "hearts-2"] } } },
+        { "move": { "actor": 1, "type": "playCard", "cards": ["diamonds-K"] }, "legal": true },
+        { "move": { "actor": 1, "type": "playCard", "cards": ["clubs-4"] }, "legal": true }
+      ]
+    },
+    {
+      "name": "lead-must-include, two-handed: the lowest card in play leads and the lead has to contain it",
+      "variants": ["lead-must-include", "pass-stays-in"],
+      "setup": {
+        "seats": 2,
+        "turn": { "seat": 1, "phase": "choose" },
+        "direction": "counterclockwise",
+        "zones": {
+          "hand.0": [],
+          "hand.1": [],
+          "offer.1": ["spades-5", "hearts-9"],
+          "offer.2": ["clubs-4", "diamonds-K"],
+          "offer.3": ["spades-7", "hearts-2"]
+        },
+        "vars": { "combo": null, "passed": [], "lastPlayer": null, "leader": 0, "trickNumber": 1, "opening": null }
+      },
+      "assert": [
+        { "apply": { "actor": 1, "type": "takeHand", "from": "offer.2" } },
+        { "apply": { "actor": 0, "type": "takeHand", "from": "offer.1" } },
+        { "expect": {
+          "turn": { "seat": 1, "phase": "play" },
           "playerVars": { "1": { "__mustInclude": "clubs-4" } } } },
         { "move": { "actor": 1, "type": "playCard", "cards": ["diamonds-K"] },
           "legal": false, "rule": "first-lead" },

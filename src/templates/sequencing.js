@@ -80,11 +80,170 @@ function rivalStockRanks(ctx, seat) {
   return ranks;
 }
 
+/**
+ * The draw pile has run dry and no completed build pile is waiting to refill
+ * it: shuffle every card lying UNDER the top of a discard pile into a new one.
+ *
+ * WHY THE DRAW RUNS DRY AT ALL. The deck is 162 cards and the deal takes 140
+ * of them at four seats — 120 into the stocks, 20 into the hands — so the draw
+ * opens with 22. Every turn ends with a discard, which takes a card OUT of
+ * circulation until the cards above it come off, and the only thing that puts
+ * cards back is a build pile completing: twelve at a time, and never while the
+ * four of them hold up to forty-four between them. So a table that discards
+ * faster than it completes piles drains the draw in a few rounds, and then a
+ * seat's turn starts with no cards to pick up. One game was abandoned exactly
+ * there: draw empty, every hand empty, and nothing on any stock top or discard
+ * top that any build pile would take.
+ *
+ * WHERE THE CARDS ARE, when that happens, is under the discard tops. They are
+ * the one pool at the table that is neither in the race (the stocks) nor
+ * playable (hands, stock tops, discard tops) nor progress (the build piles),
+ * and every one of them is face up (`visibility: 'all'`), so shuffling them
+ * back is not a leak. The TOP card of every pile stays: it is playable, and
+ * taking it would remove a move somebody could see. Declared as
+ * `rules.drawExhausted: "buried-discards"` so the manifest says it happens;
+ * a pack that leaves the key out gets the bare rule and the stall.
+ *
+ * LAZY, NOT A REACTION: it runs when a top-up comes up short rather than the
+ * moment the draw empties, so the buried cards stay where they are until
+ * somebody actually needs one — and it comes AFTER `ctx.deal`, which is what
+ * lets the `zoneEmpty:draw` reaction spend the recycled backlog first. Moved
+ * one card at a time in shuffled order because `moveCards` takes one source
+ * zone, and a pile-by-pile move would leave the new draw sorted by pile.
+ */
+function replenishDrawFromBuried(ctx) {
+  if (ctx.rules.drawExhausted !== 'buried-discards') return 0;
+  const buried = [];
+  for (let seat = 0; seat < ctx.seats; seat++) {
+    for (let n = 1; n <= ctx.rules.discardPiles; n++) {
+      const pile = `discard.${n}.${seat}`;
+      const ids = ctx.cardIdsIn(pile);
+      for (const id of ids.slice(0, -1)) buried.push({ id, pile });
+    }
+  }
+  if (!buried.length) return 0;
+  for (const { id, pile } of ctx.rng.shuffle(buried)) {
+    ctx.moveCards([id], pile, 'draw');
+    // Public, and counted: see `swept` in `evaluateState`.
+    const seat = zoneKindAndSeat(pile).seat;
+    ctx.setPlayerVar(seat, 'swept', (ctx.playerVar(seat, 'swept') ?? 0) + 1);
+  }
+  ctx.emit('recycled', { from: 'discard', to: 'draw', count: buried.length });
+  return buried.length;
+}
+
+/**
+ * The ranks the build piles are waiting for right now, as a set.
+ */
+function neededRanks(ctx) {
+  const ranks = new Set();
+  for (let n = 1; n <= ctx.rules.buildPiles; n++) {
+    const addr = `build.${n}`;
+    // An empty pile takes whatever `buildStart` says, which is the bottom of
+    // the count (and a wild); NaN would never match a card.
+    ranks.add(ctx.countIn(addr) === 0 ? ctx.rules.buildRule.from : requiredRank(ctx, addr));
+  }
+  return ranks;
+}
+
+/**
+ * Is the table STUCK — can no card that will ever be playable again land on a
+ * build pile?
+ *
+ * WHAT A STUCK TABLE IS. Every card is in one of six places: under a stock
+ * top (locked until that top plays), on a stock top, in a hand, in a discard
+ * pile, in the draw or its recycled backlog, or on a build pile. A build pile
+ * only ever advances by the one rank it is waiting for (or a wild), and
+ * nothing else on the table changes the ranks it waits for. So if no card
+ * OUTSIDE the locked parts of the stocks is a wild or a needed rank, the game
+ * cannot move: the hands and the draw only shuffle the same cards between
+ * them, and the stock tops sit where they are. That is exact, not a heuristic.
+ * A table where a playable card exists but sits in the draw is not stuck — it
+ * is somebody's next hand.
+ *
+ * WHY IT HAS TO BE ASKED. A round of Stockpile ends only on an empty stock,
+ * and a stuck table never empties one. Probed at the move cap, one four-seat
+ * game in thirty ends here: three build piles at eleven, the twelves and the
+ * wilds that would finish them all lying under stock tops, every hand full of
+ * cards that fit nowhere, and the turn passing until the harness stops it. At
+ * a real table that game was abandoned. Recycling the buried discards
+ * (`drawExhausted`) keeps cards moving but cannot conjure a rank the table
+ * does not hold.
+ *
+ * WHAT COUNTS AS CIRCULATING depends on `drawExhausted`: with buried discards
+ * recycled, every card in a discard pile comes back round; without it only the
+ * tops do, and the rest are as locked as a stock's underside. Face-down draw
+ * cards are read here — this is the table's referee asking whether the game
+ * can go on, not a seat deciding a move, and nothing about which card it was
+ * reaches anybody.
+ */
+function tableIsStuck(ctx) {
+  const needed = neededRanks(ctx);
+  const playable = (id) => {
+    const card = ctx.cardById(id);
+    return isWildCard(ctx, card) || needed.has(Number(card.rank));
+  };
+  const buriedCirculate = ctx.rules.drawExhausted === 'buried-discards';
+  for (const shared of ['draw', 'recycled']) {
+    if (ctx.cardIdsIn(shared).some(playable)) return false;
+  }
+  for (let seat = 0; seat < ctx.seats; seat++) {
+    if (ctx.cardIdsIn(ctx.zoneAddr('hand', seat)).some(playable)) return false;
+    const top = ctx.topOf(ctx.zoneAddr('stock', seat));
+    if (top !== undefined && playable(top)) return false;
+    for (let n = 1; n <= ctx.rules.discardPiles; n++) {
+      const ids = ctx.cardIdsIn(`discard.${n}.${seat}`);
+      if (!ids.length) continue;
+      if (buriedCirculate ? ids.some(playable) : playable(ids[ids.length - 1])) return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * The table is stuck: the race stands where it stopped, and the shortest
+ * stock wins it (`rules.whenStuck: "shortest-stock-wins"`).
+ *
+ * A tie goes to the seat that would have played next, walking the ring from
+ * the seat that just moved — the one deterministic order the table already
+ * has, and the one a player would reach for ("it was my turn"). Announced
+ * with every stock's count, because the felt has to say WHY a hand ended on
+ * a move that emptied nothing.
+ */
+function endStuckTable(ctx, from) {
+  const stocks = [];
+  for (let seat = 0; seat < ctx.seats; seat++) stocks.push(ctx.countIn(ctx.zoneAddr('stock', seat)));
+  // Walk the whole ring from the seat that would play next, moving the winner
+  // only on STRICTLY fewer, so the nearest seat to the turn keeps a tie.
+  let winner = ctx.nextSeat(from);
+  let cursor = winner;
+  for (let step = 1; step < ctx.seats; step++) {
+    cursor = ctx.nextSeat(cursor);
+    if (stocks[cursor] < stocks[winner]) winner = cursor;
+  }
+  ctx.emit('tableStuck', { seat: winner, stocks });
+  ctx.endRound(winner);
+}
+
+/**
+ * After a move that did not end the round: is there still a game? Asked once
+ * per applied move. The predicate reads the draw, so a needed card still
+ * waiting to be dealt keeps the table alive on its own — no gate on the draw
+ * being empty is needed, and the check is a pass over the table's zones.
+ */
+function maybeEndStuckTable(ctx, from) {
+  if (ctx.rules.whenStuck !== 'shortest-stock-wins') return;
+  if (ctx.state.roundEnded) return;
+  if (tableIsStuck(ctx)) endStuckTable(ctx, from);
+}
+
 function topUpHand(ctx, seat) {
   const to = ctx.rules.handRefill?.to ?? 5;
   const handAddr = ctx.zoneAddr('hand', seat);
   // ctx.deal stops on its own when draw AND its recycled backlog are exhausted.
-  ctx.deal(handAddr, Math.max(0, to - ctx.countIn(handAddr)));
+  const want = Math.max(0, to - ctx.countIn(handAddr));
+  const got = ctx.deal(handAddr, want);
+  if (got < want && replenishDrawFromBuried(ctx)) ctx.deal(handAddr, want - got);
 }
 
 function applyPlayCard(ctx, move) {
@@ -404,8 +563,9 @@ const sequencing = {
     }
 
     // A player with an empty hand and no legal stock/discard play (only reachable
-    // once the shared draw pile — and its recycled backlog — are both exhausted)
-    // has nothing to end their turn with; the turn just passes.
+    // once the shared draw pile, its recycled backlog and — under
+    // `drawExhausted` — everybody's buried discards are all exhausted) has
+    // nothing to end their turn with; the turn just passes.
     if (move.type === 'pass') return ctx.ok();
 
     return ctx.fail('unknown-move', `Unknown move type: ${move.type}`);
@@ -415,6 +575,7 @@ const sequencing = {
     if (move.type === 'playCard') applyPlayCard(ctx, move);
     else if (move.type === 'discard') applyDiscard(ctx, move);
     else if (move.type === 'pass') ctx.setTurnSeat(ctx.nextSeat(move.actor));
+    maybeEndStuckTable(ctx, move.actor);
   },
 
   enumerateLegalMoves(ctx, seat) {
@@ -518,18 +679,41 @@ const sequencing = {
     }];
   },
 
-  ruleLines() {
+  ruleLines(rules) {
     return [
       'Play cards up the build piles in the middle, one rank at a time.',
       'Cards come from your stock pile, your hand, or your own discard piles.',
       'End your turn by discarding to one of your own piles.',
+      ...(rules?.drawExhausted === 'buried-discards'
+        ? ['When the draw pile runs out and no build pile has completed, the cards under everyone\'s discard tops are shuffled into a new one.']
+        : []),
     ];
   },
 
   endingLines(pack) {
-    return pack.rules?.winner === 'first-empty-stock'
-      ? ['The first player to empty their stock pile wins immediately.']
-      : [];
+    const out = [];
+    if (pack.rules?.winner === 'first-empty-stock') {
+      out.push('The first player to empty their stock pile wins immediately.');
+    }
+    if (pack.rules?.whenStuck === 'shortest-stock-wins') {
+      out.push('If the table gets stuck — nothing anyone holds, or could ever draw, fits a build pile — '
+        + 'the race stands where it stopped and the shortest stock wins.');
+    }
+    return out;
+  },
+
+  /**
+   * The one event this genre narrates itself: a hand that ended on a move
+   * that emptied nothing needs the felt to say why (see `tableIsStuck`).
+   */
+  describeEvent(ev, { seatLabel, viewerSeat }) {
+    if (ev.type !== 'tableStuck') return null;
+    const mine = ev.seat === viewerSeat;
+    const left = ev.stocks[ev.seat];
+    const stock = `${left} ${left === 1 ? 'card' : 'cards'}`;
+    return mine
+      ? { text: `The table is stuck — nobody can play. You win on the shortest stock (${stock} left)`, tone: 'good', priority: 3 }
+      : { text: `The table is stuck — nobody can play. ${seatLabel(ev.seat)} wins on the shortest stock (${stock} left)`, tone: 'neutral', priority: 3 };
   },
 
   botVerbs: {},
@@ -605,6 +789,22 @@ const sequencing = {
 
     const hand = ctx.cardIdsIn(ctx.zoneAddr('hand', seat));
     score -= hand.length * w.HELD_CARD;
+    // A CARD THE SWEEP TOOK IS STILL COUNTED AGAINST THIS SEAT, permanently.
+    // The sweep (`replenishDrawFromBuried`) lifts the cards under everyone's
+    // discard tops into the draw, and it fires inside the discard that ends a
+    // turn — the next seat's top-up comes up short. Read literally, that made
+    // a discard the best move on the table whenever the draw was dry: the
+    // card it buried was gone from this seat's piles a moment later, HELD_CARD
+    // rewarded the vanishing with the same twelve a build play earns, and the
+    // one-ply lookahead, which stops mid-turn on a play, could not see that
+    // the play's turn would end in the same discard and the same sweep. Every
+    // seat sat on a legal play and discarded instead, round after round, until
+    // the move cap. Counting swept cards as if they were still in the pile
+    // makes the sweep worth nothing to the seat that triggers it, which is the
+    // honest reading: it happens on everybody's discard alike, and a card the
+    // pool takes back is a card this seat never played. A constant offset to
+    // every position, so it changes no comparison but that one.
+    score -= (ctx.playerVar(seat, 'swept') ?? 0) * w.HELD_CARD;
     for (const id of hand) {
       const card = ctx.cardById(id);
       if (isWildCard(ctx, card)) score += w.WILD_IN_HAND;

@@ -11,7 +11,8 @@
   "template": "sequencing",
   "tagline": "Race your stock down before anyone else.",
   "howToPlay": [
-    "The stock pile in front of you is the only thing that matters — hand and discards exist to help you empty it. A turn spent playing from your hand while your stock's top card sits there is usually a turn wasted."
+    "The stock pile in front of you is the only thing that matters — hand and discards exist to help you empty it. A turn spent playing from your hand while your stock's top card sits there is usually a turn wasted.",
+    "The draw pile is small — twenty-two cards at a table of four — and every discard buries a card until the ones above it come off. When it runs out and no build pile has completed to refill it, the cards under everyone's discard tops are shuffled into a new draw pile, so the deal keeps breathing. The top card of every discard pile stays where it is."
   ],
   "accent": "#6b4fa8",
   "heroCards": [
@@ -51,12 +52,14 @@
       "onEmptyMidTurn": true
     },
     "discardPiles": 4,
+    "drawExhausted": "buried-discards",
     "playableFrom": [
       "stock",
       "hand",
       "discard"
     ],
-    "winner": "first-empty-stock"
+    "winner": "first-empty-stock",
+    "whenStuck": "shortest-stock-wins"
   },
   "ui": {
     "cardStyle": "rankrun",

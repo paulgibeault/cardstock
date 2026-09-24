@@ -141,7 +141,16 @@ test("the two floored packs have not got worse", async () => {
   // and a long way ABOVE the 40% the old heuristic managed. Reverting either
   // half of the contract-rummy draw/discard scoring drops this straight through
   // 0.9, which is the regression this line is here to catch.
-  const FLOORS = { milestones: 0.9, stockpile: 0.85 };
+  //
+  // Stockpile's floor was 0.85 against a measured 97%: the missing 3% were
+  // tables with nothing left to draw and nothing on any stock top or discard
+  // top that a build pile would take, passing until the cap. It now measures
+  // 1000/1000 at four seats and 300/300 at two, three and six, because the
+  // draw refills from everyone's buried discards (`rules.drawExhausted`) and a
+  // table that genuinely cannot move ends on the shortest stock instead of
+  // looping (`rules.whenStuck`). 0.97 sits below the truth and well above the
+  // 85% a build without either would fall back to.
+  const FLOORS = { milestones: 0.9, stockpile: 0.97 };
   for (const [packId, floor] of Object.entries(FLOORS)) {
     const { completed, errored } = await simulatePack(packId, GAMES, { variants: [] });
     assert.strictEqual(errored, 0, `${packId}: ${errored} rounds threw — a stall is documented, a throw is not`);

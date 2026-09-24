@@ -12,7 +12,7 @@
   "template": "climbing",
   "tagline": "Beat it, bomb it, or pass.",
   "howToPlay": [
-    "The 2 is the highest card in the game and the 3 is the lowest, which is the opposite of nearly every other game on this shelf. Suits break every tie — spades lowest, then clubs, diamonds, hearts — so no two cards are equal and there is always an answer or a pass. The lowest card in play leads every hand and the lead has to contain it, which is the 3♠ at a full table and whatever survived the deal at a short one; the felt says who has it as the cards land.",
+    "The 2 is the highest card in the game and the 3 is the lowest, which is the opposite of nearly every other game on this shelf. Suits break every tie — spades lowest, then clubs, diamonds, hearts — so no two cards are equal and there is always an answer or a pass. The lowest card in play says who leads every hand — the 3♠ at a full table — and the felt says who has it as the cards land. The lead itself is free: open with anything legal. Switch on \"The opening lead must contain the lowest card\" for the stricter traditional rule.",
     "By default a pass only skips your turn and you are asked again when the play comes back round. Switch off \"Passing keeps you in the trick\" for the stricter rule, where a pass puts you out of the trick for good and passing early to keep a run together is a real decision rather than a shrug.",
     "A run all of one suit upgrades the trick. Play 5♥ 6♥ 7♥ over a mixed run of three and the felt says so, and from that point on nothing but another run all of one suit — same length, higher — is a legal answer. Suits are part of the ladder, so a suited run in hearts beats one in spades of the same ranks, and a hand with a flush run in it is worth holding together.",
     "The bombs are the point of the game. Three consecutive pairs kill a lone 2, four of a kind kills a pair of them, and a chop can itself be chopped — which is why holding the highest card in the deck is not the free win the ladder makes it look.",
@@ -39,7 +39,7 @@
       { "shape": "consecutive-pairs(5)", "beats": ["*"] }
     ],
     "passIsFinal": true,
-    "firstLead": { "card": "lowest", "mustInclude": true },
+    "firstLead": { "card": "lowest", "mustInclude": false },
     "laterLead": "lowest",
     "direction": "counterclockwise",
     "winner": "first-empty-hand"
@@ -58,6 +58,14 @@
       "default": false,
       "available": true,
       "patch": { "rules.runUpgrade": "none" }
+    },
+    {
+      "id": "lead-must-include",
+      "name": "The opening lead must contain the lowest card",
+      "description": "The traditional rule: the holder of the lowest card in play not only leads the hand but has to play that card in the opening combination — the bare single, or it inside a pair, a run, anything legal.",
+      "default": false,
+      "available": true,
+      "patch": { "rules.firstLead": { "card": "lowest", "mustInclude": true } }
     },
     {
       "id": "winner-leads",
