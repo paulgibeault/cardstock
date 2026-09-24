@@ -345,8 +345,16 @@ const unknownTarget = {
     // simply dropped downstream. The `false` the game handles is a real answer
     // for a real reason — no live connection, or the `peer.sendTo` capability
     // missing — and this is the honest record of which is which.
-    const unknown = await frames.H.evaluate(() =>
-      window.Arcade.peer.send({ k: 'bye', why: 'leave', tableId: 'tbl-unreachable' }, { to: 'no-such-device' }));
+    // THE FRAME IS BUILT, NOT TYPED. This was the one `{ k: 'bye', ... }` in
+    // the repo that never named `FRAME` at all, so a renamed kind would have
+    // left this scenario cheerfully sending a frame nothing on the far end
+    // recognises — and passing, because what it measures is the transport's
+    // answer rather than the far end's.
+    const unknown = await frames.H.evaluate(async () => {
+      const { byeFrame } = await window.__mod('src/match/frames.js');
+      return window.Arcade.peer.send(
+        { ...byeFrame('leave'), tableId: 'tbl-unreachable' }, { to: 'no-such-device' });
+    });
     check('an unknown target is accepted by the transport, not refused',
       unknown === true,
       `send(to: unknown) → ${unknown}. If this ever returns false, the launcher `

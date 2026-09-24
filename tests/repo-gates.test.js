@@ -253,6 +253,43 @@ test("party.js takes its session, never defaults to the focused table", () => {
 });
 
 /**
+ * ONE DEFAULT GRACE, IN ONE PLACE (#218).
+ *
+ * How long a seat gets when its host never chose was written twice: as
+ * `DEFAULT_GRACE_MS` in src/ui/partyModel.js, which is what a tile draws its
+ * countdown from, and as `TURN_TIMEOUT_MS` in src/ui/party.js, which is what
+ * the host's own turn timer actually runs on and the middle entry of
+ * `GRACE_CHOICES`. Two constants that had to stay equal and nothing making
+ * them: change one and a host who never opened the grace menu runs a timer
+ * every tile in the room disagrees with, with no test anywhere that fails.
+ *
+ * The model is the home, because the dependency only runs one way — party.js
+ * is a DOM module and partyModel.js is pure, so the model can never import the
+ * screen and the screen imports the model already.
+ *
+ * A grep, because the question is "is there a second one", and a source scan
+ * is the only shape that can answer it.
+ */
+test("the default grace is one constant, and party.js reads it rather than keeping its own", () => {
+  const model = fs.readFileSync(path.join(ROOT, "src/ui/partyModel.js"), "utf8");
+  assert.match(model, /^export const DEFAULT_GRACE_MS = 60_000;$/m,
+    "src/ui/partyModel.js no longer exports the one default grace");
+
+  const lines = fs.readFileSync(path.join(ROOT, "src/ui/party.js"), "utf8").split("\n")
+    .map((line, index) => ({ line, at: index + 1 }))
+    .filter(({ line }) => !/^\s*(\/\/|\*|\/\*)/.test(line));
+  assert.ok(lines.some(({ line }) => /\bDEFAULT_GRACE_MS\b/.test(line)),
+    "src/ui/party.js has stopped reading DEFAULT_GRACE_MS — the two copies are back");
+  const copies = lines
+    .filter(({ line }) => /=\s*60_?000\b/.test(line))
+    .map(({ line, at }) => `src/ui/party.js:${at}  ${line.trim()}`);
+  assert.deepStrictEqual(copies, [],
+    "a second default grace has been declared in party.js. Import DEFAULT_GRACE_MS "
+    + "from ./partyModel.js — the number the tiles promise and the number the timer "
+    + "runs on have to be the same number, not two that happen to match.");
+});
+
+/**
  * THE FELT'S BOTS ASK WHICH TABLE THEY ARE AT (#71).
  *
  * `createBotDriver` is built once, in `initTable`, before any match exists — so

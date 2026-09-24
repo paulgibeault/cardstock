@@ -34,6 +34,10 @@ import {
 import {
   validateFrame, isAuthentic, isSafeCardId, isSafeAddress, FRAME, PROTOCOL_VERSION, EMOTES,
 } from '../src/match/protocol.js';
+import {
+  lobbyFrame, viewFrame, rejectFrame, emoteFrame, byeFrame,
+  claimSeatFrame, proposeFrame, snapshotReqFrame, seatOfSelf,
+} from '../src/match/frames.js';
 import { createPeerNetwork } from '../tools/peer-stub.mjs';
 import { loadPackFromDisk, listPackIds } from '../tools/pack-test.mjs';
 
@@ -117,6 +121,115 @@ function seatAll(t) {
 }
 
 /* ------------------------------------------------------------------ *
+ * The builders (#218)
+ * ------------------------------------------------------------------ */
+
+/**
+ * THE WRITE SIDE MEETS THE READ SIDE, which is the only thing that makes
+ * src/match/frames.js worth having.
+ *
+ * A builder that produces a frame its own validator refuses is worse than the
+ * object literal it replaced: the literal at least failed where somebody could
+ * see it. So every builder is round-tripped here — build, stamp, validate —
+ * and the fields have to come back out. Rename a field on one side and this is
+ * where it is noticed, rather than on a stranger's phone as a dropped frame.
+ *
+ * WHAT IS DELIBERATELY NOT BUILT: every malformed fixture below this section.
+ * Those exist to be refused, and a builder that could express them would not be
+ * a builder.
+ */
+test('every outbound builder produces a frame the validator accepts', () => {
+  const roster = [
+    { seat: 0, kind: 'device', deviceId: 'host', name: 'Host', status: 'connected' },
+    { seat: 1, kind: 'empty', name: '', status: 'empty' },
+  ];
+  const cases = [
+    [lobbyFrame({
+      packId: 'crazy-eights', packVersion: '1.0.0', variants: ['house'], hostDeviceId: 'host',
+      seatCount: 2, seats: roster, started: true, graceMs: 30_000,
+    }), { k: FRAME.LOBBY, protocol: PROTOCOL_VERSION, packId: 'crazy-eights', started: true, graceMs: 30_000 }],
+    [viewFrame({ seq: 4, view: { v: 1, seat: 1 } }), { k: FRAME.VIEW, seq: 4 }],
+    [viewFrame({ seq: 4, view: { v: 1, seat: 1 }, kind: FRAME.SNAPSHOT }), { k: FRAME.SNAPSHOT, seq: 4 }],
+    [rejectFrame('p7', 'not-your-seat', 'That is not your seat.'),
+      { k: FRAME.REJECT, pid: 'p7', rule: 'not-your-seat', reason: 'That is not your seat.' }],
+    [emoteFrame(2, 1), { k: FRAME.EMOTE, i: 2, seat: 1 }],
+    [emoteFrame(2), { k: FRAME.EMOTE, i: 2, seat: undefined }],
+    [byeFrame('closed'), { k: FRAME.BYE, why: 'closed' }],
+    [byeFrame(), { k: FRAME.BYE, why: 'leave' }],
+    [claimSeatFrame(1, 2), { k: FRAME.CLAIM_SEAT, seat: 1, localIndex: 2 }],
+    [claimSeatFrame(0), { k: FRAME.CLAIM_SEAT, seat: 0, localIndex: 0 }],
+    [proposeFrame('p1', { actor: 1, type: 'draw' }), { k: FRAME.PROPOSE, pid: 'p1' }],
+    [snapshotReqFrame(9), { k: FRAME.SNAPSHOT_REQ, since: 9 }],
+    [snapshotReqFrame(), { k: FRAME.SNAPSHOT_REQ, since: 0 }],
+  ];
+  for (const [built, expected] of cases) {
+    const verdict = validateFrame({ ...built, tableId: TID });
+    assert.ok(verdict.ok, `${built.k}: the validator refused its own builder — ${verdict.reason}`);
+    for (const [key, value] of Object.entries(expected)) {
+      assert.deepEqual(verdict.frame[key], value,
+        `${built.k}: \`${key}\` did not survive the round trip`);
+    }
+  }
+});
+
+/**
+ * NO BUILDER STAMPS, and the gate that counts doors out cannot see this.
+ *
+ * `tableId` belongs to the one send path each module has (`stamp()` in host.js,
+ * the spread in client.js) — protocol v2's whole shape is that a frame is
+ * completed on the way out, in one place per module. A builder that helpfully
+ * filled it in would be a second place, and the first frame built somewhere
+ * that does not send is the one that carries a stale table's name.
+ */
+test('a built frame names no table until something sends it', () => {
+  const built = [
+    lobbyFrame({ packId: 'crazy-eights', hostDeviceId: 'host', seatCount: 2, seats: [] }),
+    viewFrame({ seq: 0, view: { v: 1 } }),
+    rejectFrame('p1', 'illegal', 'no'),
+    emoteFrame(0),
+    byeFrame(),
+    claimSeatFrame(0),
+    proposeFrame('p1', { actor: 0, type: 'draw' }),
+    snapshotReqFrame(),
+  ];
+  for (const frame of built) {
+    assert.equal('tableId' in frame, false, `${frame.k} stamped its own tableId`);
+    assert.equal(validateFrame(frame).reason, 'no tableId',
+      `${frame.k} was accepted without a table — the stamp has stopped being load-bearing`);
+  }
+});
+
+/**
+ * ONE ANSWER TO "AM I SEATED HERE", for the two readers that ask it.
+ *
+ * src/match/client.js decides whether it is sitting down and src/ui/partyModel.js
+ * decides whether to draw it that way; they ran identical private copies of
+ * this, and two copies of a question are two answers waiting to differ.
+ */
+test('seatOfSelf reads the host roster, and seat zero is a seat', () => {
+  const frame = lobbyFrame({
+    packId: 'crazy-eights',
+    hostDeviceId: 'host',
+    seatCount: 3,
+    seats: [
+      { seat: 0, kind: 'device', deviceId: 'me' },
+      { seat: 1, kind: 'bot' },
+      { seat: 2, kind: 'device', deviceId: 'other' },
+    ],
+  });
+  assert.equal(seatOfSelf(frame, 'me'), 0, 'seat zero is a chair like any other');
+  assert.equal(seatOfSelf(frame, 'other'), 2);
+  assert.equal(seatOfSelf(frame, 'nobody'), null, 'a device on no chair holds no seat');
+  assert.equal(seatOfSelf(frame, null), null);
+  assert.equal(seatOfSelf(null, 'me'), null, 'no roster is not a seat');
+  // A BOT IS NOT A DEVICE. Without the `kind` test a bot seat carrying a stale
+  // deviceId would answer for us.
+  assert.equal(seatOfSelf(lobbyFrame({
+    packId: 'p', hostDeviceId: 'host', seatCount: 2, seats: [{ seat: 0, kind: 'bot', deviceId: 'me' }],
+  }), 'me'), null);
+});
+
+/* ------------------------------------------------------------------ *
  * Frame validation
  * ------------------------------------------------------------------ */
 
@@ -129,8 +242,8 @@ test('an unknown frame kind is refused, not guessed at', () => {
 });
 
 test('a validated frame is a CLEANED COPY — unknown fields never survive', () => {
-  const verdict = validateFrame({ tableId: TID,
-    k: FRAME.PROPOSE, pid: 'p1', move: { actor: 1, type: 'draw' }, sneaky: 'payload',
+  const verdict = validateFrame({
+    ...proposeFrame('p1', { actor: 1, type: 'draw' }), tableId: TID, sneaky: 'payload',
   });
   assert.ok(verdict.ok);
   assert.equal(verdict.frame.sneaky, undefined);
@@ -183,7 +296,7 @@ test('every card id and zone address the engine mints survives the wire validato
       // And end to end, as a frame: a real move from a real enumeration.
       for (let seat = 0; seat < seats; seat++) {
         for (const move of enumerateLegalMoves(state, seat)) {
-          const verdict = validateFrame({ tableId: TID, k: FRAME.PROPOSE, pid: 'p1', move });
+          const verdict = validateFrame({ ...proposeFrame('p1', move), tableId: TID });
           assert.ok(verdict.ok, `${packId}: the wire refuses a legal move — ${JSON.stringify(move)}`);
           assert.deepEqual(verdict.frame.move, move,
             `${packId}: the validator dropped a field off a legal move — ${JSON.stringify(move)}`);
@@ -257,18 +370,20 @@ test('A JOINER CANNOT IMPERSONATE THE HOST', async () => {
   // the hub, because joiner-to-joiner traffic has to — which is precisely the
   // signal the spoof check reads, and precisely what a payload cannot fake.
   const forged = {
-    k: FRAME.VIEW,
+    ...viewFrame({
+      seq: 999,
+      view: {
+        v: 1, seat: 1, seats: 3, zones: {},
+        turn: { seat: 1, phase: null }, scores: [0, 0, 0],
+      },
+    }),
     // THE RIGHT TABLE, because a table id is not a secret — it rides in every
     // broadcast lobby frame, and an attacker who could not copy one would be a
-    // very poor attacker. The forgery is well-formed and correctly addressed;
-    // what refuses it is that it arrived relayed, from somebody who is not the
-    // host. That is the check, and it does not depend on the forger being lazy.
+    // very poor attacker. The forgery is well-formed — it comes off the same
+    // builder the host uses — and correctly addressed; what refuses it is that
+    // it arrived relayed, from somebody who is not the host. That is the check,
+    // and it does not depend on the forger being lazy.
     tableId: TID,
-    seq: 999,
-    view: {
-      v: 1, seat: 1, seats: 3, zones: {},
-      turn: { seat: 1, phase: null }, scores: [0, 0, 0],
-    },
   };
   assert.ok(t.ports.b.send(forged, { to: 'a' }), 'the forged frame was delivered');
 
@@ -283,10 +398,10 @@ test('even a DIRECT frame from a non-host peer is refused', async () => {
   const t = await threeSeatTable();
   seatAll(t);
   const before = t.seen.b.views.length;
-  assert.ok(t.ports.host.send({
-    k: FRAME.LOBBY, protocol: PROTOCOL_VERSION, packId: 'crazy-eights', variants: [],
+  assert.ok(t.ports.host.send(lobbyFrame({
+    packId: 'crazy-eights', variants: [],
     hostDeviceId: 'a', seatCount: 3, seats: [{ seat: 0, kind: 'device', deviceId: 'a' }],
-  }, { to: 'b' }), 'delivered');
+  }), { to: 'b' }), 'delivered');
   // It came from the real host, so it is accepted — hostDeviceId in the PAYLOAD
   // is not what authenticates it, which is the point of the next assertion.
   assert.ok(t.seen.b.lobbies.length > 0);
@@ -550,9 +665,11 @@ test('a client on the wrong pack version refuses to seat itself', async () => {
   client.start();
 
   net.createDevice('host').send({
-    tableId: TID, k: FRAME.LOBBY, protocol: PROTOCOL_VERSION, packId: pack.id, packVersion: '0.1.0',
-    variants: [], hostDeviceId: 'host', seatCount: 3,
-    seats: [{ seat: 0, kind: 'device', deviceId: 'host' }],
+    ...lobbyFrame({
+      packId: pack.id, packVersion: '0.1.0', variants: [], hostDeviceId: 'host', seatCount: 3,
+      seats: [{ seat: 0, kind: 'device', deviceId: 'host' }],
+    }),
+    tableId: TID,
   }, { to: 'a' });
 
   assert.equal(bad.at(-1)?.why, 'packVersion');
@@ -573,9 +690,11 @@ test('a different variant set is a different rule set, and is refused', async ()
   client.start();
 
   net.createDevice('host').send({
-    tableId: TID, k: FRAME.LOBBY, protocol: PROTOCOL_VERSION, packId: pack.id,
-    variants: ['house-rule'], hostDeviceId: 'host', seatCount: 3,
-    seats: [{ seat: 0, kind: 'device', deviceId: 'host' }],
+    ...lobbyFrame({
+      packId: pack.id, variants: ['house-rule'], hostDeviceId: 'host', seatCount: 3,
+      seats: [{ seat: 0, kind: 'device', deviceId: 'host' }],
+    }),
+    tableId: TID,
   }, { to: 'a' });
 
   assert.equal(bad.at(-1)?.why, 'variants');
@@ -909,7 +1028,7 @@ test('the host says whose emote it was — the sender does not get to', async ()
   // Ada, hand-rolling a frame that claims Bo's seat. The host resolves the seat
   // from the authenticated sender, the same rule `handlePropose` keys on, and
   // never reads this field at all.
-  t.ports.a.send({ tableId: TID, k: FRAME.EMOTE, i: 0, seat: 2 }, { to: 'host' });
+  t.ports.a.send({ ...emoteFrame(0, 2), tableId: TID }, { to: 'host' });
 
   assert.deepEqual(t.seen.b.emotes, [{ seat: 1, emote: EMOTES[0] }]);
 });
@@ -921,7 +1040,7 @@ test('a client refuses an emote that did not come from its host', async () => {
   // Bo, addressing Ada directly. Until v3 this was the one frame a client took
   // from a fellow joiner, so anybody in the party could burst an emoji on
   // somebody else's screen and there was no test that could tell.
-  t.ports.b.send({ tableId: TID, k: FRAME.EMOTE, i: 3 }, { to: 'a' });
+  t.ports.b.send({ ...emoteFrame(3), tableId: TID }, { to: 'a' });
 
   assert.deepEqual(t.seen.a.emotes, [], 'nothing was rendered');
   assert.ok(t.errors.a.some((e) => e.kind === 'spoofed-authority' && e.frame === FRAME.EMOTE),
@@ -950,7 +1069,7 @@ test('a client refuses a bye from anyone but its host', async () => {
   seatAll(t);
 
   // Bo, announcing that Ada's table has closed. It has not.
-  t.ports.b.send({ tableId: TID, k: FRAME.BYE, why: 'closed' }, { to: 'a' });
+  t.ports.b.send({ ...byeFrame('closed'), tableId: TID }, { to: 'a' });
 
   assert.deepEqual(t.seen.a.ends, [], 'Ada is still at the table');
   assert.ok(t.errors.a.some((e) => e.kind === 'spoofed-authority' && e.frame === FRAME.BYE));
@@ -962,9 +1081,11 @@ test('a client refuses a bye from anyone but its host', async () => {
 
 test('a lobby frame may carry the host’s grace, and may leave it out', () => {
   const base = {
-    tableId: TID, k: FRAME.LOBBY, protocol: PROTOCOL_VERSION, packId: 'crazy-eights',
-    variants: [], hostDeviceId: 'host', seatCount: 3, started: false,
-    seats: [{ seat: 0, kind: 'device', deviceId: 'host', name: 'Host', status: 'connected' }],
+    ...lobbyFrame({
+      packId: 'crazy-eights', variants: [], hostDeviceId: 'host', seatCount: 3, started: false,
+      seats: [{ seat: 0, kind: 'device', deviceId: 'host', name: 'Host', status: 'connected' }],
+    }),
+    tableId: TID,
   };
   assert.equal(validateFrame({ ...base, graceMs: 30_000 }).frame.graceMs, 30_000);
   // A host that never chose sends nothing; so does a build from before this
@@ -974,9 +1095,11 @@ test('a lobby frame may carry the host’s grace, and may leave it out', () => {
 
 test('a grace outside the bounds is refused rather than clamped', () => {
   const base = {
-    tableId: TID, k: FRAME.LOBBY, protocol: PROTOCOL_VERSION, packId: 'crazy-eights',
-    variants: [], hostDeviceId: 'host', seatCount: 3, started: false,
-    seats: [{ seat: 0, kind: 'device', deviceId: 'host', name: 'Host', status: 'connected' }],
+    ...lobbyFrame({
+      packId: 'crazy-eights', variants: [], hostDeviceId: 'host', seatCount: 3, started: false,
+      seats: [{ seat: 0, kind: 'device', deviceId: 'host', name: 'Host', status: 'connected' }],
+    }),
+    tableId: TID,
   };
   // ZERO WOULD TIME EVERY SEAT OUT ON ARRIVAL, and a year is a timer that is
   // off without saying so. Neither is a table anybody meant to sit at.

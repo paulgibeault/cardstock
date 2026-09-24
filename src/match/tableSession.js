@@ -127,6 +127,26 @@ export function createTableSession({ tableId, packId, role, packName = '', varia
     liveState() { return session.state; },
 
     /**
+     * WHICH SEAT WE HOLD AT THIS TABLE, or null for none.
+     *
+     * "Am I sitting here" was answered twice — `heldSeat` in
+     * src/match/sessionRegistry.js and a `session?.client?.seat?.() != null` in
+     * src/ui/partyModel.js — and both had to know that the answer lives on the
+     * client rather than on the session. That is the session's own business, so
+     * it is the session that says it.
+     *
+     * UNDEFINED BECOMES NULL, AND SEAT 0 STAYS 0. A joiner that never claimed
+     * gets `undefined` from a client with no seat and a host gets `undefined`
+     * from no client at all; both mean "no chair". Seat zero is a chair like
+     * any other, which is why this compares against undefined rather than
+     * testing truthiness — see tests/tableSession.test.js.
+     */
+    seatedAt() {
+      const seat = session.client?.seat?.();
+      return seat === undefined ? null : seat;
+    },
+
+    /**
      * What the felt needs to draw this table — the shape `tableContext()`
      * returned when the felt owned all of it.
      */
