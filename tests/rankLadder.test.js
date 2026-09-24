@@ -19,7 +19,7 @@ import path from "node:path";
 import {
   RANKS, buildStandardDeck, cardOrder, rankAt, rankIndexOf, rankLadderOf, rankOrder,
 } from "../src/engine/cards.js";
-import { loadPack } from "../src/engine/packLoader.js";
+import { loadPack } from "../src/templates/loadPack.js";
 import { createState } from "../src/engine/state.js";
 import { makeCtx } from "../src/engine/context.js";
 import { resolveMeld, rankDomain } from "../src/templates/melds.js";

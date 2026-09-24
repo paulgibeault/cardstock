@@ -20,13 +20,13 @@ import { test, beforeEach } from "node:test";
 import assert from "node:assert";
 import fs from "node:fs";
 import path from "node:path";
-import { loadPack } from "../src/engine/packLoader.js";
+import { loadPack } from "../src/templates/loadPack.js";
 import { createState } from "../src/engine/state.js";
 import { makeCtx } from "../src/engine/context.js";
 import { applyMove } from "../src/engine/movePipeline.js";
 import { chooseBotMove } from "../src/engine/bot.js";
 import { ROOT } from "../tools/stage.mjs";
-import { dailyRunFor, applyDailyLadder } from "../src/engine/dailyLadder.js";
+import { dailyRunFor, applyDailyLadder } from "../src/templates/contract-rummy-daily.js";
 import {
   MATCH_KEY_PREFIX, DAILY_KEY_PREFIX, matchKey, dailyKey, isDailyKey, isMatchKey,
   saveMatch, loadMatch, clearMatch, listMatchSummaries,

@@ -11,7 +11,7 @@ import { test, beforeEach } from "node:test";
 import assert from "node:assert";
 import fs from "node:fs";
 import path from "node:path";
-import { loadPack } from "../src/engine/packLoader.js";
+import { loadPack } from "../src/templates/loadPack.js";
 import { createState } from "../src/engine/state.js";
 import { makeCtx } from "../src/engine/context.js";
 import { applyMove } from "../src/engine/movePipeline.js";

@@ -27,7 +27,7 @@ import { applyMove } from "../src/engine/movePipeline.js";
 import { forkState } from "../src/engine/fork.js";
 import { rankMoves } from "../src/engine/bot.js";
 import { arePartners } from "../src/engine/sides.js";
-import { loadPack } from "../src/engine/packLoader.js";
+import { loadPack } from "../src/templates/loadPack.js";
 import { loadPackFromDisk } from "../tools/pack-test.mjs";
 import { PARTNERS_MANIFEST } from "./fixtures/partnersPack.js";
 

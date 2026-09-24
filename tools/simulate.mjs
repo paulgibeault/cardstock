@@ -13,13 +13,13 @@
 import { readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadPack } from '../src/engine/packLoader.js';
+import { loadPack } from '../src/templates/loadPack.js';
 import { createState } from '../src/engine/state.js';
 import { makeCtx, actingSeats } from '../src/engine/context.js';
 import { applyMove } from '../src/engine/movePipeline.js';
 import { chooseBotMove, DIFFICULTIES } from '../src/engine/bot.js';
 import { createRng } from '../src/engine/rng.js';
-import { dailyRunFor, applyDailyLadder } from '../src/engine/dailyLadder.js';
+import { dailyRunFor, applyDailyLadder } from '../src/templates/contract-rummy-daily.js';
 import { dailyDateStr } from '../src/engine/arcade-rng.js';
 import { createSeatTable } from '../src/players/seats.js';
 import { createTableHost } from '../src/match/host.js';

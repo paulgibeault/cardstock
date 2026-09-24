@@ -9,7 +9,7 @@
 //                                 A generated `run(11)` on a twelve-rank deck
 //                                 with a ten-card deal is a day nobody finishes.
 //   IT IS A LADDER              — difficulty never goes down, by the measure
-//                                 src/engine/dailyLadder.js writes down.
+//                                 src/templates/contract-rummy-daily.js writes down.
 //   IT IS DIFFERENT TOMORROW    — 365 dates, 365 puzzles, and four distinct
 //                                 shapes within any one of them.
 //
@@ -22,15 +22,18 @@ import assert from "node:assert";
 import fs from "node:fs";
 import path from "node:path";
 import { ROOT } from "../tools/stage.mjs";
-import { loadPack } from "../src/engine/packLoader.js";
+import { loadPack } from "../src/templates/loadPack.js";
 import { createState } from "../src/engine/state.js";
 import { makeCtx } from "../src/engine/context.js";
 import { resolveMeld, itemsMatchContract, parseItem } from "../src/templates/melds.js";
 import {
-  DAILY_RUNGS, MIN_DISTINCT_SHAPES, dailyLadder, dailyRunFor, dailySeedFor, dateOfDailySeed,
+  DAILY_RUNGS, MIN_DISTINCT_SHAPES, dailyLadder, dailyRunFor,
   deckProfile, findDeckLayDown, contractCost, compareContracts, rungSignature,
-  isDailyDate, previousDate, applyDailyLadder, isPlayableRung,
-} from "../src/engine/dailyLadder.js";
+  applyDailyLadder, isPlayableRung,
+} from "../src/templates/contract-rummy-daily.js";
+import {
+  dailySeedFor, dateOfDailySeed, isDailyDate, previousDate,
+} from "../src/arcade/daily.js";
 
 const PACK_ID = "milestones";
 
@@ -211,7 +214,7 @@ test("findDeckLayDown refuses what the deck cannot supply", () => {
 test("no rung pulls two ways at once, and none is a lone set", () => {
   // The second door, and the one the deck cannot answer: `run(6) set(3)` has a
   // lay-down in every deck in the repo and finished 25 hands in 50 at the table
-  // (src/engine/dailyLadder.js isPlayableRung carries the measurements). A rung
+  // (contract-rummy-daily.js isPlayableRung carries the measurements). A rung
   // no hand assembles, or no hand can go out on, is a round that never ends.
   assert.ok(!isPlayableRung(["run(6)", "set(3)"]));
   assert.ok(!isPlayableRung(["run(5)", "set(4)"]));
