@@ -25,6 +25,14 @@
 //
 // A rank the ladder does not name (`orderOf` < 0) takes no part in runs. It
 // still counts for fifteens and pairs, which are facts about value and rank.
+//
+// ITS ONE IMPORT is `rankWindow`, and it does not cost the module anything the
+// paragraph above promised: it is ctx-free, pack-free arithmetic over ladder
+// POSITIONS — the numbers `orderOf` already hands back — and taking it from
+// src/engine/cards.js is what stops "consecutive" from being spelled out a
+// fourth time here (#211).
+
+import { rankWindow } from '../engine/cards.js';
 
 /** Two points, for each of the four things that are worth two points. */
 const PAIR = 2;
@@ -386,9 +394,7 @@ export function scorePlay(played, opts = {}) {
     const tail = played.slice(-length);
     const rungs = tail.map(orderOf);
     if (rungs.some((r) => !Number.isInteger(r) || r < 0)) continue;
-    const distinct = new Set(rungs);
-    if (distinct.size !== length) continue;
-    if (Math.max(...rungs) - Math.min(...rungs) !== length - 1) continue;
+    if (!rankWindow(rungs).ok) continue;
     total += length;
     if (breakdown) breakdown.push({ kind: 'run', points: length, cards: tail.map(cardKey) });
     break;
