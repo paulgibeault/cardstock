@@ -974,8 +974,14 @@ test("the game-over path counts the final show through the same machinery", () =
     'the counts that wait must be walked by the same sequence a live show is');
   assert.match(runner, /beatTimer\(open, plan\.lookAt\)/,
     'and the counts on a clock must end in the final look at the plan\'s own time');
-  assert.match(runner, /session\.roundBeat = true/,
+  // The hold is the shared one since #202, so this asks for the call AND that
+  // the thing it calls still raises the flag `feltState` reads.
+  assert.match(runner, /holdRoundEnding\(plan, finalState, shown\)/,
     'the felt must hold the ending while the counts are read (feltState)');
+  const hold = table.match(/function holdRoundEnding\([\s\S]*?\n\}/);
+  assert.ok(hold, 'holdRoundEnding must exist — it is the one place the ending is held');
+  assert.match(hold[0], /session\.roundBeat = true/,
+    'a hold that does not raise `roundBeat` leaves the felt actable over an ending');
   // The ending position is claimed for a match-ending round too, or there is
   // nothing to pose the crib face down on.
   assert.match(table, /takeRoundFinal\(ended \? move : null\)/);
