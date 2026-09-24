@@ -6,7 +6,11 @@ repo. The platform ask-list is **fully satisfied** — read that before
 anything else, because the filename and the E-labels scattered through the
 other docs both invite the opposite conclusion.
 
-**Status: ready to implement. All open decisions are resolved (2026-08-04).**
+**Shipped.** Every phase below landed, including Phase 8 (multiplayer); all open
+decisions were resolved 2026-08-04 before the work started. See
+[docs/notes/IMPLEMENTATION_NOTES.md](../notes/IMPLEMENTATION_NOTES.md) §"Arcade
+platform enhancements — shipped" and §"Multiplayer, and then tables (2026-08)".
+The plan below is kept as written.
 
 **What v1 asked for, and where it went.** v1 of this document specified four
 platform-side `Arcade.peer` enhancements — E0 capability flags, E1 targeted
@@ -98,7 +102,7 @@ Tasks:
    - Update: `README.md` pack list and the trademark paragraph (replace it
      with a note that the packs implement classic mechanics under original
      names), `tools/simulate.mjs` comments, any test fixtures referencing
-     the old pack ids, `IMPLEMENTATION_NOTES.md`.
+     the old pack ids, `docs/notes/IMPLEMENTATION_NOTES.md`.
    - Leave alone: nominative comparisons in `CARD_PLATFORM_DESIGN.md`
      ("a Phase-10-style contract pack") — describing compatibility with a
      named game is lawful and useful; design docs also get excluded from
@@ -325,7 +329,7 @@ visit; no `[Arcade SDK]` cache warning in the console.
    ```
 3. Set `launcher: true` in `pages.yml` so acceptance runs in CI on every
    push.
-4. Documentation pass: update `README.md` and `IMPLEMENTATION_NOTES.md`
+4. Documentation pass: update `README.md` and `docs/notes/IMPLEMENTATION_NOTES.md`
    for the integration; apply ARCADE_COMPLIANCE.md **Appendix A**'s four
    corrections to `CARD_PLATFORM_DESIGN.md` §17 (sandbox flags,
    catalog-registration mechanics, E0–E3 now shipped, PWA posture).

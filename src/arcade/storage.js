@@ -5,7 +5,7 @@
 // place that knows which keys are player-facing enough to sync, and one place
 // to change when a key's shape moves.
 //
-// Storage posture (ARCADE_ENHANCEMENTS.md Decision 3): `Arcade.state` only.
+// Storage posture (docs/plans/ARCADE_ENHANCEMENTS.md Decision 3): `Arcade.state` only.
 //
 // The lobby's several-tables-at-once did NOT change that posture, and the
 // reasoning is worth keeping: `Arcade.state` is synchronous, which the
@@ -36,7 +36,7 @@ import { isSafeId } from '../match/protocol.js';
 export const KEYS = {
   lastPack: 'lastPack',
   settings: 'settings',
-  // THE SHARED TABLE DOES NOT LIVE UNDER `match.<packId>`, and LOBBY_PLAN.md
+  // THE SHARED TABLE DOES NOT LIVE UNDER `match.<packId>`, and docs/plans/LOBBY_PLAN.md
   // reserved this the day the per-pack keys shipped. Two reasons, and the
   // second is the load-bearing one: a multiplayer match belongs to a PARTY
   // rather than to a pack, so two of them are not two saved games the lobby
@@ -265,7 +265,7 @@ export function isValidPackId(id) {
  * This is the ONLY thing that still sends a boot straight to a table, and it
  * exists for the dev server, the §13 acceptance run, and hand-shared links.
  * A plain visit — including every launcher deep link, which is `#app=cardstock`
- * and cannot carry a query (ARCADE_COMPLIANCE.md finding B2) — lands on the
+ * and cannot carry a query (docs/plans/ARCADE_COMPLIANCE.md finding B2) — lands on the
  * lobby and lets the player choose.
  */
 export function packOverride(search = '') {

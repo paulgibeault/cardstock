@@ -17,7 +17,7 @@
 //
 // PURE, AND THAT IS THE POINT (#75). No DOM, no `Arcade`, no module state, no
 // clock of its own — every input arrives as data or as a narrow reader, in the
-// style of src/ui/botDriver.js. TABLES_PLAN §11 records that party.js, table.js
+// style of src/ui/botDriver.js. docs/plans/TABLES_PLAN §11 records that party.js, table.js
 // and lobby.js have no unit coverage and that every bug in them was found by
 // driving three real browsers. This file is the first party-side code that runs
 // under `node --test`, which is what lets the roster-churn cases — a seat

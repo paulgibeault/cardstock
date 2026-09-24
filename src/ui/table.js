@@ -15,7 +15,7 @@
 // Solo only, deliberately. Session timers freeze with the frame (§6c), which
 // is right for one player and wrong for a shared table: a game that stopped
 // while one player glanced at another tab would desync every peer. Phase 8
-// replaces them with host-wall-clock timeout events (ARCADE_ENHANCEMENTS §8.2).
+// replaces them with host-wall-clock timeout events (docs/plans/ARCADE_ENHANCEMENTS §8.2).
 //
 // RENDERING IS ZONE-DRIVEN. The table no longer hard-codes "a draw pile and a
 // center pile": every shared zone the pack declares (draw, discard, trick,

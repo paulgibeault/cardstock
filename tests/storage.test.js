@@ -122,7 +122,7 @@ const TABLE_A = 't1aaaaaaaaaaaaaaaaa';
 const TABLE_B = 't2bbbbbbbbbbbbbbbbb';
 
 test('the shared table is stored under its own key, not match.<packId>', () => {
-  // LOBBY_PLAN.md reserved this: a multiplayer match belongs to a party rather
+  // docs/plans/LOBBY_PLAN.md reserved this: a multiplayer match belongs to a party rather
   // than to a pack, and "only the open table advances" is exactly the invariant
   // a shared table inverts.
   const pack = packFromDisk('crazy-eights');

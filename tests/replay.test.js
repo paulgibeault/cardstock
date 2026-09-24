@@ -1,6 +1,6 @@
 // Seed + event log really does reconstruct the match.
 //
-// This is the pre-commitment Phase 2 owes Phase 8 (ARCADE_ENHANCEMENTS.md):
+// This is the pre-commitment Phase 2 owes Phase 8 (docs/plans/ARCADE_ENHANCEMENTS.md):
 // `activeMatch` persists a seed and a move log and re-hydrates by replaying
 // the reducer, which is the identical payload a multiplayer `snapshot` frame
 // carries and the identical path an `overflowed` resync takes. If this ever

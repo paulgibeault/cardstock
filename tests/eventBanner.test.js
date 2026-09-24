@@ -8,7 +8,7 @@
 // `bannerBand` is the arithmetic, pulled out of the DOM so it can be argued
 // with here — src/ui/celebrations.js measures the three boxes and hands them
 // over. THE FELTS BELOW ARE MEASURED, not invented: every number came off a
-// headless Chrome probe of the real table (see IMPLEMENTATION_NOTES). The file
+// headless Chrome probe of the real table (see docs/notes/IMPLEMENTATION_NOTES). The file
 // ends with source gates, because a placement function nothing calls is a
 // placement function that is green forever and moves nothing.
 import { test } from "node:test";

@@ -236,7 +236,7 @@ test("sw.js keeps the CI-owned APP_VERSION line shape", () => {
 const OURTABLE_DEFAULT = /\([^()]*\b[A-Za-z_$][\w$]*\s*=\s*ourTable\(\)/;
 
 test("party.js takes its session, never defaults to the focused table", () => {
-  // The regex has to bite, or a green run means nothing (TABLES_PLAN.md §11).
+  // The regex has to bite, or a green run means nothing (docs/plans/TABLES_PLAN.md §11).
   assert.match("function refreshSeats(session = ourTable()) {", OURTABLE_DEFAULT);
   assert.match("function askAboutSeat(seat, session = ourTable()) {", OURTABLE_DEFAULT);
   assert.doesNotMatch("  const session = ourTable();", OURTABLE_DEFAULT);

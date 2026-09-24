@@ -720,7 +720,7 @@ async function main() {
   const budgetMoves = budgetArg ? Number(budgetArg.split('=')[1]) : undefined;
   // `--rollout-depth=N` overrides how far a hard rollout plays before it asks
   // the template to score the position; `inf` plays every one to the end. This
-  // is the knob the depth sweep in IMPLEMENTATION_NOTES.md was measured on.
+  // is the knob the depth sweep in docs/notes/IMPLEMENTATION_NOTES.md was measured on.
   const depthArg = args.find((a) => a.startsWith('--rollout-depth='));
   const depthValue = depthArg ? depthArg.split('=')[1] : undefined;
   const depth = depthValue === undefined ? undefined
