@@ -120,7 +120,7 @@ export function isMatchKey(key) {
  *
  * A daily slot is DISPOSABLE in a way a casual save is not: its seed names the
  * day it belongs to, so yesterday's unfinished run is not resumed, it is
- * dropped (see `dailyStatus` and src/ui/table.js openTable).
+ * dropped (see `dailyStatus` and src/ui/matchDoors.js openTable).
  */
 export const DAILY_KEY_PREFIX = 'daily.';
 

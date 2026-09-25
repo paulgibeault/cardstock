@@ -27,6 +27,7 @@ import { installArcade } from "./fixtures/arcade.js";
 // `epoch` as parameters — so the three rules below about WHEN each half of the
 // trick's narration runs are driven rather than read out of the source.
 import { roundEndingHarness } from "./fixtures/roundEnding.js";
+import { doorsHarness } from "./fixtures/matchDoors.js";
 import { trickRevealPlan } from "../src/ui/roundBeat.js";
 
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), "utf8");
@@ -702,21 +703,37 @@ test("the deal's own events are the window after roundOver, and nothing before i
   assert.deepEqual(dealEvents([{ type: "passed", seat: 1 }]).map((ev) => ev.type), ["passed"]);
 });
 
-test("both moments a new hand becomes visible say what the deal said", () => {
-  // A source gate for the same reason the file's others exist: a narrator
-  // nothing calls is green forever and says nothing. The two call sites are the
-  // two doors a dealt hand comes through — `adoptMatch` for the first hand of a
-  // match, `dismissRoundSummary` for every one after it.
+test("both moments a new hand becomes visible say what the deal said", async () => {
+  // A narrator nothing calls is green forever and says nothing. The two call
+  // sites are the two doors a dealt hand comes through — `adoptMatch` for the
+  // first hand of a match, `dismissRoundSummary` for every one after it.
   const source = read("src/ui/table.js");
-  // DEFINED ONCE IN table.js AND CALLED FROM BOTH DOORS — and since #223 one of
-  // those doors is in src/ui/roundEnding.js, which is handed the narrator as a
-  // parameter. So the tally is: the definition, `adoptMatch`'s call, and the
-  // `celebrateDeal,` that hands it over.
+  // DEFINED ONCE IN table.js AND HANDED TO BOTH DOORS — since #223 both of them
+  // live in carved modules, src/ui/matchDoors.js (seam 4) and
+  // src/ui/roundEnding.js (seam 2), and each is handed the narrator as a
+  // parameter. So the tally is the definition and the two `celebrateDeal,`
+  // lines that hand it over.
   assert.strictEqual((source.match(/celebrateDeal[,(]/g) || []).length, 3,
-    "the deal's narration is no longer defined once and called from both doors");
-  assert.match(source, /if \(dealing\) celebrateDeal\(state\);/,
-    "a resumed match narrates its deal — `state.events` there is the last REPLAYED move, so the "
-    + "table would open on a sentence about something the player did yesterday");
+    "the deal's narration is no longer defined once and handed to both doors");
+
+  // THE FIRST DOOR, DRIVEN since #223 seam 4 (it was a grep for
+  // `if (dealing) celebrateDeal(state);`): a fresh deal narrates, a resume does
+  // not. tests/matchDoors.test.js asks the same of every door.
+  const arcade = globalThis.Arcade;
+  try {
+    const doors = doorsHarness();
+    await doors.doors.openTable("hearts");
+    assert.deepEqual(doors.celebrated, [doors.slots.session.state],
+      "a fresh deal arrives on screen unannounced");
+    const { state, seats, seating } = doors.slots.session;
+    doors.reset();
+    await doors.doors.resumeHostedTable({ packId: "hearts", state, seats, seating });
+    assert.deepEqual(doors.celebrated, [],
+      "a resumed match narrates its deal — `state.events` there is the last REPLAYED move, so the "
+      + "table would open on a sentence about something the player did yesterday");
+  } finally {
+    globalThis.Arcade = arcade;
+  }
   const dismiss = /function dismissRoundSummary\([\s\S]*?\n  \}/.exec(read("src/ui/roundEnding.js"));
   assert.ok(dismiss, "dismissRoundSummary has moved");
   assert.match(dismiss[0], /celebrateDeal\(liveState\(\)\);/,

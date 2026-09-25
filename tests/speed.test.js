@@ -356,31 +356,31 @@ test("a setting the new-game sheet can change is never read from a snapshot olde
   // snapshot is written in comments that quote it — including the one that
   // explains this very fix — and a gate that counted those would be reading the
   // argument rather than the program.
-  // BOTH FILES THE FELT READS SETTINGS IN since #223: the round ending — and with
-  // it `currentPace`, the one reader of `pace` — lives in src/ui/roundEnding.js.
-  const code = (read("src/ui/table.js") + read("src/ui/roundEnding.js"))
+  // EVERY FILE THE FELT READS SETTINGS IN since #223: the round ending — and
+  // with it `currentPace`, the one reader of `pace` — lives in
+  // src/ui/roundEnding.js, and the doors a match opens through, `adoptMatch`
+  // among them, in src/ui/matchDoors.js.
+  const code = (read("src/ui/table.js") + read("src/ui/roundEnding.js") + read("src/ui/matchDoors.js"))
     .replace(/\/\*[\s\S]*?\*\//g, '')
     .replace(/^\s*\/\/.*$/gm, '');
+  // Indented or not: the carved modules hold their functions inside a factory.
   const bodyOf = (name) => {
-    const m = code.match(new RegExp(`\\n(?:export )?(?:async )?function ${name}\\([\\s\\S]*?\\n\\}\\n`));
-    assert.ok(m, `${name} must exist in src/ui/table.js`);
+    const m = code.match(new RegExp(`\\n( *)(?:export )?(?:async )?function ${name}\\([\\s\\S]*?\\n\\1\\}\\n`));
+    assert.ok(m, `${name} must exist in src/ui/table.js or a module carved out of it`);
     return m[0];
   };
 
   // EVERY DOOR INTO A MATCH GOES THROUGH ONE ROOM, which is what makes a single
-  // refresh a fix rather than a fourth place to forget. A new door that adopts a
-  // state by itself fails here, which is the point.
+  // refresh a fix rather than a fourth place to forget. That used to be a grep
+  // here for `adoptMatch(` in each door's body; since #223 seam 4 the doors are
+  // src/ui/matchDoors.js and tests/matchDoors.test.js DRIVES every one of them
+  // and checks it ends in adoptMatch's sequence. What stays here is the room.
   const adopt = bodyOf('adoptMatch');
-  for (const door of ['startGame', 'dealHostedTable', 'resumeHostedTable', 'openTable']) {
-    assert.match(bodyOf(door), /adoptMatch\(|startGame\(/,
-      `${door} must reach the felt through adoptMatch — a path that seats a match some other `
-      + "way is a path with its own idea of how fast the cards move");
-  }
 
   // The settings the sheet writes that the felt answers from its snapshot.
   const snapshotted = keys.filter((key) => new RegExp(`settings\\??\\.${key}(?!\\s*=)`).test(code));
   if (snapshotted.length) {
-    assert.match(adopt, /\n  settings = loadSettings\(\);/,
+    assert.match(adopt, /\n +settings = loadSettings\(\);/,
       `${snapshotted.join(', ')}: read off the module snapshot, and nothing refreshes that `
       + "snapshot where a match opens — `initTable` runs once a session and `rerenderTable` only "
       + "on a resume or an SDK settings event, so a rung chosen on the new-game sheet cannot "
