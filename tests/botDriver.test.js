@@ -27,6 +27,7 @@ import { createSeatTable, createSeatLens, soloSeatTable } from '../src/players/s
 import { createBotDriver } from '../src/ui/botDriver.js';
 import { applyMove } from '../src/engine/movePipeline.js';
 import { chooseBotMove } from '../src/engine/bot.js';
+import { createTableSession } from '../src/match/tableSession.js';
 
 /**
  * A clock that fires nothing on its own.
@@ -259,4 +260,111 @@ test('the driver hands the table its difficulty, and reads it when the turn fire
     assert.deepStrictEqual(played[0].move, chooseBotMove(state, seat, { difficulty: depth }),
       `${depth}: the driver played something other than what that difficulty chooses`);
   }
+});
+
+/* ------------------------------------------------------------------ *
+ * A held table is held by the driver, per table (#228)
+ * ------------------------------------------------------------------ */
+
+const TABLE = { a: 't1aaaaaaaaaaaaaaaaa', b: 't2bbbbbbbbbbbbbbbbb' };
+
+/**
+ * One hosted table with its own driver on a shared clock — the shape the host
+ * is in with two tables: the felt's driver on one, the headless driver
+ * (src/ui/party.js) on the other, both built from this module. Seat 0 is the
+ * host's; seats 1 and 2 are the house's.
+ */
+async function hostedTable(tableId, clock, { persona = null, announcements = () => [] } = {}) {
+  const table = createTableSession({ tableId, packId: 'crazy-eights', role: 'host' });
+  table.state = await crazyEights(3);
+  table.state.turn.seat = 1; // a bot's turn
+  table.seats = soloSeatTable(3);
+  const played = [];
+  const said = [];
+  const bots = createBotDriver({
+    clock,
+    currentEpoch: () => table.epoch,
+    botDelayMs: () => 0,
+    me: createSeatLens(() => table.seats),
+    identityOf: (seat) => ({ seat, name: `Seat ${seat}`, persona }),
+    actingSeatsOf: (s) => (s.gameOver ? [] : [s.turn.seat]),
+    announcementsFor: announcements,
+    playMove: (_state, move, seat) => played.push({ seat, type: move.type }),
+    playAnnouncement: (_state, move) => said.push(move.type),
+    onError: (message) => assert.fail(message),
+  });
+  table.attach({ bots });
+  const drive = () => {
+    bots.scheduleNextTurn(table, table.epoch);
+    bots.scheduleAnnouncementBeats(table, table.epoch);
+  };
+  return { table, played, said, drive };
+}
+
+test('holding one hosted table stops its bots and leaves the other table playing', async () => {
+  // THE BUG (#228): "wait for them" was the felt's pause, so answering it about
+  // a table the felt was not showing held the one on screen and left the table
+  // with the empty chair played on. The pause is the TABLE's now, and the
+  // driver — which both the felt and the headless path schedule through — is
+  // what reads it.
+  const clock = fakeClock();
+  const a = await hostedTable(TABLE.a, clock);
+  const b = await hostedTable(TABLE.b, clock);
+  assert.equal(b.table.paused, false, 'a table starts unheld');
+
+  b.table.paused = true; // the host answered "wait for them" about B
+  a.drive();
+  b.drive();
+  assert.equal(clock.pending.filter((e) => !e.cancelled).length, 1,
+    'a held table armed a turn — only table A should be on the clock');
+  clock.flush();
+
+  assert.equal(a.played.length, 1, 'table A — not held — stopped playing');
+  assert.equal(b.played.length, 0, 'table B was held and its bot moved anyway');
+
+  // Letting it go and re-arming, which is what party.js `setTableHeld` does.
+  b.table.paused = false;
+  b.drive();
+  assert.equal(clock.flush(), 1, 'releasing table B did not arm its turn');
+  assert.equal(b.played.length, 1, 'table B did not pick up where it was held');
+  assert.equal(b.played[0].seat, 1);
+});
+
+test('a turn armed before the hold drops itself when it fires', async () => {
+  // Holding writes a flag and cancels nothing, so the turn already on the
+  // clock has to ask again when it fires — otherwise the first thing a held
+  // table does is play one more bot move.
+  const clock = fakeClock();
+  const b = await hostedTable(TABLE.b, clock);
+  b.drive();
+  assert.equal(clock.pending.filter((e) => !e.cancelled).length, 1, 'the turn was armed');
+
+  b.table.paused = true;
+  clock.flush();
+  assert.equal(b.played.length, 0, 'a turn armed before the hold played through it');
+});
+
+test('a held table is silent: no bot declares or catches while it waits', async () => {
+  const clock = fakeClock();
+  const persona = { callReliability: 1, catchAttention: 1 };
+  const announce = { type: 'announce' };
+  const b = await hostedTable(TABLE.b, clock, {
+    persona, announcements: (_s, seat) => (seat === 1 ? [announce] : []),
+  });
+  b.table.state.turn.seat = 0; // the host's own turn, so only the beat is in play
+
+  b.table.paused = true;
+  b.drive();
+  assert.equal(clock.pending.length, 0, 'a held table armed an announcement beat');
+
+  b.table.paused = false;
+  b.drive();
+  b.table.paused = true; // held again before the beat lands
+  clock.flush();
+  assert.deepEqual(b.said, [], 'a beat armed before the hold spoke through it');
+
+  b.table.paused = false;
+  b.drive();
+  clock.flush();
+  assert.deepEqual(b.said, ['announce'], 'releasing the table did not re-arm its beat');
 });

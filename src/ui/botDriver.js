@@ -23,6 +23,16 @@
 //
 // The `epoch` guard is still needed on top of either, for "Play again" and for
 // leaving to the lobby, which no clock knows anything about.
+//
+// A PAUSED TABLE IS HELD HERE, AND ONLY HERE (#228). `session.paused` is the
+// table's own flag (src/match/tableSession.js) — the host's "wait for them"
+// answer about a seat that dropped at THAT table. Both drivers come through
+// this module, the felt's for the table on screen and the headless one
+// (src/ui/party.js) for a table nobody is looking at, so reading it here is the
+// one read site for both: whichever driver owns the table, it will not arm a
+// turn or a beat while the table is held, and a turn armed before the pause
+// drops itself when it fires. Resuming is the caller re-arming (party.js
+// `setTableHeld`), because only the caller knows which driver owns the table.
 
 import { chooseBotMove } from '../engine/bot.js';
 import { thinkTimeMs } from '../players/roster.js';
@@ -82,7 +92,7 @@ export function createBotDriver({
     // Cancel first: an announcement or a re-entry could otherwise leave two
     // timers racing to move the same bot.
     cancelTurn(session);
-    if (!session) return;
+    if (!session || session.paused) return;
     const state = session.state;
     if (state.gameOver) return;
     const seat = actingSeatsOf(state).find((s) => me.plays(s));
@@ -91,6 +101,7 @@ export function createBotDriver({
     session.botTimer = clock.after(thinkTimeMs(identityOf(seat), botDelayMs()), () => {
       session.botTimer = null;
       if (myEpoch !== currentEpoch()) return; // superseded — drop the stale turn
+      if (session.paused) return; // held after this was armed — resuming re-arms it
       // WRAPPED, BECAUSE A BOT'S MOVE REACHES THE ENGINE FROM INSIDE A TIMER.
       // If the enumerator and the validator ever drift, applyMove throws with
       // nobody to catch it: the exception escapes into the timer callback, the
@@ -136,13 +147,19 @@ export function createBotDriver({
    */
   function scheduleAnnouncementBeats(session, myEpoch) {
     cancelBeats(session);
-    if (!session) return;
+    // A HELD TABLE IS A SILENT ONE. A beat is a move — a bot declaring, or
+    // catching somebody who did not — and "wait for them" means the hand stays
+    // exactly as it stands until the host lets it go, not that only the turns
+    // stop. The decision caches are left alone, so resuming re-arms the same
+    // choices rather than re-rolling them.
+    if (!session || session.paused) return;
     const state = session.state;
     if (state.gameOver || !state.pack.template.enumerateAnnouncements) return;
 
     const beat = (fn, ms) => {
       session.announceTimers.push(clock.after(ms, () => {
         if (myEpoch !== currentEpoch()) return;
+        if (session.paused) return;
         fn();
       }));
     };

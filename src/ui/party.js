@@ -61,7 +61,7 @@ import {
 import { confirmAction } from './confirm.js';
 import {
   adoptSharedView, leaveSharedTable, tableContext, setSeating, dealHostedTable, resumeHostedTable,
-  setLocalMoveListener, afterRemoteMove, setTablePaused, rerenderTable,
+  setLocalMoveListener, afterRemoteMove, rearmTableBots, rerenderTable,
 } from './table.js';
 import { motionAllowed } from './flight.js';
 import { createSeatTable, deserializeSeatTable } from '../players/seats.js';
@@ -1954,19 +1954,34 @@ function headlessBotsFor(session) {
  * A no-op while the felt is bound, because then the felt is already doing it
  * and two drivers scheduling against one state would move the same bot twice.
  *
- * AND NO PAUSE GATE, which is a decision rather than an omission (#203). "Wait
- * for them" is the felt's pause — `setTablePaused` holds the table the felt is
- * showing, and the felt's own scheduler is the only thing that reads it. There
- * is no per-table pause for an unbound table to be held by, so this used to read
- * a `session.paused` that nothing ever wrote: a gate that was always open,
- * wearing the look of one that was not. See the note in `askAboutSeat` for the
- * gap that leaves.
+ * AND NO PAUSE GATE OF ITS OWN (#228). A table the host answered "wait for
+ * them" about is held by its own `session.paused`, which the driver reads for
+ * this path and the felt's alike (src/ui/botDriver.js) — so a held unbound
+ * table schedules nothing from here, and `setTableHeld` re-arms it.
  */
 function driveBots(session) {
   if (!session?.hosting() || !session.bots || !session.state) return;
   if (sessions.isBound(session)) return;
   session.bots.scheduleNextTurn(session, session.epoch);
   session.bots.scheduleAnnouncementBeats(session, session.epoch);
+}
+
+/**
+ * Hold a table, or let it go, and re-arm whichever driver owns it (#228).
+ *
+ * THE TABLE THAT LOST THE PLAYER, never "the table on screen": the pause is
+ * `session.paused`, and the driver reads it for both of its callers. Holding
+ * needs nothing else — a turn already armed drops itself when it fires.
+ * Releasing re-arms, and which driver that is is the registry's answer, not
+ * the session's: the felt's scheduler while the felt is bound to this table,
+ * the headless driver otherwise.
+ */
+function setTableHeld(session, on) {
+  if (!session) return;
+  session.paused = !!on;
+  if (session.paused) return;
+  if (sessions.isBound(session)) rearmTableBots();
+  else driveBots(session);
 }
 
 /**
@@ -2035,7 +2050,6 @@ export function stopHosting() {
   if (tick) { clearInterval(tick); tick = null; }
   session.host.sendBye('closed');
   setLocalMoveListener(null);
-  setTablePaused(false);
   // ONE TEARDOWN POINT NOW. The timer, the host, the seat table, the two
   // bookkeeping Sets and the state all go with the session, which is what stops
   // this list drifting out of step with the one in hostGame.
@@ -2125,16 +2139,16 @@ function askAboutSeat(seat, session) {
       // THE BINDING IS REPLACED, not merely covered: the seat is a bot now, and
       // the departed player rejoining takes a free seat rather than this one.
       session?.seats?.seatBot(seat);
-      setTablePaused(false);
       afterSeatChange(session);
+      // After the seat change, so the driver re-armed here already sees a bot
+      // in the chair and plays it.
+      setTableHeld(session, false);
     } else if (choice === 'pause') {
-      // THE FELT'S PAUSE, WHICH IS THE ONE THE FELT IS SHOWING. `setTablePaused`
-      // is not per-table: answering "wait for them" about a table the felt is
-      // not bound to holds whichever table it IS showing, and leaves the one
-      // that lost a player being played on by the headless driver. Noted with
-      // #203, which removed the `session.paused` that looked like a fix for this
-      // and never was; the fix itself is a per-table pause and is its own job.
-      setTablePaused(true);
+      // THE TABLE THAT LOST THE PLAYER (#228) — `session`, the one this dialog
+      // was raised for, whether or not the felt is showing it. This used to be
+      // the felt's own pause, which held whichever table was on screen and left
+      // this one being played on by the headless driver.
+      setTableHeld(session, true);
       setNotice(`Paused — waiting for ${who}.`);
       afterSeatChange(session);
     } else {

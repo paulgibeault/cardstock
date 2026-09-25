@@ -2148,7 +2148,6 @@ function performAnnouncement(state, move, myEpoch = epoch) {
  * ------------------------------------------------------------------ */
 
 let bots = null;
-let paused = false;
 
 // THE DRIVER'S SLOTS ARE THE TABLE'S (#225): `session.table.botTimer` and the
 // rest, the same four fields the headless driver in src/ui/party.js uses for a
@@ -2162,11 +2161,12 @@ function scheduleNextTurn() {
   // stopped out from under the felt (the host's "Stop hosting") has no state
   // left to schedule against.
   if (!liveState() || liveState().isView) return;
-  // PAUSED IS A REAL STATE, and it is the host player's answer to a seat that
-  // dropped for good: hold the hand exactly as it stands rather than let the
-  // bots play on around an empty chair. Nothing is torn down, so resuming is
-  // one call and the table picks up mid-turn.
-  if (paused) return;
+  // NO PAUSE GATE HERE (#228). A held table is the TABLE's state
+  // (`session.table.paused`, src/match/tableSession.js), and the driver reads
+  // it for this scheduler and the headless one alike — this used to hold a
+  // felt-global flag, which paused whatever table was on screen rather than
+  // the one that lost a player.
+  //
   // A REVIEW IS A PAUSE THE PLAYER OPENED: the felt is standing at a past
   // position and a bot moving the live one underneath would be a move nobody
   // saw. `leaveReview` (src/ui/reviewController.js) re-arms the turn.
@@ -2174,10 +2174,14 @@ function scheduleNextTurn() {
   if (bots) bots.scheduleNextTurn(session.table, epoch);
 }
 
-/** Hold or release the table's own clock. The host's "wait for them" answer. */
-export function setTablePaused(on) {
-  paused = !!on;
-  if (!paused) scheduleNextTurn();
+/**
+ * Re-arm the bots at the table on screen. The host's resume after "wait for
+ * them" (src/ui/party.js `setTableHeld`), once the table's own `paused` is
+ * cleared — nothing is torn down by a pause, so the table picks up mid-turn.
+ */
+export function rearmTableBots() {
+  scheduleNextTurn();
+  scheduleAnnouncementBeats();
 }
 function scheduleAnnouncementBeats() {
   if (bots && liveState()) bots.scheduleAnnouncementBeats(session.table, epoch);

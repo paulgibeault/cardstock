@@ -122,12 +122,16 @@ export function createTableSession({ tableId = null, packId, role, packName = ''
     // Hearts says nothing about the same device's seat at Crazy Eights.
     decided: new Set(),      // seats whose terminal drop the host has answered
     unreachable: new Set(),  // seats a targeted send was refused for
-    // NO `paused` HERE (#203). There was one, and nothing ever wrote it: the
-    // pause a host can ask for is the felt's (`setTablePaused` in src/ui/table.js),
-    // held by the felt's own scheduler, and the headless driver read this field
-    // as though it were a second copy of that answer. A table-level pause is a
-    // real thing to want — see the note in `askAboutSeat` — but it has to be
-    // written before it is read.
+    // IS THIS TABLE HELD? (#228) The host's "wait for them" answer about a seat
+    // that dropped HERE — written by src/ui/party.js `askAboutSeat` for the
+    // table that lost the player, whichever table the felt happens to be
+    // showing. Per-table because the pause it replaced was the felt's, and
+    // answering about a backgrounded table held the one on screen while the
+    // one with the empty chair played on. Read in exactly one place, the bot
+    // driver (src/ui/botDriver.js), which both the felt and the headless driver
+    // schedule through. Clearing it is not enough on its own: whoever clears it
+    // re-arms the driver that owns the table (party.js `setTableHeld`).
+    paused: false,
     // HOW LONG A SEAT GETS AT THIS TABLE (plan §7). Per-table because the right
     // answer differs between a game played in one room and one played across a
     // week, and the host is the only one who knows which this is. Null until
