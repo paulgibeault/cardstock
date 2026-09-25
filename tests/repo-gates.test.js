@@ -308,6 +308,29 @@ test("party.js takes its session, never defaults to the focused table", () => {
 });
 
 /**
+ * A HOST'S ROSTER CHANGE RE-SEATS ITS OWN TABLE (#274).
+ *
+ * `refreshSeats(session)` rebuilt `session.lobbyFrame` and then derived the
+ * seating from `lobbyFrame()` — the frame of the table the FELT is showing — so
+ * a joiner at a second hosted table overwrote that table's seating with the
+ * first one's. The rule itself is `reseatHostedTable` in src/ui/partyModel.js,
+ * driven in tests/partyModel.test.js; this pins that party.js goes through it
+ * and has not grown the felt's frame back.
+ */
+test("refreshSeats seats the table it was called for, not the one on the felt", () => {
+  const file = "src/ui/party.js";
+  const src = fs.readFileSync(path.join(ROOT, file), "utf8");
+  const start = src.indexOf("\nfunction refreshSeats(session) {");
+  assert.ok(start >= 0, `${file} has no refreshSeats(session) — update this gate`);
+  const body = src.slice(start, src.indexOf("\n}\n", start))
+    .split("\n").filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line)).join("\n");
+  assert.match(body, /\breseatHostedTable\(session,/,
+    `${file} refreshSeats no longer derives the seating through reseatHostedTable(session, …)`);
+  assert.doesNotMatch(body, /\b(lobbyFrame|attached|ourTable|theirTable)\(\)/,
+    `${file} refreshSeats reads the felt's or the panel's table — the seating must come from the session it was called for`);
+});
+
+/**
  * ONE DEFAULT GRACE, IN ONE PLACE (#218).
  *
  * How long a seat gets when its host never chose was written twice: as

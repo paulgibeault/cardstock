@@ -20,9 +20,10 @@ import assert from 'node:assert';
 
 import {
   partyModel, tableOf, focusedTable, boundTable, packState, emptyBeliefs, SETTLE_MS,
-  DEFAULT_GRACE_MS,
+  DEFAULT_GRACE_MS, reseatHostedTable,
 } from '../src/ui/partyModel.js';
 import { createTableSession } from '../src/match/tableSession.js';
+import { createSessionRegistry } from '../src/match/sessionRegistry.js';
 import { createTableDirectory } from '../src/match/tableDirectory.js';
 import { createSeatTable } from '../src/players/seats.js';
 
@@ -384,6 +385,70 @@ test('a device hosting two packs answers about each table separately', () => {
   assert.strictEqual(tableOf(model, 't2b2b2b2b2b2b2b2b2b').hasState, false);
   assert.strictEqual(tableOf(model, 't1a1a1a1a1a1a1a1a1a').stage, 'in progress');
   assert.strictEqual(tableOf(model, 't2b2b2b2b2b2b2b2b2b').stage, 'waiting to deal');
+});
+
+/**
+ * The roster a host publishes for ONE of its tables — the shape party.js's
+ * `ourLobbyFrame(session)` builds, read off that session's own seat table.
+ */
+function frameOfHosted(session) {
+  if (!session?.seats) return null;
+  const names = { [ME]: 'Me', [ADA]: 'Ada', [BO]: 'Bo' };
+  const seats = [];
+  for (let seat = 0; seat < session.seats.count; seat++) {
+    const owner = session.seats.ownerOf(seat);
+    seats.push({ seat, kind: owner.kind, deviceId: owner.deviceId ?? undefined,
+      name: owner.kind === 'device' ? names[owner.deviceId] : undefined });
+  }
+  return { tableId: session.tableId, packId: session.packId, variants: [], hostDeviceId: ME,
+    seatCount: session.seats.count, seats, graceMs: 60_000, started: !!session.state };
+}
+
+test('a roster change at the table in the background re-seats THAT table and leaves the felt alone (#274)', () => {
+  const HEARTS = 't1a1a1a1a1a1a1a1a1a';
+  const EIGHTS = 't2b2b2b2b2b2b2b2b2b';
+  const registry = createSessionRegistry();
+  const hearts = hostSession(HEARTS, 'hearts');
+  const eights = hostSession(EIGHTS, 'crazy-eights');
+  registry.add(hearts);
+  registry.add(eights);
+  registry.bind(HEARTS);
+  const deps = { frameOf: frameOfHosted, isBound: registry.isBound, ctx: base };
+
+  // Both tables seated once, each with a bot face of its own at seat 1.
+  const onFelt = reseatHostedTable(hearts, deps);
+  assert.ok(onFelt, 'the bound table hands the felt its seating');
+  reseatHostedTable(eights, deps);
+  hearts.seating = hearts.seating.map((s) => (s.seat === 1 ? Object.freeze({ ...s, name: 'Otto' }) : s));
+  eights.seating = eights.seating.map((s) => (s.seat === 1 ? Object.freeze({ ...s, name: 'Nell' }) : s));
+  const heartsBefore = hearts.seating;
+  const heartsFrameBefore = hearts.lobbyFrame;
+
+  // Bo sits down at Crazy Eights while Hearts is on the felt.
+  eights.seats.claim(2, { deviceId: BO });
+  const forFelt = reseatHostedTable(eights, deps);
+
+  assert.strictEqual(forFelt, null,
+    'a table the felt is not showing must not re-seat the felt — it would draw its roster on the other table');
+  assert.strictEqual(eights.lobbyFrame.tableId, EIGHTS);
+  assert.strictEqual(eights.seating[2].name, 'Bo', "the background table's seating is its OWN roster");
+  assert.strictEqual(eights.seating[1].name, 'Nell',
+    "and its own bot face — not the bound table's Otto");
+  assert.strictEqual(eights.seating.length, 3);
+  assert.strictEqual(hearts.seating, heartsBefore, "the bound table's seating is untouched");
+  assert.strictEqual(hearts.lobbyFrame, heartsFrameBefore, 'and so is its frame');
+  assert.strictEqual(hearts.seating[2].name, 'Open seat', 'Bo is not at Hearts');
+
+  // The same change at the bound table does go to the felt.
+  hearts.seats.claim(2, { deviceId: ADA });
+  const next = reseatHostedTable(hearts, deps);
+  assert.strictEqual(next, hearts.seating);
+  assert.strictEqual(next[2].name, 'Ada');
+  assert.strictEqual(next[1].name, 'Otto', "the bound table keeps its own bot face");
+  assert.strictEqual(eights.seating[2].name, 'Bo', 'and the background table is left as it was');
+
+  // No subject, nothing touched.
+  assert.strictEqual(reseatHostedTable(null, deps), null);
 });
 
 test('unreachable is per table, so a failed send at one says nothing about the other', () => {
