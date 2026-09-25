@@ -405,6 +405,38 @@ test("the felt's bot driver picks its clock from the match, not from the tab", (
 });
 
 /**
+ * THE FELT'S BOTS DROP A TURN WHEN THE SCREEN CHANGES (#264).
+ *
+ * `botDriverSeams` defaults `epoch` to the TABLE's (src/match/tableSession.js),
+ * which moves only when the table stops. The felt passes its own counter
+ * instead — the SHOWING's, moved by the doors when what is on screen changes —
+ * because leaving a hosted table for the lobby changes the screen without
+ * stopping the table (src/ui/botSeams.js's header has the whole argument).
+ *
+ * Deleting the felt's `epoch:` line would look like tidying a redundant option
+ * and would still load, still play, and still pass every Node test: the default
+ * is a perfectly good epoch, just the wrong one. tests/botSeams.test.js proves
+ * the builder honours the seam; this proves the felt still hands it over, and
+ * that the headless driver — which must answer to the table — does not.
+ */
+test("the felt's bot driver is handed the felt's epoch, the headless one the table's", () => {
+  const optionsIn = (rel) => {
+    const code = fs.readFileSync(path.join(ROOT, rel), "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+    const at = code.indexOf("createBotDriver(botDriverSeams(");
+    assert.ok(at >= 0, `${rel} no longer builds its bot driver through botDriverSeams`);
+    return code.slice(at, code.indexOf("}));", at));
+  };
+  assert.match(optionsIn("src/ui/table.js"), /^\s*epoch: \(\) => epoch,$/m,
+    "the felt's bot driver no longer takes `epoch: () => epoch` — without it the driver reads the "
+    + "TABLE's epoch, and a turn armed before leaving a hosted table for the lobby plays for a "
+    + "screen that is gone (#264)");
+  assert.doesNotMatch(optionsIn("src/ui/party.js"), /\bepoch:/,
+    "the headless driver hands botDriverSeams an epoch — it drives a table nobody is looking at, "
+    + "so it must take the default, the table's own (#264)");
+});
+
+/**
  * ONE TIMER SEAM (#213).
  *
  * `Arcade.session.setTimeout` is a §6c obligation — a timer that freezes with

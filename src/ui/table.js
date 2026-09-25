@@ -234,6 +234,16 @@ const el = {
 // scheduleNextTurn's callback checks its own epoch is still current before
 // touching anything, so "Play again", a save import (onStateReplaced) and
 // leaving for the lobby all bump it to drop a turn already in flight.
+//
+// IT IS THE SHOWING'S EPOCH, NOT THE TABLE'S (#264), and the two are different
+// on purpose. `session.table.epoch` (src/match/tableSession.js) moves when the
+// TABLE stops; this one moves when what the felt SHOWS changes, and guards the
+// felt's own awaits — offerFinalLook, performHumanMove's pending choices,
+// performAnnouncement, the flights, the round ending. Leaving a hosted table
+// for the lobby moves this one and not the table's: the felt's awaits drop
+// while the table plays on headless. src/ui/botSeams.js's header has the rest.
+// (Kept as `epoch` rather than renamed: tests/matchDoors.test.js's writers
+// gate reads the name, and the doors' `bumpEpoch` is theirs.)
 let session = null;
 let epoch = 0;
 
@@ -2719,11 +2729,14 @@ export function initTable({ onExit }) {
   // is showing something else.
   bots = createBotDriver(botDriverSeams(() => session?.table ?? null, {
     clock: feltClock({ shared: () => !!session?.table.hosting() }),
-    // THE FELT'S EPOCH, NOT THE TABLE'S — and this one stays. It is the
-    // screen's counter: it has to outlive every table the felt shows (a solo
+    // THE FELT'S EPOCH, NOT THE TABLE'S — and this one stays (#264). It is the
+    // SHOWING's counter: it has to outlive every table the felt shows (a solo
     // table ends with the felt, so its own counter would start again from zero
-    // at "Play again"), and `performAnnouncement` below compares the epoch a
-    // bot's beat was scheduled under against this same counter.
+    // at "Play again"), it moves when the felt leaves a hosted table that plays
+    // on headless (whose own counter must not), and `performAnnouncement` below
+    // compares the epoch a bot's beat was scheduled under against this same
+    // counter. The default would be the table's, which is the wrong question
+    // here (tests/repo-gates.test.js keeps this line).
     epoch: () => epoch,
     identityOf,
     playMove: (state, move, seat) => {

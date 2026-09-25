@@ -22,9 +22,38 @@
 //   identityOf        both read `session.seating` first; the fallback differs
 //                     (the felt: "Seat N", a bot unless it is this device's;
 //                     headless: the party's name for the seat, always a bot).
-//   epoch             the felt passes its own screen counter (src/ui/table.js
-//                     says why it cannot be the table's); the headless driver
-//                     takes the default, the table's own `epoch`.
+//   epoch             the felt passes its own SHOWING counter; the headless
+//                     driver takes the default, the table's own `epoch`. Two
+//                     lifetimes, on purpose — see below.
+//
+// TWO EPOCHS, TWO LIFETIMES (#264 — decided, not a leftover). The felt's
+// `epoch` is the one seam the felt still passes where a default exists, and it
+// stays passed:
+//
+//   the TABLE's epoch   (src/match/tableSession.js) is the table's lifetime.
+//                       `stop()` bumps it, so a turn armed on a table that has
+//                       since ended drops itself. Nothing else moves it.
+//   the FELT's epoch    (src/ui/table.js, bumped only by the doors' `bumpEpoch`
+//                       in src/ui/matchDoors.js: adopting a match — which is
+//                       how "Play again" and a save import arrive — a joiner's
+//                       view of a different table, and leaving for the lobby)
+//                       is the lifetime of what is ON SCREEN. It guards the felt's own
+//                       awaits — `offerFinalLook`, `performHumanMove`'s pending
+//                       choices, `performAnnouncement`, the move flights, the
+//                       round ending — across a change of what is showing.
+//
+// They part company exactly when a hosted table is UNBOUND: the felt leaves for
+// the lobby, so its awaits must drop and its counter moves, while the table
+// plays on headless and its counter must NOT move (party.js arms the headless
+// driver under that same table epoch). A table re-bound later is the same
+// object with the same epoch, so an identity check on the table cannot stand in
+// for the felt's counter either; and a registry-wide table generation would
+// only answer "is this table alive", which the table's own epoch already does.
+//
+// So the felt handing `epoch` in is the felt telling its driver "drop the turn
+// if the SCREEN changed", which is a different question from the one the
+// default asks. Pinned by tests/botSeams.test.js (the leave-to-lobby shape) and
+// by a gate in tests/repo-gates.test.js that the felt keeps passing it.
 //
 // NO LONGER ON THE LIST (#225): `announcementsFor`. The felt used to pass its
 // view-aware wrapper and the headless driver took the engine's; the view-aware
