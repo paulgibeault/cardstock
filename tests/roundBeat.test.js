@@ -38,6 +38,8 @@ import { FLIGHT_MIN_MS, FLIGHT_MS, FLIGHT_MAX_MS } from "../src/ui/flight.js";
 // Everything below that used to be a regex over table.js's source is now driven;
 // what is left as a grep is the two INPUT DOORS, which are still table.js's.
 import { roundEndingHarness, inputAt } from "./fixtures/roundEnding.js";
+import { createStatusBar } from "../src/ui/statusBar.js";
+import { seatAnswers } from "./fixtures/chrome.js";
 import { inputEndsHeldBeat } from "../src/ui/session.js";
 import { TAP_TO_GO_ON } from "../src/ui/celebrations.js";
 
@@ -864,6 +866,9 @@ test("the show is walked one input at a time, and one input advances one beat", 
   h.session.roundBeat = true;
   const opened = [];
   h.ending.runShowSequence(plan, h.state, () => opened.push('summary'));
+  // The bar, reading the very session the show is walking (src/ui/statusBar.js).
+  const bar = createStatusBar({ el: {}, session: () => h.session, ...seatAnswers(), winnerSentence: () => '' });
+  const barSays = () => bar.statusTextFor(h.state, [0]);
 
   // THE FIRST COUNT STILL OPENS ON THE HOLD — there is nothing to dismiss until
   // something is on the felt — and it is the ONLY timer a show that waits arms.
@@ -881,6 +886,11 @@ test("the show is walked one input at a time, and one input advances one beat", 
       + 'is measured against — without it the tap that dismissed the last count is '
       + 'still in flight and dismisses this one too');
     seen.push(h.said.at(-1));
+    // THE FELT SAYS A TAP CONTINUES on the bar too, or three motionless counts
+    // read as a hang. #status-text is a label that changes; #log is the announced one.
+    assert.strictEqual(barSays(), 'Round over. Tap to go on.',
+      "the status bar must promise the tap for exactly as long as a count is waiting "
+      + "for one");
 
     // A COUNT IS DISMISSED EXACTLY ONCE. The stale closure from the beat before
     // this one must not fire into the middle of it.
@@ -898,6 +908,9 @@ test("the show is walked one input at a time, and one input advances one beat", 
   // no count left rather than armed alongside the counts.
   assert.deepStrictEqual(opened, ['summary']);
   assert.strictEqual(h.session.beatResume, null, 'and nothing is left standing');
+  h.session.roundBeat = true;
+  assert.strictEqual(barSays(), 'Round over.',
+    'and once nothing is waiting on a tap, the bar stops promising one');
 
   // THE ORDER IS THE PLAN'S, not the renderer's: pone, the dealer, then the crib.
   assert.deepStrictEqual(
@@ -1000,11 +1013,8 @@ test("the show is walked one input at a time, and one input advances one beat", 
   assert.match(ending, /plan\.stepMs == null && plan\.steps\.length/,
     'and it must read the plan\'s own numbers to decide, rather than the rung');
 
-  // THE FELT SAYS A TAP CONTINUES on the bar too, or three motionless counts read
-  // as a hang. #status-text is a label that changes; #log is the announced one.
-  assert.match(table, /session\.beatResume \? 'Round over\. Tap to go on\.' : 'Round over\.'/,
-    "the status bar must promise the tap for exactly as long as a count is waiting "
-    + "for one");
+  // (The bar's half of "a tap continues" is asked of src/ui/statusBar.js inside
+  // the walk above, against the same session.)
   assert.match(ending, /el\.log\.textContent = waits \? heldBeatLine\(text\) : text/,
     "the live region must carry both the count and the way out of it in one write");
 

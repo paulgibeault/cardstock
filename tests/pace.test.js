@@ -30,6 +30,8 @@ import { tableCss } from "./fixtures/tableCss.js";
 import { currentPace } from "../src/ui/roundEnding.js";
 import { roundEndingHarness } from "./fixtures/roundEnding.js";
 import { installArcade } from "./fixtures/arcade.js";
+import { createStatusBar } from "../src/ui/statusBar.js";
+import { seatAnswers } from "./fixtures/chrome.js";
 
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), "utf8");
 
@@ -311,7 +313,10 @@ test("the shipped default waits for a person at the count too", () => {
     'and the sheet after the last of them, which is the fourth');
   // The felt promises it at exactly the rung that needs it promised, on the bar
   // and in the live region — three motionless counts read as a hang otherwise.
-  assert.match(read("src/ui/table.js"), /'Round over\. Tap to go on\.'/,
+  // Asked of the bar itself (src/ui/statusBar.js), with a count waiting on a tap.
+  const session = { roundBeat: true, beatResume: () => {} };
+  const bar = createStatusBar({ el: {}, session: () => session, ...seatAnswers(), winnerSentence: () => '' });
+  assert.strictEqual(bar.statusTextFor({}, [0]), 'Round over. Tap to go on.',
     'the status bar must offer the tap whenever a count is waiting for one, which at '
     + 'the shipped rung is every count of every cribbage hand');
 });
@@ -436,9 +441,14 @@ test("the shipped default waits for a person at both beats, and one tap leaves i
     + 'work on the very first tap; #174 is that door');
   // And the felt promises the tap at exactly the rung that needs it promised —
   // otherwise a first trick with no clock on it is a game that looks frozen.
-  assert.match(read("src/ui/table.js"), /trickBeat\.waits \? `\$\{whose\} Tap to go on\.`/,
+  const session = { trickBeat: { seat: 1, waits: true } };
+  const bar = createStatusBar({ el: {}, session: () => session, ...seatAnswers(), winnerSentence: () => '' });
+  assert.strictEqual(bar.statusTextFor({}, [0]), "Fig's trick. Tap to go on.",
     'the status bar must offer the tap whenever the hold has no clock, which at the '
     + 'shipped rung is every trick of every hand');
+  session.trickBeat.waits = false;
+  assert.strictEqual(bar.statusTextFor({}, [0]), "Fig's trick.",
+    'and only then — a hold with a clock on it is over before the sentence is read');
 });
 
 // #176 records the six seconds as decided against, and the reasoning is worth

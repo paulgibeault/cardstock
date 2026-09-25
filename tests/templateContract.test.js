@@ -65,7 +65,7 @@ const OPTIONAL_FUNCTIONS = [
   "gathers",
   "seatCounters",
   // What the TABLE is counting rather than what a seat is — cribbage's running
-  // count in the play (#124). Read by src/ui/table.js's renderTableCounters.
+  // count in the play (#124). Read by src/ui/statusBar.js's renderTableCounters.
   "tableCounters",
   // How many cards a simultaneous commit wants and what its button says — the
   // two things src/ui/interaction.js used to read out of trick-taking's own

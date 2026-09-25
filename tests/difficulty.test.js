@@ -20,6 +20,8 @@ import { ROOT } from "../tools/stage.mjs";
 import { DIFFICULTIES } from "../src/engine/bot.js";
 import { SKILL_LEVELS, skillLevel } from "../src/ui/difficulty.js";
 import { SETTINGS_DEFAULTS } from "../src/arcade/storage.js";
+import { botDriverSeams } from "../src/ui/botSeams.js";
+import { installArcade } from "./fixtures/arcade.js";
 
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), "utf8");
 
@@ -84,11 +86,24 @@ test("the lobby saves the choice on the gesture that deals, and only then", () =
   }
 });
 
+// ONE BUILDER FOR BOTH DRIVERS since #223 seam 7, so the live read is asked of
+// src/ui/botSeams.js rather than grepped twice; what is left as a grep is that
+// both drivers are built through it (tests/botSeams.test.js pins the rest).
 test("both bot drivers are told which difficulty to play at", () => {
   for (const file of ["src/ui/table.js", "src/ui/party.js"]) {
-    assert.match(read(file), /difficulty: \(\) => loadSettings\(\)\.botDifficulty/,
-      `${file}: the driver reads the setting at fire time (src/ui/botDriver.js), so this `
-      + "must be a live read — a snapshot taken at table init is stale the moment the "
-      + "sheet changes it");
+    assert.match(read(file), /createBotDriver\(botDriverSeams\(/,
+      `${file}: the driver must be built through src/ui/botSeams.js, which is where the `
+      + "difficulty is read");
+  }
+  const { store } = installArcade({ state: true });
+  const noop = () => {};
+  const seams = botDriverSeams(() => null, {
+    clock: {}, identityOf: noop, playMove: noop, playAnnouncement: noop, onError: noop,
+  });
+  for (const level of SKILL_LEVELS) {
+    store.set("settings", { ...SETTINGS_DEFAULTS, botDifficulty: level.id });
+    assert.strictEqual(seams.difficulty(), level.id,
+      "the driver reads the setting at fire time (src/ui/botDriver.js), so this must be a "
+      + "live read — a snapshot taken at table init is stale the moment the sheet changes it");
   }
 });

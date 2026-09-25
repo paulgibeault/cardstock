@@ -54,7 +54,7 @@ const parentOf = (root, node) => {
   return null;
 };
 
-/** A seat entry of the shape src/ui/table.js's `sharedBoardFor` hands over. */
+/** A seat entry of the shape src/ui/statusBar.js's `sharedBoardFor` hands over. */
 const seat = (n, value, from, extra = {}) => ({
   seat: n,
   name: extra.name ?? `Seat ${n}`,
