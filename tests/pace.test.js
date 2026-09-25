@@ -23,6 +23,13 @@ import {
 } from "../src/ui/roundBeat.js";
 import { SETTINGS_DEFAULTS } from "../src/arcade/storage.js";
 import { tableCss } from "./fixtures/tableCss.js";
+// THE FELT'S OWN HALF, NOW IMPORTABLE (#223 seam 2). The round ending was carved
+// out of src/ui/table.js into src/ui/roundEnding.js, which takes its elements and
+// its session as parameters — so the four rules below that used to be read out of
+// table.js's source are driven instead.
+import { currentPace } from "../src/ui/roundEnding.js";
+import { roundEndingHarness } from "./fixtures/roundEnding.js";
+import { installArcade } from "./fixtures/arcade.js";
 
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), "utf8");
 
@@ -489,13 +496,18 @@ test("the felt builds its trick plan with the player's rung and its own shared f
 
   // THE SAME TWO ARGUMENTS ONE BEAT LATER (#181). The round beat's plan needs
   // both for the same two reasons, and a call that dropped the shared flag here
-  // would gate a shared device's queue on three taps rather than one.
-  const round = table.match(/roundBeatPlan\(events, \{[\s\S]*?\}\) : null/);
+  // would gate a shared device's queue on three taps rather than one. It is read
+  // out of src/ui/roundEnding.js since #223 — `beginRoundEnding` went with the
+  // seam, and this is still the one place a round ending is planned.
+  const round = read("src/ui/roundEnding.js").match(/roundBeatPlan\(events, \{[\s\S]*?\}\) : null/);
   assert.ok(round, "beginRoundEnding must be the one place a round ending is planned");
   assert.match(round[0], /pace: currentPace\(\)\.id/,
     "without the rung the show is counted at the default for everybody, whatever "
     + "dial the player set");
-  assert.match(round[0], /shared: !!session\?\.shared/,
+  // `session()` rather than `session` because the seam is handed a thunk — it is
+  // replaced wholesale by adoptMatch, so a captured object would be a closure
+  // over a match that has gone (src/ui/roundEnding.js's header).
+  assert.match(round[0], /shared: !!session\(\)\?\.shared/,
     "without the shared flag a count with no clock on it stalls one device's queue "
     + "three times a hand while the other players keep playing");
 });
@@ -509,14 +521,20 @@ test("the felt builds its trick plan with the player's rung and its own shared f
 // it, so a copy is what this forbids.
 test("both paths that end a round plan it through the one shared builder", () => {
   const table = read("src/ui/table.js");
-  const calls = table.match(/roundBeatPlan\(/g) || [];
-  assert.strictEqual(calls.length, 1,
-    `${calls.length} round-beat plans are built in table.js; a second builder is how the `
-    + "announcement path lost `shared` in the first place — call `beginRoundEnding`");
+  const ending = read("src/ui/roundEnding.js");
+  // BOTH FILES, since #223 split them: the builder is in src/ui/roundEnding.js
+  // and the two callers are still in src/ui/table.js, so "there is exactly one"
+  // is a question about the pair.
+  const calls = (table.match(/roundBeatPlan\(/g) || []).length
+    + (ending.match(/roundBeatPlan\(/g) || []).length;
+  assert.strictEqual(calls, 1,
+    `${calls} round-beat plans are built across table.js and roundEnding.js; a second `
+    + "builder is how the announcement path lost `shared` in the first place — call "
+    + "`beginRoundEnding`");
 
-  const builder = table.match(/function beginRoundEnding\([\s\S]*?\n\}/);
+  const builder = ending.match(/function beginRoundEnding\([\s\S]*?\n  \}/);
   assert.ok(builder, "beginRoundEnding must exist — it is the shared round-ending tail");
-  assert.match(builder[0], /shared: !!session\?\.shared/,
+  assert.match(builder[0], /shared: !!session\(\)\?\.shared/,
     "the shared builder must carry the table's own shared flag, or EVERY path that "
     + "ends a round leaves a hosted device gated on taps nobody else can make");
 
@@ -530,7 +548,7 @@ test("both paths that end a round plan it through the one shared builder", () =>
     return table.slice(at, table.indexOf("\n}\n", at));
   };
   for (const name of ["afterMove", "performAnnouncement"]) {
-    assert.match(body(name), /beginRoundEnding\(state, move\)/,
+    assert.match(body(name), /roundEnding\.beginRoundEnding\(state, move\)/,
       `${name} must plan its round ending through the shared builder, not a copy of it`);
   }
 });
@@ -554,20 +572,40 @@ test("both paths that end a round plan it through the one shared builder", () =>
 // read in none. The guard that matters is no longer "this function reads past the
 // snapshot" but "there is no snapshot to read past": a felt-side copy of the blob
 // is the shape of this bug, whoever reintroduces it and for whichever setting.
+//
+// DRIVEN SINCE #223, not read: `currentPace` came out of table.js with the round
+// ending and is pure, so the question "does a rung written after the deal reach
+// the felt" can be ASKED rather than inferred from the shape of two lines. That is
+// the whole bug, executable: write storage the way the lobby does, and read.
 test("the pace is read from storage, and the felt keeps no copy to go stale", () => {
-  const src = read("src/ui/table.js");
-  const fn = src.match(/function currentPace\(\) \{[\s\S]*?\n\}/);
-  assert.ok(fn, "currentPace must exist — it is the one place the felt asks for the rung");
-  assert.match(fn[0], /loadSettings\(\)\.pace/,
+  const { store } = installArcade({ state: true });
+
+  store.set("settings", { pace: "relaxed" });
+  assert.strictEqual(currentPace().id, "relaxed",
     "the rung must be read fresh at the moment it is needed");
-  assert.doesNotMatch(fn[0], /settings \?/,
-    "reading a module snapshot first is the bug: the new-game sheet writes storage "
-    + "and never touches such a snapshot, so a rung picked in the lobby does not reach "
-    + "the felt until the tab is reloaded");
-  assert.doesNotMatch(src, /^let settings\b/m,
-    "src/ui/table.js must not hold its own copy of the preferences blob — every reader "
-    + "asks storage at the moment it needs the answer, and a second copy is only a "
-    + "second thing to forget to refresh (#181, #184, #203)");
+
+  // THE NEW-GAME SHEET, in the only way that matters: storage changes and nothing
+  // tells the felt. A snapshot taken at boot would still answer `relaxed` here.
+  store.set("settings", { pace: "quick" });
+  assert.strictEqual(currentPace().id, "quick",
+    "a rung written after the table opened must reach the very next round ending — "
+    + "the new-game sheet writes storage and deals, and touches no snapshot");
+
+  // An unreadable rung is the shipped one, rather than no rung at all.
+  store.set("settings", { pace: "glacial" });
+  assert.strictEqual(currentPace().id, DEFAULT_PACE);
+  store.delete("settings");
+  assert.strictEqual(currentPace().id, DEFAULT_PACE,
+    "a fresh install has no saved rung and still has to have one");
+
+  // AND NEITHER FILE MAY KEEP A COPY. This half stays a source gate because it is
+  // a claim about what does NOT exist, which nothing can be driven to prove.
+  for (const rel of ["src/ui/table.js", "src/ui/roundEnding.js"]) {
+    assert.doesNotMatch(read(rel), /^let settings\b/m,
+      `${rel} must not hold its own copy of the preferences blob — every reader asks `
+      + "storage at the moment it needs the answer, and a second copy is only a "
+      + "second thing to forget to refresh (#181, #184, #203)");
+  }
 });
 
 test("an unknown rung runs the default schedule rather than no schedule", () => {
@@ -616,29 +654,93 @@ test("the lobby saves the rung on the gesture that deals, and only then", () => 
 // paints the deal and only then calls `scheduleNextTurn`. A timer that reached
 // for `scheduleNextTurn` itself would let a bot play its first card into a felt
 // still showing the last hand.
+// DRIVEN SINCE #223, for the same reason the rung above is: `armAutoAdvance` and
+// `dismissRoundSummary` came out of table.js into src/ui/roundEnding.js, which
+// takes its session and its panel doors in — so what the countdown arms, and what
+// it does when it goes off, can be watched instead of read.
 test("the auto-advance goes through the one door that deals", () => {
-  const src = read("src/ui/table.js");
-  const arm = src.match(/function armAutoAdvance\(ms\) \{[\s\S]*?\n\}/);
-  assert.ok(arm, "armAutoAdvance must exist — it is the whole of the timed transition");
-  assert.match(arm[0], /dismissRoundSummary\(\)/,
-    "the timer must deal through dismissRoundSummary");
-  assert.doesNotMatch(arm[0], /scheduleNextTurn/,
-    "a timer that schedules a bot directly re-arms the table before the deal is on it");
-  assert.match(arm[0], /if \(ms == null\) return/,
-    "Manual must arm no timer at all, rather than one with a null delay");
+  // MANUAL ARMS NOTHING AT ALL, rather than a timer with a null delay.
+  {
+    const h = roundEndingHarness();
+    h.ending.armAutoAdvance(null);
+    assert.strictEqual(h.live().length, 0,
+      "Manual must arm no timer at all — the sheet waits for a tap, forever");
+  }
+
   // A DELAY THAT IS NOT A WAIT CANNOT BE A COUNTDOWN (#174). `instant` never
   // opens a sheet — runRoundBeat dismisses through the door before
   // showRoundSummary is called — so a 0 arriving here can only be a bug, and
   // the bug it was is a summary that closed itself on the tick after the tap
   // that opened the pace control.
-  assert.match(arm[0], /if \(!\(ms > 0\)\) return/,
-    "a zero, negative or NaN delay must arm nothing; setTimeout(…, 0) here is a "
-    + "sheet dismissing itself on the next tick, under the tap that just changed it");
-  // The tap has to beat the clock, and the clock must not fire behind it.
-  const door = src.match(/function dismissRoundSummary\(message\) \{[\s\S]*?\n\}/);
-  assert.ok(door, "dismissRoundSummary is the door; it must still be here");
-  assert.match(door[0], /cancelRoundBeat\(\)/,
-    "dismissing the sheet must cancel the countdown that was about to dismiss it");
+  for (const ms of [0, -1, NaN, undefined]) {
+    const h = roundEndingHarness();
+    h.ending.armAutoAdvance(ms);
+    assert.strictEqual(h.live().length, 0,
+      `a delay of ${String(ms)} must arm nothing; setTimeout(…, 0) here is a sheet `
+      + "dismissing itself on the next tick, under the tap that just changed it");
+  }
+
+  // AND A REAL RUNG DEALS THROUGH THE ONE DOOR. `dismissRoundSummary` clears the
+  // flag, paints the deal and only THEN schedules the next turn; a timer that
+  // reached for `scheduleNextTurn` itself would let a bot play its first card
+  // into a felt still showing the last hand.
+  {
+    const h = roundEndingHarness({ session: undefined });
+    h.session.roundSummaryOpen = true;
+    h.session.roundBeat = true;
+    h.ending.armAutoAdvance(2500);
+    assert.deepStrictEqual(h.live().map((t) => t.ms), [2500],
+      "one countdown, at the rung's own duration");
+    assert.strictEqual(h.session.advanceTimer, h.live()[0],
+      "and held on the session, or stopSession cannot stop it (#150)");
+    assert.strictEqual(h.names().includes("scheduleNextTurn"), false,
+      "nothing is scheduled while the sheet is still up");
+
+    h.fire();
+    assert.strictEqual(h.session.roundSummaryOpen, false, "the door clears the flag");
+    assert.strictEqual(h.session.roundBeat, false,
+      "and lets the ending go, so the render below is the first sight of the new hand");
+    const order = h.names();
+    assert.ok(order.indexOf("hideRoundSummary") < order.indexOf("render"),
+      "the sheet comes down before the deal is painted");
+    assert.ok(order.indexOf("render") < order.indexOf("scheduleNextTurn"),
+      "a bot is scheduled only after the deal is on the felt — that is the whole "
+      + "reason the timer goes through this door rather than calling scheduleNextTurn");
+    assert.ok(order.includes("celebrateDeal"),
+      "the hand the engine dealt inside the round-ending move arrives unannounced "
+      + "otherwise");
+  }
+
+  // A COUNTDOWN WHOSE TABLE HAS GONE deals nothing. The handle is what lets
+  // stopSession stop it firing; the epoch is what stops one that already fired
+  // from dealing a hand into the match that replaced it.
+  {
+    const h = roundEndingHarness();
+    h.session.roundSummaryOpen = true;
+    h.ending.armAutoAdvance(2500);
+    h.setEpoch(5);
+    h.fire();
+    assert.strictEqual(h.session.roundSummaryOpen, true,
+      "a countdown armed for one table must not deal into the next one");
+    assert.deepStrictEqual(h.names(), []);
+  }
+
+  // THE TAP BEATS THE CLOCK, AND THE CLOCK MUST NOT FIRE BEHIND IT.
+  {
+    const h = roundEndingHarness();
+    h.session.roundSummaryOpen = true;
+    h.ending.armAutoAdvance(2500);
+    const countdown = h.live()[0];
+    h.ending.dismissRoundSummary();
+    assert.strictEqual(countdown.cancelled, true,
+      "dismissing the sheet must cancel the countdown that was about to dismiss it");
+    // ...and the door is idempotent under the panel's two listeners.
+    const before = h.names().length;
+    h.ending.dismissRoundSummary();
+    assert.strictEqual(h.names().length, before,
+      "the second call must find `roundSummaryOpen` false and do nothing — the sheet "
+      + "carries two listeners that both reach this door");
+  }
 });
 
 test("every round-ending timer is held on the session and cancelled with it", () => {
@@ -649,11 +751,22 @@ test("every round-ending timer is held on the session and cancelled with it", ()
       `stopSession must cancel ${field} — a timer left running is a table that keeps `
       + 'playing a match nobody is looking at');
   }
-  const table = read("src/ui/table.js");
-  // `schedule(` since #213: the raw `Arcade.session.setTimeout` this named is
-  // gone from src/ui/ entirely, so the shape to refuse is the seam's.
-  assert.doesNotMatch(table, /\n  schedule\(\(\) => \{\n    if \(myEpoch !== epoch \|\| !session\?\.roundBeat\)/,
-    "the round beat must not schedule an unheld timer");
+  // AND EVERY TIMER A ROUND ENDING ARMS ACTUALLY LANDS IN ONE OF THE THREE, which
+  // is what the source gate here used to try to say by refusing one shape of
+  // unheld `schedule(` call. Driven since #223: run a whole timed show and count.
+  const h = roundEndingHarness();
+  h.session.roundBeat = true;
+  const plan = roundBeatPlan(showEnd, { flightMs: 420, pace: "quick" });
+  h.ending.runRoundBeat(h.state, plan, h.state);
+  assert.strictEqual(h.live().length, plan.steps.length + 1,
+    "three counts and the sheet's own opening, on a clock");
+  assert.deepStrictEqual(h.session.beatTimers, h.live(),
+    "every one of them must be held on `beatTimers`, or stopSession leaves a table "
+    + "counting a hand nobody is looking at");
+  h.ending.cancelRoundBeat();
+  assert.deepStrictEqual(h.live(), [], "and the sweep must cancel all of them");
+  assert.deepStrictEqual(h.session.beatTimers, [],
+    "and empty the list, or the next ending inherits four spent handles");
 });
 
 // THE BUG THIS PINS COST AN HOUR AND LOOKED LIKE NOTHING. `hidden` is an IDL
@@ -699,13 +812,41 @@ test("the panel offers the cycling control and refuses to swallow End match", ()
     + "button must not be handled twice");
   assert.match(panels, /el\.roundPace\.addEventListener\('click'/);
   const table = read("src/ui/table.js");
-  assert.match(table, /onCyclePace: \(\) => cyclePace\(\)/,
+  assert.match(table, /onCyclePace: \(\) => roundEnding\.cyclePace\(\)/,
     "the table must wire the control, or it is a button that does nothing");
-  assert.match(table, /function cyclePace\(\)[\s\S]*?saveSettings\(/,
+
+  // THE CONTROL ITSELF, DRIVEN (#223). It moved into src/ui/roundEnding.js with
+  // the rest of the ending, so what one tap on it does — to storage, to the ring
+  // and to the countdown it is interrupting — is watched rather than read.
+  const h = roundEndingHarness();
+  const { store } = h;
+  store.set("settings", { pace: "quick", botDelayMs: 600 });
+  h.session.roundSummaryOpen = true;
+  h.ending.armAutoAdvance(2500);
+  const interrupted = h.live()[0];
+
+  h.ending.cyclePace();
+  const next = nextSummaryPace("quick");
+  assert.strictEqual(store.get("settings").pace, next,
     "cycling must persist immediately — the point is changing it the moment you feel it");
-  assert.match(table, /nextSummaryPace\(currentPace\(\)\.id\)/,
-    "the summary's control must walk the summary's own cycle; the full list runs "
-    + "through Instant, which is the rung that closes the sheet it is tapped on");
+  assert.strictEqual(store.get("settings").botDelayMs, 600,
+    "and write only the rung: the blob it is saved in belongs to four other settings");
+  const painted = h.calls.filter((c) => c[0] === "paintRoundPace");
+  assert.strictEqual(painted.length, 1, "the ring must be redrawn for the new rung");
+  assert.strictEqual(painted[0][1].label, paceLevel(next).label);
+  assert.strictEqual(painted[0][1].autoMs, paceLevel(next).autoMs);
+
+  // RESTARTED, NOT RESUMED: a player who reaches for this at 2.4s of a 2.5s
+  // countdown is asking for more time.
+  assert.strictEqual(interrupted.cancelled, true,
+    "the countdown in flight must be cancelled rather than left to fire at the old rung");
+  assert.deepStrictEqual(h.live().map((t) => t.ms), [paceLevel(next).autoMs],
+    "and a fresh one armed at the new rung's full duration");
+
+  // AND THE SUMMARY'S OWN CYCLE, not the full list: the full one runs through
+  // Instant, which is the rung that closes the sheet it is tapped on (#174).
+  assert.match(read("src/ui/roundEnding.js"), /nextSummaryPace\(currentPace\(\)\.id\)/,
+    "the summary's control must walk the summary's own cycle");
 });
 
 // No infinite animations, ever (cardstock#24). The ring is a countdown to a
@@ -729,9 +870,17 @@ test("the countdown ring is one-shot and stops with the sheet", () => {
     "the ring must stop animating when the sheet closes");
   assert.match(panels, /pace\.animate \? 'deal-ring--running' : 'deal-ring--static'/,
     "which treatment runs must be decided by the motion check, not by CSS alone");
-  const table = read("src/ui/table.js");
-  assert.match(table, /animate: motionAllowed\(\) && !powerSaving\(\)/,
-    "reduced motion and the power saver take the animation; the timer is untouched");
-  assert.match(table, /autoMs: level\.autoMs/,
-    "the view handed to the panel must carry the rung's own duration");
+  // REDUCED MOTION AND THE POWER SAVER TAKE THE ANIMATION, NOT THE TIMER — driven
+  // since #223, because `paceView` is the seam's and takes `powerSaving` in.
+  for (const saving of [false, true]) {
+    const h = roundEndingHarness({ powerSaving: () => saving });
+    const view = h.ending.paceView(paceLevel("quick"));
+    assert.strictEqual(view.animate, !saving,
+      "the power saver must take the animation — a countdown ring is a moving thing "
+      + "and a player who asked for less movement asked for a mark instead");
+    assert.strictEqual(view.autoMs, paceLevel("quick").autoMs,
+      "the view handed to the panel must carry the rung's own duration WHATEVER the "
+      + "motion answer was: the sheet still deals itself at exactly the same moment");
+    assert.strictEqual(view.label, paceLevel("quick").label);
+  }
 });

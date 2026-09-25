@@ -22,6 +22,12 @@ import {
 import { ROOT } from "../tools/stage.mjs";
 import { tableCss } from "./fixtures/tableCss.js";
 import { installArcade } from "./fixtures/arcade.js";
+// THE HOLD ITSELF, NOW CALLABLE (#223 seam 2). `runTrickReveal` came out of
+// src/ui/table.js into src/ui/roundEnding.js, which takes `el`, `session` and
+// `epoch` as parameters — so the three rules below about WHEN each half of the
+// trick's narration runs are driven rather than read out of the source.
+import { roundEndingHarness } from "./fixtures/roundEnding.js";
+import { trickRevealPlan } from "../src/ui/roundBeat.js";
 
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), "utf8");
 
@@ -301,8 +307,8 @@ test("a move that says nothing takes the last sentence down", () => {
  *
  * `createCelebrations` takes every node and every measurement as a parameter,
  * so the split itself can be driven from Node with a stubbed felt. WHEN each
- * half runs is src/ui/table.js's decision and table.js cannot be imported, so
- * that part is a source gate at the foot of this file.
+ * half runs is the round ending's decision (src/ui/roundEnding.js since #223),
+ * and that is driven too, at the foot of this file.
  */
 
 /** Every timer the celebrations buy, so a held banner's lack of one is visible. */
@@ -543,43 +549,90 @@ test("the fade is one number too, and neither end of a held pill loops", () => {
 });
 
 /* ------------------------------------------------------------------ *
- * Source gates: WHEN each half runs, which is table.js's decision
+ * WHEN each half runs, which is the round ending's decision
+ *
+ * DRIVEN SINCE #223, not grepped. These three rules used to be read out of
+ * src/ui/table.js's source because nothing could load it; `runTrickReveal` lives
+ * in src/ui/roundEnding.js now and takes its screen in, so the hold can be opened
+ * for real and asked what it did.
  * ------------------------------------------------------------------ */
 
-/** runTrickReveal's body — table.js cannot be imported (see repo-gates.test.js). */
-function trickReveal() {
-  const body = /function runTrickReveal\([\s\S]*?\n\}/.exec(read("src/ui/table.js"));
-  assert.ok(body, "runTrickReveal is not where this test thinks it is");
-  return body[0];
+/** A completed trick, and the plan the felt would build for it at `pace`. */
+const HELD_TRICK = { type: "trickWon", seat: 2, points: 1, cards: ["a", "b", "c", "d"] };
+const revealAt = (pace) => trickRevealPlan([HELD_TRICK], { flightMs: 420, pace, posed: true });
+
+/**
+ * Open a hold, recording the order everything happened in.
+ *
+ * `announce` is what `afterMove` hands in — the half that names the winner — and
+ * `resume` is the sweep. Both are recorded, so "which ran first" is a fact rather
+ * than the position of two lines in a file.
+ */
+function heldTrick(pace, { said = { text: "Nell takes it", tone: "good" } } = {}) {
+  const order = [];
+  const h = roundEndingHarness({
+    render: () => order.push("render"),
+    animateMove: () => order.push("animateMove"),
+    releaseBanner: () => order.push("releaseBanner"),
+  });
+  const reveal = revealAt(pace);
+  h.ending.runTrickReveal(
+    h.state, { actor: 2, type: "play" }, null, reveal,
+    () => order.push("resume"),
+    () => { order.push("announce"); return said; },
+  );
+  return { h, reveal, order };
 }
 
 test("the announcement runs as the hold opens, and nothing sweeps until it ends", () => {
-  const body = trickReveal();
-  const announced = body.indexOf("announce ? announce()");
-  assert.ok(announced > 0, "runTrickReveal no longer makes the announcement at all");
-  const openEnded = body.indexOf("if (reveal.holdMs == null)");
-  // `schedule` since #213 — the felt's one door onto the session clock, which
-  // is what this used to name directly.
-  const armed = body.indexOf("session.revealTimer = schedule(");
-  assert.ok(announced < openEnded && announced < armed,
-    "the announcement happens after the hold is set up rather than at the top of it — at a rung "
-    + "that waits for a tap that is the whole bug: four cards and nothing saying who won them");
-  assert.match(body, /releaseBanner\(\);\s*\n\s*resume\(\);/,
-    "the held banner is not taken down when the hold ends, so it outlives the cards or never goes");
-  assert.doesNotMatch(body, /gatherTrick|celebrateTrick/,
-    "the sweep moved inside the hold — the gather is what the tap is asking for");
+  // THE TIMED RUNG: the hold has reading time in it, so the winner is named at the
+  // TOP of it and the sweep waits for the clock.
+  const { h, order } = heldTrick("quick");
+  assert.ok(order.includes("announce"), "the hold no longer makes the announcement at all");
+  assert.ok(order.indexOf("announce") > order.indexOf("render"),
+    "the sentence is measured against the felt it is about — placeBanner looks for the "
+    + "highest card in the middle, and on this frame that is the posed trick");
+  assert.strictEqual(order.includes("resume"), false,
+    "nothing sweeps while the cards are being read: the gather is what the clock is for");
+  assert.strictEqual(h.live().length, 1, "a timed hold arms exactly one clock");
+  assert.strictEqual(h.session.revealTimer, h.live()[0],
+    "held on the session, or stopSession cannot stop it (#150)");
+
+  h.fire();
+  assert.deepStrictEqual(order.slice(-2), ["releaseBanner", "resume"],
+    "the held banner must come down WITH the cards — a sentence released after the "
+    + "sweep outlives them, and one never released never goes");
+
+  // AND THE OPEN-ENDED RUNG ARMS NOTHING AT ALL: at Manual a person is the clock.
+  const manual = heldTrick("manual");
+  assert.strictEqual(manual.reveal.holdMs, null);
+  assert.strictEqual(manual.h.live().length, 0,
+    "the indefinite rung must arm no timer at all, rather than one with a null delay");
+  assert.ok(manual.order.includes("announce"),
+    "and it is the rung that needs the announcement most: four cards, no clock, and "
+    + "nothing saying who won them was the whole of #180");
 });
 
 test("an open-ended hold writes the live region once, with both facts in it", () => {
-  const open = /if \(reveal\.holdMs == null\) \{([\s\S]*?)\n  \}/.exec(trickReveal());
-  assert.ok(open, "the open-ended branch is not where this test thinks it is");
-  assert.strictEqual((open[1].match(/el\.log\.textContent =/g) || []).length, 1,
+  const { h, reveal } = heldTrick("manual");
+  assert.strictEqual(reveal.holdMs, null);
+  assert.strictEqual(h.said.length, 1,
     "the open-ended hold writes #log more than once in a frame — one of the two sentences is "
     + "lost, and the one that carries the way out is the net for a pause with no clock on it");
-  assert.match(open[1], /heldBeatLine\(/,
-    "the live region's sentence is built somewhere other than heldBeatLine");
-  assert.match(open[1], /said \? said\.text/,
-    "the winner is not in the sentence the live region gets");
+  assert.strictEqual(h.said[0], heldBeatLine("Nell takes it"),
+    "one write, both facts: the winner and the way out, joined by heldBeatLine");
+  assert.ok(h.said[0].includes(TAP_TO_GO_ON));
+
+  // AND THE BARE POSSESSIVE IS THE FALLBACK, for a hold that somehow had nothing
+  // to announce — a pause with no stated end and no sentence is a frozen table.
+  const quiet = heldTrick("manual", { said: null });
+  assert.strictEqual(quiet.h.said.length, 1);
+  assert.strictEqual(quiet.h.said[0], heldBeatLine("Seat 2's trick"));
+
+  // A TIMED HOLD SAYS ITS HALF NOW TOO, and only once.
+  const timed = heldTrick("quick");
+  assert.deepStrictEqual(timed.h.said, ["Nell takes it"],
+    "a hold with a clock on it says the winner and nothing about a tap");
 });
 
 test("only a hold with reading time in it announces early", () => {
@@ -590,13 +643,16 @@ test("only a hold with reading time in it announces early", () => {
   assert.match(source, /if \(announce\) gatherTrick\(st, trick\);\s*\n\s*else celebrateTrick\(st, trick\);/,
     "a path with no early announcement no longer celebrates the whole trick at its resume");
   // THREE SINCE #189: the trick's own settle, the match ending on a card, and the
-  // match ending inside a show (runFinalShow opens on the same close).
-  assert.strictEqual((source.match(/closeTrick\(/g) || []).length, 3,
+  // match ending inside a show — and the third is counted in src/ui/roundEnding.js
+  // since #223, because `runFinalShow` went with the seam and `closeTrick` is
+  // handed to it.
+  const both = source + read("src/ui/roundEnding.js");
+  assert.strictEqual((both.match(/closeTrick\(/g) || []).length, 3,
     "the three resumes no longer all go through closeTrick");
-  assert.doesNotMatch(source, /if \(trick\) celebrateTrick\(/,
+  assert.doesNotMatch(both, /if \(trick\) celebrateTrick\(/,
     "a resume celebrates the whole trick itself again, so a held announcement is said twice");
   assert.strictEqual(
-    (source.match(/runTrickReveal\(trickPose, move, from, reveal, \w+, announce\)/g) || []).length, 2,
+    (source.match(/roundEnding\.runTrickReveal\(trickPose, move, from, reveal, \w+, announce\)/g) || []).length, 2,
     "the match-over resume and the ordinary one no longer both hand the reveal its announcement",
   );
 });
@@ -652,12 +708,16 @@ test("both moments a new hand becomes visible say what the deal said", () => {
   // two doors a dealt hand comes through — `adoptMatch` for the first hand of a
   // match, `dismissRoundSummary` for every one after it.
   const source = read("src/ui/table.js");
-  assert.strictEqual((source.match(/celebrateDeal\(/g) || []).length, 3,
+  // DEFINED ONCE IN table.js AND CALLED FROM BOTH DOORS — and since #223 one of
+  // those doors is in src/ui/roundEnding.js, which is handed the narrator as a
+  // parameter. So the tally is: the definition, `adoptMatch`'s call, and the
+  // `celebrateDeal,` that hands it over.
+  assert.strictEqual((source.match(/celebrateDeal[,(]/g) || []).length, 3,
     "the deal's narration is no longer defined once and called from both doors");
   assert.match(source, /if \(dealing\) celebrateDeal\(state\);/,
     "a resumed match narrates its deal — `state.events` there is the last REPLAYED move, so the "
     + "table would open on a sentence about something the player did yesterday");
-  const dismiss = /function dismissRoundSummary\([\s\S]*?\n\}/.exec(source);
+  const dismiss = /function dismissRoundSummary\([\s\S]*?\n  \}/.exec(read("src/ui/roundEnding.js"));
   assert.ok(dismiss, "dismissRoundSummary has moved");
   assert.match(dismiss[0], /celebrateDeal\(liveState\(\)\);/,
     "the hand the engine dealt inside the round-ending move arrives on screen unannounced");

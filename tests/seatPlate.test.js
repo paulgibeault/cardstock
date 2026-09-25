@@ -429,11 +429,16 @@ test("the row honours openOnly, and the round summary asks past it", () => {
   // of those are openOnly at a Spades table. The template writes the phrase now,
   // so the words cannot go missing behind a filter; what this pins is that the
   // felt asks rather than composes.
-  assert.match(table, /const declared = finalState\.pack\.template\.roundLines\?\.\(makeCtx\(finalState\)\);/,
+  // The sheet's line is built in src/ui/roundEnding.js since #223 (seam 2), so
+  // the positive half reads there and the negative half reads both files.
+  const ending = code(read("src/ui/roundEnding.js"));
+  assert.match(ending, /const declared = finalState\.pack\.template\.roundLines\?\.\(makeCtx\(finalState\)\);/,
     "the round summary is building its own per-seat phrase again — the bid's "
     + "words are the template's (src/templates/CONTRACT.md, `roundLines`)");
-  assert.doesNotMatch(table, /kind === 'bid'|kind === 'tricks'/,
-    "the felt is reading counter kinds by name to write a sentence out of them");
+  for (const src of [table, ending]) {
+    assert.doesNotMatch(src, /kind === 'bid'|kind === 'tricks'/,
+      "the felt is reading counter kinds by name to write a sentence out of them");
+  }
   // ...and the human's own strip picks its counters the same way: the template
   // marks them, rather than this file keeping a list of the kinds that qualify.
   assert.match(table, /\.filter\(\(counter\) => counter\.mine\)/,
