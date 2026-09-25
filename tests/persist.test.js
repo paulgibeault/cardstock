@@ -68,13 +68,13 @@ test("a solo table goes to its pack's slot, a daily to the daily slot, with its 
   installArcade({ state: true });
   const casual = playSome(dealt(), 3);
   assert.notStrictEqual(persistTable(soloTable(casual, { hintsTaken: 2 })), false);
-  assert.strictEqual(loadMatch("hearts").log.length, 3);
-  assert.strictEqual(loadMatch("hearts").hints, 2, "the hints taken ride beside the save");
+  assert.strictEqual(loadMatch("hearts")?.log.length, 3, "the casual game is in its pack's slot");
+  assert.strictEqual(loadMatch("hearts")?.hints, 2, "the hints taken ride beside the save");
 
   const daily = playSome(dealt("hearts", 4, 11), 1);
   persistTable(soloTable(daily, { daily: { date: "2026-09-25", seed: "hearts|2026-09-25" } }));
-  assert.strictEqual(loadMatch("hearts", { slot: "daily" }).log.length, 1);
-  assert.strictEqual(loadMatch("hearts").log.length, 3,
+  assert.strictEqual(loadMatch("hearts", { slot: "daily" })?.log.length, 1, "the daily is in the daily slot");
+  assert.strictEqual(loadMatch("hearts")?.log.length, 3,
     "a daily must never overwrite the casual game waiting on the same tile");
 });
 
@@ -86,9 +86,9 @@ test("a hosted table goes to mpMatch.<tableId> and never to the solo slot", () =
   installArcade({ state: true });
   const state = playSome(dealt(), 2);
   persistTable(hostTable(state));
-  assert.strictEqual(loadHostMatch(TABLE_ID).log.length, 2);
-  assert.strictEqual(loadHostMatch(TABLE_ID).graceMs, 30000, "the host's grace survives the reload");
-  assert.ok(loadHostMatch(TABLE_ID).seatBindings, "with its seat bindings beside the log");
+  assert.strictEqual(loadHostMatch(TABLE_ID)?.log.length, 2, "a hosted table is saved under mpMatch.<tableId>");
+  assert.strictEqual(loadHostMatch(TABLE_ID)?.graceMs, 30000, "the host's grace survives the reload");
+  assert.ok(loadHostMatch(TABLE_ID)?.seatBindings, "with its seat bindings beside the log");
   assert.strictEqual(loadMatch("hearts"), null, "a hosted table wrote the solo slot");
 });
 
@@ -210,5 +210,5 @@ test("ending the day's run from the summary drops the daily and leaves the casua
   assert.strictEqual(h.slots.session, null);
   assert.strictEqual(loadMatch("milestones", { slot: "daily" }), null,
     "the day's run came back after it was ended");
-  assert.strictEqual(loadMatch("milestones").log.length, 2, "the casual game went with the daily");
+  assert.strictEqual(loadMatch("milestones")?.log.length, 2, "the casual game went with the daily");
 });
