@@ -26,6 +26,11 @@ import { showSteps } from "../src/ui/roundBeat.js";
 import { showCardModel } from "../src/ui/showCard.js";
 import { revealSentence } from "../src/ui/scoreDirection.js";
 import { actingSeats } from "./fixtures/engine.js";
+// THE STEP PLAYER AND THE TEMPLATE'S STAGING, both callable since #223 seam 2:
+// they came out of src/ui/table.js into src/ui/roundEnding.js, which takes its
+// screen in and loads with no `document`.
+import { showStepOf } from "../src/ui/roundEnding.js";
+import { roundEndingHarness, stubState } from "./fixtures/roundEnding.js";
 
 /** Play `packId` with the house bot until the first round boundary; the ending move's events. */
 async function firstRoundEnd(packId, seats, seed = 3) {
@@ -193,34 +198,95 @@ test("the reveal's sentence follows the price, and its tone follows the viewer",
   assert.strictEqual(say({ seat: 1, isCrib: false, points: 8, parts: [] }), null, "a cribbage count is the template's sentence");
 });
 
-// PART GREP: src/ui/table.js touches the DOM at import, so the one thing that
-// turns these events into a held card — the step player asking the platform for
-// the sentence and spotlighting the hand rather than a play pile — is pinned by
-// reading the source.
+// DRIVEN SINCE #223. The step player — the one thing that turns these events into
+// a held card, asks the platform for the sentence, and lights the hand rather than
+// a play pile — used to be pinned by reading table.js's source, because nothing
+// could load it. `playShowStep` is the round ending's now, so it can be run.
 test("the step player says a reveal in the platform's words and lights the right zone", async () => {
-  const fs = await import("node:fs");
-  const table = fs.readFileSync(new URL("../src/ui/table.js", import.meta.url), "utf8");
-  const player = table.slice(table.indexOf("function playShowStep("), table.indexOf("function showCardFor("));
-  assert.match(player, /revealSentence\(step,/);
-  assert.match(player, /step\.reason === 'taken' \? 'won' : 'hand'/);
-  assert.match(table.slice(table.indexOf("function showCardFor(")), /zeroLabel: step\.reason \? 'nothing'/);
+  const lit = [];
+  const state = stubState({
+    seats: 4,
+    // A card for every id the steps below name, so the show card is drawable.
+    pack: { id: "p", manifest: { name: "P" }, template: {} },
+  });
+  const h = roundEndingHarness({
+    state,
+    cardById: (_s, id) => ({ id, rank: "5", suit: "hearts" }),
+    zoneStackNode: (address) => { lit.push(address); return null; },
+  });
+
+  // A PENALTY REVEAL: the platform priced the cards, so the platform has the
+  // sentence (revealSentence) and knows the pile — the seat's own WON pile.
+  h.ending.playShowStep(state, {
+    seat: 1, reason: "taken", n: 3, points: 9, cards: ["c1", "c2"], parts: [],
+  });
+  assert.deepStrictEqual(lit, ["won.1"],
+    "a reveal's cards are in the seat's own won pile, which the platform priced "
+    + "and therefore knows");
+  assert.strictEqual(h.said.at(-1),
+    revealSentence({ seat: 1, reason: "taken", n: 3, points: 9 },
+      { label: (s) => `Seat ${s}`, possessive: (s) => `Seat ${s}'s`, viewerSeat: 0 }).text,
+    "the sentence must be the platform's own, not a number in a sentence of the felt's");
+
+  // A HAND REVEAL lights the hand instead, off the same one branch.
+  lit.length = 0;
+  h.ending.playShowStep(state, {
+    seat: 2, reason: "held", n: 2, points: 4, cards: ["c3"], parts: [],
+  });
+  assert.deepStrictEqual(lit, ["hand.2"]);
+
+  // AND A ZERO IS "nothing" RATHER THAN A NUMBER on a reveal's card (#189).
+  const card = h.calls.filter((c) => c[0] === "showShowCard").at(-1)[1];
+  assert.strictEqual(card.zeroLabel, "nothing");
 
   // ...AND THE OTHER HALF OF THE SAME BRANCH IS THE TEMPLATE'S (#219). A step
   // with no `reason` is a template's own count, and staging one used to mean
-  // spelling out four of cribbage's zone ids and two of its nouns in this file:
+  // spelling out four of cribbage's zone ids and two of its nouns in the felt:
   // `'show'`/`'crib'` for the pose, `'show'` or `play.<seat>` for the spotlight,
-  // `'starter'` for the cut, and "crib"/"hand" for the sentence.
-  assert.match(player, /const staging = showStepOf\(finalState, step\);/,
-    "the step player no longer asks the template how to stage its own count");
-  assert.match(player, /staging\?\.spotlight/,
+  // `'starter'` for the cut, and "crib"/"hand" for the sentence. `showStepOf` is
+  // the hook, and it is importable, so this asks it rather than reading it.
+  const staged = {
+    pack: {
+      template: {
+        showStep: (_ctx, step) => (step.isCrib
+          ? { what: "crib", spotlight: "show", pose: { from: "show", to: "crib" }, starterId: "s1" }
+          : { what: "hand", spotlight: `play.${step.seat}`, starterId: "s1" }),
+      },
+    },
+  };
+  assert.deepStrictEqual(showStepOf(staged, { seat: 0, isCrib: true }).pose,
+    { from: "show", to: "crib" },
+    "the template must be the one that says which cards go back where");
+  assert.strictEqual(showStepOf(staged, { seat: 3, isCrib: false }).spotlight, "play.3");
+  assert.strictEqual(showStepOf(null, { seat: 0 }), null);
+  assert.strictEqual(showStepOf(staged, null), null);
+  // A hook that throws is a bug worth surviving: the round is over either way.
+  assert.strictEqual(
+    showStepOf({ pack: { template: { showStep: () => { throw new Error("no"); } } } }, { seat: 0 }),
+    null);
+  // And a template with no opinion is the platform's own reveal, which is what
+  // every other pack's round ending is.
+  assert.strictEqual(showStepOf({ pack: { template: {} } }, { seat: 0 }), null);
+
+  // THE FELT ASKS, and the spotlight it lights for a template's count is the
+  // template's answer rather than one of cribbage's zone ids.
+  lit.length = 0;
+  h.ending.playShowStep({ ...state, ...staged, pack: { ...state.pack, ...staged.pack } },
+    { seat: 3, isCrib: false, points: 8, cards: ["c4"], parts: [] });
+  assert.deepStrictEqual(lit, ["play.3"],
     "the felt is picking the zone to light for a template's count itself again");
+
   // Comments stripped for the negative half: the fix is documented beside where
   // the old code was, and a gate that fires on prose about itself teaches people
   // to stop writing the prose (the rule tests/climbing.test.js states).
-  const code = table.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
-  for (const spelled of [/'starter'/, /'show', 'crib'/, /\? 'crib' : 'hand'/]) {
-    assert.doesNotMatch(code, spelled,
-      `src/ui/table.js spells ${spelled} — one template's zones and words, in the `
-      + "file src/templates/CONTRACT.md exists because of");
+  const fs = await import("node:fs");
+  for (const rel of ["../src/ui/table.js", "../src/ui/roundEnding.js"]) {
+    const code = fs.readFileSync(new URL(rel, import.meta.url), "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+    for (const spelled of [/'starter'/, /'show', 'crib'/, /\? 'crib' : 'hand'/]) {
+      assert.doesNotMatch(code, spelled,
+        `${rel} spells ${spelled} — one template's zones and words, in the `
+        + "file src/templates/CONTRACT.md exists because of");
+    }
   }
 });

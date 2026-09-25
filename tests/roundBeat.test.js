@@ -32,6 +32,15 @@ import {
 import { PACE_LEVELS, DEFAULT_PACE } from "../src/ui/pace.js";
 import { FLIGHT_MIN_MS, FLIGHT_MS, FLIGHT_MAX_MS } from "../src/ui/flight.js";
 
+// THE FELT'S OWN HALF, CALLABLE SINCE #223 seam 2: the trick's held beat, the
+// show's walk and the final show came out of src/ui/table.js into
+// src/ui/roundEnding.js, which takes `el`, `session` and `epoch` as parameters.
+// Everything below that used to be a regex over table.js's source is now driven;
+// what is left as a grep is the two INPUT DOORS, which are still table.js's.
+import { roundEndingHarness, inputAt } from "./fixtures/roundEnding.js";
+import { inputEndsHeldBeat } from "../src/ui/session.js";
+import { TAP_TO_GO_ON } from "../src/ui/celebrations.js";
+
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), "utf8");
 
 /** A cribbage show as `theShow` emits it: pone, dealer, then the crib. */
@@ -639,44 +648,104 @@ test("the cap does not invent a hold on the path that never had one", () => {
 });
 
 /* ------------------------------------------------------------------ *
- * The felt's half, which no Node test can call
+ * The felt's half — driven since #223, except the two input doors
+ *
+ * This block opened with "which no Node test can call", and for src/ui/table.js
+ * that is still true: it resolves 43 element ids at import time. The round
+ * ending is not in there any more (#223 seam 2), so the hold, the show's walk
+ * and the sweep are RUN below — and what is still read is only the two places
+ * an input reaches them from, which are table.js's own listeners.
  * ------------------------------------------------------------------ */
 
-// PART GREP, FOR THE REASON tests/pace.test.js GIVES: src/ui/table.js touches
-// `document` at import time, so the wiring that makes an indefinite hold safe
-// cannot be imported and called. It can be read.
-//
+/** A completed trick, and its plan at the rung asked for. */
+const ONE_TRICK = [{ type: 'trickWon', seat: 3, points: 1, cards: ['a', 'b', 'c', 'd'] }];
+const heldPlan = (pace) => trickRevealPlan(ONE_TRICK, { flightMs: 420, pace, posed: true });
+
+/**
+ * Open a trick hold and hand back everything needed to ask what it did.
+ * `resumed` counts how many times the sweep behind it ran — which is the whole
+ * question this block exists to answer.
+ */
+function heldHold(pace) {
+  const resumed = [];
+  const h = roundEndingHarness();
+  const reveal = heldPlan(pace);
+  h.ending.runTrickReveal(h.state, { actor: 3, type: 'play' }, null, reveal,
+    () => resumed.push('resume'), null);
+  return { h, reveal, resumed };
+}
+
 // The three things that make the tap correct rather than merely present: the
-// felt carries it, it cancels the clock it is beating, and it runs the held
-// resume EXACTLY ONCE — the same resume the timer would have run, which is the
-// whole reason it is held on the session at all (both call sites of
+// resume is held where a handler can reach it, it cancels the clock it is
+// beating, and it runs EXACTLY ONCE — the same resume the timer would have run,
+// which is the whole reason it is on the session at all (both call sites of
 // runTrickReveal pass a different function).
 test("the felt ends a trick hold on a tap: once, through the held resume", () => {
   const table = read("src/ui/table.js");
-  const reveal = table.match(/function runTrickReveal\([\s\S]*?\n\}/);
-  assert.ok(reveal, "runTrickReveal must exist — it is the whole of the trick beat");
 
-  assert.match(reveal[0], /session\.beatResume = release/,
-    "the resume must be held where the tap handler can reach it: runTrickReveal "
-    + "is handed a different `resume` by each of its two call sites, so a handler "
-    + "cannot close over the right one");
-  assert.match(reveal[0], /session\.beatResume !== release/,
-    "the hold must be released exactly once — a tap landing on the frame the "
-    + "timer fires would otherwise resume the move twice");
-  assert.match(reveal[0], /session\.beatResume = null/,
-    "and cleared the moment it runs, or a later tap fires into the position after it");
-  assert.match(reveal[0], /session\.revealTimer\.cancel\(\)/,
+  // HELD WHERE THE TAP HANDLER CAN REACH IT. `runTrickReveal` is handed a
+  // different `resume` by each of its two call sites, so a handler cannot close
+  // over the right one — it has to be able to find it.
+  const { h, resumed } = heldHold('quick');
+  assert.strictEqual(typeof h.session.beatResume, 'function',
+    "the resume must be held on the session where the felt's listener can reach it");
+  assert.strictEqual(h.session.trickBeat.seat, 3);
+
+  // ONCE, WHICHEVER END ASKS. A tap landing on the frame the timer fires would
+  // otherwise resume the move twice.
+  const held = h.session.beatResume;
+  const clock = h.live()[0];
+  held();
+  assert.deepStrictEqual(resumed, ['resume']);
+  assert.strictEqual(h.session.beatResume, null,
+    "cleared the moment it runs, or a later tap fires into the position after it");
+  assert.strictEqual(h.session.beatOpenedAt, null);
+  assert.strictEqual(h.session.trickBeat, null, "and the felt stops promising a tap");
+  assert.strictEqual(h.session.trickPoseState, null, "and lets go of the posed copy");
+  assert.strictEqual(clock.cancelled, true,
     "a tap must cancel the clock it is beating; a timer left armed fires into "
     + "the next position");
-  assert.match(reveal[0], /myEpoch !== epoch/,
-    "and the epoch guard stays: a hold whose table has been closed or re-dealt "
-    + "must not resume into it");
-  assert.match(reveal[0], /reveal\.holdMs == null/,
-    "the indefinite rung must arm no timer at all, rather than one with a null delay");
+  // The stale closure — a second tap, or the timer that has already been beaten.
+  held();
+  clock.fn();
+  assert.deepStrictEqual(resumed, ['resume'],
+    "a hold must be released exactly once, whichever end it is asked from");
 
-  const end = table.match(/function endHeldBeat\(\w*\) \{[\s\S]*?\n\}/);
-  assert.ok(end, "one function for what ends a held beat, so the tap and the key cannot drift");
-  assert.match(end[0], /session\?\.beatResume/);
+  // AND THE EPOCH GUARD STAYS: a hold whose table has been closed, replaced or
+  // re-dealt must not resume into it.
+  {
+    const closed = heldHold('quick');
+    const resume = closed.h.session.beatResume;
+    closed.h.setEpoch(9);
+    resume();
+    closed.h.live()[0]?.fn();
+    assert.deepStrictEqual(closed.resumed, [],
+      "a hold whose table has been closed or re-dealt must not resume into it");
+  }
+
+  // THE INDEFINITE RUNG ARMS NO TIMER AT ALL, rather than one with a null delay.
+  {
+    const manual = heldHold('manual');
+    assert.strictEqual(manual.reveal.holdMs, null);
+    assert.strictEqual(manual.h.live().length, 0);
+    assert.strictEqual(manual.h.session.trickBeat.waits, true,
+      "the felt has to SAY that a tap is what continues, or a hold with no clock "
+      + "on it reads as a frozen table");
+    manual.h.session.beatResume();
+    assert.deepStrictEqual(manual.resumed, ['resume'],
+      "and a person is then the only way out of it");
+  }
+
+  // ONE FUNCTION FOR WHAT ENDS A HELD BEAT, so the tap and the key cannot drift —
+  // and it answers whether there WAS one, which is what lets the keyboard door
+  // decide whether to swallow the key.
+  {
+    const beat = heldHold('manual');
+    assert.strictEqual(beat.h.ending.endHeldBeat(inputAt(beat.h.session.beatOpenedAt + 1)), true);
+    assert.deepStrictEqual(beat.resumed, ['resume']);
+    assert.strictEqual(beat.h.ending.endHeldBeat(inputAt(1e9)), false,
+      "with no beat standing there is nothing to end, and the key must not be swallowed");
+  }
 
   // ON THE FELT, NOT ON THE SCREEN: #status-bar is outside #table, so Lobby and
   // the score chip are exempt by construction, and the chrome standing on the
@@ -688,10 +757,6 @@ test("the felt ends a trick hold on a tap: once, through the held resume", () =>
   assert.match(table, /event\.key === 'Enter' \|\| event\.key === ' '/,
     "an indefinite hold that only a pointer can end strands anyone playing this "
     + "from a keyboard or a screen reader");
-  assert.match(table, /waits: reveal\.holdMs == null/,
-    "the felt has to SAY that a tap is what continues, or a hold with no clock "
-    + "on it reads as a frozen table");
-
   const session = read("src/ui/session.js");
   assert.match(session, /beatResume:/, "the session must own the handle");
   assert.match(session.split('export function stopSession')[1], /beatResume = null/,
@@ -711,7 +776,8 @@ test("the felt ends a trick hold on a tap: once, through the held resume", () =>
 // div, which the window listener's `button, a[href], ...` opt-out does not
 // match. The rule that tells the two apart is a comparison of two numbers and
 // lives in src/ui/session.js, where tests/session.test.js calls it directly.
-// What can only be grepped is that the felt actually ASKS.
+// That the round ending's door OBEYS it is driven below (#223); what can still
+// only be grepped is that table.js's two listeners hand their event to that door.
 test("neither input path can end the hold its own gesture opened", () => {
   const table = read("src/ui/table.js");
 
@@ -724,28 +790,49 @@ test("neither input path can end the hold its own gesture opened", () => {
     "the decision must come from src/ui/session.js, where a Node test can reach "
     + "it — a copy of it inlined here is a rule with no test on it");
 
-  const reveal = table.match(/function runTrickReveal\([\s\S]*?\n\}/);
-  assert.match(reveal[0], /session\.beatOpenedAt = performance\.now\(\)/,
+  // THE STAMP, AND WHAT IT IS COMPARED AGAINST — driven since #223. A hold opened
+  // at T is not ended by an input from before T, which is exactly the gesture that
+  // opened it; an input after T is a new one and ends it.
+  const before = performance.now();
+  const { h, resumed } = heldHold('manual');
+  const opened = h.session.beatOpenedAt;
+  assert.ok(Number.isFinite(opened) && opened >= before,
     "the hold must stamp WHEN it opened, on performance.now() — that is the time "
     + "origin Event.timeStamp is measured against, and a stamp from any other "
     + "clock makes the comparison meaningless");
 
-  const end = table.match(/function endHeldBeat\(event\) \{[\s\S]*?\n\}/);
-  assert.ok(end, "endHeldBeat must take the input, or it cannot ask about it");
-  assert.match(end[0], /inputEndsHeldBeat\(session\.beatOpenedAt, event\?\.timeStamp\)/,
-    "one place asks, so the tap and the key cannot disagree about it");
+  assert.strictEqual(h.ending.endHeldBeat(inputAt(opened - 1)), false,
+    "the gesture that OPENED the hold must not end it: the tap that plays the "
+    + "fourth card reaches the felt after runTrickReveal has already run");
+  assert.deepStrictEqual(resumed, [], "and nothing was swept by it");
+  assert.strictEqual(h.ending.endHeldBeat(inputAt(opened + 1)), true,
+    "and the next input is a new gesture, which does end it");
+  assert.deepStrictEqual(resumed, ['resume']);
+
+  // ONE PLACE ASKS, so the tap and the key cannot disagree — and the rule itself
+  // is src/ui/session.js's, where its own test calls it directly. What is pinned
+  // here is that the felt's door actually obeys the same answer.
+  for (const at of [opened - 1, opened, opened + 1]) {
+    const beat = heldHold('manual');
+    beat.h.session.beatOpenedAt = opened;
+    assert.strictEqual(beat.h.ending.endHeldBeat(inputAt(at)), inputEndsHeldBeat(opened, at),
+      `an input at opened${at < opened ? '-' : '+'}${Math.abs(at - opened)} must agree with `
+      + "inputEndsHeldBeat — a copy of the rule inlined in the felt is a rule with no "
+      + "test on it, and its two failure modes are a beat that never happens and a "
+      + "table that never moves again");
+  }
 
   // BOTH DOORS, because a fix applied to only one of them leaves the other
   // sweeping the trick the player just completed.
   const felt = table.match(/el\.table\.addEventListener\('click',[\s\S]*?\n  \}\);/);
   assert.ok(felt, "the felt's tap listener is not where this test thinks it is");
-  assert.match(felt[0], /endHeldBeat\(event\)/,
+  assert.match(felt[0], /roundEnding\.endHeldBeat\(event\)/,
     "the felt's tap must hand its event over: the tap that plays the fourth card "
     + "arrives here in the same dispatch that opened the hold");
 
   const keys = table.match(/event\.key === 'Enter' \|\| event\.key === ' '[\s\S]*?preventDefault\(\);/);
   assert.ok(keys, "the keyboard door is not where this test thinks it is");
-  assert.match(keys[0], /endHeldBeat\(event\)/,
+  assert.match(keys[0], /roundEnding\.endHeldBeat\(event\)/,
     "and so must the key: Enter on a hand card plays it and then reaches the "
     + "window listener, because a card is a role=button div and not a <button>");
 });
@@ -760,66 +847,159 @@ test("neither input path can end the hold its own gesture opened", () => {
 // trick, all three counts and the sheet, and a hand ending in one gesture.
 test("the show is walked one input at a time, and one input advances one beat", () => {
   const table = read("src/ui/table.js");
-  const run = table.match(/function runShowSequence\([\s\S]*?\n\}/);
-  assert.ok(run, "runShowSequence must exist — it is the whole of a show that waits");
+  const ending = read("src/ui/roundEnding.js");
 
-  assert.match(run[0], /nextShowBeat\(plan, dismissed\)/,
-    "the renderer must walk the plan's own statement of what follows what, or the "
-    + "ordering is asserted in one file and implemented in another");
-  assert.match(run[0], /session\.beatOpenedAt = performance\.now\(\)/,
-    "every beat that opens must stamp WHEN it opened, on the clock Event.timeStamp "
-    + "is measured against — without it the tap that dismissed the last count is "
-    + "still in flight and dismisses this one too");
-  assert.match(run[0], /session\.beatResume !== advance/,
-    "a count must be dismissed exactly once: a stale closure from a beat that is "
-    + "already over would fire into the middle of the next one");
-  assert.match(run[0], /session\.beatResume = null;\s*\n\s*session\.beatOpenedAt = null;/,
-    "and the gate must be cleared before the next beat opens, or two of them are "
-    + "standing at once");
-  assert.match(run[0], /myEpoch !== epoch/,
-    "a show whose table has been closed or re-dealt must not keep counting into it");
-  // THE STAMP GOES UP BEFORE THE COUNT DOES. The crib's step renders, and
-  // `statusTextFor` reads the gate to decide whether to promise the tap — a gate
-  // armed after the paint is one count of every hand with the bar saying nothing
-  // continues it, and a window for an input to land inside the beat's own opening.
-  assert.ok(run[0].indexOf("session.beatOpenedAt = performance.now()")
-    < run[0].indexOf("playShowStep("),
-    "the gate must be armed before the count is painted");
-  assert.match(run[0], /if \(!step\) \{\s*\n\s*openSummary\(\);/,
-    "the sheet must be what the cursor runs off the end INTO — reached by there "
-    + "being no count left rather than armed alongside the counts");
+  // THE WHOLE WALK, RUN (#223). A cribbage show at the rung that waits: three
+  // counts and a sheet, and the only thing that moves it is a person.
+  const plan = roundBeatPlan(cribbageShow, { flightMs: 420, pace: 'manual' });
+  assert.strictEqual(plan.stepMs, null, 'the rung that waits has no step duration');
+  const h = roundEndingHarness();
+  h.session.roundBeat = true;
+  const opened = [];
+  h.ending.runShowSequence(plan, h.state, () => opened.push('summary'));
 
-  // THE SHEET IS NOT ON A TIMER ON THIS PATH. `beatTimer` is armed exactly once
-  // — for the first count, which opens on the hold — and the summary is reached
-  // only through the walk.
-  assert.strictEqual((run[0].match(/beatTimer\(/g) || []).length, 1,
-    "a show that waits arms one timer: the first count, on the hold. A second one "
-    + "is a beat that happens without the player");
-  assert.match(run[0], /beatTimer\(open, plan\.steps\[0\]\.at\)/,
-    "the first count must open on the `at` the plan gave it");
+  // THE FIRST COUNT STILL OPENS ON THE HOLD — there is nothing to dismiss until
+  // something is on the felt — and it is the ONLY timer a show that waits arms.
+  assert.deepStrictEqual(h.live().map((t) => t.ms), [plan.steps[0].at],
+    'a show that waits arms one timer: the first count, on the `at` the plan gave '
+    + 'it. A second one is a beat that happens without the player');
+  h.fire();
+
+  const seen = [];
+  for (let i = 0; i < plan.steps.length; i++) {
+    assert.strictEqual(typeof h.session.beatResume, 'function',
+      `count ${i + 1} must be waiting behind a gate a person can open`);
+    assert.ok(Number.isFinite(h.session.beatOpenedAt),
+      'every beat that opens must stamp WHEN it opened, on the clock Event.timeStamp '
+      + 'is measured against — without it the tap that dismissed the last count is '
+      + 'still in flight and dismisses this one too');
+    seen.push(h.said.at(-1));
+
+    // A COUNT IS DISMISSED EXACTLY ONCE. The stale closure from the beat before
+    // this one must not fire into the middle of it.
+    const advance = h.session.beatResume;
+    advance();
+    advance();
+    assert.notStrictEqual(h.session.beatResume, advance,
+      'the gate must be cleared before the next beat opens, or two of them are '
+      + 'standing at once');
+    assert.strictEqual(h.live().length, 0,
+      'and nothing is on a clock in between: the next count is the tap');
+  }
+
+  // THE SHEET IS WHAT THE CURSOR RUNS OFF THE END INTO — reached by there being
+  // no count left rather than armed alongside the counts.
+  assert.deepStrictEqual(opened, ['summary']);
+  assert.strictEqual(h.session.beatResume, null, 'and nothing is left standing');
+
+  // THE ORDER IS THE PLAN'S, not the renderer's: pone, the dealer, then the crib.
+  assert.deepStrictEqual(
+    plan.steps.map((step, i) => nextShowBeat(plan, i)), plan.steps,
+    'the renderer must walk the plan\'s own statement of what follows what, or the '
+    + 'ordering is asserted in one file and implemented in another');
+  assert.strictEqual(seen.length, plan.steps.length);
+  for (const line of seen) {
+    assert.ok(line.endsWith(TAP_TO_GO_ON),
+      'the live region must carry both the count and the way out of it in one write; '
+      + 'two writes in a frame is one sentence announced and one lost');
+  }
+  assert.strictEqual(h.said.length, plan.steps.length,
+    'one write per count — three counts, three sentences, none of them lost');
+
+  // AND THE BAR IS REPAINTED BY HAND at every one of them, because only the
+  // crib's count renders the felt: the other two would otherwise leave "Round
+  // over." standing over a table that will not move again on its own.
+  assert.strictEqual(h.calls.filter((c) => c[0] === 'renderStatusBar').length,
+    plan.steps.length + 1,
+    'the bar must be repainted at every count and once more as the sheet opens');
+
+  // A SHOW WHOSE TABLE HAS BEEN CLOSED OR RE-DEALT MUST NOT KEEP COUNTING INTO IT.
+  {
+    const closed = roundEndingHarness();
+    closed.session.roundBeat = true;
+    const reached = [];
+    closed.ending.runShowSequence(plan, closed.state, () => reached.push('summary'));
+    closed.setEpoch(7);
+    closed.fire();
+    assert.deepStrictEqual(closed.said, [], 'no count is painted into a closed table');
+    assert.deepStrictEqual(reached, []);
+    assert.strictEqual(closed.session.beatResume, null);
+
+    // ...AND A TAP ON A COUNT THAT WAS STANDING WHEN THE TABLE WENT is a stale
+    // closure over a finished match: it must not paint the next count into
+    // whatever replaced it.
+    const standing = roundEndingHarness();
+    standing.session.roundBeat = true;
+    standing.ending.runShowSequence(plan, standing.state, () => reached.push('summary'));
+    standing.fire();
+    const stale = standing.session.beatResume;
+    standing.setEpoch(8);
+    stale();
+    assert.strictEqual(standing.said.length, 1,
+      'a count whose table has been closed or re-dealt must not open the next one');
+    assert.deepStrictEqual(reached, []);
+  }
+
+  // AND AN ENDING THAT WAS RELEASED WITHOUT THE EPOCH MOVING — a review opened,
+  // the sheet dismissed by hand — stops too.
+  {
+    const let_go = roundEndingHarness();
+    let_go.session.roundBeat = true;
+    let_go.ending.runShowSequence(plan, let_go.state, () => {});
+    let_go.session.roundBeat = false;
+    let_go.fire();
+    assert.deepStrictEqual(let_go.said, []);
+  }
 
   // AND runRoundBeat HAS TO CHOOSE BETWEEN THE TWO KINDS, off the plan rather
   // than off the rung — the rung is the plan's business and the felt reads
-  // numbers.
-  const beat = table.match(/function runRoundBeat\([\s\S]*?\n\}\n/);
-  assert.ok(beat, "runRoundBeat is not where this test thinks it is");
-  assert.match(beat[0], /plan\.stepMs == null && plan\.steps\.length/,
-    "the renderer must pick the sequence off the plan's own `stepMs`, and only "
-    + "when there are counts to wait on — a round with no show must not gate the "
-    + "sheet behind a tap that dismisses nothing");
+  // numbers. A show that waits arms ONE timer; a timed one arms a count each
+  // plus the sheet.
+  {
+    const waits = roundEndingHarness();
+    waits.session.roundBeat = true;
+    waits.ending.runRoundBeat(waits.state, plan, waits.state);
+    assert.strictEqual(waits.live().length, 1,
+      'the renderer must pick the sequence off the plan\'s own `stepMs`');
 
-  // THE FELT SAYS A TAP CONTINUES, on both surfaces, or three motionless counts
-  // read as a hang. #status-text is a label that changes; #log is the announced
-  // one, and it carries the whole sentence.
+    const timed = roundBeatPlan(cribbageShow, { flightMs: 420, pace: 'quick' });
+    const clocked = roundEndingHarness();
+    clocked.session.roundBeat = true;
+    clocked.ending.runRoundBeat(clocked.state, timed, clocked.state);
+    assert.strictEqual(clocked.live().length, timed.steps.length + 1);
+    // A TIMED COUNT RE-CHECKS THE HOLD when it fires, not only the epoch: an
+    // ending can be let go of — a review opened, the sheet dismissed by hand —
+    // without the epoch moving, and a count painted over the live felt is a
+    // sentence about a hand that is no longer on the table.
+    clocked.session.roundBeat = false;
+    clocked.fire();
+    assert.deepStrictEqual(clocked.said, [],
+      'a timed count must not paint onto an ending that has been released');
+
+    // ...AND ONLY WHEN THERE ARE COUNTS TO WAIT ON. A round with no show must not
+    // gate the sheet behind a tap that dismisses nothing.
+    const plain = roundBeatPlan(
+      [{ type: 'roundOver', round: 2, scores: {}, totals: [10, 12], over: false }],
+      { flightMs: 420, pace: 'manual' },
+    );
+    assert.strictEqual(plain.steps.length, 0);
+    const bare = roundEndingHarness();
+    bare.session.roundBeat = true;
+    bare.ending.runRoundBeat(bare.state, plain, bare.state);
+    assert.strictEqual(bare.session.beatResume, null,
+      'a round with no show must not gate the sheet behind a tap that dismisses '
+      + 'nothing');
+  }
+  assert.match(ending, /plan\.stepMs == null && plan\.steps\.length/,
+    'and it must read the plan\'s own numbers to decide, rather than the rung');
+
+  // THE FELT SAYS A TAP CONTINUES on the bar too, or three motionless counts read
+  // as a hang. #status-text is a label that changes; #log is the announced one.
   assert.match(table, /session\.beatResume \? 'Round over\. Tap to go on\.' : 'Round over\.'/,
     "the status bar must promise the tap for exactly as long as a count is waiting "
     + "for one");
-  assert.match(table, /el\.log\.textContent = waits \? heldBeatLine\(text\) : text/,
-    "the live region must carry both the count and the way out of it in one write; "
-    + "two writes in a frame is one sentence announced and one lost");
-  assert.match(run[0], /renderStatusBar\(/,
-    "only the crib's count repaints the felt, so the other two would leave the bar "
-    + "saying nothing continues them");
+  assert.match(ending, /el\.log\.textContent = waits \? heldBeatLine\(text\) : text/,
+    "the live region must carry both the count and the way out of it in one write");
 
   // AND BOTH DOORS HAVE TO BE OPEN TO A COUNT AT ALL. They asked about
   // `session.trickBeat` while a completed trick was the only thing on this felt
@@ -840,11 +1020,19 @@ test("the show is walked one input at a time, and one input advances one beat", 
   // AND AN ENDING THAT IS CANCELLED TAKES ITS GATE WITH IT. A count's resume is
   // the one thing in a round beat with no timer to cancel, so the sweep that
   // stops everything else would have left it standing.
-  const cancel = table.match(/function cancelRoundBeat\(\) \{[\s\S]*?\n\}/);
-  assert.ok(cancel, "cancelRoundBeat is not where this test thinks it is");
-  assert.match(cancel[0], /session\.beatResume = null/,
-    "a gate left open outlives the ending it belongs to: the sheet's own tap would "
-    + "find a count's resume still standing and advance a beat of the hand before it");
+  // Driven since #223: open a count, sweep the ending, and look for the gate.
+  {
+    const swept = roundEndingHarness();
+    swept.session.roundBeat = true;
+    swept.ending.runShowSequence(plan, swept.state, () => {});
+    swept.fire();
+    assert.strictEqual(typeof swept.session.beatResume, 'function');
+    swept.ending.cancelRoundBeat();
+    assert.strictEqual(swept.session.beatResume, null,
+      "a gate left open outlives the ending it belongs to: the sheet's own tap would "
+      + "find a count's resume still standing and advance a beat of the hand before it");
+    assert.strictEqual(swept.session.beatOpenedAt, null);
+  }
 });
 
 // The round beat's own arithmetic is unchanged by any of this: a reveal is a
@@ -959,32 +1147,76 @@ test("at the rung that waits, the final show is a sequence that ends in the fina
   assert.ok(Number.isFinite(shared.lookAt), 'three other people are waiting');
 });
 
-// PART GREP, for the reason the tap tests above are: src/ui/table.js touches the
-// DOM at import and nothing loads it. The arithmetic is pinned above; this pins
-// that the game-over path actually asks for it and runs it through the same
-// show machinery — a plan nobody reads is the bug this fixes, still there.
+// PART GREP, PART DRIVE. The arithmetic is pinned above; this pins that the
+// game-over path actually asks for it — a grep, because that branch is
+// `afterMove`'s and src/ui/table.js still cannot be loaded — and then RUNS the
+// show it asks for through src/ui/roundEnding.js (#223), the same machinery a
+// live show uses. A plan nobody reads is the bug this fixes, still there.
 test("the game-over path counts the final show through the same machinery", () => {
   const table = read("src/ui/table.js");
   const gameOver = table.slice(table.indexOf("  if (state.gameOver) {"), table.indexOf("  if (passed && !message)"));
   assert.ok(gameOver.length > 0, 'the game-over branch must still be where afterMove starts');
   assert.match(gameOver, /finalShowPlan\(events,/, 'the game-over branch must ask for the final show');
-  assert.match(gameOver, /runFinalShow\(/, 'and run it');
-  const runner = table.slice(table.indexOf("function runFinalShow("), table.indexOf("function afterMove("));
-  assert.match(runner, /runShowSequence\(plan, finalState, open\)/,
-    'the counts that wait must be walked by the same sequence a live show is');
-  assert.match(runner, /beatTimer\(open, plan\.lookAt\)/,
-    'and the counts on a clock must end in the final look at the plan\'s own time');
-  // The hold is the shared one since #202, so this asks for the call AND that
-  // the thing it calls still raises the flag `feltState` reads.
-  assert.match(runner, /holdRoundEnding\(plan, finalState, shown\)/,
-    'the felt must hold the ending while the counts are read (feltState)');
-  const hold = table.match(/function holdRoundEnding\([\s\S]*?\n\}/);
-  assert.ok(hold, 'holdRoundEnding must exist — it is the one place the ending is held');
-  assert.match(hold[0], /session\.roundBeat = true/,
-    'a hold that does not raise `roundBeat` leaves the felt actable over an ending');
+  assert.match(gameOver, /roundEnding\.runFinalShow\(/, 'and run it');
+
+  // THE RUNNER ITSELF, DRIVEN (#223): `runFinalShow` is src/ui/roundEnding.js's
+  // now, so both kinds of show are run to their end rather than read.
+  const finalRun = (pace) => {
+    const h = roundEndingHarness();
+    const looked = [];
+    const plan = finalShowPlan(decidingShow, { flightMs: 420, pace });
+    const finalState = { ...h.state, tag: 'final' };
+    const shown = { ...h.state, tag: 'shown' };
+    h.ending.runFinalShow(h.state, plan, finalState, shown, {
+      message: 'Game over.', move: { type: 'play' }, from: null, reveal: null,
+      closeTrick: () => h.calls.push(['closeTrick']),
+      done: () => looked.push('look'),
+    });
+    return { h, plan, looked, finalState, shown };
+  };
+
+  // THE HOLD IS THE SHARED ONE SINCE #202, and it raises the flag `feltState`
+  // reads — a hold that does not raise `roundBeat` leaves the felt actable over
+  // an ending, and one that does not keep the ending is a rotation away from
+  // painting the next deal.
+  {
+    const { h, shown } = finalRun('quick');
+    assert.strictEqual(h.session.roundBeat, true,
+      'the felt must hold the ending while the counts are read (feltState)');
+    assert.strictEqual(h.session.roundFinalState, shown,
+      'and hold the posed ending, which is what a repaint during the beat paints');
+    assert.deepStrictEqual(h.calls[0].slice(0, 3), ['render', shown, 'Game over.'],
+      'the first paint is the ending, posed for its first count');
+  }
+
+  // ON A CLOCK: every count, then the final look at the plan's own time.
+  {
+    const { h, plan, looked } = finalRun('quick');
+    assert.deepStrictEqual(h.live().map((t) => t.ms), [...plan.steps.map((st) => st.at), plan.lookAt],
+      'the counts on a clock must end in the final look at the plan\'s own time');
+    for (let i = 0; i <= plan.steps.length; i++) h.fire();
+    assert.deepStrictEqual(looked, ['look']);
+    assert.strictEqual(h.session.roundBeat, false,
+      'the felt goes live again under the bar: at match end the live state IS the ending');
+  }
+
+  // WAITING FOR A PERSON: walked by the same sequence a live show is.
+  {
+    const { h, plan, looked } = finalRun('manual');
+    assert.strictEqual(plan.stepMs, null);
+    assert.strictEqual(h.live().length, 1, 'one clock — the first count, on the hold');
+    h.fire();
+    for (let i = 0; i < plan.steps.length; i++) {
+      assert.deepStrictEqual(looked, [], 'the final look must wait for every count');
+      h.session.beatResume();
+    }
+    assert.deepStrictEqual(looked, ['look'],
+      'the counts that wait must be walked by the same sequence a live show is');
+  }
+
   // The ending position is claimed for a match-ending round too, or there is
   // nothing to pose the crib face down on.
-  assert.match(table, /takeRoundFinal\(ended \? move : null\)/);
+  assert.match(read("src/ui/roundEnding.js"), /takeRoundFinal\(ended \? move : null\)/);
   // And the last count comes down with the results, not before them.
   const look = table.slice(table.indexOf("function offerFinalLook("), table.indexOf("function openScoreboard("));
   assert.match(look, /hideShowCard\(\);\s*\n\s*showGameOver\(state, ending\)/);

@@ -304,7 +304,10 @@ test("the speed is read from storage, not from a snapshot the lobby cannot refre
   // so counted a comment that happened to quote `currentFlightMs()` — the tally
   // was 8 for 7 call sites, and deleting a paragraph failed a test about flight
   // timing. The neighbour gate below strips comments for exactly this reason.
-  const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  // AND ACROSS THE ROUND ENDING TOO (#223): `beginRoundEnding` asks for the round
+  // beat's flight in src/ui/roundEnding.js now, handed `currentFlightMs` in.
+  const code = (src + read("src/ui/roundEnding.js"))
+    .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
   assert.strictEqual((code.match(/currentFlightMs\(\)/g) || []).length, 6,
     "every flight-duration call site must ask currentFlightMs, plus its own definition — "
     + "a site left on the snapshot is a card that still flies at the stale rung");
@@ -353,7 +356,9 @@ test("a setting the new-game sheet can change is never read from a snapshot olde
   // snapshot is written in comments that quote it — including the one that
   // explains this very fix — and a gate that counted those would be reading the
   // argument rather than the program.
-  const code = read("src/ui/table.js")
+  // BOTH FILES THE FELT READS SETTINGS IN since #223: the round ending — and with
+  // it `currentPace`, the one reader of `pace` — lives in src/ui/roundEnding.js.
+  const code = (read("src/ui/table.js") + read("src/ui/roundEnding.js"))
     .replace(/\/\*[\s\S]*?\*\//g, '')
     .replace(/^\s*\/\/.*$/gm, '');
   const bodyOf = (name) => {
