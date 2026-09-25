@@ -513,3 +513,123 @@ test("the pip row is painted in both themes and never animates", () => {
   assert.match(css, /\.seat__pips\[data-dense="true"\] \{[^}]*--pip-size:/,
     "the dense row no longer shrinks its circles, so a bid of thirteen runs off the seat");
 });
+
+/* ------------------------------------------------------------------ *
+ * The refit paints what the felt paints (#259)
+ * ------------------------------------------------------------------ */
+
+/**
+ * A document the WHOLE row can be built into — every seat, its head, its
+ * badges and its fan of backs — which is more than `stubDocument` above needs
+ * to answer: class lists, a style that takes custom properties, a rect, and
+ * the lookups the row makes on its way past (all of which find nothing, which
+ * is the truth about a row nobody has laid out).
+ */
+function stubRowDocument() {
+  const make = (tag) => {
+    const node = {
+      tag,
+      className: "",
+      textContent: "",
+      innerHTML: "",
+      dataset: {},
+      attrs: {},
+      children: [],
+      clientWidth: 900,
+      scrollWidth: 900,
+      scrollLeft: 0,
+      style: { setProperty(name, value) { this[name] = value; } },
+      classList: {
+        add: (cls) => { node.className = `${node.className} ${cls}`.trim(); },
+        contains: (cls) => node.className.split(/\s+/).includes(cls),
+        toggle: (cls, on) => {
+          const list = node.className.split(/\s+/).filter((c) => c && c !== cls);
+          if (on) list.push(cls);
+          node.className = list.join(" ");
+        },
+      },
+      get childElementCount() { return node.children.length; },
+      appendChild(child) { node.children.push(child); return child; },
+      replaceChildren(...kids) { node.children = kids; },
+      setAttribute(name, value) { node.attrs[name] = String(value); },
+      addEventListener() {},
+      querySelector: () => null,
+      getBoundingClientRect: () => ({ left: 0, top: 0, width: 900, height: 120, bottom: 120 }),
+      cloneNode: () => make(tag),
+      remove() {},
+    };
+    if (tag === "template") node.content = make("fragment");
+    return node;
+  };
+  return { createElement: make, getElementById: () => null, querySelector: () => null };
+}
+
+test("the width refit repaints the felt's position, not the live one (#259)", async () => {
+  // A REVIEW IS OPEN: the felt stands at a position from the middle of the
+  // round while the engine already holds a fresh deal. The two are told apart
+  // by the one thing a seat always draws — how many cards each opponent holds.
+  const pack = await loadPackFromDisk("hearts");
+  const live = createState({ pack, seats: 4, seed: "refit:259" });
+  pack.template.setup(makeCtx(live));
+  const reviewed = createState({ pack, seats: 4, seed: "refit:259" });
+  pack.template.setup(makeCtx(reviewed));
+  const held = { 1: 9, 2: 10, 3: 11 };
+  for (const [seat, count] of Object.entries(held)) {
+    reviewed.zones.cards(`hand.${seat}`).splice(count);
+  }
+  for (const seat of [1, 2, 3]) assert.equal(live.zones.count(`hand.${seat}`), 13);
+
+  const hadDocument = Object.prototype.hasOwnProperty.call(globalThis, "document");
+  const hadWindow = Object.prototype.hasOwnProperty.call(globalThis, "window");
+  const before = { document: globalThis.document, window: globalThis.window };
+  const listeners = [];
+  globalThis.document = stubRowDocument();
+  globalThis.window = { addEventListener: (type, handler) => listeners.push({ type, handler }) };
+  try {
+    const row = document.createElement("div");
+    const session = { review: { state: reviewed } };
+    const seam = createSeatRow({
+      el: { opponentsTop: row, table: document.createElement("div"), screen: document.createElement("div") },
+      session: () => session,
+      zones: () => null,
+      liveState: () => live,
+      feltState: () => reviewed,
+      render: () => {},
+      mySeat: () => 0,
+      isMySeat: (seat) => seat === 0,
+      identityOf: (seat) => ({ name: `Seat ${seat}`, color: "#345", icon: "", initials: `S${seat}` }),
+      art: () => ({ backPanel: "#123", back: () => "<svg></svg>" }),
+      markEntry: (node) => node,
+      turnToken: () => document.createElement("span"),
+      committingToken: () => document.createElement("span"),
+      humanAnnouncements: () => [],
+      heldValueText: () => "",
+      ownZoneInstances: () => [],
+      perPlayerZoneInstances: () => [],
+      performAnnouncement: () => {},
+      isBusy: () => false,
+    });
+
+    // No ResizeObserver under node, so the seam falls back to the window's
+    // `resize` — the same refit either way, and this is the one a test can fire.
+    seam.watchSeatRowWidth();
+    const resize = listeners.find((l) => l.type === "resize");
+    assert.ok(resize, "watchSeatRowWidth installed no refit to drive");
+    resize.handler();
+
+    const drawn = {};
+    for (const wrap of row.children.filter((c) => c.dataset.seat !== undefined)) {
+      const mini = childByClass(wrap, "mini-hand");
+      assert.ok(mini, `seat ${wrap.dataset.seat} drew no fan`);
+      drawn[wrap.dataset.seat] = Number(mini.style["--mini-count"]);
+    }
+    assert.deepEqual(drawn, { 1: 9, 2: 10, 3: 11 },
+      "the refit repainted the seat row from the live state — under an open review "
+      + "the row shows the next deal while the felt shows the reviewed position (#259)");
+  } finally {
+    if (hadDocument) globalThis.document = before.document;
+    else delete globalThis.document;
+    if (hadWindow) globalThis.window = before.window;
+    else delete globalThis.window;
+  }
+});

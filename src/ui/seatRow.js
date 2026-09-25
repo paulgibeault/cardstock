@@ -320,6 +320,8 @@ export const SEAT_VIEW_LABEL = 'Minimize player cards';
  * @param session     () => the open session (the plate's pick, the fit cache, the reserve)
  * @param zones       () => the pile/meld renderer (src/ui/zoneRenderer.js)
  * @param liveState   () => the open match's state, or null
+ * @param feltState   () => the position the felt is SHOWING — the live state,
+ *                    except under a round beat, a trick reveal or an open review
  * @param render      (state) => void — a full felt rebuild, for the row's own controls
  * @param mySeat      () => the seat at this device
  * @param isMySeat    (seat) => boolean
@@ -336,7 +338,7 @@ export const SEAT_VIEW_LABEL = 'Minimize player cards';
  * @param isBusy      () => true while a drag owns the pointer
  */
 export function createSeatRow({
-  el, session, zones, liveState, render, mySeat, isMySeat, identityOf, art,
+  el, session, zones, liveState, feltState, render, mySeat, isMySeat, identityOf, art,
   markEntry, turnToken, committingToken, humanAnnouncements, heldValueText,
   ownZoneInstances, perPlayerZoneInstances, performAnnouncement, isBusy,
 }) {
@@ -1295,10 +1297,15 @@ export function createSeatRow({
     // question is about; height is only ever its answer.
     let lastWidth = -1;
     const refit = () => {
-      const state = liveState();
       // A rebuild mid-drag would replace the seat the pointer is carrying a card
       // to — and the drag holds measured rects for nodes this would throw away.
-      if (!state || !session() || isBusy()) return;
+      if (!liveState() || !session() || isBusy()) return;
+      // THE FELT'S POSITION, NOT THE ENGINE'S (#259). Under an open review, a
+      // round beat or a trick reveal the felt is holding a position the engine
+      // has moved past; repainting the row from the live state put the next
+      // deal's thirteen cards over a reviewed trick, or under the round summary,
+      // the moment the phone rotated. The row paints what `render` painted.
+      const state = feltState();
       const width = el.opponentsTop.clientWidth;
       // BEFORE the width gate, and outside it. A row can be re-measured at the
       // same width and a different LENGTH — the launcher's font scale, a meld

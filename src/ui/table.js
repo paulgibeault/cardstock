@@ -2311,6 +2311,7 @@ export function initTable({ onExit }) {
     session: () => session,
     zones: () => zones,
     liveState,
+    feltState,
     render,
     mySeat,
     isMySeat,
