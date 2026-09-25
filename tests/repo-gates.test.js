@@ -28,8 +28,8 @@ test("every tracked JS file parses", () => {
  * one silently wins — so `node --check` passes it and the gate above never
  * sees it. That is how the felt's `el` map carried two `feltMiddle` entries
  * (#182). There is no parser in the repo, so this is a SOURCE SCAN (#183), a
- * heuristic and not an AST: it tracks brace depth line by line, skips `//` and
- * `/* *\/` comments, and collects the `key:` that starts each line per block.
+ * heuristic and not an AST: it tracks brace depth line by line, skips line
+ * and block comments, and collects the `key:` that starts each line per block.
  * It catches the one-key-per-line shape every hand-written map here uses; it
  * does not see quoted keys, a second key on the same line, or braces hiding in
  * strings. A label (`outer: for`) reads as a key too, so two identical labels
@@ -37,6 +37,11 @@ test("every tracked JS file parses", () => {
  */
 test("no object literal writes the same key twice", () => {
   const files = tracked.filter((f) => /\.(js|mjs)$/.test(f));
+  // Spelled in halves so this file does not read as a comment to its own scan:
+  // a literal opener in the source below would blind it to the rest of the file.
+  const OPEN = "/" + "*";
+  const CLOSE = "*" + "/";
+  const LINE = "/" + "/";
   const offenders = [];
   for (const f of files) {
     const lines = fs.readFileSync(path.join(ROOT, f), "utf8").split("\n");
@@ -45,12 +50,16 @@ test("no object literal writes the same key twice", () => {
     lines.forEach((raw, i) => {
       let s = raw;
       if (inBlockComment) {
-        if (!s.includes("*/")) return;
-        s = s.slice(s.indexOf("*/") + 2);
+        if (!s.includes(CLOSE)) return;
+        s = s.slice(s.indexOf(CLOSE) + 2);
         inBlockComment = false;
       }
-      s = s.replace(/\/\/.*$/, "").replace(/\/\*.*?\*\//g, "");
-      if (s.includes("/*")) { s = s.slice(0, s.indexOf("/*")); inBlockComment = true; }
+      if (s.includes(LINE)) s = s.slice(0, s.indexOf(LINE));
+      for (let at = s.indexOf(OPEN); at >= 0; at = s.indexOf(OPEN)) {
+        const end = s.indexOf(CLOSE, at + 2);
+        if (end < 0) { s = s.slice(0, at); inBlockComment = true; break; }
+        s = s.slice(0, at) + s.slice(end + 2);
+      }
       const m = /^\s*([a-zA-Z_$][\w$]*)\s*:\s*\S/.exec(s);
       if (m) {
         const block = stack[stack.length - 1];
