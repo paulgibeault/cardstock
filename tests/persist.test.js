@@ -212,3 +212,24 @@ test("ending the day's run from the summary drops the daily and leaves the casua
     "the day's run came back after it was ended");
   assert.strictEqual(loadMatch("milestones")?.log.length, 2, "the casual game went with the daily");
 });
+
+test("End match at a table we host walks the host out and leaves the shared game saved", async () => {
+  // THE GAME GOES ON FOR THE PEOPLE STILL AT IT, so its save does too; ending
+  // it for everybody is "Stop hosting". And the host's own solo game of the
+  // same pack is nobody's business here — this path used to clear
+  // `match.<packId>`, which at a hosted table is exactly that game.
+  const solo = playSome(dealt("hearts", 4, 3), 2);
+  const shared = dealt("hearts", 4, 9);
+  let host = null;
+  const { h, exited } = await endFromSummary(async (doors) => {
+    host = hostTable(shared);
+    host.seating = [];
+    await doors.resumeHostedTable({ table: host });
+  }, { before: () => saveMatch(solo) });
+  assert.strictEqual(exited, 1);
+  assert.strictEqual(h.slots.session, null);
+  assert.strictEqual(host.concluded, false, "a shared game was marked over by one player leaving it");
+  assert.strictEqual(loadHostMatch(TABLE_ID)?.log.length, shared.log.length,
+    "the hosted table's save was dropped while it plays on for everybody else");
+  assert.strictEqual(loadMatch("hearts")?.log.length, 2, "the host's unrelated solo game was cleared");
+});

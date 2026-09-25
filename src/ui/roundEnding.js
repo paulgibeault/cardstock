@@ -1045,8 +1045,14 @@ export function createRoundEnding({
     // flush wrote the match straight back — so the lobby offered to resume a
     // game whose forfeit had already been recorded. Marking the table is what
     // the flush reads (src/arcade/persist.js).
+    //
+    // A SOLO TABLE ONLY. At a table the player is hosting, walking out of the
+    // summary leaves the lobby and nothing else: the game goes on for the people
+    // still sitting at it, so its save must too — ending it for everybody is
+    // "Stop hosting". (This used to clear `match.<packId>` there as well, which
+    // was the host's unrelated solo game of the same pack.)
     const table = session().table;
-    concludeTable(table);
+    if (table.local()) concludeTable(table);
     if (table.daily) {
       recordDailyResult(state.pack.id, table.daily.date, {
         won: false, hands: state.roundNumber,
