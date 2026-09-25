@@ -63,6 +63,85 @@ export function handValue(cards, scoring) {
  * the sheet still reads the returned deltas.
  */
 
+/* ------------------------------------------------------------------ *
+ * What the parts are CALLED
+ * ------------------------------------------------------------------ */
+
+/**
+ * WHAT ONE PART OF A SCORE IS CALLED OUT LOUD.
+ *
+ * Every scoring event in cribbage carried its breakdown from the day it shipped
+ * and the felt said only the total, so a fifteen, a pair and a run all read
+ * "Nell pegs 2" — three completely different things to have happen to you
+ * (#124, item 41). These are the words a cribbage player uses; they are the
+ * whole reason the game has a vocabulary at all.
+ *
+ * HERE, BESIDE `heldParts`, BECAUSE `showScored` IS THE PLATFORM'S EVENT and its
+ * part `kind`s are named in two places: `held`, by the reveal below, and the six
+ * cribbage kinds, by src/templates/cribbage-score.js. The words for them were in
+ * that template's module and the show card imported it by name — `import
+ * { partPhrase } from '../templates/cribbage-score.js'` in src/ui/showCard.js —
+ * so a platform renderer knew which game it was drawing (#219). One table for
+ * every kind the event can carry, in the file that documents the event, is what
+ * replaces that: the felt asks for the words and never asks whose they are.
+ *
+ * A kind nobody has a word for answers null and is left OFF rather than printed
+ * raw — the fail-soft every caller here is written against.
+ *
+ * `n` is the number of CARDS in the part, which is what separates a pair from a
+ * pair royal and sizes a run. It arrives as `part.n` from a wire event
+ * (cribbage.js's `partsOf`) and as `part.cards.length` from a breakdown, so
+ * both are accepted.
+ */
+export function partPhrase(part) {
+  const n = part?.n ?? part?.cards?.length ?? 0;
+  switch (part?.kind) {
+    // THE REVEAL'S OWN ROW (`heldParts` below): cards grouped by what each one
+    // is worth. "7 cards at 1" is a Thirteen hand; "a card at 50" is the eight
+    // somebody was caught with.
+    case 'held': return `${n === 1 ? 'a card' : `${n} cards`} at ${part?.each ?? 0}`;
+    case 'fifteen': return 'fifteen';
+    case 'thirty-one': return 'thirty-one';
+    // Three of a kind is a pair royal and four is a double pair royal — six and
+    // twelve holes. Calling either of them "a pair" undersells the hand badly.
+    case 'pair': return n >= 4 ? 'double pair royal' : n === 3 ? 'pair royal' : 'a pair';
+    case 'run': return `a run of ${n}`;
+    case 'flush': return `a flush of ${n}`;
+    // The one cribbage puts in its own tagline and had never once printed.
+    case 'nobs': return 'his nobs';
+    default: return null;
+  }
+}
+
+/** The breakdown as one clause: "fifteen, fifteen and a pair". */
+export function namedParts(parts) {
+  return joinParts((parts || []).map(partPhrase).filter(Boolean));
+}
+
+/**
+ * THE SAME CLAUSE WITH THE ARITHMETIC IN IT: "fifteen for 2 and a pair for 2".
+ *
+ * For cribbage's play, where there is no card to draw and the banner is the
+ * whole of what the player gets (#152). "Nell pegs 4 — fifteen and a pair" left
+ * the four to be divided up by the reader, which is the one sum a cribbage
+ * player is doing out loud anyway.
+ *
+ * ONE PART KEEPS THE PLAIN PHRASE, because the total has already said what it
+ * is worth: "You peg 2 — a pair for 2 — the count is 8" says two twice.
+ */
+export function scoredParts(parts) {
+  const list = (parts || []).filter((part) => partPhrase(part));
+  if (list.length < 2) return namedParts(list);
+  return joinParts(list.map((part) => `${partPhrase(part)} for ${part.points ?? 0}`));
+}
+
+/** "a", "a and b", "a, b and c" — the one list style the felt uses. */
+function joinParts(words) {
+  if (!words.length) return '';
+  if (words.length === 1) return words[0];
+  return `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`;
+}
+
 /** The rows of a reveal card: one per distinct value, highest first. */
 function heldParts(cards, scoring) {
   const byValue = new Map();

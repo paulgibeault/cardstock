@@ -28,12 +28,6 @@ import { describeZone, zoneAriaLabel, zoneBadge, zoneFocusOf, cardName } from '.
 import { seatSideMarks } from './seatRing.js';
 import { handValue } from '../engine/scoring.js';
 import { makeCtx } from '../engine/context.js';
-// A ui/ file reaching into templates/ the way lobby.js and cardStyles/ already
-// reach for templates/registry.js: melds.js is leaf logic (it imports only
-// engine/), so there is no cycle, and the alternative — hanging a display hook
-// off the template object — would put a purely visual concern in the rules
-// surface every future melding pack has to implement.
-import { meldDisplayOrder } from '../templates/melds.js';
 
 /** How many discards stay visible under the top one. Enough to read as a pile. */
 const DISCARD_DEPTH = 3;
@@ -77,6 +71,17 @@ const OVERLAP_MODES = new Set(['horizontal', 'vertical']);
 function overlapFor(state, def) {
   const declared = state.pack.manifest.ui?.zoneOverlap?.[def.id];
   return OVERLAP_MODES.has(declared) ? declared : null;
+}
+
+/**
+ * Are these the same cards, in any order? The check behind `meldCardOrder`
+ * below: a reordering may not lose, gain or rename a card.
+ */
+function isSameCards(declared, cards) {
+  if (!Array.isArray(declared) || declared.length !== cards.length) return false;
+  const left = [...declared].sort();
+  const right = [...cards].sort();
+  return left.every((id, i) => id === right[i]);
 }
 
 // A stable pseudo-random tilt per card. Seeded from the id rather than
@@ -479,6 +484,36 @@ export function createZoneRenderer({
   }
 
   /**
+   * WHAT ORDER TO DRAW A MELD'S CARDS IN — the template's, or the stored one.
+   *
+   * This file used to import `meldDisplayOrder` from src/templates/melds.js: a
+   * platform file reaching into one template's internals for a rule only that
+   * template has, which is the thing src/templates/CONTRACT.md exists to stop
+   * (#219). The template says so through `meldCardOrder` now, and the DEFAULT is
+   * the order the cards are stored in — so a melding template with no opinion
+   * implements nothing and loses nothing.
+   *
+   * AND THE ANSWER IS CHECKED, because the guarantee used to come from importing
+   * the function that made it ("a permutation of group.cards — always the same
+   * ids, always the same length"). A chip that silently renders three cards of a
+   * four-card meld is a worse bug than an unsorted one and the caller cannot
+   * tell by looking, so an answer that has lost, gained or renamed a card is
+   * discarded for the stored order rather than drawn.
+   */
+  function meldCardOrder(state, group) {
+    const cards = Array.isArray(group?.cards) ? group.cards : [];
+    try {
+      const declared = state.pack.template.meldCardOrder?.(makeCtx(state), group);
+      return isSameCards(declared, cards) ? declared.slice() : cards.slice();
+    } catch {
+      // Belt and braces over the check above, and the same rule the function
+      // this replaced ended on: no arrangement of match state is worth a blank
+      // table.
+      return cards.slice();
+    }
+  }
+
+  /**
    * How a card in a laid-down meld reads.
    *
    * A wild on the felt is not a wild any more — it is the card it was played
@@ -523,9 +558,9 @@ export function createZoneRenderer({
       // Sorted for reading, once, and used by BOTH the chip and its inspector
       // below — a run drawn `3 W 5 6` whose inspector still numbered it `6 3 W 5`
       // would make "Card 2" name a card that is not second on the felt, which is
-      // worse than either order on its own. See meldDisplayOrder: the stored
-      // array is match state and is deliberately left as the engine wrote it.
-      const ordered = meldDisplayOrder(makeCtx(state), group);
+      // worse than either order on its own. See meldCardOrder: the stored array
+      // is match state and is deliberately left as the engine wrote it.
+      const ordered = meldCardOrder(state, group);
 
       const cards = document.createElement('span');
       cards.className = 'meld-chip__cards';
@@ -559,5 +594,8 @@ export function createZoneRenderer({
     });
     return strip;
   }
-  return { buildPileNode, buildMeldStrip, paintPileState, paintMeldState, meldGroupsOf };
+  return {
+    buildPileNode, buildMeldStrip, paintPileState, paintMeldState,
+    meldGroupsOf, meldCardOrder,
+  };
 }

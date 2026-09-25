@@ -202,15 +202,50 @@ test("the row honours openOnly, and the round summary asks past it", () => {
     "seatCountersFor no longer drops openOnly counters from a minimized face");
   assert.match(table, /\n\s*: list\.filter\(\(counter\) => !counter\.minimizedOnly\);/,
     "seatCountersFor no longer drops minimizedOnly counters from an open seat");
-  // ...and the one caller that wants neither face. `roundContractLines` reads
-  // the bid and the trick count off this list to write "Bid 4, took 5"; asking
-  // for the minimized face would hand it a list with both of them filtered out
-  // and the sheet would lose the line without erroring.
-  assert.match(table, /const counters = seatCountersFor\(finalState, seat, \{ all: true \}\);/,
-    "the round summary is reading a FACE's counters — a Spades bid and its "
-    + "trick count are openOnly, so its rows would quietly disappear");
-  assert.match(table, /\n\s*if \(all\) return list;/,
-    "`all` no longer returns the template's whole declaration");
+  // ...and the sheet's own line no longer reads this list at all (#219). It used
+  // to find the counters whose `kind` is 'bid' and 'tricks' and compose "Bid 4,
+  // took 5" from them, which needed a third face — `{ all: true }` — because both
+  // of those are openOnly at a Spades table. The template writes the phrase now,
+  // so the words cannot go missing behind a filter; what this pins is that the
+  // felt asks rather than composes.
+  assert.match(table, /const declared = finalState\.pack\.template\.roundLines\?\.\(makeCtx\(finalState\)\);/,
+    "the round summary is building its own per-seat phrase again — the bid's "
+    + "words are the template's (src/templates/CONTRACT.md, `roundLines`)");
+  assert.doesNotMatch(table, /kind === 'bid'|kind === 'tricks'/,
+    "the felt is reading counter kinds by name to write a sentence out of them");
+  // ...and the human's own strip picks its counters the same way: the template
+  // marks them, rather than this file keeping a list of the kinds that qualify.
+  assert.match(table, /\.filter\(\(counter\) => counter\.mine\)/,
+    "the own-seat strip is choosing counters by kind again (#219) — which of a "
+    + "template's numbers the plateless seat needs is the template's answer");
+  assert.doesNotMatch(table, /MY_SEAT_KINDS/,
+    "the platform is back to keeping one template's counter slugs in a list");
+});
+
+// THE SHEET'S PHRASE ITSELF, off a real position — the half a source gate cannot
+// see. "Bid 4, took 5" is the reason a delta of -30 happened, and both numbers
+// have to be the seat plate's own words (a nil reads "nil" on both).
+test("a bidding pack writes one round-sheet line per seat, and Hearts writes none", async () => {
+  let checked = 0;
+  for (const packId of listPackIds()) {
+    const pack = await loadPackFromDisk(packId);
+    if (!pack.template.roundLines) continue;
+    const state = createState({ pack, seats: 4, seed: `sheet:${packId}` });
+    pack.template.setup(makeCtx(state));
+    const lines = pack.template.roundLines(makeCtx(state));
+    if (!pack.rules.bidding) {
+      assert.strictEqual(lines, null, `${packId}: a pack that does not bid wrote a sheet line`);
+      continue;
+    }
+    checked++;
+    assert.strictEqual(lines.length, state.seats, `${packId}: one line per seat`);
+    for (let seat = 0; seat < state.seats; seat++) {
+      const badge = pack.template.seatCounters(makeCtx(state), seat).find((c) => c.kind === "bid");
+      assert.strictEqual(lines[seat], `Bid ${badge.text}, took 0`,
+        `${packId} seat ${seat}: the sheet's words and the plate's disagree`);
+    }
+  }
+  assert.ok(checked >= 2, `only ${checked} bidding packs were examined — the sweep found nothing`);
 });
 
 test("an empty hidden pile draws no chip, and no empty strip either", () => {

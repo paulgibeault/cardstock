@@ -28,7 +28,12 @@
 // keyframe in this component loops, and the highlight is a transition.
 
 import { svgNode, line } from './dom.js';
-import { partPhrase } from '../templates/cribbage-score.js';
+// WHAT A PART IS CALLED, from the file that documents the event it rides on
+// (`showScored`, src/engine/scoring.js). This used to be
+// `import { partPhrase } from '../templates/cribbage-score.js'` — a platform
+// renderer naming one template's module, and the reveal's own `held` rows spelled
+// out a second time here because that module had never heard of them (#219).
+import { partPhrase } from '../engine/scoring.js';
 
 /** What a hand worth nothing is called. */
 export const NINETEEN = 'nineteen';
@@ -67,7 +72,7 @@ export function showCardModel({
 
   const rows = (Array.isArray(parts) ? parts : [])
     .map((part) => {
-      const label = part?.kind === 'held' ? heldPhrase(part) : partPhrase(part);
+      const label = partPhrase(part);
       if (!label) return null;
       return {
         label,
@@ -101,17 +106,6 @@ export function showCardModel({
       ? `${title}: ${zeroLabel} — nothing.`
       : `${title}: ${spoken} — ${points}.`,
   };
-}
-
-/**
- * A reveal row: cards grouped by what each one is worth (the `held` part of
- * src/engine/scoring.js). "7 cards at 1" is a Thirteen hand; "a card at 50" is
- * the eight somebody was caught with.
- */
-function heldPhrase(part) {
-  const n = part?.n ?? 0;
-  const each = part?.each ?? 0;
-  return `${n === 1 ? 'a card' : `${n} cards`} at ${each}`;
 }
 
 /**

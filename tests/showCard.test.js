@@ -212,6 +212,45 @@ test("the positions are positions, not card ids", async () => {
   assert.ok(makeCtx);
 });
 
+// HOW THE FELT IS TOLD TO STAGE ONE COUNT (#219).
+//
+// src/ui/table.js used to know four things about this game by name: that the
+// crib is turned over by moving `crib -> show`, that a hand is counted in front
+// of its seat in `play.<seat>` while the crib is counted in `show`, that the
+// fifth card is the shared `starter`, and that the two piles are called a hand
+// and a crib. All four are answers now, and the felt's own half — the fork, the
+// guards, the release — is pinned by the source gate in tests/handReveal.test.js.
+test("cribbage stages its own show: the pile counted, the cut, and the crib posed back", async () => {
+  const { pack, state, shows } = await playToTheShow();
+  const staged = shows.map(({ ev }) => pack.template.showStep(makeCtx(state), ev));
+
+  assert.deepEqual(staged.map((s) => s.what), ["hand", "hand", "crib"],
+    "the two hands and then the crib, in the words the sentence uses");
+  assert.deepEqual(staged.map((s) => s.spotlight),
+    [`play.${shows[0].ev.seat}`, `play.${shows[1].ev.seat}`, "show"],
+    "a hand is counted in front of its own seat; the crib where it was turned over");
+
+  // ONLY THE CRIB'S COUNT IS POSED, and the pose is the reveal run backwards:
+  // the crib comes face up inside the move that ends the hand, so without this
+  // its "turn" is a caption on cards that have been up through two counts (#152).
+  assert.deepEqual(staged.map((s) => s.pose),
+    [null, null, { from: "show", to: "crib" }]);
+
+  // THE CUT BELONGS TO ALL THREE, and it is read off the position handed in
+  // rather than off the event — it is a public zone, and a second copy on the
+  // wire is a fact travelling outside the field the view filter checks.
+  const cut = state.zones.cards("starter")[0];
+  for (const s of staged) assert.equal(s.starterId, cut);
+
+  // AND THE PLATFORM'S OWN REVEAL IS NOT CRIBBAGE'S TO STAGE. A step carrying a
+  // `reason` came from src/engine/scoring.js's emitReveal, which prices the
+  // cards left in a hand at a round boundary and says itself.
+  for (const reason of ["leftover", "to-winner", "taken"]) {
+    assert.equal(pack.template.showStep(makeCtx(state), { seat: 0, reason }), null,
+      `a ${reason} reveal was staged as if it were a show`);
+  }
+});
+
 /* ------------------------------------------------------------------ *
  * The half of the game with no card to draw
  * ------------------------------------------------------------------ */
