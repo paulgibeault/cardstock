@@ -199,7 +199,7 @@ export function counterPips(counter) {
   const taken = Number.isInteger(counter.taken) && counter.taken > 0 ? counter.taken : 0;
   // A nil is the template's word, not a number this file recognises: a 0 at a
   // POINTS auction is a pass and means the opposite (src/templates/
-  // trick-taking.js `bidBadge`), so the flag is what decides and the zero is
+  // trick-auction.js `bidBadge`), so the flag is what decides and the zero is
   // only the fallback for a template that declared one without the other.
   const nil = counter.nil === true || bid === 0;
   const pips = [];
