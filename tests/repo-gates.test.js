@@ -313,7 +313,7 @@ test("no frame leaves src/match without going through its stamping helper", () =
  * THE STYLESHEET (#214)
  * ------------------------------------------------------------------ *
  *
- * src/ui/table.css was the only tracked file class with no check on it at
+ * The stylesheet was the only tracked file class with no check on it at
  * all, and it showed: ten selector lists written twice in the same context, a
  * `gap` overridden by a second `gap` eleven lines further down the same block,
  * seven byte-identical pulse rings, and three `!important`s papering over a
@@ -401,6 +401,61 @@ function cssDeclarations(body) {
 const stylesheets = () => tracked.filter((f) => f.endsWith(".css"))
   .map((f) => ({ file: f, rules: cssRules(fs.readFileSync(path.join(ROOT, f), "utf8")) }));
 
+/* ------------------------------------------------------------------ *
+ * THE LINK ORDER (#221)
+ * ------------------------------------------------------------------ *
+ *
+ * The sheet is eleven files now, and there is no `@layer` and no `@import`:
+ * the order of the `<link>`s in index.html IS the order of the cascade. That
+ * makes the sequence the one invariant of the split that nothing else in the
+ * repo states — a reader can see what `felt.css` is for, but not that it has
+ * to be read after `seats.css` and before `responsive.css`.
+ *
+ * So it is written down here, once, as a list. Two rules it encodes:
+ *
+ *  - `tokens.css` FIRST. Every other file resolves custom properties it
+ *    declares, and a `var()` with no declaration in scope falls back rather
+ *    than failing, which is the kind of breakage a screenshot does not show.
+ *  - `responsive.css` LAST. "Stepping the whole felt down" overrides rules in
+ *    five of the sheets above it at equal specificity, so it only wins by
+ *    coming after them. Moving it up is the one edit here that silently
+ *    changes the table at every width below a desktop window.
+ */
+const LINKED_CSS = [
+  "src/ui/css/tokens.css",
+  "src/ui/css/chrome.css",
+  "src/ui/css/seats.css",
+  "src/ui/css/felt.css",
+  "src/ui/css/cards.css",
+  "src/ui/css/moments.css",
+  "src/ui/css/panels.css",
+  "src/ui/css/lobby.css",
+  "src/ui/css/party.css",
+  "src/ui/css/review.css",
+  "src/ui/css/responsive.css",
+];
+
+test("index.html links the stylesheets in cascade order", () => {
+  const html = fs.readFileSync(path.join(ROOT, "index.html"), "utf8");
+  const linked = [...html.matchAll(/<link\b[^>]*rel="stylesheet"[^>]*>/g)]
+    .map((m) => (m[0].match(/href="([^"]+)"/) || [])[1]);
+  assert.deepStrictEqual(linked, LINKED_CSS,
+    "the <link> sequence in index.html is the cascade order. If a sheet moved "
+    + "on purpose, move it in LINKED_CSS too and say in the PR what it now "
+    + "wins or loses — responsive.css in particular must stay last.");
+});
+
+// A sheet nobody links is dead weight that still passes every gate below it,
+// and a link to a sheet that is not tracked 404s in the artifact. Set
+// equality catches both, and catches a twelfth file added without a link.
+test("every tracked stylesheet is linked exactly once", () => {
+  assert.deepStrictEqual(
+    tracked.filter((f) => f.endsWith(".css")).sort(),
+    [...LINKED_CSS].sort(),
+    "a stylesheet that is tracked but not linked is dead, and a link to an "
+    + "untracked file 404s in the staged artifact");
+});
+
 /*
  * A selector written twice is two answers to one question, and the reader has
  * to hold six thousand lines in their head to know which one wins. Every pair
@@ -415,22 +470,26 @@ const DUPLICATE_SELECTORS_ALLOWED = new Set([
   "#table-board",
 ]);
 
+// Across the LINKED SHEET, not per file. Before #221 this was one file, so
+// per-file and whole-sheet were the same question; after the split they are
+// not, and the question worth asking is still the reader's — "which of these
+// two wins?" — which does not care that they are now in different files.
 test("no stylesheet writes the same selector list twice in one @-context", () => {
   const offenders = [];
+  const seen = new Map();
   for (const { file, rules } of stylesheets()) {
-    const seen = new Map();
     for (const r of rules) {
       const key = selectorKey(r.prelude);
       if (r.context.startsWith("@") && /keyframes/i.test(r.context)) continue; // 0%/100% steps
       const slot = `${r.context}||${key}`;
       if (!seen.has(slot)) seen.set(slot, []);
-      seen.get(slot).push(r.line);
+      seen.get(slot).push(`${file}:${r.line}`);
     }
-    for (const [slot, lines] of seen) {
-      const key = slot.split("||")[1];
-      if (lines.length > 1 && !DUPLICATE_SELECTORS_ALLOWED.has(key)) {
-        offenders.push(`${file}:${lines.join(",")} — \`${key}\` ${lines.length} times`);
-      }
+  }
+  for (const [slot, where] of seen) {
+    const key = slot.split("||")[1];
+    if (where.length > 1 && !DUPLICATE_SELECTORS_ALLOWED.has(key)) {
+      offenders.push(`${where.join(", ")} — \`${key}\` ${where.length} times`);
     }
   }
   assert.deepStrictEqual(offenders, [],

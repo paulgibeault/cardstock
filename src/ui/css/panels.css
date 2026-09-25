@@ -1,0 +1,543 @@
+/* SHEETS AND PANELS — the card inspector, the modals, round history and match
+ * stats, and a sheet's fold-out sections. The surfaces that come up OVER the
+ * table rather than living on it.
+ *
+ * File 7 of 11 — read after moments.css, before lobby.css. The
+ * order is the cascade; tokens.css says why and repo-gates.test.js pins it. */
+
+/* ------------------------------------------------------------------ *
+ * The card inspector (src/ui/inspector.js)
+ * ------------------------------------------------------------------ */
+
+#card-inspector {
+  position: fixed;
+  z-index: 14;
+  max-width: 15rem;
+  padding: 0.55rem 0.7rem;
+  border-radius: 10px;
+  background: var(--panel-bg);
+  color: var(--panel-text);
+  border: 1px solid var(--panel-border);
+  box-shadow: 0 10px 30px var(--panel-shadow);
+  font-size: 0.78rem;
+  pointer-events: none;
+}
+#card-inspector[hidden] { display: none; }
+
+.inspector__title { font-weight: 700; margin-bottom: 0.3rem; }
+.inspector__lines {
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 0.1rem 0.7rem;
+}
+.inspector__label { opacity: 0.65; }
+.inspector__value { text-align: right; font-variant-numeric: tabular-nums; }
+.inspector__note {
+  margin-top: 0.35rem;
+  padding-top: 0.3rem;
+  border-top: 1px solid var(--chip-border);
+  opacity: 0.85;
+  line-height: 1.35;
+}
+
+/* ------------------------------------------------------------------ *
+ * Modals
+ * ------------------------------------------------------------------ */
+
+#choice-modal,
+#confirm-modal,
+#round-overlay,
+#scoreboard-overlay,
+#game-over-overlay,
+#rules-overlay,
+#party-decision,
+#party-overlay,
+#new-game-overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--scrim);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  z-index: 10;
+  overflow-y: auto;
+}
+#choice-modal[hidden],
+#confirm-modal[hidden],
+#round-overlay[hidden],
+#scoreboard-overlay[hidden],
+#game-over-overlay[hidden],
+#rules-overlay[hidden],
+#party-decision[hidden],
+#party-overlay[hidden],
+#new-game-overlay[hidden] { display: none; }
+
+/* THE SHARED SHEET, AND WHY ITS OWN IDS ARE IN `:where()`.
+ *
+ * `.panel` is a component; the nine ids are only the nine places one is
+ * mounted. Written plainly the list scored id-and-a-class, which beat every
+ * modifier a panel could wear — `.panel--wide` and `.choice-dialog` are one
+ * class each — so both of them carried `!important` to win an argument they
+ * should never have been in, and a third joined them on the review sheet.
+ * `:where()` contributes nothing to specificity, so this reads as the
+ * one-class rule it always meant to be and a modifier below simply overrides
+ * it. No `!important` outside the reduced-motion kill switch. */
+:where(
+  #choice-modal,
+  #confirm-modal,
+  #round-overlay,
+  #scoreboard-overlay,
+  #game-over-overlay,
+  #rules-overlay,
+  #party-decision,
+  #party-overlay,
+  #new-game-overlay
+) .panel {
+  background: var(--panel-bg);
+  color: var(--panel-text);
+  border: 1px solid var(--panel-border);
+  padding: 1.5rem;
+  border-radius: 14px;
+  text-align: center;
+  max-width: min(26rem, 100%);
+  box-shadow: 0 20px 60px var(--panel-shadow);
+  animation: settle-in 0.3s ease-out;
+  margin: auto;
+}
+
+/* The panels that carry a table rather than a sentence. */
+.panel--wide { max-width: min(34rem, 100%); }
+
+.panel__title {
+  font-size: 1.05rem;
+  font-weight: 600;
+  margin-bottom: 1rem;
+}
+
+.panel__actions {
+  display: flex;
+  gap: 0.6rem;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+/* Inside a panel the ghost button sits on the panel's own surface, so it
+   borrows the panel's text colour rather than the felt's. */
+.panel .ghost-button {
+  color: var(--panel-text);
+  border-color: var(--panel-text);
+  opacity: 0.75;
+}
+.panel .ghost-button:hover { opacity: 1; background: transparent; }
+
+/* The score sheet between rounds: one row per seat — this round's damage and
+   the running total. The human's row is the one you look for, so it leads.
+ *
+ * NAME FIRST, and the middle column is what gives. This was `1fr auto auto`,
+ * which reads as "the name gets the slack" and does the opposite: an `auto`
+ * middle track claims its max-content width, and the scoreboard puts a bot's
+ * whole persona line there ("is thinking about something else"). That
+ * squeezed the 1fr name column down to the width of its icon, and the name
+ * spilled out from under it across the persona text. Sizing the name to its
+ * content and giving the middle track the leftover puts the shrinking where
+ * it belongs — on the decorative line. */
+.round-scores {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 0.35rem 1.2rem;
+  margin-bottom: 1.25rem;
+  text-align: left;
+  font-size: 0.95rem;
+}
+.round-scores__row { display: contents; }
+.round-scores__row--you .round-scores__name,
+.round-scores__row--you .round-scores__total { font-weight: 700; }
+/* Truncates rather than overflowing: this cell holds "+12" on the round sheet
+   but a whole persona line on the scoreboard, and only one of those fits. */
+.round-scores__delta {
+  text-align: right;
+  opacity: 0.8;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.round-scores__total { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* What the delta beside it is the arithmetic OF: "Bid 4, took 3" (#123). Inside
+   the name cell rather than a fourth column, because a row here is
+   `display: contents` over a three-column grid. Quiet, and allowed to
+   disappear: the name is what the row is for. */
+.round-scores__note {
+  font-size: 0.72rem;
+  opacity: 0.7;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* How far this match still has to run. Sits between the sheet and the buttons
+   because it is the fact the two buttons are a choice between. */
+.round-target {
+  margin: -0.75rem 0 1rem;
+  font-size: 0.85rem;
+  opacity: 0.72;
+}
+
+/* Every player's name carries their mark, everywhere it appears — the seat
+   plate, the score sheet, the stats. One face per opponent, one place it is
+   decided (src/players/roster.js). */
+.round-scores__name,
+.round-history__head,
+.stat-card__name,
+/* One partner's name inside a side's row — same icon-then-name pair, nested
+   (src/ui/panels.js, sideNameCell). */
+.name-cell {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+}
+/* A pair's row is two of those with an ampersand between them, so it wraps
+   where a single name never had to. */
+.round-scores__name, .round-history__head { flex-wrap: wrap; }
+.seat-icon { flex: none; }
+
+/* ------------------------------------------------------------------ *
+ * Round history and match stats
+ * ------------------------------------------------------------------ */
+
+/* Every round of the match, one row each. Computed from the log when the
+   panel opens (src/stats/matchStats.js) — nothing is tallied as you play. */
+.round-history { margin-bottom: 1.1rem; }
+.round-history__grid {
+  display: grid;
+  grid-template-columns: auto repeat(var(--history-cols, 3), minmax(2.6rem, 1fr));
+  gap: 0.15rem 0.5rem;
+  font-size: 0.82rem;
+  text-align: right;
+}
+.round-history__head {
+  font-weight: 700;
+  font-size: 0.72rem;
+  justify-content: flex-end;
+  padding-bottom: 0.25rem;
+  border-bottom: 1px solid var(--chip-border);
+  overflow: hidden;
+}
+.round-history__label { text-align: left; opacity: 0.7; }
+.round-history__cell { font-variant-numeric: tabular-nums; opacity: 0.85; }
+.round-history__label--total,
+.round-history__cell--total {
+  font-weight: 700;
+  opacity: 1;
+  padding-top: 0.25rem;
+  border-top: 1px solid var(--chip-border);
+}
+.round-history__empty { font-size: 0.8rem; opacity: 0.6; }
+
+/* One card per player: what they actually did this game, in their template's
+   own terms (a Hearts player counts tricks, a Wildfire player counts wilds). */
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr));
+  gap: 0.6rem;
+  margin-bottom: 1rem;
+  text-align: left;
+}
+.stat-card {
+  padding: 0.55rem 0.7rem;
+  border-radius: 10px;
+  border: 1px solid var(--chip-border);
+  background: color-mix(in srgb, var(--panel-text) 4%, transparent);
+}
+.stat-card--winner { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.stat-card__name { font-weight: 700; font-size: 0.85rem; margin-bottom: 0.35rem; }
+.stat-card__lines {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.1rem 0.6rem;
+  font-size: 0.78rem;
+}
+.stat-card__label { opacity: 0.7; }
+.stat-card__value { font-weight: 700; font-variant-numeric: tabular-nums; }
+
+#game-over-rounds-toggle[hidden] { display: none; }
+#game-over-rounds[hidden] { display: none; }
+
+#scoreboard-close {
+  font: inherit;
+  padding: 0.6rem 1.4rem;
+  border-radius: 8px;
+  border: none;
+  cursor: pointer;
+  background: var(--action-bg);
+  color: var(--action-text);
+  font-weight: 600;
+}
+#scoreboard-close:hover { background: var(--action-bg-hover); }
+
+#round-continue {
+  font: inherit;
+  padding: 0.7rem 1.5rem;
+  border-radius: 8px;
+  border: none;
+  cursor: pointer;
+  background: var(--action-bg);
+  color: var(--action-text);
+  font-weight: 600;
+}
+#round-continue:hover { background: var(--action-bg-hover); }
+
+/* ------------------------------------------------------------------ *
+ * The wild's question — a MODAL, and that is why it is in this file rather
+ * than with the other table moments. `.choice-dialog` out-ranks the shared
+ * `.panel` width cap above one class over one class, settled by source order
+ * alone (see the `:where()` note on that cap), so the two have to be read in
+ * this order and therefore out of this one file.
+ * ------------------------------------------------------------------ *
+ *
+ * A wild asks the one thing the cards cannot say for themselves, and it used
+ * to ask it the way a settings screen asks for a timezone: four word-buttons
+ * in a box. The options are cards now (src/ui/cardStyles/chooser.js), which
+ * makes the whole moment part of the game rather than an interruption to it.
+ *
+ * --choice-tint is set by table.js to whichever option is under the finger and
+ * cleared when the dialog closes. It is the through-line: the panel lights up
+ * in the colour, then the felt washes in the same one when the card lands
+ * (.table--flash) and the discard badge keeps a dot of it afterwards. */
+.choice-dialog {
+  /* Out-ranks the shared panel width cap: four cards two-up need the room, and
+     a 26rem panel squeezed them to slivers. One class over one class, settled
+     by source order — see the `:where()` note on that cap. */
+  max-width: min(22rem, 100%);
+  border-color: color-mix(in srgb, var(--choice-tint, var(--panel-border)) 60%, var(--panel-border));
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--choice-tint, transparent) 40%, transparent),
+    0 0 34px color-mix(in srgb, var(--choice-tint, transparent) 28%, transparent),
+    0 20px 60px var(--panel-shadow);
+  transition: box-shadow 0.18s ease, border-color 0.18s ease;
+}
+
+/* The card that asked. Small — it is the subject of the sentence above the
+   options, not the thing you are choosing between. */
+.choice-dialog__card {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 0.7rem;
+}
+.choice-dialog__card[hidden] { display: none; }
+.choice-dialog__face .card-face {
+  width: 58px;
+  display: block;
+  border-radius: 6px;
+  box-shadow: 0 4px 12px var(--card-shadow);
+}
+
+/* WHAT THE TABLE HAS ALREADY SAID (#123).
+ *
+ * A bid is made against the bids before it, and on a phone the seats carrying
+ * them are a carousel — the playtest bid with the partner's plate clipped
+ * mid-word and the third opponent off the screen entirely. So the four
+ * promises come into the dialog, in seat order, with your own and your
+ * partner's marked; the row after them is what the two of you have promised
+ * between you, which is the number the hand is actually played against.
+ *
+ * Wraps rather than scrolls: four short chips fit on one line at 375px and on
+ * two if a name is long, and a row that can be scrolled off is the bug this is
+ * fixing wearing a smaller hat. */
+.choice-context {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.3rem;
+  margin: -0.4rem 0 0.9rem;
+}
+.choice-context[hidden] { display: none; }
+
+.choice-context__row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.3rem;
+  padding: 0.12rem 0.45rem;
+  border-radius: 999px;
+  border: 1px solid var(--chip-border);
+  background: var(--chip-bg);
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Your side, marked the way the felt marks it: the plate wears a PARTNER pill
+   and these two wear the accent. Colour is not the only signal — the row is
+   named "your partner" in its accessible label as well. */
+.choice-context__row--mine,
+.choice-context__row--partner {
+  border-color: color-mix(in srgb, var(--accent) 60%, var(--chip-border));
+}
+.choice-context__row--mine { font-weight: 700; }
+
+.choice-context__name { opacity: 0.78; }
+.choice-context__value { font-weight: 700; }
+
+.choice-grid {
+  display: flex;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+  justify-content: center;
+  margin-bottom: 1rem;
+}
+/* Four options are the rosette on the wild, so they are laid out as one. */
+.choice-grid--quad {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.choice-option {
+  font: inherit;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.5rem;
+  border-radius: 10px;
+  border: 1px solid var(--panel-border);
+  cursor: pointer;
+  background: color-mix(in srgb, var(--panel-text) 8%, transparent);
+  color: var(--panel-text);
+  text-transform: capitalize;
+  transition: transform 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+}
+
+/* The card lifts toward the finger, which is the same vocabulary a playable
+   card in the hand uses — this IS a card you are about to play. */
+.choice-option:hover,
+.choice-option:focus-visible {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--panel-text) 14%, transparent);
+  transform: translateY(-3px);
+}
+.choice-option:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.choice-option__art { display: block; }
+.choice-option__art .choice-face {
+  display: block;
+  width: 62px;
+  border-radius: 5px;
+  box-shadow: 0 3px 9px var(--card-shadow);
+}
+
+.choice-option__name {
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  /* A pack names its own colours and one of them will eventually be longer
+     than the tile; the caption gives rather than the grid. */
+  max-width: 6.5rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* No picture for this one — whatever a template has invented is not a card. It
+   keeps the old pill shape rather than pretending to be a tile with a blank
+   face. */
+.choice-option--word {
+  flex-direction: row;
+  padding: 0.6rem 1rem;
+  border-radius: 8px;
+}
+
+/* A PLAYER IS NOT A CARD EITHER, and must not be dressed as one — you are
+   choosing a person at the table, not something to put on the discard. So the
+   tile keeps the card's shape (it is the same choice, made the same way) and
+   fills it with the seat's own mark: the face already on their plate and in
+   the score sheet, big enough to aim at. */
+.choice-option--seat { min-width: 5.5rem; }
+
+.choice-option__icon {
+  display: grid;
+  place-items: center;
+  width: 3.2rem;
+  height: 3.2rem;
+  border-radius: 50%;
+  font-size: 1.7rem;
+  /* The glyph is the whole box — no leading, or the circle grows a chin. The
+     suit medallion under the discard is sized the same way and for the same
+     reason. */
+  line-height: 1;
+  background: color-mix(in srgb, var(--panel-text) 10%, transparent);
+  border: 1px solid var(--panel-border);
+}
+
+/* A short window — a laptop, or a phone in landscape — cannot spare two rows of
+   full-size cards plus the one that asked. The modal scrolls rather than
+   clipping, but a dialog you have to scroll to answer has stopped being a
+   single gesture, so the cards step down instead. */
+@media (max-height: 720px) {
+  .choice-dialog__face .card-face { width: 44px; }
+  .choice-option__art .choice-face { width: 50px; }
+  .choice-option { padding: 0.35rem; }
+  .choice-dialog__card { margin-bottom: 0.45rem; }
+}
+
+/* ------------------------------------------------------------------ *
+ * A SHEET'S FOLD-OUT SECTION. "Round by round" and "Trick by trick" are
+ * headings you open, not things you do — so they are drawn as a sheet's
+ * own rows: a hairline, the name at the left, a chevron at the right that
+ * turns when the section is open. The verbs (Deal, Lobby, Play again) stay
+ * in the actions row and stay looking like buttons.
+ * ------------------------------------------------------------------ */
+.sheet-disclosure {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  width: 100%;
+  margin: 0;
+  padding: 0.6rem 0.25rem;
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--panel-text);
+  background: transparent;
+  border: none;
+  border-top: 1px solid var(--panel-border);
+  border-radius: 0;
+  cursor: pointer;
+  text-align: left;
+  opacity: 0.88;
+}
+.sheet-disclosure:hover { opacity: 1; background: color-mix(in srgb, var(--panel-text) 5%, transparent); }
+.sheet-disclosure:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.sheet-disclosure::after {
+  content: "";
+  flex: none;
+  width: 0.5em;
+  height: 0.5em;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(45deg) translate(-0.1em, -0.1em);
+  transition: transform 0.18s ease;
+  opacity: 0.7;
+  margin-right: 0.2em;
+}
+.sheet-disclosure[aria-expanded="true"]::after { transform: rotate(-135deg) translate(-0.1em, -0.05em); }
+.sheet-disclosure[hidden] { display: none; }
+.sheet-disclosure__body { margin: 0 0 0.4rem; }
+.sheet-disclosure__body[hidden] { display: none; }
+/* The last fold before the actions closes with its own hairline, and the
+   actions keep their breathing room above. */
+.sheet-disclosure__body + .panel__actions,
+.sheet-disclosure + .panel__actions { border-top: 1px solid var(--panel-border); padding-top: 1rem; }
+
+/* On the round sheet the target line sits directly on the first fold, and a
+   map inside a fold is tighter than one standing on its own — this is the
+   only margin either map has. */
+#round-panel .round-target { margin-bottom: 0.6rem; }
+#round-panel .sheet-disclosure { margin-top: 0.2rem; }
+#round-map,
+#game-over-map { margin: 0.4rem 0 0.2rem; }
+#game-over-overlay .round-history.sheet-disclosure__body { margin-top: 0.4rem; }

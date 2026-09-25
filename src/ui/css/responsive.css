@@ -1,0 +1,325 @@
+/* STEPPING THE WHOLE FELT DOWN — every width and height breakpoint, and the
+ * reduced-motion kill switch.
+ *
+ * THIS FILE IS LINKED LAST, AND THAT IS LOAD-BEARING. It overrides rules in
+ * five of the sheets above it at equal specificity, so it wins only by coming
+ * after them. Linking it anywhere else silently changes the table at every
+ * window smaller than a desktop one, which is exactly the kind of break a
+ * passing test suite does not show you.
+ *
+ * File 11 of 11 — read after review.css, before nothing. The
+ * order is the cascade; tokens.css says why and repo-gates.test.js pins it. */
+
+/* ------------------------------------------------------------------ *
+ * Stepping the whole felt down
+ * ------------------------------------------------------------------ */
+
+/* Everything on the table derives from the two variables on #table, so a
+ * viewport gets smaller cards by changing those two numbers and nothing else.
+ *
+ * BOTH AXES CONSTRAIN, AND THE TIGHTER ONE MUST WIN. A table is a horizontal
+ * problem — Stockpile's deck plus four builds have to fit on one line — and
+ * equally a vertical one: seats, shared piles, your own piles, the action bar
+ * and your hand are a stack, and Milestones adds melds AND a contract ladder
+ * to it. Past a point the hand slides off the bottom, which is the one row a
+ * player cannot do without.
+ *
+ * THESE FOUR BLOCKS ARE ORDERED BY THE SIZE THEY PRODUCE, LARGEST FIRST, AND
+ * THE ORDER IS LOAD-BEARING. They have identical specificity, so on a viewport
+ * matching several of them the last one wins — and since each is smaller than
+ * the one above, "last match wins" is exactly "the tightest constraint wins".
+ * Grouping them by axis instead is what broke it: a 390x750 phone matches both
+ * width rules and the 800px-tall rule, and with the height rules written last
+ * it took 74/60px cards — BIGGER than the 52/46 the phone rule intends — which
+ * then overflowed, raised a scrollbar, narrowed the viewport, and could flip
+ * the breakpoint back mid-game. */
+
+/* TALL: a desktop window with height to spare, where the cards should take it.
+ *
+ * The felt is a stack whose middle now absorbs the slack (#felt-middle is
+ * `flex: 1`), so on a big window the cards kept their default size and the
+ * space they did not take became a void between the piles and the hand. This
+ * spends it on the cards instead.
+ *
+ * ONE BLOCK, AND IT SCALES CONTINUOUSLY. A ladder of min-height steps would
+ * have to be written largest-last to work, which is the exact inversion of the
+ * ordering rule above — so `vh` does the interpolation and the clamps hold it
+ * between "no smaller than the default" and "no bigger than a card wants to
+ * be". Every block below is a tighter constraint and still overrules it, which
+ * is what keeps a tall-but-narrow phone on its own small numbers. */
+@media (min-height: 860px) {
+  #table {
+    --pile-w: clamp(90px, 11vh, 132px);
+    --hand-card-w: clamp(70px, 8.6vh, 104px);
+    /* The other players' cards grow with the felt too. Left behind, an
+       opponent's laid-down meld stayed a row of 26px stamps on a window whose
+       deck had gone to 130 — and their melds are the thing you plan a turn
+       against, so they are the last cards that should be hard to read.
+       Held to a gentler slope than the deck: these sit in a ROW of seats, and
+       what they cost is the width that keeps that row on one line. */
+    --seat-fan-w: clamp(28px, 3.2vh, 38px);
+    --seat-fan-max: clamp(118px, 13vh, 156px);
+    --seat-meld-w: clamp(26px, 3vh, 36px);
+    --seat-pile-w: clamp(34px, 3.9vh, 47px);
+  }
+}
+
+/* Short: a laptop window, or a phone in landscape. */
+@media (max-height: 800px) {
+  #table {
+    --pile-w: 74px;
+    --hand-card-w: 60px;
+    gap: 0.5rem;
+    padding: 0.7rem 0.9rem;
+    margin: 0.4rem;
+  }
+  .opponent-row { gap: 0.8rem; }
+  .pile-count { margin-top: 0.35rem; }
+  .ladder__rung { padding: 0.15rem 0.3rem 0.12rem; gap: 0; }
+}
+
+/* Narrow: tablets and split-screen. The pile gaps tighten too. */
+@media (max-width: 720px) {
+  #table {
+    --pile-w: 62px;
+    --hand-card-w: 54px;
+    gap: 0.7rem;
+    padding: 0.9rem 0.5rem;
+  }
+  .pile-count { font-size: 0.66rem; margin-top: 0.5rem; }
+  .pile--mini { --pile-w: 28px; }
+  .opponent-row { gap: 0.6rem; }
+}
+
+/* Very short: everything the vertical stack can give back.
+   The cards are the LAST thing to shrink — what goes first is the space
+   between things, because a felt with tight margins still reads as a table
+   and a felt you have to scroll does not. */
+@media (max-height: 660px) {
+  #table {
+    --pile-w: 58px;
+    --hand-card-w: 50px;
+    gap: 0.35rem;
+    padding: 0.45rem 0.6rem;
+    margin: 0.35rem;
+  }
+  /* Only the card width: the overlap is derived from it (see .mini-hand). */
+  .mini-hand { --mini-w: 22px; --mini-max: 96px; }
+  .seat { padding: 0.3rem 0.4rem 0.35rem; }
+  .ladder__rung { font-size: 0.6rem; min-width: 2.4rem; }
+  .ladder__pip { width: 0.9rem; height: 0.9rem; font-size: 0.55rem; }
+  .hand { padding: 0.3rem; }
+  .pile-count { margin-top: 0.3rem; }
+  /* The medallions give height back too, but only a third of it: they shrink
+     one step and stop, because the whole point of them is being seeable. */
+  .pile-count--match[data-suit] { width: 1.9rem; height: 1.9rem; font-size: 1.3rem; margin-top: 0.25rem; }
+  .direction-badge { width: 2rem; height: 2rem; font-size: 1.4rem; }
+  /* The tray reserves its height whether or not it holds anything, so on a
+     short screen it is charged for during every turn of a lay-down phase.
+     Smaller cards here, not a collapsing row — a tray that appeared on the
+     first pick would shove the fan down mid-gesture. */
+  /* Same three terms as the full-size slot, with this block's own numbers: the
+     0.78 the cards shrink to, the tray's smaller padding, its outline. */
+  #stage-row { min-height: calc(var(--hand-card-w, 70px) * 0.78 * 1.4 + 0.5rem + 2px); }
+  .stage-card .card-face { width: calc(var(--hand-card-w, 70px) * 0.78); }
+  #stage-tray { padding: 0.25rem 0.4rem; }
+}
+
+/* Phones: small enough that Stockpile's deck-plus-four-builds row still fits
+   on one line (5 × 52px + gaps < 375px). */
+@media (max-width: 420px) {
+  #table { --pile-w: 52px; --hand-card-w: 46px; }
+  #center-piles { gap: 0.4rem 0.7rem; }
+  #player-piles { gap: 0.3rem 0.55rem; }
+  .pile--mini { --pile-w: 24px; }
+}
+
+/* The smallest phones still in the wild, 320px.
+   A WRAPPED ROW COSTS FAR MORE HEIGHT THAN SMALLER CARDS DO. Stockpile puts
+   five piles in a row twice over, and at 52px they no longer fit across — so
+   each row folded in two and the felt grew by hundreds of pixels for want of
+   a few. This is the floor: below it the cards would stop being readable, and
+   scrolling would genuinely be the better trade. */
+@media (max-width: 360px) {
+  #table {
+    --pile-w: 44px;
+    --hand-card-w: 40px;
+    gap: 0.3rem;
+    padding: 0.4rem 0.3rem;
+    margin: 0.3rem;
+  }
+  #center-piles { gap: 0.3rem 0.35rem; }
+  #player-piles { gap: 0.25rem 0.3rem; }
+  .pile--mini { --pile-w: 20px; }
+  .mini-hand { --mini-w: 20px; --mini-max: 76px; }
+  .seat { padding: 0.25rem 0.3rem 0.3rem; }
+  .seat__head { gap: 0.3rem; }
+  .ladder__rung { min-width: 2rem; padding: 0.15rem; }
+  /* Two seats side by side or two seats stacked — and stacked costs a whole
+     seat's height. A laid-down opponent's meld strip is what decides which,
+     so it gives up card size before the row gives up its shape. */
+  .meld-strip--mini { --meld-card-w: 20px; }
+  .meld-strip--mini .meld-chip { padding: 0.15rem 0.2rem; }
+  .meld-strip--mini .meld-chip__label { font-size: 0.46rem; }
+  /* The chrome bar is not the game. It can no longer wrap (see #status-bar),
+     but it can still be quieter about the room it takes. */
+  #status-bar { padding: 0.35rem 0.5rem; font-size: 0.82rem; gap: 0.35rem; }
+  /* The speed chip gives up its padding before the sentence beside it gives
+     up characters — the glyph stays, because it is what makes a one-word pill
+     read as a control rather than as a second score. */
+  .speed-chip { font-size: 0.72rem; padding: 0.15rem 0.38rem; }
+}
+
+/* `card-face` is the class on the SVG ELEMENT itself (src/ui/cardStyles) —
+   not on a wrapper — so the shadow belongs here. It used to sit on
+   `.card-face svg`, which matches a nested svg that does not exist, and so
+   every card on the table was shadowless.
+ *
+ * BOX-SHADOW, NOT DROP-SHADOW. `filter: drop-shadow()` derives its shape from
+ * the element's own alpha channel, so it has to rasterise the whole SVG — a
+ * card back is up to ninety vector lines — into an offscreen buffer, blur it,
+ * and composite it back, and it redoes that whenever the card moves. On a
+ * phone with forty cards on the felt that is the single most expensive thing
+ * in the frame. A card is a rounded rectangle, so its shadow can simply be
+ * declared as one: `border-radius` here matches the rx="8" on the 100x140
+ * blank every style draws (8/100 across, 8/140 down), and box-shadow on a
+ * rounded box is a compositor operation with no rasterisation at all. */
+.card-face {
+  display: inline-block;
+  border-radius: 8% / 5.71%;
+  box-shadow: 0 3px 4px var(--card-shadow);
+}
+
+/* A card that has just ARRIVED settles onto the felt. This used to be on
+   `.card-face` itself, which meant every card on the table replayed it on
+   every render — and since a render rebuilds every node, that was every state
+   change, including merely selecting a card. The whole table twitched because
+   you tapped one thing in it. markEntry (src/ui/table.js) adds this class only
+   where something genuinely arrived: a card the hand did not hold a moment
+   ago, a pile that has a new top, an opponent's fan that just grew. */
+.card-face--fresh {
+  animation: settle-in 0.22s ease-out;
+}
+
+.card-face-wrap.card-deal,
+.mini-hand .card-deal .card-face,
+.mini-hand .card-deal .mini-hand__edge {
+  animation: deal-in 0.4s cubic-bezier(0.2, 0.8, 0.3, 1) both;
+}
+
+@keyframes settle-in {
+  from { opacity: 0; transform: translateY(6px) scale(0.96); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes deal-in {
+  from { opacity: 0; transform: translateY(-36px) scale(0.85) rotate(-6deg); }
+  to { opacity: 1; transform: translateY(0) scale(1) rotate(0deg); }
+}
+
+/* The LAUNCHER's reduced-motion setting is handled for free: the SDK injects a
+   kill-switch rule keyed on data-reduced-motion and this game sets no
+   data-arcade-keep-motion opt-out. This block reads the OS preference instead,
+   which is a different signal and the only one a standalone visit has. Both are
+   needed; the JS-driven deal stagger is gated separately in src/main.js. */
+@media (prefers-reduced-motion: reduce) {
+  .card-face--fresh,
+  .card-face-wrap--nomatch .card-face,
+  .card-face-wrap.card-deal,
+  .mini-hand .card-deal .card-face,
+  .mini-hand .card-deal .mini-hand__edge,
+  .seat--active .seat__name,
+  .pile-stack--ready .pile-stack__top,
+  .turn-token,
+  .meld-chip--ready,
+  .seat--target,
+  .event-banner--in,
+  .event-banner--bad.event-banner--in,
+  .event-banner--held,
+  .event-banner--bad.event-banner--held,
+  .event-banner--out,
+  .contract-chip[data-chip="broken"],
+  .show-card,
+  .zone-celebrate,
+  .zone-lament,
+  .table--flash::after,
+  .announce-button,
+  .seat__catch,
+  .game-over--won .game-over-fan__card,
+  .final-look__bar,
+  #choice-modal .panel,
+  #confirm-modal .panel,
+  #round-overlay .panel,
+  #scoreboard-overlay .panel,
+  #game-over-overlay .panel,
+  #rules-overlay .panel,
+  #new-game-overlay .panel {
+    animation: none !important;
+  }
+
+  /* The deal countdown (#150). Which of the two treatments runs is decided in
+     JS — `paintRoundPace` reads `motionAllowed()`, which also sees the SDK's
+     own reducedMotion setting, and CSS cannot — so this is here for the one
+     case JS cannot catch: the media query flipping while the sheet is already
+     open. The outline stays and is simply drawn whole; the timer is untouched
+     and the next hand still deals itself on time. */
+  .deal-ring--running .deal-ring__fill {
+    animation: none !important;
+    stroke-dashoffset: 0;
+  }
+
+  /* The pulses live on pseudo-elements, and stopping the animation alone would
+     freeze one at whatever opacity it happened to hold. Hidden outright: the
+     thing each one emphasises is already said by a colour — the accent border
+     on a targeted seat and a ready meld chip, the accent ring on a ready pile,
+     the red catch button, the gold token, the static 4px glow on the acting
+     seat's name.
+
+     THIS LIST IS THE AUTHORITATIVE STATEMENT OF THOSE RESTING TREATMENTS, and
+     it stays explicit even though --arcade-pulse-count now covers the same
+     ground from the other side (#24, GAME_INTEGRATION §6d): every rule here is
+     an animation whose absence must not cost the player information, and it is
+     cheaper to read that as one list than to infer it from eight call sites.
+     `.seat--target::before` was the one omission — its four sibling rings were
+     already here. */
+  .seat--target::before,
+  .seat--active .seat__name::after,
+  .seat__catch::after,
+  .announce-button::after,
+  .turn-token::before,
+  .pile-stack--ready .pile-stack__top::after,
+  .meld-chip--ready::after {
+    animation: none !important;
+    opacity: 0;
+  }
+
+  /* A card in flight is JS-driven and gated in src/ui/flight.js; what is left
+     here is the lift, which is a transform on a static ghost and reads as a
+     jump rather than as motion. Flattened so the ghost is simply the card. */
+  .drag-ghost .card-face { transform: none !important; }
+
+  /* Transitions are motion too, and the SDK's kill-switch only covers
+     animations. Everything below moves an element under the pointer — the
+     tile lift, the fan opening, a card rising out of the hand — so it is
+     reduced to the colour change alone rather than removed entirely. */
+  .tile,
+  .tile__fan-card,
+  .seat,
+  .hand .card-face,
+  button.pile-stack,
+  .choice-option,
+  .card-face-wrap--playable .card-face {
+    transition: none !important;
+  }
+  .tile:hover,
+  .tile__open:hover .tile__fan-card,
+  .hand .card-face:hover,
+  .card-face-wrap--playable .card-face,
+  .card-face-wrap--playable .card-face:hover,
+  button.pile-stack:not(:disabled):hover,
+  .choice-option:hover,
+  .choice-option:focus-visible,
+  .seat--active {
+    transform: none !important;
+  }
+}

@@ -212,7 +212,7 @@ export function showRoundSummary(state, ev, seating, contract = null, pace = nul
  * The pace of the sheet (#150)
  * ------------------------------------------------------------------ */
 
-/** The button's own corner radius (src/ui/table.css `#round-continue`). */
+/** The button's own corner radius (src/ui/css/panels.css `#round-continue`). */
 const DEAL_RADIUS = 8;
 
 /**
@@ -260,7 +260,7 @@ export function paintRoundPace(pace) {
   }
   // MEASURED WITHOUT THE TRANSFORM, and that is the whole reason this is
   // `offsetWidth` and not `getBoundingClientRect()`. This runs on the frame the
-  // overlay is unhidden, and the panel's entrance (`settle-in`, src/ui/table.css)
+  // overlay is unhidden, and the panel's entrance (`settle-in`, src/ui/css/panels.css)
   // starts at `scale(0.96)`: a client rect read then is 96% of the button, while
   // the svg's own layout box — which the path is drawn in, and which a transform
   // does not touch — is full size. The dash array came out 4% short of the real
@@ -276,7 +276,7 @@ export function paintRoundPace(pace) {
     showRing(false);
     return;
   }
-  // The svg is inset 2px inside the button (src/ui/table.css says why), so its
+  // The svg is inset 2px inside the button (src/ui/css/panels.css says why), so its
   // own box is 4px smaller in each dimension and a 2px stroke centred on that
   // edge lies wholly on the button's own surface.
   const w = bw - 4;
@@ -580,7 +580,7 @@ export function hideGameOver() {
  *
  * THE TABLE DECIDES WHICH — `drawer` is its call, made against the window —
  * because the felt is what has to make room, and it does so by a class on
- * body that src/ui/table.css reads (`body.review-drawer`).
+ * body that src/ui/css/review.css reads (`body.review-drawer`).
  */
 export function showReviewMap(node, { drawer = false, title = 'The game so far' } = {}) {
   hideReviewMap();
@@ -760,7 +760,7 @@ export function initPanels({
   el.gameOverRoundsToggle.addEventListener('click', () => {
     const open = el.gameOverRounds.hidden;
     el.gameOverRounds.hidden = !open;
-    // The chevron says open or shut (src/ui/table.css `.sheet-disclosure`);
+    // The chevron says open or shut (src/ui/css/panels.css `.sheet-disclosure`);
     // the heading keeps its name either way, like a heading.
     el.gameOverRoundsToggle.setAttribute('aria-expanded', String(open));
   });

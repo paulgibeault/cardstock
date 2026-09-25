@@ -20,6 +20,7 @@ import {
   BANNER_HOLD_MS, BANNER_FADE_MS, TAP_TO_GO_ON, TRICK_BANNER_PRIORITY,
 } from "../src/ui/celebrations.js";
 import { ROOT } from "../tools/stage.mjs";
+import { tableCss } from "./fixtures/tableCss.js";
 
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), "utf8");
 
@@ -153,7 +154,7 @@ test("a felt with no opponent row or no piles still gets a placement", () => {
  */
 function transformFrames(css, name) {
   const block = new RegExp(`@keyframes ${name} \\{([\\s\\S]*?)\\n\\}`).exec(css);
-  assert.ok(block, `no ${name} keyframes in src/ui/table.css`);
+  assert.ok(block, `no ${name} keyframes in src/ui/css/moments.css`);
   const seen = [];
   const re = /(\d+)% \{[^}]*?transform: translate\(-50%,\s*(-?[\d.]+)%\)\s*scale\(([\d.]+)\)/g;
   for (let m; (m = re.exec(block[1])); ) {
@@ -207,7 +208,7 @@ test("the entrance animation stays inside the band the placement reserved", () =
   // bottom: 1.5px on the tallest pill the felt draws (68px, cribbage's hand
   // score at 1280) against BANNER_CLEARANCE's 6px. The old 0% frame was a
   // different animal — 0.125h, and it grew with the sentence.
-  const seen = transformFrames(read("src/ui/table.css"), "banner-in");
+  const seen = transformFrames(tableCss(), "banner-in");
   assert.ok(seen.length >= 4, `only ${seen.length} transform frames parsed out of banner-in`);
   assertInsideBand(seen, "banner-in");
 });
@@ -219,7 +220,7 @@ test("the held pill's own entrance and exit stay in the band too", () => {
   // exactly the edit that loses a constraint quietly, so they are held to the
   // same rule the entrance above is: every frame inside the rect bannerBand
   // reserved, with only the exit's drift up into the chrome under the seat row.
-  const css = read("src/ui/table.css");
+  const css = tableCss();
   const enter = transformFrames(css, "banner-enter");
   assert.strictEqual(enter.length, 3, `banner-enter parsed as ${enter.length} frames, not 3`);
   assertInsideBand(enter, "banner-enter");
@@ -235,9 +236,9 @@ test("the held pill's own entrance and exit stay in the band too", () => {
 });
 
 test("the stylesheet takes its position from the measurement, not from 34%", () => {
-  const css = read("src/ui/table.css");
+  const css = tableCss();
   const block = /\n#event-banner \{([^}]*)\}/.exec(css);
-  assert.ok(block, "no #event-banner block in src/ui/table.css");
+  assert.ok(block, "no #event-banner block in src/ui/css/moments.css");
   const rules = declarations(block[1]);
   assert.match(rules, /top:\s*var\(--banner-top/,
     "#event-banner is back on a fixed percentage of the window");
@@ -256,7 +257,7 @@ test("the stylesheet takes its position from the measurement, not from 34%", () 
 });
 
 test("the hold is one number, spent by both the timer and the animation", () => {
-  const css = read("src/ui/table.css");
+  const css = tableCss();
   const rule = /\n\.event-banner--in \{([^}]*)\}/.exec(css);
   assert.ok(rule, "no .event-banner--in rule");
   const fallback = /var\(--banner-hold,\s*(\d+)ms\)/.exec(rule[1]);
@@ -527,7 +528,7 @@ test("the live region carries the winner and the way out in one write", () => {
 });
 
 test("the fade is one number too, and neither end of a held pill loops", () => {
-  const css = read("src/ui/table.css");
+  const css = tableCss();
   const held = /\n\.event-banner--held \{([^}]*)\}/.exec(css);
   const out = /\n\.event-banner--out \{([^}]*)\}/.exec(css);
   assert.ok(held, "no .event-banner--held rule — nothing holds a banner open for a person");
