@@ -14,8 +14,16 @@
 //   3. NOTHING LEAKS BETWEEN SEATS. A seat ranked with the shipped weights
 //      gets the same answer whether or not another seat was just ranked with
 //      strange ones. Module-level "current weights" state would fail this.
+//   4. EVERY `w.KEY` A HOOK READS IS IN THE BAG. Rules 1-3 only ever look at
+//      what is IN `template.weights`; a key that vanished from it is invisible
+//      to them, and the read quietly becomes `undefined` arithmetic (#252).
 import { test } from "node:test";
 import assert from "node:assert";
+import { execSync } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
+import { ROOT } from "../tools/stage.mjs";
+import { getTemplate } from "../src/templates/index.js";
 import { createState } from "../src/engine/state.js";
 import { makeCtx } from "../src/engine/context.js";
 import { applyMove } from "../src/engine/movePipeline.js";
@@ -177,4 +185,72 @@ test("one seat's weights do not leak into the next seat's ranking", async () => 
         `${packId}: ranking seat ${seat} with strange weights changed its ranking with the shipped ones`);
     });
   }
+});
+
+/**
+ * WHICH BAG A FILE'S `w` IS. A template's hooks live in more than one file —
+ * trick-taking's phases each bring a share that the core merges onto ONE frozen
+ * bag (#224), and climbing and contract-rummy keep their strategy in a `-bot`
+ * module — so every `w.KEY` is resolved against the bag the TEMPLATE ships, the
+ * one the tuner hands back in, not against whatever the file itself declares.
+ *
+ * A file absent from this map may not read `w.KEY` at all: a new module that
+ * starts reading weights has to say whose they are.
+ */
+const BAG_OF_FILE = {
+  "src/templates/trick-taking.js": "trick-taking",
+  "src/templates/trick-pass.js": "trick-taking",
+  "src/templates/trick-auction.js": "trick-taking",
+  "src/templates/trick-meld.js": "trick-taking",
+  "src/templates/climbing.js": "climbing",
+  "src/templates/climbing-bot.js": "climbing",
+  "src/templates/contract-rummy.js": "contract-rummy",
+  "src/templates/contract-rummy-bot.js": "contract-rummy",
+  "src/templates/cribbage.js": "cribbage",
+  "src/templates/sequencing.js": "sequencing",
+  "src/templates/shedding.js": "shedding",
+};
+
+// The files that read weights today. An empty scan of one of these means the
+// regex went blind, not that the file is clean.
+const READS_EXPECTED = [
+  "src/templates/trick-taking.js", "src/templates/trick-pass.js", "src/templates/trick-auction.js",
+  "src/templates/climbing-bot.js", "src/templates/contract-rummy-bot.js",
+  "src/templates/cribbage.js", "src/templates/sequencing.js", "src/templates/shedding.js",
+];
+
+/** Comments blanked, newlines kept, so a match's offset still names its line. */
+const stripComments = (src) => src
+  .replace(/\/\*[\s\S]*?\*\//g, (c) => c.replace(/[^\n]/g, " "))
+  .replace(/(^|[^:"'`\\])\/\/.*$/gm, "$1");
+
+// `w` is the weights parameter in every file below. Local `w`s that are not
+// (climbing's `(w) => w.length` windows, melds.js's `w.rank`) read lower-case
+// members, which the upper-case KEY pattern cannot match.
+const WEIGHT_READ = /\bw\.([A-Z][A-Z0-9_]*)\b/g;
+
+test("every w.KEY a template reads is a key in that template's weights bag", () => {
+  const files = execSync("git ls-files src/templates", { cwd: ROOT, encoding: "utf8" })
+    .split("\n").filter((f) => f.endsWith(".js"));
+  const missing = [];
+  const readsIn = new Map();
+  for (const file of files) {
+    const code = stripComments(fs.readFileSync(path.join(ROOT, file), "utf8"));
+    for (const m of code.matchAll(WEIGHT_READ)) {
+      const line = code.slice(0, m.index).split("\n").length;
+      readsIn.set(file, (readsIn.get(file) || 0) + 1);
+      const templateId = BAG_OF_FILE[file];
+      if (!templateId) {
+        missing.push(`${file}:${line} reads w.${m[1]}, but the file is not in BAG_OF_FILE — say whose weights it reads`);
+        continue;
+      }
+      if (!Object.hasOwn(getTemplate(templateId).weights, m[1])) {
+        missing.push(`${file}:${line} reads w.${m[1]}, which is not in the ${templateId} weights bag`);
+      }
+    }
+  }
+  for (const file of READS_EXPECTED) {
+    assert.ok(readsIn.get(file) > 0, `${file}: the scan found no w.KEY reads — the pattern has gone blind`);
+  }
+  assert.deepStrictEqual(missing, [], `weights read but not in the bag:\n  ${missing.join("\n  ")}`);
 });
