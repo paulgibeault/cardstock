@@ -24,11 +24,6 @@
 
 import { rankMoves } from '../engine/bot.js';
 import { makeCtx } from '../engine/context.js';
-// What a declared meld is called, and what the round's trump is — the same two
-// readings the meld phase's own plate and sentence use (src/templates/
-// trick-meld.js), so a suggested declaration names its melds in their words.
-import { detectDeclaredMelds, meldNames } from '../templates/melds.js';
-import { trumpSuitOf } from '../templates/trick-shared.js';
 import { cardName, titleCase } from './describe.js';
 import { describeContract, implicitLandingZone, handAddress } from './interaction.js';
 import { skillLevel } from './difficulty.js';
@@ -126,6 +121,11 @@ function answerLabels(state, move) {
  * uses, so a hint never calls a card something the inspector would not.
  */
 function phrasesFor(state, seat, move) {
+  // THE TEMPLATE FIRST, for a move whose meaning lives in its own tables — a
+  // Pinochle declaration's melds (#232). Null is "no opinion" and the platform's
+  // phrasing below stands (src/templates/CONTRACT.md, `phraseMove`).
+  const own = state.pack.template.phraseMove?.(makeCtx(state), move);
+  if (own) return [own.full, own.short ?? own.full];
   const cards = move.cards || [];
   switch (move.type) {
     case 'draw': {
@@ -175,14 +175,6 @@ function phrasesFor(state, seat, move) {
       if (/^pass$/i.test(amount)) return ['pass', 'pass'];
       const said = /^\d+$/.test(amount) ? amount : amount.toLowerCase();
       return [trump ? `bid ${said} in ${trump}` : `bid ${said}`, `bid ${said}`];
-    }
-    case 'declareMeld': {
-      // What the declaration would score, named the way the plate and the
-      // "You meld" sentence name it once it is made.
-      const ctx = makeCtx(state);
-      const declared = detectDeclaredMelds(ctx, cards, trumpSuitOf(ctx));
-      if (!declared.points) return ['declare no meld', 'declare no meld'];
-      return [`meld ${declared.points}: ${meldNames(declared.melds).join(', ')}`, `meld ${declared.points}`];
     }
     case 'passCards':
       return [`pass ${listOf(state, cards)}`, `pass the ${cards.length} cards lit up`];

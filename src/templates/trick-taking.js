@@ -44,7 +44,8 @@
  *   playBlocked    the refusal a `playCard` gets while this phase is open.
  *   interactionMode, commitPrompt, pendingChoice, committed   the felt's
  *                  affordances for it (src/ui/interaction.js).
- *   counters, chips, describe, roundLines, ruleLines, publicVars, botVerbs
+ *   counters, chips, describe, roundLines, ruleLines, publicVars, botVerbs,
+ *   phraseMove
  *                  what it contributes to the hooks the platform asks the
  *                  TEMPLATE, composed below in the order the felt reads them.
  *   score(ctx, move, w)        what its move is worth (`botHeuristic`).
@@ -808,6 +809,20 @@ const trickTaking = {
     if (ctx.countIn('trick') + 1 !== ctx.seats) return false;
     placeCard(ctx, move);
     return true;
+  },
+
+  /**
+   * WHAT THE HINT BAR CALLS A MOVE — asked of the phase that owns it (the meld
+   * names its declaration), and null for everything else, which the platform
+   * phrases itself (src/ui/hint.js). A bid is one of those: the platform reads
+   * it back through `pendingChoice`'s own labels, which Spades shares.
+   */
+  phraseMove(ctx, move) {
+    for (const phase of PHASES) {
+      const said = phase.phraseMove?.(ctx, move);
+      if (said) return said;
+    }
+    return null;
   },
 
   enumerateLegalMoves(ctx, seat) {
