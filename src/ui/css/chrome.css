@@ -627,7 +627,7 @@ body {
  * what is meant instead of relying on a reset.
  *
  * `--fan-step` is how far each card sits from the one before it, computed per
- * render from the space actually available (layoutHand in src/ui/table.js) so
+ * render from the space actually available (layoutHand in src/ui/handFan.js) so
  * a big hand tightens its fan rather than overflowing. The fallback here is
  * the natural spacing, for the first paint before JS measures.
  */

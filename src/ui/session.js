@@ -194,7 +194,7 @@ export function createSession({
     // Cached for the same reason seatFit is: the row count answers a
     // measurement of the felt's spare height that the row count itself
     // changes, so a raw re-measure could flip the hand between one row and two
-    // on alternate renders — see layoutHand in src/ui/table.js.
+    // on alternate renders — see layoutHand in src/ui/handFan.js.
     handFit: null,
     // The biggest the opponent row has been for the current configuration, so
     // it can hold that shape instead of resizing under the player every time

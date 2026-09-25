@@ -1272,7 +1272,7 @@ export function createSeatRow({
    * Re-fit the opponent row when the room it has changes.
    *
    * The same shape, and the same reason, as `watchHandWidth` over in
-   * src/ui/table.js (the hand's half of the same problem): the width that
+   * src/ui/handFan.js (the hand's half of the same problem): the width that
    * decides how much the seats have to give up is the ROW's, and it moves for
    * things a window `resize` never hears about — the launcher's font scale, the
    * table screen going from `hidden` to shown at boot, a suspended frame waking
