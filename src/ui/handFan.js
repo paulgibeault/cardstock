@@ -516,7 +516,12 @@ export function createHandFan({
    * order the player's own gesture is in.
    */
   function reorderHandAt(cardId, clientX, clientY) {
-    const rows = handRowNodes();
+    // The carried card's own node is still in the fan, hidden in its old slot,
+    // but `reorder` places it among the OTHER cards — so it must not be counted,
+    // or every drop to its right lands one slot too far (#256).
+    const rows = handRowNodes()
+      .map((row) => ({ ...row, nodes: row.nodes.filter((n) => n.dataset.cardId !== cardId) }))
+      .filter((row) => row.nodes.length);
     if (!rows.length) return;
     // The row the pointer is in, or the nearest one: a card released just above
     // the fan or just below it belongs to the row it was closest to, not to
