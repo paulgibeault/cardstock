@@ -650,7 +650,10 @@ export function createSeatRow({
       session().seatView = nextSeatView(view);
       // The seat holding an open plate may not be minimized in the next view.
       session().openSeat = null;
-      render(liveState());
+      // THE FELT'S POSITION (#270, as #259 for the refit): under an open review,
+      // a round beat or a trick reveal this control stays pressable, and a
+      // repaint from the live state put the next deal over the held position.
+      render(feltState());
     });
     // NO INSPECTOR HERE EITHER. It existed to explain three invented glyphs; a
     // count of dots is a scale that explains itself, and the button's name and
@@ -758,7 +761,8 @@ export function createSeatRow({
             session().openSeat = seat;
             session().plateDismissed = false;
           }
-          render(liveState());
+          // The felt's position, not the engine's — see the toggle above (#270).
+          render(feltState());
         });
       }
 
