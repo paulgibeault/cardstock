@@ -1,7 +1,7 @@
 // THE MATCH AS A MAP — hands, turns and moves, and the position at any of them.
 //
-// The review UI (src/ui/table.js's review mode, REVIEW_PLAN.md phase 3) needs
-// two things of a match: a LIST it can scroll — what happened, in order, grouped
+// The review UI (src/ui/reviewController.js, REVIEW_PLAN.md phase 3) needs two
+// things of a match: a LIST it can scroll — what happened, in order, grouped
 // the way a player thinks about a game — and a way to stand the felt at the
 // start of any turn in it. Both come out of the log alone.
 //

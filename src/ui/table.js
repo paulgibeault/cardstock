@@ -48,7 +48,10 @@
 // src/ui/handFan.js (#223 seam 3), and THE DOORS — every way a match arrives
 // on the felt (a solo open or resume, the daily run, "Play again", the host's
 // deal and its way back, a joiner's view) and the one way it leaves — in
-// src/ui/matchDoors.js (#223 seam 4). What is left here is the rest of the
+// src/ui/matchDoors.js (#223 seam 4), and THE REVIEW LENS — the felt at any
+// turn of the match, the reel, the map beside or over it and the two maps the
+// results and the round sheet open onto it — in src/ui/reviewController.js
+// (#223 seam 5). What is left here is the rest of the
 // felt: piles, what a tap on a card means, and the loop that turns a move into
 // sound, motion and a save.
 //
@@ -90,6 +93,10 @@ import { createHandFan } from './handFan.js';
 // THE DOORS (#223, seam 4). The slots they write — the session, the epoch, the
 // joiner's client — stay in this file; the doors are handed setters for them.
 import { createMatchDoors } from './matchDoors.js';
+// THE REVIEW LENS (#223, seam 5). `session.review` stays on the session, which
+// is this file's slot; where a review opens, what it draws and what leaving it
+// puts back are over there.
+import { createReviewController } from './reviewController.js';
 import { makeCardRenderer } from './cardStyles/index.js';
 import { fetchPack } from './packSource.js';
 import {
@@ -112,7 +119,6 @@ import { renderShowCard } from './showCard.js';
 import { createContractLadder } from './contractLadder.js';
 import { createContractStrip } from './contractStrip.js';
 import { createSeatLens } from '../players/seats.js';
-import { modelFromView } from './tableModel.js';
 import { feltClock } from '../match/clock.js';
 import { createMatchRecord } from './matchRecord.js';
 import { watchHandGestures } from './handGestures.js';
@@ -140,11 +146,6 @@ import {
 import { packRules } from './rules.js';
 import { trickRevealPlan, finalShowPlan } from './roundBeat.js';
 import { lastHandSentence } from './scoreDirection.js';
-import { serializeMatch } from '../engine/replay.js';
-import { viewFor } from '../engine/view.js';
-import { matchTimeline, positionAt, seekTargets } from '../stats/timeline.js';
-import { reviewMapModel, renderReviewMap, reviewBarModel, paintReviewCursor, beatMoment } from './review.js';
-import { paceLevel } from './pace.js';
 import { speedLevel, speedForDelay, nextSpeed } from './speed.js';
 import {
   loadSettings, saveSettings, saveMatch,
@@ -2064,6 +2065,10 @@ let handFan = null;
 // and the way out. The exported door functions ("Match lifecycle", below)
 // hand straight to it.
 let doors = null;
+// The review lens (src/ui/reviewController.js): the felt at a past position,
+// the reel, the map, and the doors in from the scoreboard, the results and the
+// round sheet.
+let reviewer = null;
 
 // THE BANNER AND THE SHOW CARD ARE ONE SLOT. The card replaces the banner for
 // a scoring step (#152) and they must never be on the felt together — so every
@@ -2252,220 +2257,6 @@ function offerFinalLook(state, move, ending, { ended = null, now = false } = {})
   schedule(ask, beat);
 }
 
-/* ------------------------------------------------------------------ *
- * Review: the felt at any turn of the match (REVIEW_PLAN.md phase 3)
- *
- * The log is the match (src/engine/replay.js) and a whole one replays in a
- * few milliseconds, so a position is computed every time it is asked for
- * (src/stats/timeline.js's positionAt) and nothing here caches a state. The
- * LIVE state is never touched: review is a different thing on the felt, and
- * leaving it is rendering the live one again.
- *
- * THE LENS. A finished match shows every position whole. A LIVE match shows
- * what this seat could see at that position — `viewFor` through the same
- * `modelFromView` a joiner renders — so scrubbing back through a hand still
- * being played is never a peek at a card that was face down then. Opponents'
- * hands render as backs either way until the open lens lands (phase 4).
- * ------------------------------------------------------------------ */
-
-/** Can a review be opened on this felt right now? */
-function reviewOffered() {
-  const state = liveState();
-  if (!state || state.isView || !session || session.review || state.log.length === 0) return false;
-  // FROM THE SHEET IS FINE: the beat is holding at the summary, which knows how
-  // to put itself back (`reopenSummary`). Mid-beat — a trick held, a count up —
-  // is not: there is a timer or a tap the beat is waiting on.
-  if (session.roundSummaryOpen) return !!session.reopenSummary;
-  return !session.roundBeat && !session.trickBeat;
-}
-
-/**
- * Open the review at `at`, or at the start of the last turn when not asked —
- * the position a player most wants to look at is the one just before the
- * thing that just happened.
- */
-function enterReview({ at = null, map = false } = {}) {
-  if (!reviewOffered()) return;
-  const state = liveState();
-  cancelBotTurn();
-  cancelAnnouncementBeats();
-  hideBanner();
-  hideGameOver();
-  hideScoreboard();
-  if (session.roundSummaryOpen) {
-    // The sheet steps aside and its countdown stops; `leaveReview` puts both
-    // back. `roundSummaryOpen` stays true: we are still between hands.
-    roundEnding.cancelRoundBeat();
-    hideRoundSummary();
-  }
-  const snapshot = serializeMatch(state);
-  const timeline = matchTimeline(state.pack, snapshot, { labelOf: seatLabel });
-  session.review = {
-    snapshot,
-    timeline,
-    index: 0,
-    state: null,
-    lens: state.gameOver ? 'open' : 'own',
-  };
-  const start = at ?? (seekTargets(timeline, timeline.length).prevTurn ?? 0);
-  seekReview(start);
-  el.reviewBar.hidden = false;
-  if (map) openReviewMap();
-}
-
-/** Stand the felt at position `n` of the reviewed match. */
-function seekReview(n) {
-  const review = session?.review;
-  if (!review) return;
-  const live = liveState();
-  const index = Math.max(0, Math.min(review.timeline.length, n | 0));
-  review.index = index;
-  const whole = positionAt(live.pack, review.snapshot, index);
-  review.state = review.lens === 'own'
-    ? modelFromView(viewFor(whole, mySeat()), live.pack)
-    : whole;
-  hideShowCard();
-  render(review.state);
-  paintReviewBar();
-  // The map follows the felt, in place: the drawer stays open across a whole
-  // review and a rebuild per step would redraw hundreds of faces.
-  paintReviewCursor(reviewMapNode(), review.timeline, index);
-  // The sentence for where we are: the move that led here, which is what a
-  // player stepping back is trying to see.
-  const led = index > 0 ? review.timeline.moves[index - 1] : null;
-  el.log.textContent = led ? `${led.text}.` : 'The deal.';
-}
-
-function paintReviewBar() {
-  const review = session?.review;
-  if (!review) return;
-  const model = reviewBarModel(review.timeline, review.index, seatLabel);
-  el.reviewPosition.textContent = model.label;
-  el.reviewPrevHand.disabled = model.prevHand == null;
-  el.reviewPrevTurn.disabled = model.prevTurn == null;
-  el.reviewNextTurn.disabled = model.nextTurn == null;
-  el.reviewNextHand.disabled = model.nextHand == null;
-}
-
-function stepReview(which) {
-  const review = session?.review;
-  if (!review) return;
-  const target = seekTargets(review.timeline, review.index)[which];
-  if (target != null) seekReview(target);
-}
-
-/**
- * Where the map goes: BESIDE the felt when the window has room for both, so
- * every tap on it moves the felt in view; over it as a sheet otherwise.
- * Answered when the map opens, against the window as it is then.
- */
-function reviewMapFits() {
-  return typeof window !== 'undefined' && window.matchMedia?.('(min-width: 900px)').matches;
-}
-
-function openReviewMap() {
-  const review = session?.review;
-  if (!review) return;
-  if (isReviewMapOpen()) { hideReviewMap(); refitFelt(); return; }
-  const live = liveState();
-  const drawer = reviewMapFits();
-  const model = reviewMapModel(review.timeline, { index: review.index, labelOf: seatLabel });
-  const node = renderReviewMap(model, {
-    art,
-    cardOf: (id) => cardById(live, id) ?? null,
-    // A play stands the felt at the moment before it. As a sheet the map
-    // closes to show it; as a drawer it stays and the felt moves beside it.
-    onSeek: (from) => {
-      if (!isReviewDrawerOpen()) hideReviewMap();
-      seekReview(from);
-    },
-    // A beat's head opens it; beside the felt it also shows the winning play
-    // landed, which is the moment a player opening a trick wants to see.
-    onBeat: (beat, open) => {
-      if (open && isReviewDrawerOpen()) seekReview(beatMoment(beat));
-    },
-  });
-  showReviewMap(node, { drawer, title: live.gameOver ? 'The whole game' : 'The game so far' });
-  refitFelt();
-}
-
-/**
- * The finished game's map, for the results panel (issue #191): the same
- * accordion, standing at the end, every play of it a door onto the felt at
- * that moment — the results close, the review opens there, and beside the
- * felt the drawer opens with it so the reading can go on.
- */
-function gameOverMapNode() {
-  const state = liveState();
-  if (!state || state.isView || !state.log.length) return null;
-  const snapshot = serializeMatch(state);
-  const timeline = matchTimeline(state.pack, snapshot, { labelOf: seatLabel });
-  const model = reviewMapModel(timeline, { index: timeline.length, labelOf: seatLabel });
-  return renderReviewMap(model, {
-    art,
-    cardOf: (id) => cardById(state, id) ?? null,
-    onSeek: (from) => {
-      hideGameOver();
-      enterReview({ at: from, map: reviewMapFits() });
-    },
-  });
-}
-
-/**
- * The map on the round sheet: the hand just finished, standing at its last
- * trick. Opening it stops the countdown — the sheet's own control shows Manual
- * for the rest of this sheet, the way "End match" does while it asks.
- */
-function roundMapNode() {
-  const state = liveState();
-  if (!state || state.isView || !state.log.length || !session?.roundSummaryOpen) return null;
-  roundEnding.cancelAutoAdvance();
-  paintRoundPace({ ...roundEnding.paceView(paceLevel(currentPace().id)), autoMs: null });
-  const snapshot = serializeMatch(state);
-  const timeline = matchTimeline(state.pack, snapshot, { labelOf: seatLabel });
-  const at = seekTargets(timeline, timeline.length).prevTurn ?? 0;
-  const model = reviewMapModel(timeline, { index: at, labelOf: seatLabel });
-  return renderReviewMap(model, {
-    art,
-    cardOf: (id) => cardById(state, id) ?? null,
-    onSeek: (from) => enterReview({ at: from, map: reviewMapFits() }),
-  });
-}
-
-/** The felt after the drawer took or gave back its width: measure again. */
-function refitFelt() {
-  if (!session) return;
-  session.seatFit = null;
-  session.handFit = null;
-  render(feltState());
-}
-
-/** Back to the game: the live felt, the bots, and the results if the match was over. */
-function leaveReview() {
-  if (!session?.review) return;
-  session.review = null;
-  hideReviewMap();
-  el.reviewBar.hidden = true;
-  const state = liveState();
-  if (!state) return;
-  session.seatFit = null;
-  session.handFit = null;
-  if (session.roundSummaryOpen && session.reopenSummary) {
-    // Back between hands: the ending on the felt and the sheet over it, its
-    // countdown restarted. The bots wait on the sheet's own door, as before.
-    render(feltState());
-    session.reopenSummary();
-    return;
-  }
-  render(state);
-  if (state.gameOver) {
-    if (session.ending) showGameOver(state, session.ending);
-    return;
-  }
-  scheduleNextTurn();
-  scheduleAnnouncementBeats();
-}
-
 function openScoreboard() {
   if (!liveState()) return;
   showScoreboard(liveState(), session.seating, record.safeStats(liveState()));
@@ -2579,7 +2370,7 @@ function afterMove(state, move, from, message, { publish = true } = {}) {
     // air on this frame.
     const ending = record.concludeMatch(state, { hints: session.hintsTaken });
     // Kept so the results can be put back after a review of the finished
-    // game (leaveReview).
+    // game (leaveReview, src/ui/reviewController.js).
     session.ending = ending;
     // THE LAST TRICK IS STILL A TRICK, and it is the one most worth seeing
     // whole: the card that ends a match is the card that won it. The match is
@@ -3006,7 +2797,7 @@ function scheduleNextTurn() {
   if (paused) return;
   // A REVIEW IS A PAUSE THE PLAYER OPENED: the felt is standing at a past
   // position and a bot moving the live one underneath would be a move nobody
-  // saw. `leaveReview` re-arms the turn.
+  // saw. `leaveReview` (src/ui/reviewController.js) re-arms the turn.
   if (session?.review) return;
   if (bots) bots.scheduleNextTurn(session, epoch);
 }
@@ -3228,6 +3019,40 @@ export function initTable({ onExit }) {
     closeConfirm,
   });
 
+  // AND THE REVIEW, BEFORE ANYTHING LISTENS: the window's keydown hands its
+  // event to `reviewer.onKey` below, and `initPanels` is handed the three doors
+  // into review and the two maps. The panel doors go in for the same reason
+  // they go into the round ending — src/ui/panels.js resolves its element ids
+  // at import time.
+  reviewer = createReviewController({
+    el,
+    session: () => session,
+    roundEnding,
+    liveState,
+    feltState,
+    render,
+    seatLabel,
+    mySeat,
+    cardById,
+    art,
+    cancelBotTurn,
+    cancelAnnouncementBeats,
+    scheduleNextTurn,
+    scheduleAnnouncementBeats,
+    hideBanner,
+    hideShowCard,
+    showGameOver,
+    hideGameOver,
+    hideScoreboard,
+    hideRoundSummary,
+    paintRoundPace,
+    showReviewMap,
+    hideReviewMap,
+    isReviewMapOpen,
+    isReviewDrawerOpen,
+    reviewMapNode,
+  });
+
   // THE HELP MARK (#155). Two questions about the game — how is this played,
   // and what would a good player do here — behind one `?` in the felt's
   // corner, instead of the rules two taps deep in the scoreboard and the hint
@@ -3353,20 +3178,9 @@ export function initTable({ onExit }) {
     // not depend on which kind of beat it is.
     //
     // THE REEL FROM THE KEYBOARD (REVIEW_PLAN.md phase 3): arrows step a turn,
-    // with Shift a hand; Escape closes the map, then the review.
-    if (session.review) {
-      if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
-        const forward = event.key === 'ArrowRight';
-        stepReview(event.shiftKey ? (forward ? 'nextHand' : 'prevHand') : (forward ? 'nextTurn' : 'prevTurn'));
-        event.preventDefault();
-        return;
-      }
-      if (event.key === 'Escape') {
-        if (isReviewMapOpen()) { hideReviewMap(); refitFelt(); }
-        else leaveReview();
-        return;
-      }
-    }
+    // with Shift a hand; Escape closes the map, then the review — see
+    // `onKey` in src/ui/reviewController.js.
+    if (reviewer.onKey(event)) return;
     // NOT WHEN THE KEY IS AIMED AT A CONTROL. Focus sitting on Lobby and a press
     // of Enter is a player leaving; this must not read it as "go on".
     if (session.beatResume && (event.key === 'Enter' || event.key === ' ')
@@ -3515,10 +3329,10 @@ export function initTable({ onExit }) {
   });
 
   initPanels({
-    onReview: () => enterReview(),
-    onReviewMapClosed: () => refitFelt(),
-    onGameOverMap: () => gameOverMapNode(),
-    onRoundMap: () => roundMapNode(),
+    onReview: () => reviewer.enterReview(),
+    onReviewMapClosed: () => reviewer.refitFelt(),
+    onGameOverMap: () => reviewer.gameOverMapNode(),
+    onRoundMap: () => reviewer.roundMapNode(),
     onContinueRound: () => roundEnding.dismissRoundSummary(),
     onPlayAgain: () => livePack() && doors.startGame(livePack(), liveState()?.seats),
     onLobby: () => exitToLobby(),
@@ -3550,12 +3364,12 @@ export function initTable({ onExit }) {
   el.scoreChip.addEventListener('click', () => openScoreboard());
 
   // The reel's own buttons (index.html #review-bar).
-  el.reviewPrevHand.addEventListener('click', () => stepReview('prevHand'));
-  el.reviewPrevTurn.addEventListener('click', () => stepReview('prevTurn'));
-  el.reviewNextTurn.addEventListener('click', () => stepReview('nextTurn'));
-  el.reviewNextHand.addEventListener('click', () => stepReview('nextHand'));
-  el.reviewPosition.addEventListener('click', () => openReviewMap());
-  el.reviewDone.addEventListener('click', () => leaveReview());
+  el.reviewPrevHand.addEventListener('click', () => reviewer.stepReview('prevHand'));
+  el.reviewPrevTurn.addEventListener('click', () => reviewer.stepReview('prevTurn'));
+  el.reviewNextTurn.addEventListener('click', () => reviewer.stepReview('nextTurn'));
+  el.reviewNextHand.addEventListener('click', () => reviewer.stepReview('nextHand'));
+  el.reviewPosition.addEventListener('click', () => reviewer.openReviewMap());
+  el.reviewDone.addEventListener('click', () => reviewer.leaveReview());
   // The bar is on screen before the first render, so the chip needs its word
   // now rather than at the first `renderStatusBar` — an empty pill in the
   // chrome reads as a bug, not as a control waiting for a state.

@@ -1,7 +1,7 @@
 // THE MAP AND THE REEL, DRAWN — the review UI's two surfaces, as a model and
 // then as DOM (the pattern src/ui/showCard.js and src/ui/counterTrack.js set:
 // pure first, so a Node test can ask what the map would say; DOM second, so
-// src/ui/table.js only has to put it somewhere).
+// src/ui/reviewController.js only has to put it somewhere).
 //
 // THE MAP is the scrollable record of the game: one section per hand with its
 // result, one row per turn with the seat, the cards it played (drawn, not
@@ -14,7 +14,8 @@
 //
 // What either of them shows of HIDDEN cards is not decided here: the map draws
 // the cards the LOG names (a played card is public by the time it is played),
-// and the felt behind it renders through whatever lens table.js chose.
+// and the felt behind it renders through whatever lens
+// src/ui/reviewController.js chose.
 
 import { line, svgNode } from './dom.js';
 import { baseId } from '../engine/selectors.js';
