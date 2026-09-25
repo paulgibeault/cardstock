@@ -1108,8 +1108,9 @@ export function createRoundEnding({
     runFinalShow,
     cancelRoundBeat,
     // The sheet's map stops the countdown and puts Manual in the control while
-    // it is open (roundMapNode), which is the fourth site of the cancel the
-    // three above share — so it asks for it here rather than spelling it again.
+    // it is open (roundMapNode, src/ui/reviewController.js), which is the
+    // fourth site of the cancel the three above share — so it asks for it here
+    // rather than spelling it again.
     cancelAutoAdvance,
     paceView,
     cyclePace,
