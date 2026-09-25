@@ -19,6 +19,7 @@ import path from "node:path";
 import { createState } from "../src/engine/state.js";
 import { loadPackFromDisk } from "../tools/pack-test.mjs";
 import { ROOT } from "../tools/stage.mjs";
+import { tableCss } from "./fixtures/tableCss.js";
 
 const read = (f) => fs.readFileSync(path.join(ROOT, f), "utf8");
 /** Comment lines stripped, so a gate cannot be satisfied by prose about it. */
@@ -108,7 +109,7 @@ test("the row and the count share one slot in the felt's middle", () => {
   assert.ok(middle.indexOf('id="table-counters"') > middle.indexOf('id="table-play"'),
     "#table-counters has moved back out beside the piles, away from the spreads "
     + "whose sum it is");
-  const css = read("src/ui/table.css");
+  const css = tableCss();
   assert.match(css, /#felt-middle\.felt-middle--tabled/,
     "the middle no longer wraps for a table with a play row, so the row is "
     + "squeezed onto the piles' line instead of taking one of its own");

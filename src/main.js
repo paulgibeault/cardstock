@@ -128,7 +128,7 @@ function wireLauncherHooks() {
   });
 
   // Theme, font scale, handedness and reduced motion are applied to <html> by
-  // the SDK and handled in CSS (src/ui/table.css). Re-render anyway: the deal
+  // the SDK and handled in CSS (src/ui/css/). Re-render anyway: the deal
   // stagger and the card-travel animation are JS-driven, so reducedMotion has
   // to reach a render to take hold.
   Arcade.onSettingsChange(() => {

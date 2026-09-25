@@ -30,8 +30,9 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { ROOT } from "../tools/stage.mjs";
+import { tableCss } from "./fixtures/tableCss.js";
 
-const css = fs.readFileSync(path.join(ROOT, "src/ui/table.css"), "utf8")
+const css = tableCss()
   .replace(/\/\*[\s\S]*?\*\//g, "");
 const html = fs.readFileSync(path.join(ROOT, "index.html"), "utf8");
 

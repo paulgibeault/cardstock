@@ -21,6 +21,7 @@ import { makeCtx } from "../src/engine/context.js";
 import { loadPackFromDisk, listPackIds } from "../tools/pack-test.mjs";
 import { ROOT } from "../tools/stage.mjs";
 import { defaultScoreChip } from "../src/ui/seatRing.js";
+import { tableCss } from "./fixtures/tableCss.js";
 
 const read = (f) => fs.readFileSync(path.join(ROOT, f), "utf8");
 /** Comment lines stripped, so a gate cannot be satisfied by prose about it. */
@@ -116,7 +117,7 @@ test("the seat row actually draws the caption it asks templates for", () => {
 });
 
 test("a minimized face keeps the bare number", () => {
-  const css = read("src/ui/table.css");
+  const css = tableCss();
   assert.match(css, /\.seat--collapsed \.seat__count-label \{\s*display: none;\s*\}/,
     "captions are showing on collapsed faces — there is no room for them there, and "
     + "the crowded-row ladder other packs rely on is measured on that width");
@@ -152,7 +153,7 @@ test("the carousel says which way it still scrolls", () => {
 });
 
 test("the fade is a mask on the two edge classes and nothing else", () => {
-  const css = read("src/ui/table.css");
+  const css = tableCss();
   assert.match(css, /\.opponent-row--more-left,\n\.opponent-row--more-right \{[^}]*mask-image: linear-gradient\(to right,/,
     "the edge fade's mask is gone");
   assert.match(css, /\.opponent-row--more-left \{ --seat-fade-start: transparent; \}/,
@@ -165,7 +166,7 @@ test("the fade is a mask on the two edge classes and nothing else", () => {
     "every carousel row is being masked, including the ones with nothing to scroll to");
   // Battery contract (cardstock#24): the fade is a state, never an animation.
   const block = /\.opponent-row--more-left,\n\.opponent-row--more-right \{([^}]*)\}/.exec(css);
-  assert.ok(block, "no edge-fade block in src/ui/table.css");
+  assert.ok(block, "no edge-fade block in src/ui/css/seats.css");
   assert.doesNotMatch(block[1], /animation/,
     "the scroll affordance must not animate — no infinite animations (cardstock#24)");
 });
@@ -260,7 +261,7 @@ test("an empty hidden pile draws no chip, and no empty strip either", () => {
 });
 
 test("the pip row is painted in both themes and never animates", () => {
-  const css = read("src/ui/table.css");
+  const css = tableCss();
   // Every tone, and the ring an unfilled pip is drawn as: fill is the signal,
   // colour is the reinforcement, so a row read without hue still says a number.
   for (const cls of ["taken", "bag", "broken"]) {
@@ -280,7 +281,7 @@ test("the pip row is painted in both themes and never animates", () => {
   }
   // Battery contract (cardstock#24): a pip fills once and then sits still.
   const block = /\.seat__pip \{([^}]*)\}/.exec(css);
-  assert.ok(block, "no .seat__pip block in src/ui/table.css");
+  assert.ok(block, "no .seat__pip block in src/ui/css/seats.css");
   assert.doesNotMatch(block[1], /animation/,
     "a pip must not animate — no infinite animations (cardstock#24)");
   assert.match(css, /\.seat__pips\[data-dense="true"\] \{[^}]*--pip-size:/,

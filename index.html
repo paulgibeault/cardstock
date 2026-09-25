@@ -9,7 +9,25 @@
   <link rel="manifest" href="manifest.json" />
   <link rel="icon" type="image/png" href="icon.png" />
   <link rel="apple-touch-icon" href="icon.png" />
-  <link rel="stylesheet" href="src/ui/table.css" />
+  <!-- THE SHEET, IN CASCADE ORDER (#221). There is no @layer and no @import
+       here, so the order of these links IS the order of the cascade, and it is
+       the one thing about the split that a reader cannot infer from the files.
+       tokens first because everything below reads its custom properties;
+       responsive.css LAST because "Stepping the whole felt down" overrides
+       rules in five of the sheets above it at equal specificity. The sequence
+       is pinned by tests/repo-gates.test.js; separate links rather than
+       @import, which would serialise the fetches. -->
+  <link rel="stylesheet" href="src/ui/css/tokens.css" />
+  <link rel="stylesheet" href="src/ui/css/chrome.css" />
+  <link rel="stylesheet" href="src/ui/css/seats.css" />
+  <link rel="stylesheet" href="src/ui/css/felt.css" />
+  <link rel="stylesheet" href="src/ui/css/cards.css" />
+  <link rel="stylesheet" href="src/ui/css/moments.css" />
+  <link rel="stylesheet" href="src/ui/css/panels.css" />
+  <link rel="stylesheet" href="src/ui/css/lobby.css" />
+  <link rel="stylesheet" href="src/ui/css/party.css" />
+  <link rel="stylesheet" href="src/ui/css/review.css" />
+  <link rel="stylesheet" href="src/ui/css/responsive.css" />
 
   <!-- The evergreen alias, root-relative — GAME_INTEGRATION §2. Not the
        major-pinned /sdk/v3/ form: evergreen is the deliberate fleet posture
@@ -350,7 +368,7 @@
         <div class="hand" id="hand"></div>
         <!-- Two elements, because the rail owes the row a WIDTH and must never
              owe it a HEIGHT: the outer box is zero-height and the stack hangs
-             off its bottom edge, out of flow. See .hand-rail in table.css. -->
+             off its bottom edge, out of flow. See .hand-rail in src/ui/css/chrome.css. -->
         <div id="hand-rail" class="hand-rail">
           <div class="hand-rail__stack">
             <!-- THE turn marker, the same chip the seats wear. Never `hidden`:
