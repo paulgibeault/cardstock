@@ -45,9 +45,12 @@
 // the sheet — in src/ui/roundEnding.js (#223 seam 2), and THE HAND — the fan,
 // its fit and its second row, the gathered-card tray, the observer that re-fans
 // on a width change, the reorder a drop implies and the sort toggle — in
-// src/ui/handFan.js (#223 seam 3). What is left here is the rest of the felt:
-// piles, what a tap on a card means, and the loop that turns a move into sound,
-// motion and a save.
+// src/ui/handFan.js (#223 seam 3), and THE DOORS — every way a match arrives
+// on the felt (a solo open or resume, the daily run, "Play again", the host's
+// deal and its way back, a joiner's view) and the one way it leaves — in
+// src/ui/matchDoors.js (#223 seam 4). What is left here is the rest of the
+// felt: piles, what a tap on a card means, and the loop that turns a move into
+// sound, motion and a save.
 //
 // THE MOVE LOOP STILL DECIDES WHEN A ROUND ENDING HAPPENS, which is the boundary
 // between this file and that one: `afterMove` reads the event window, asks
@@ -63,14 +66,11 @@
 // instead — see the header of src/ui/seatRow.js. `initTable` is where they are
 // constructed and handed what they read.
 
-import { createState } from '../engine/state.js';
 import { makeCtx, actingSeats, announcementsFor as enumerateAnnouncementsFor } from '../engine/context.js';
 import { validateMove, applyMove, legalMovesFor } from '../engine/movePipeline.js';
-import { rehydrateMatch, packVersionChanged } from '../engine/replay.js';
 import { baseId } from '../engine/selectors.js';
 import { handValue } from '../engine/scoring.js';
-import { buildSeating } from '../players/roster.js';
-import { sidesOf, hasSides } from '../engine/sides.js';
+import { hasSides } from '../engine/sides.js';
 import { opponentRing, scoreBearers, seatSideMarks } from './seatRing.js';
 // THE OPPONENT ROW (#223, seam 1). Everything the row decides that a Node test
 // can be asked about is over there now, importable, because src/ui/seatRow.js
@@ -87,33 +87,31 @@ import { createRoundEnding, currentPace, posedForShow } from './roundEnding.js';
 // split and the observer that re-asks it — takes `el` and `session` in the same
 // way; the math it measures for is in src/ui/handOrder.js.
 import { createHandFan } from './handFan.js';
+// THE DOORS (#223, seam 4). The slots they write — the session, the epoch, the
+// joiner's client — stay in this file; the doors are handed setters for them.
+import { createMatchDoors } from './matchDoors.js';
 import { makeCardRenderer } from './cardStyles/index.js';
 import { fetchPack } from './packSource.js';
 import {
   flyCard, landOn, motionAllowed, flightLayer, rectOf, cardSizedRect,
   scrollCorrectedRect, flightDurationMs,
 } from './flight.js';
-import {
-  createSession, stopSession,
-  // The felt's own Node-clean decisions are still over there and are imported by
-  // the seams that need them now rather than by this file: `normalizeSeatView`
-  // and `seatToShow` by src/ui/seatRow.js, and `inputEndsHeldBeat` — "is this
-  // input a NEW gesture, or the one that opened the beat?" — by
-  // src/ui/roundEnding.js, which is where the beats it is about now live.
-} from './session.js';
+// NOTHING FROM src/ui/session.js IS IMPORTED HERE ANY MORE. The felt's own
+// Node-clean decisions over there are imported by the seams that need them:
+// `normalizeSeatView` and `seatToShow` by src/ui/seatRow.js, `inputEndsHeldBeat`
+// — "is this input a NEW gesture, or the one that opened the beat?" — by
+// src/ui/roundEnding.js, and `createSession`/`stopSession` by
+// src/ui/matchDoors.js, which is where a session is born and ends.
 import { createBotDriver, botVerb } from './botDriver.js';
 import { suggestMove } from './hint.js';
 import { schedule } from './clock.js';
-import { line, clearSvgCache } from './dom.js';
+import { line } from './dom.js';
 import { promptChoice, closeChoiceDialog } from './choiceDialog.js';
 import { createCelebrations, TRICK_BANNER_PRIORITY, dealEvents } from './celebrations.js';
 import { renderShowCard } from './showCard.js';
 import { createContractLadder } from './contractLadder.js';
 import { createContractStrip } from './contractStrip.js';
-import {
-  createSeatLens, soloSeatTable, createSeatTable,
-  LOCAL_DEVICE as LOCAL_VIEWER,
-} from '../players/seats.js';
+import { createSeatLens } from '../players/seats.js';
 import { modelFromView } from './tableModel.js';
 import { feltClock } from '../match/clock.js';
 import { createMatchRecord } from './matchRecord.js';
@@ -149,12 +147,10 @@ import { reviewMapModel, renderReviewMap, reviewBarModel, paintReviewCursor, bea
 import { paceLevel } from './pace.js';
 import { speedLevel, speedForDelay, nextSpeed } from './speed.js';
 import {
-  rememberPack, loadSettings, saveSettings, saveMatch, loadMatch, clearMatch,
-  loadHandPrefs,
+  loadSettings, saveSettings, saveMatch,
 } from '../arcade/storage.js';
-import { dailyRunFor, applyDailyLadder } from '../templates/contract-rummy-daily.js';
 import {
-  playDeal, playCardPlayed, playDraw, playShuffle, playInvalid, playWin, playAnnouncement,
+  playCardPlayed, playDraw, playShuffle, playInvalid, playWin, playAnnouncement,
 } from '../arcade/audio.js';
 
 // WHICH SEAT AM I, AND IS THIS ONE MINE — asked through the match's ownership
@@ -169,37 +165,6 @@ import {
 const me = createSeatLens(() => session?.seats ?? null);
 const mySeat = () => me.seat();
 const isMySeat = (seat) => me.holds(seat);
-
-// Where the star sits at a table with no peers. Solo play has always dealt the
-// player seat 0 and the roster paints them there; this names that fact instead
-// of spelling it as a bare literal in the two places that still need one.
-const SOLO_HUMAN_SEAT = 0;
-
-// The last resort when nothing asks for anything else AND the pack declines to
-// say — a manifest with no `players.best`. The new-game sheet
-// (src/ui/newGame.js) is what usually decides this, and the pack's own
-// recommendation is what decides it when nothing else does.
-const SEAT_COUNT = 3;
-
-/**
- * Clamp a requested seat count to what the pack says it can seat.
- *
- * NO REQUEST MEANS THE PACK'S OWN RECOMMENDATION (#156). This used to fall
- * through to a flat 3, which is the seat count a deep link (`?pack=thirteen`)
- * and a resume-with-no-saved-setup got — so the table the playtester opened
- * from a link was a three-handed Thirteen while the manifest's `players.best`
- * said four, and the new-game sheet preselected four (newGame.js reads `best`
- * for exactly this). Two surfaces answering the same question differently is
- * how "the deal is wrong" reports arrive against a pack that is right at the
- * table it was designed for.
- */
-function seatsFor(pack, requested) {
-  const players = pack.manifest.players || {};
-  const min = players.min ?? 2;
-  const max = players.max ?? 8;
-  const want = Number.isFinite(requested) ? requested : (players.best ?? SEAT_COUNT);
-  return Math.max(min, Math.min(max, want));
-}
 
 const el = {
   screen: document.getElementById('table-screen'),
@@ -293,12 +258,6 @@ let exitToLobby = () => {};
 let drag = null;
 // A renderer with no pack behind it, for the moment before the first match.
 const EMPTY_ART = makeCardRenderer({});
-
-// openTable() awaits a fetch, and the player can be back in the lobby before it
-// lands. `epoch` cannot cover that gap — it is bumped when the match is ADOPTED,
-// which is the thing we are trying not to do. So opening carries its own token:
-// whoever bumps it last owns the screen, and a superseded open returns quietly.
-let openToken = 0;
 
 /* ------------------------------------------------------------------ *
  * State questions
@@ -2101,6 +2060,10 @@ let roundEnding = null;
 // The human's own hand (src/ui/handFan.js): the fan, the gathered-card tray,
 // the width observer, the reorder a drop implies and the sort toggle.
 let handFan = null;
+// The doors onto the felt (src/ui/matchDoors.js): every open, resume and deal,
+// and the way out. The exported door functions ("Match lifecycle", below)
+// hand straight to it.
+let doors = null;
 
 // THE BANNER AND THE SHOW CARD ARE ONE SLOT. The card replaces the banner for
 // a scoring step (#152) and they must never be on the felt together — so every
@@ -3056,199 +3019,20 @@ export function setTablePaused(on) {
 function scheduleAnnouncementBeats() { if (bots) bots.scheduleAnnouncementBeats(session, epoch); }
 
 /* ------------------------------------------------------------------ *
- * Match lifecycle
+ * Match lifecycle — the doors are src/ui/matchDoors.js (#223, seam 4)
  * ------------------------------------------------------------------ */
 
-/**
- * Take over the screen for `state`. THE ONLY PLACE A SESSION IS BORN.
- *
- * A fresh object rather than a field-by-field reset, which is what this used to
- * be — and the two bot-decision caches are exactly the ones the other half of
- * the ritual (closeTable) forgot, so a persona's "did they remember to declare?"
- * roll could survive into a match that had not been dealt when it was made.
- */
-function adoptMatch(pack, state, message, {
-  dealing = false, seats = null, seating = null, shared = false, hints = 0, daily = null,
-} = {}) {
-  epoch += 1;
-  // NOTHING ABOUT THE PREFERENCES BLOB IS SNAPSHOTTED HERE (#184, then #203).
-  // #184 refreshed the felt's copy of it on this line, because a match opening is
-  // the moment the new-game sheet's answers exist. Every reader has since moved
-  // to a live storage read — `currentDelayMs`, `currentPace`, the driver's
-  // `difficulty` — which is the stronger version of the same fix, so #203 deleted
-  // the copy and this line with it. `hands` goes through `loadHandPrefs`, which
-  // `createSession` just below calls fresh for this pack.
-  stopSession(session);
-  // A pre-move copy belongs to the match it was taken in, and this is a
-  // different one (src/ui/roundEnding.js's notePreMove).
-  roundEnding.forgetPreMove();
-  if (drag) drag.cancel();
-  session = createSession({
-    pack,
-    state,
-    // WHO OWNS EACH SEAT, before who they are. Solo is one human on this device
-    // and bots in the rest — which is the whole reason ownership is a table
-    // rather than the number zero, because a HOSTED deal arrives with its
-    // seats already decided in the party panel and passes them in.
-    // `sides` is which chairs are a pair (src/engine/sides.js) — the pack's
-    // declaration, handed to the table that answers "whose seat is it" so the
-    // two never disagree about who is partnering whom.
-    seats: seats || soloSeatTable(state.seats, {
-      humanSeat: SOLO_HUMAN_SEAT, sides: sidesOf(pack, state.seats),
-    }),
-    // Who is at this table — derived from the match SEED, so a resumed game
-    // re-seats the same opponents and a fresh deal brings new ones. A hosted
-    // deal overrides it: some of those chairs hold people, and a seed knows
-    // nothing about people.
-    seating: seating || buildSeating(state.seed, state.seats, { humanSeat: SOLO_HUMAN_SEAT, humanName: humanName() }),
-    // From the PACK rather than the manifest alone: the deck is what tells a
-    // style which colours it actually has to draw. Built once per match rather
-    // than per render — resolving a theme walks the whole deck.
-    cardArt: makeCardRenderer(pack.manifest, pack.cardsById),
-    handPrefs: loadHandPrefs(pack.id),
-    shared,
-    // Handed in with the session rather than patched on afterwards, because
-    // this function persists the match before it returns and a count set
-    // after that write is a count the next reload has already lost.
-    hintsTaken: hints,
-    // `{ date, seed }` when this is a daily run, null when it is an ordinary
-    // game. It decides which slot the match is written to and which record its
-    // ending goes into — both of which happen before the first render, so it
-    // has to arrive WITH the session rather than be set on it afterwards.
-    daily,
-  });
-  // Set on the NEW session, not before it exists: a fresh deal staggers its
-  // cards in, a resumed match must not (the cards have been there all along).
-  session.dealAnimation = dealing;
-  // The parsed-SVG cache is keyed by markup the OLD renderer produced, so it is
-  // dead weight from here on — and left alone it would accumulate one entry per
-  // card per pack for as long as the tab is open.
-  clearSvgCache();
-  hideAllPanels();
-  setHelpOpen(false);
-  hideBanner();
-  render(state, message);
-  // ONLY ON A FRESH DEAL. A resume arrives here having REPLAYED its log
-  // (src/engine/replay.js), so `state.events` is the last move of a hand that
-  // has been going for twenty turns — narrating it would open the table on a
-  // sentence about something the player did yesterday.
-  if (dealing) celebrateDeal(state);
-  persistMatch();
-  scheduleNextTurn();
-  scheduleAnnouncementBeats();
-}
-
-/**
- * DEAL A TABLE THAT WAS BUILT BEFORE IT WAS DEALT — the host's half of the
- * party flow.
- *
- * The difference from `openTable` is entirely in what it refuses to do. It
- * does not consult storage, because a party deal is a new hand by definition
- * and resuming somebody's solo save into a room full of people is nonsense. It
- * does not derive the seating, because the seats were decided in the party
- * panel by the people sitting in them.
- *
- * @param seats    the seat table the party agreed on (src/players/seats.js)
- * @param seating  who those seats are, from the host's own lobby roster
- */
-export async function dealHostedTable({ packId, variants, seats, seating, message = '' }) {
-  const myToken = ++openToken;
-  cancelBotTurn();
-  cancelAnnouncementBeats();
-  closeChoiceDialog();
-
-  const pack = await fetchPack(packId, variants);
-  if (myToken !== openToken) return null;
-
-  rememberPack(packId);
-  Arcade.ui.setTitle(pack.manifest.name);
-  hideAllPanels();
-
-  const state = createState({ pack, seats: seats.count, seed: Date.now() });
-  pack.template.setup(makeCtx(state));
-  playDeal(seats.count);
-  adoptMatch(pack, state, message || `Playing ${pack.manifest.name}.`,
-    { dealing: true, seats, seating, shared: true });
-  return state;
-}
-
-/**
- * Put an ALREADY RUNNING hosted table back on the felt.
- *
- * The counterpart to `dealHostedTable`, and the door that was missing: since
- * the session inversion (#48) a hosted game outlives the felt, so there has to
- * be a way back to one. It deals nothing and consults no storage — the state is
- * handed in, because the session has been holding it the whole time.
- *
- * @param state    the host's live engine state, from its TableSession
- * @param seats    that table's seat table, likewise
- * @param seating  who those seats are, from the host's own roster
- */
-export async function resumeHostedTable({ packId, variants, state, seats, seating, message = '' }) {
-  const myToken = ++openToken;
-  cancelBotTurn();
-  cancelAnnouncementBeats();
-  closeChoiceDialog();
-
-  const pack = await fetchPack(packId, variants);
-  if (myToken !== openToken) return null;
-
-  rememberPack(packId);
-  Arcade.ui.setTitle(pack.manifest.name);
-  hideAllPanels();
-
-  adoptMatch(pack, state, message || `Back at ${pack.manifest.name}.`, { seats, seating, shared: true });
-  return state;
-}
-
-/**
- * Draw the table from a view the host sent us.
- *
- * The joiner's counterpart to adoptMatch. It builds a state-shaped model
- * (src/ui/tableModel.js) and hands it to exactly the same render path, which is
- * the whole design: one felt, drawn by one renderer, whether the cards are in
- * front of us or being described to us.
- *
- * `seating` IS A PARAMETER rather than derived here, and that is the one real
- * difference from a solo table. Solo seating comes from the match SEED — a
- * seeded shuffle of the bot roster — and a joiner has no seed and should not
- * have one. Who is at a shared table is a fact the host publishes in its lobby
- * frame, so the caller that read that frame is the one that knows.
- *
- * @param client  the table client (src/match/client.js), for proposing moves
- */
-export function adoptSharedView({ view, pack, seating, client, message = '' }) {
-  sharedTable = client || sharedTable;
-  const model = modelFromView(view, pack);
-
-  const seats = createSeatTable({
-    seats: view.seats, localDeviceId: LOCAL_VIEWER, sides: sidesOf(pack, view.seats),
-  });
-  if (view.seat !== null && view.seat !== undefined) {
-    seats.claim(view.seat, { deviceId: LOCAL_VIEWER });
-  }
-
-  if (!session || session.pack?.id !== pack.id) {
-    epoch += 1;
-    stopSession(session);
-    if (drag) drag.cancel();
-    session = createSession({
-      pack, state: model, seats, seating, cardArt: makeCardRenderer(pack.manifest, pack.cardsById),
-      handPrefs: loadHandPrefs(pack.id),
-    });
-    clearSvgCache();
-    hideAllPanels();
-    hideBanner();
-  } else {
-    // AN ORDINARY VIEW IS A REPLACEMENT, NOT A NEW MATCH (design decision D2).
-    // Swapping the model in place is what lets a card animate from where it
-    // was to where it is, instead of the table blinking on every move.
-    session.state = model;
-    session.seats = seats;
-    session.seating = seating;
-  }
-  render(model, message);
-}
+// EXPORTED FROM HERE, BUILT OVER THERE. main.js and party.js import the felt's
+// surface from this file, so every door keeps its name on it and hands straight
+// through to the seam `initTable` builds. The slots the doors write — the
+// session, the epoch, the joiner's client — stay here, behind the setters
+// initTable hands over; the doors' own `openToken` went with them.
+export function openTable(packId, setup) { return doors.openTable(packId, setup); }
+export function closeTable() { doors.closeTable(); }
+export function rerenderTable() { doors.rerenderTable(); }
+export function dealHostedTable(deal) { return doors.dealHostedTable(deal); }
+export function resumeHostedTable(table) { return doors.resumeHostedTable(table); }
+export function adoptSharedView(frame) { doors.adoptSharedView(frame); }
 
 /** Stop being a joiner. The felt is torn down by the caller's ordinary exit. */
 export function leaveSharedTable() {
@@ -3316,174 +3100,8 @@ export function setSeating(seating) {
   if (liveState()) render(feltState());
 }
 
-function startGame(pack, seats, { seed, daily = null } = {}) {
-  cancelBotTurn();
-  cancelAnnouncementBeats();
-  const seatCount = seatsFor(pack, seats);
-  // Date.now() is only the entropy source. The seed itself is persisted with
-  // the match from the first write, which is what makes the log replayable
-  // (src/engine/replay.js) rather than merely re-runnable — and, since the
-  // seating is derived from it, what rotates the opponents per game.
-  //
-  // A DAILY RUN HANDS ITS OWN SEED IN, and that is the whole of what makes the
-  // day shared: `milestones|2026-09-10` deals the same cards and seats the same
-  // opponents on every device, because both are derived from it.
-  const state = createState({ pack, seats: seatCount, seed: seed ?? Date.now() });
-  pack.template.setup(makeCtx(state));
-  playDeal(seatCount);
-  adoptMatch(state.pack, state, daily
-    ? `${pack.manifest.name} daily — ${daily.date}.`
-    : `Playing ${pack.manifest.name}.`, { dealing: true, daily });
-}
-
-/**
- * The day's run for `pack`, with the pack rewritten to play it.
- *
- * The ladder is DERIVED, never stored: everything about the day comes back out
- * of `<packId>|<YYYY-MM-DD>`, so a resume re-derives it from the seed the save
- * already carries rather than trusting ten contracts that were written to disk
- * (src/templates/contract-rummy-daily.js says why that matters). The pack object is the
- * private clone `fetchPack` just handed us, so rewriting its rules affects this
- * table and nothing else.
- */
-function openDailyRun(pack) {
-  const run = dailyRunFor(pack);
-  applyDailyLadder(pack, run.ladder);
-  return { date: run.date, seed: run.seed };
-}
-
-/**
- * How many chairs a daily run is played at.
- *
- * FIXED PER PACK, and read from the manifest rather than from the table's own
- * default seat count: a daily everybody gets the same of cannot depend on a
- * default that moves, and the seating is derived from the seed, so the seat
- * count is the other half of "the same table everywhere".
- */
-function dailySeats(pack) {
-  const players = pack.manifest.players || {};
-  return seatsFor(pack, players.best ?? players.min);
-}
-
-/**
- * Open `packId`'s table: resume its saved match when there is one, deal a
- * fresh game when there is not.
- *
- * Every entry to the table goes through here — a lobby tap, a `?pack=` deep
- * link, and a save import (`onStateReplaced` is a fresh boot by contract, §3).
- */
-export async function openTable(packId, { variants, seats, daily = false } = {}) {
-  const myToken = ++openToken;
-  cancelBotTurn();
-  cancelAnnouncementBeats();
-  closeChoiceDialog();
-
-  el.statusText.textContent = 'Dealing…';
-  // WHICH OF THE PACK'S TWO SOLO GAMES THIS IS. A casual save and today's daily
-  // sit in different slots (src/arcade/storage.js), so opening one never
-  // disturbs the other — the whole point of the second key.
-  const slot = daily ? 'daily' : 'match';
-
-  // A stored match pins the variant set: the same pack loaded with different
-  // variants is a different rule set, and replaying a log against it diverges.
-  // A stored match wins over anything the caller asked for: its log was
-  // recorded under ITS rule set and seating, and replaying it under another is
-  // divergence, not a preference.
-  let stored = loadMatch(packId, { slot });
-  const pack = await fetchPack(packId, stored ? stored.variants : variants);
-  if (myToken !== openToken) return; // the player left before the pack landed
-
-  // TODAY'S LADDER, BEFORE ANYTHING IS DEALT OR REPLAYED. A stored daily has to
-  // be replayed under the rules its log was recorded against, which for a daily
-  // means the ladder its seed names — so the pack is rewritten first.
-  const run = daily ? openDailyRun(pack) : null;
-  if (run && stored && stored.seed !== run.seed) {
-    // Yesterday's unfinished run. A daily is not a game to come back to a week
-    // later — the puzzle it was is gone — so the slot is dropped and today's is
-    // dealt instead. Nothing is recorded: an abandoned daily was never a result.
-    clearMatch(packId, { slot });
-    stored = null;
-  }
-
-  rememberPack(packId);
-  // The variant's name ALONE, and only in the launcher's title bar. At a table
-  // the game you are playing is the only name that means anything, and saying
-  // it twice — once in the launcher bar, once in our own — cost the status bar
-  // the room it needed to stay on one line. The lobby restores the wordmark
-  // (src/main.js).
-  //
-  // A DAILY SAYS WHICH DAY, and this bar is where it says it: the felt has no
-  // room for a second name — which is what the paragraph above is about — and a
-  // ladder being unfamiliar is not a label. This is the surface that answers
-  // "what am I looking at", so it is the one that carries the date.
-  Arcade.ui.setTitle(run ? `${pack.manifest.name} — daily ${run.date}` : pack.manifest.name);
-  hideAllPanels();
-
-  if (stored) {
-    // Asked BEFORE the replay, because a version bump is the one cause of a
-    // failed replay we can name. Reordering two entries in a deck file changes
-    // cardsById's insertion order, which changes the seeded shuffle, which
-    // deals every stored match a different hand — so the log replays into a
-    // state its own moves are illegal in. "The rules changed" is the honest
-    // sentence; "could not replay" is not one a player can do anything with.
-    const rulesMoved = packVersionChanged(pack, stored);
-    try {
-      if (rulesMoved) throw new Error(`pack version changed: ${stored.packVersion} → ${pack.manifest.version}`);
-      const state = rehydrateMatch(pack, stored);
-      if (!state.gameOver) {
-        adoptMatch(pack, state, run
-          ? `Back on the ${pack.manifest.name} daily — ${run.date}.`
-          : `Resumed ${pack.manifest.name}.`,
-        { hints: Number(stored.hints) || 0, daily: run });
-        return;
-      }
-    } catch (err) {
-      // A pack whose rules moved under a stored log. Losing one match is the
-      // right cost; resuming into a state the current rules could never have
-      // produced is not.
-      console.warn('[cardstock] could not replay the stored match, starting fresh', err);
-      if (rulesMoved) reportTableError(`${pack.manifest.name}'s rules have changed — dealing a fresh game.`);
-    }
-    clearMatch(packId, { slot });
-  }
-  startGame(pack, run ? dailySeats(pack) : seats, run ? { seed: run.seed, daily: run } : {});
-}
-
-/**
- * Leave the table. The match keeps its place in storage; nothing about it
- * keeps running.
- */
-export function closeTable() {
-  openToken += 1;          // abandon any open still in flight
-  epoch += 1;              // and any bot turn already scheduled
-  cancelBotTurn();
-  cancelAnnouncementBeats();
-  closeChoiceDialog();
-  closeConfirm();
-  hideInspector();
-  if (drag) drag.cancel();
-  flushTable();
-  // ONE RESET POINT. Everything a match owned — its timers, its selection, its
-  // bot decisions, its idea of which cards were already on the felt — goes with
-  // the object. There is no longer a list here to fall out of date with the one
-  // in adoptMatch.
-  hideBanner();
-  stopSession(session);
-  roundEnding.forgetPreMove();
-  session = null;
-  hideAllPanels();
-  setHelpOpen(false);
-  if (ladder) ladder.hide();
-  if (contractStrip) contractStrip.hide();
-}
-
 export function isTableOpen() {
   return liveState() !== null;
-}
-
-/** Re-render in place — onResume, and after a settings change. */
-export function rerenderTable() {
-  if (liveState()) render(feltState());
 }
 
 export function initTable({ onExit }) {
@@ -3573,6 +3191,41 @@ export function initTable({ onExit }) {
     markEntry,
     committedSelectionOf,
     onHandCard,
+  });
+
+  // AND THE DOORS, BEFORE ANYTHING CAN OPEN A MATCH: main.js calls `initTable`
+  // before it routes, and the panels' "Play again" below reaches for
+  // `doors.startGame`. They are the only writers of the session and the epoch,
+  // which is why they are handed setters rather than the slots themselves.
+  doors = createMatchDoors({
+    el,
+    session: () => session,
+    setSession: (next) => { session = next; },
+    bumpEpoch: () => { epoch += 1; },
+    sharedTable: () => sharedTable,
+    setSharedTable: (client) => { sharedTable = client; },
+    drag: () => drag,
+    ladder: () => ladder,
+    contractStrip: () => contractStrip,
+    roundEnding,
+    fetchPack,
+    render,
+    liveState,
+    feltState,
+    humanName,
+    celebrateDeal,
+    persistMatch,
+    flushTable,
+    scheduleNextTurn,
+    scheduleAnnouncementBeats,
+    cancelBotTurn,
+    cancelAnnouncementBeats,
+    hideBanner,
+    setHelpOpen,
+    reportTableError,
+    hideAllPanels,
+    closeChoiceDialog,
+    closeConfirm,
   });
 
   // THE HELP MARK (#155). Two questions about the game — how is this played,
@@ -3867,7 +3520,7 @@ export function initTable({ onExit }) {
     onGameOverMap: () => gameOverMapNode(),
     onRoundMap: () => roundMapNode(),
     onContinueRound: () => roundEnding.dismissRoundSummary(),
-    onPlayAgain: () => livePack() && startGame(livePack(), liveState()?.seats),
+    onPlayAgain: () => livePack() && doors.startGame(livePack(), liveState()?.seats),
     onLobby: () => exitToLobby(),
     onEndMatch: () => roundEnding.endMatchFromSummary(),
     onRules: () => livePack() && showRules(packRules(livePack())),

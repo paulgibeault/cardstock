@@ -784,8 +784,15 @@ test("neither input path can end the hold its own gesture opened", () => {
   // IMPORTED, not re-derived. A `>` written inline here is the same rule with
   // no test on it, and this is a rule whose two failure modes are "the beat
   // never happens" and "the table never moves again".
-  const imported = table.match(/import \{[\s\S]*?\} from '\.\/session\.js';/);
-  assert.ok(imported, "table.js must still take its Node-clean decisions from session.js");
+  //
+  // FROM src/ui/roundEnding.js, which is where the door that asks it has lived
+  // since #223 seam 2. This used to read table.js's session.js import, and after
+  // that seam the only `inputEndsHeldBeat` left in it was a COMMENT saying where
+  // the import had gone — green for the wrong reason until seam 4 took the last
+  // real import out of that block.
+  const imported = read("src/ui/roundEnding.js")
+    .match(/^import \{[^}]*\} from '\.\/session\.js';/m);
+  assert.ok(imported, "the round ending must still take its Node-clean decisions from session.js");
   assert.match(imported[0], /\binputEndsHeldBeat\b/,
     "the decision must come from src/ui/session.js, where a Node test can reach "
     + "it — a copy of it inlined here is a rule with no test on it");
