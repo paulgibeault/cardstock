@@ -6,7 +6,7 @@
 //
 // Everything below was lifted out of trick-taking.js unchanged.
 
-import { detectDeclaredMelds } from './melds.js';
+import { detectDeclaredMelds, meldNames } from './melds.js';
 import { trumpSuitOf } from './trick-shared.js';
 
 /* ------------------------------------------------------------------ *
@@ -163,7 +163,7 @@ export const meldPhase = {
   counters(ctx, seat) {
     if (!melds(ctx.rules)) return [];
     const meld = ctx.playerVar(seat, 'meld');
-    const named = meld?.melds?.map((m) => (m.suit ? `${m.label} in ${m.suit}` : m.label)).join(', ');
+    const named = meldNames(meld?.melds).join(', ');
     return [{
       text: meld ? String(meld.points) : '—',
       aria: !meld ? 'has not declared a meld yet'
@@ -208,9 +208,7 @@ export const meldPhase = {
     if (ev.type !== 'meldDeclared') return null;
     if (ev.seat !== viewerSeat) return null;
     if (!ev.points) return { text: 'Nothing to declare — no meld in your hand.', tone: 'neutral' };
-    const named = (ev.melds || [])
-      .map((m) => (m.suit ? `${m.label} in ${m.suit}` : m.label))
-      .join(', ');
+    const named = meldNames(ev.melds).join(', ');
     return { text: `You meld ${ev.points}: ${named}.`, tone: 'good' };
   },
 
