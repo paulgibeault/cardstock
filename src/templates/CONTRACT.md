@@ -68,8 +68,8 @@ not dominated, with the felt building the real move from whatever was tapped:
 | Shortlist | Where | What it leaves out |
 |---|---|---|
 | climbing's combinations | `candidateSets`, `src/templates/climbing.js` | the 4^L same-play variants of a run or strip — every rank below the top is filled with the lowest card of that rank, because a run is compared by its top card alone. 55 moves where the subset walk gives 325. |
-| trick-taking's pass | `passCandidates`, `src/templates/trick-taking.js` | most of thirteen-choose-three (286), kept to the handful a passer would actually consider. |
-| trick-taking's meld | `bestMeldSelection`, `src/templates/trick-taking.js` | every meld declaration but the best one — a declaration has no trade-off in it, so the rest are dominated rather than merely unlisted. |
+| trick-taking's pass | `passCandidates`, `src/templates/trick-pass.js` | most of thirteen-choose-three (286), kept to the handful a passer would actually consider. |
+| trick-taking's meld | `bestMeldSelection`, `src/templates/trick-meld.js` | every meld declaration but the best one — a declaration has no trade-off in it, so the rest are dominated rather than merely unlisted. |
 
 A shortlist is only honest while the player is **not** restricted to it, which
 is why climbing's phase uses the `combination` interaction mode: that mode is

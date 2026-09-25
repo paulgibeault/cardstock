@@ -205,7 +205,7 @@ function namesAny(value, ids) {
  * information and any decision that changes is correct behaviour, not a leak.
  *
  * A committed pass travels with the hand it was committed from. Hearts holds
- * three named cards in `__pendingPass` (src/templates/trick-taking.js), and
+ * three named cards in `__pendingPass` (src/templates/trick-pass.js), and
  * moving the hand without the commitment does not make an alternative world, it
  * makes an impossible one — the commit would name cards its owner is no longer
  * holding, and a probe run on an impossible state proves nothing about a
