@@ -24,7 +24,7 @@ import { applyMove, enumerateLegalMoves } from "../src/engine/movePipeline.js";
 import { chooseBotMove, DIFFICULTIES } from "../src/engine/bot.js";
 import { createRng } from "../src/engine/rng.js";
 import { loadPackFromDisk } from "../tools/pack-test.mjs";
-import { suggestMove, SUGGESTION_MAX_CHARS } from "../src/ui/hint.js";
+import { suggestMove, suggestionText, SUGGESTION_MAX_CHARS } from "../src/ui/hint.js";
 import { SKILL_LEVELS } from "../src/ui/difficulty.js";
 import { actingSeats } from "./fixtures/engine.js";
 
@@ -34,7 +34,7 @@ import { actingSeats } from "./fixtures/engine.js";
 // declaration, a throw into the crib, a card onto the count — has to be legal,
 // has to name its level and has to fit the action bar like any other.
 const TABLES = [["crazy-eights", 3], ["wildfire", 3], ["hearts", 4], ["milestones", 3], ["stockpile", 3],
-  ["pinochle", 4], ["cribbage", 2]];
+  ["pinochle", 4], ["cribbage", 2], ["team-spades", 4]];
 
 async function dealt(packId, seats, seed) {
   const pack = await loadPackFromDisk(packId);
@@ -101,13 +101,67 @@ test("every suggestion names the level and fits the action bar", async () => {
           `${packId}: "${hint.text}" does not say what ${label} would do`);
         assert.ok(hint.text.length <= SUGGESTION_MAX_CHARS,
           `${packId}: "${hint.text}" is ${hint.text.length} chars against a budget of ${SUGGESTION_MAX_CHARS}`);
-        // The text is prose about a move, never the move's own vocabulary.
-        assert.ok(!/layDown|playCard|passCards/.test(hint.text), `${packId}: raw move type in "${hint.text}"`);
+        // The text is prose about a move, never the move's own vocabulary —
+        // every move type the templates enumerate is named here, and the
+        // shape rule below catches the next one nobody thought to list: a
+        // move type is one camelCase word, and a hint that ends on one bare
+        // is the `default` branch saying `move.type` out loud (#232).
+        assert.ok(!/layDown|playCard|passCards|declareMeld|takeHand/.test(hint.text),
+          `${packId}: raw move type in "${hint.text}"`);
+        assert.ok(!/ would [a-z]+[A-Z]\w*$/.test(hint.text), `${packId}: raw move type in "${hint.text}"`);
+        // A bid says what it bids: "would bid" and nothing after it names no
+        // number, which is the default branch again with a lower-case type.
+        assert.ok(!/ would bid$/.test(hint.text), `${packId}: a bid that says nothing — "${hint.text}"`);
+        // The short form points at what is lit, and a two-card crib throw is
+        // two cards lit up, not "the card".
+        if ((hint.move.cards || []).length > 1) {
+          assert.ok(!/the card lit up/.test(hint.text), `${packId}: "${hint.text}" for a ${hint.move.cards.length}-card move`);
+        }
         if (hint.text.length > longest.length) longest = hint.text;
       }
     });
     assert.ok(longest.length > 0, `${packId}: no suggestion text produced`);
   }
+});
+
+test("a bid says what it bids, in the bid dialog's own words (#232)", async () => {
+  const sharp = SKILL_LEVELS.find((l) => l.id === "hard");
+  const say = (state, move) => suggestionText(state, move.actor, move, sharp).replace(`${sharp.label} would `, "");
+
+  // Spades: a number of tricks, nil, and — for a side far enough behind — blind nil.
+  const spades = await dealt("team-spades", 4, "hint:bid-words");
+  const seat = spades.turn.seat;
+  const other = (seat + 1) % 4;
+  spades.scores[other] = 200; // the other side leads by 200, past `blindNil.behind`
+  const said = new Set(enumerateLegalMoves(spades, seat).map((m) => say(spades, m)));
+  for (const want of ["bid nil", "bid blind nil", "bid 1", "bid 4"]) {
+    assert.ok(said.has(want), `team-spades: no bid reads "${want}" — got ${[...said].join(" | ")}`);
+  }
+  assert.strictEqual(said.size, enumerateLegalMoves(spades, seat).length,
+    "team-spades: two different bids read the same");
+
+  // Pinochle: a number of points and the suit it names, or a pass.
+  const pinochle = await dealt("pinochle", 4, "hint:bid-words");
+  const legal = enumerateLegalMoves(pinochle, pinochle.turn.seat);
+  const pass = legal.find((m) => m.choice.bid === 0);
+  const hearts = legal.find((m) => m.choice.bid > 0 && m.choice.trump === "hearts");
+  assert.strictEqual(say(pinochle, pass), "pass");
+  assert.strictEqual(say(pinochle, hearts), `bid ${hearts.choice.bid} in Hearts`);
+
+  // And the declaration after it names its melds, as the plate will.
+  const labels = pinochle.pack.rules.melds.map((m) => m.label);
+  const melded = [];
+  walk(pinochle, 40, (live, s) => {
+    for (const move of enumerateLegalMoves(live, s)) {
+      if (move.type === "declareMeld" && move.cards.length) melded.push(say(live, move));
+    }
+  });
+  assert.ok(melded.length > 0, "pinochle: the walk never reached a declaration with a meld in it");
+  for (const text of melded) {
+    assert.match(text, /^meld \d+(: |$)/, `pinochle: a declaration reads "${text}"`);
+  }
+  assert.ok(melded.some((text) => labels.some((label) => text.includes(`: ${label}`))),
+    `pinochle: no declaration named a meld — ${melded.join(" | ")}`);
 });
 
 test("what is lit on the felt is what the move touches", async () => {

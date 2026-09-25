@@ -207,6 +207,7 @@ platform file.
 | `tableCounters` | `(ctx) -> {text, label, aria?}[] \| null` | `table.js` | no strip at all |
 | `commitPrompt` | `(ctx, seat, voice?) -> {action, staging, waiting, count \| min+max, moveType?} \| null` | `interaction.js`, `table.js` | count and move type read off the enumeration; the button says "Commit" |
 | `poseMove` | `(ctx, move) -> boolean` | `src/ui/table.js` | no pose; the felt paints where the move ENDED |
+| `phraseMove` | `(ctx, move) -> {full, short} \| null` | `src/ui/hint.js` | the platform's own phrasing of the move — see below |
 | `zoneReading` | `(ctx, inst) -> {badge, line?} \| null` | `src/ui/describe.js` | the pile's number is its card count |
 | `committedSelection` | `(ctx, seat) -> cardId[] \| null` | `table.js` | none |
 | `zoneCardOwners` | `(ctx, address) -> (seat\|null)[] \| null` | `src/ui/zoneRenderer.js` | none — a spread zone's cards carry no owner |
@@ -471,6 +472,32 @@ Keep it cheap and keep it a subset: a pose that emitted events, ended a round or
 moved a card the real move does not move would be a second set of rules living
 in the renderer. Trick-taking's is one statement — the card onto the trick —
 and it answers `false` for every play but the one that completes it.
+
+## `phraseMove` — what the hint calls a move
+
+The hint (`src/ui/hint.js`) suggests a move as a sentence — "Sharp would meld
+12: Aces around, Marriage in diamonds" — and the platform can phrase the moves
+whose shape it knows: a card played, drawn, discarded or passed, a contract laid
+down, a bid read back through `pendingChoice`'s own option labels. A move whose
+MEANING lives in the template's own tables cannot be said from outside without
+the platform importing those tables, which is what #219 took out of the felt:
+Pinochle's declaration is one (#232), and until this hook the hint read "Easy
+would declareMeld".
+
+```js
+phraseMove(ctx, move) -> { full, short } | null   // null: no opinion
+```
+
+- **A second-person verb phrase**, completing "Sharp would …": `meld 12: Aces
+  around`, not "Meld: 12" or "You meld 12". Plain prose in the same register as
+  `describeContract`: the words the rest of the felt uses for the thing, and never
+  the move's own vocabulary — no `type`, no camelCase, no choice keys.
+- **`short` is the fallback** the platform uses when `full` would not fit, and
+  both must fit `SUGGESTION_MAX_CHARS` (`src/ui/hint.js`) once the level's label
+  and " would " are in front of them. `tests/hint.test.js` holds every pack to it.
+- **Answer `null` for a move you have nothing to add to**, and the platform's own
+  phrasing stands. Like every presentation hook it reads and never writes: it is
+  asked on the live state, before the move is made, and a hint is not a move.
 
 ## `showStep` — how one count of a show is staged
 

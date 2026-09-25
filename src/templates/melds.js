@@ -643,6 +643,19 @@ function instancesOf(available, slots) {
 }
 
 /**
+ * WHAT A DECLARATION IS CALLED, one name per meld — "Run in hearts", "Pinochle".
+ *
+ * The one spelling of a declared meld's name, over the `melds` a declaration
+ * publishes (`detectDeclaredMelds` below): the seat plate's aria, the "You
+ * meld" sentence (src/templates/trick-meld.js) and the hint that suggests the
+ * declaration (src/ui/hint.js) all read it here, so none of them can call a
+ * meld something the others would not.
+ */
+export function meldNames(melds) {
+  return (melds || []).map((m) => (m.suit ? `${m.label} in ${m.suit}` : m.label));
+}
+
+/**
  * WHAT THIS SELECTION OF CARDS IS WORTH, against the pack's declared table.
  *
  * @param cardIds  the cards being declared — instance ids, so `spades-Q#2` is a

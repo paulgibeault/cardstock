@@ -75,6 +75,9 @@ const OPTIONAL_FUNCTIONS = [
   // can hold it for a beat — four cards on a trick, before the move that put
   // the fourth one there sweeps all four away (#123, src/ui/table.js).
   "poseMove",
+  // What the hint bar calls a move, in the template's own words, when the
+  // platform's generic phrasing would say its raw type (#232, src/ui/hint.js).
+  "phraseMove",
   // What a pile's number MEANS when the count of cards is not it: a won pile is
   // counted in tricks, and only the genre knows four cards are one (#123).
   "zoneReading",

@@ -23,6 +23,7 @@
 // view. The host giving hints to joiners is a protocol question for later.
 
 import { rankMoves } from '../engine/bot.js';
+import { makeCtx } from '../engine/context.js';
 import { cardName, titleCase } from './describe.js';
 import { describeContract, implicitLandingZone, handAddress } from './interaction.js';
 import { skillLevel } from './difficulty.js';
@@ -76,12 +77,55 @@ function pileWord(state, seat, address) {
 }
 
 /**
+ * The words the template's own chooser puts on this move's answers, in the
+ * order it asks them — `["250", "Hearts"]` for a Pinochle bid, `["Nil"]` or
+ * `["Blind nil"]` for a Spades one, `["Pass"]` for a pass.
+ *
+ * A bid is built on the felt from a bare `{type}` by `pendingChoice`, one
+ * question at a time, until the template has nothing left to ask; the labels
+ * on the options chosen are what the player read in that dialog. So a
+ * suggested bid is said by replaying those questions against the move the
+ * bot ranked and reading the label of the option that yields it — the
+ * template's vocabulary, never spelled out a second time here.
+ */
+function answerLabels(state, move) {
+  const ask = state.pack.template.pendingChoice;
+  if (typeof ask !== 'function') return [];
+  const ctx = makeCtx(state);
+  const want = move.choice || {};
+  const labels = [];
+  let built = { actor: move.actor, type: move.type };
+  for (let step = 0; step < 4; step++) {
+    const question = ask(ctx, built);
+    if (!question?.options?.length) break;
+    // The option whose answer agrees with the move on every key it sets, and
+    // of those the one that sets the most: a blind nil is `{bid: 0, sight}`,
+    // and the plain Nil above it in the list agrees with it on `bid` alone.
+    let pick = null;
+    let best = -1;
+    for (const option of question.options) {
+      const set = Object.entries(question.apply(built, option.value).choice || {});
+      if (set.length > best && set.every(([k, v]) => want[k] === v)) { pick = option; best = set.length; }
+    }
+    if (!pick) break;
+    labels.push(String(pick.label));
+    built = question.apply(built, pick.value);
+  }
+  return labels;
+}
+
+/**
  * The move as a verb phrase, in the second person, plus a shorter form for
  * when the full one will not fit. Both are plain prose: the card's name and
  * the contract's words come from the same describers the rest of the felt
  * uses, so a hint never calls a card something the inspector would not.
  */
 function phrasesFor(state, seat, move) {
+  // THE TEMPLATE FIRST, for a move whose meaning lives in its own tables — a
+  // Pinochle declaration's melds (#232). Null is "no opinion" and the platform's
+  // phrasing below stands (src/templates/CONTRACT.md, `phraseMove`).
+  const own = state.pack.template.phraseMove?.(makeCtx(state), move);
+  if (own) return [own.full, own.short ?? own.full];
   const cards = move.cards || [];
   switch (move.type) {
     case 'draw': {
@@ -98,7 +142,8 @@ function phrasesFor(state, seat, move) {
       return [n ? `take hand ${n}` : 'take one of the hands on offer', 'take the hand lit up'];
     }
     case 'discard':
-      return [`discard ${listOf(state, cards)}`, 'discard the card lit up'];
+      return [`discard ${listOf(state, cards)}`,
+        cards.length > 1 ? `discard the ${cards.length} cards lit up` : 'discard the card lit up'];
     case 'layDown': {
       const items = (move.choice?.melds || []).map((m) => m.item);
       return [`lay down ${describeContract(items)}`, 'lay your contract down'];
@@ -118,6 +163,18 @@ function phrasesFor(state, seat, move) {
       if (to) full += ` to ${to}`;
       if (call) full += ` and call ${titleCase(call)}`;
       return [full, `play the card lit up${to ? ` to ${to}` : ''}`];
+    }
+    case 'bid': {
+      // "bid 250 in Hearts", "bid 4", "bid nil", "bid blind nil" — or, where
+      // the dialog's own word for a bid of nothing is Pass, just "pass".
+      const [amount, trump] = answerLabels(state, move);
+      if (!amount) {
+        const n = move.choice?.bid;
+        return Number.isInteger(n) ? [`bid ${n}`, `bid ${n}`] : ['make your bid', 'make your bid'];
+      }
+      if (/^pass$/i.test(amount)) return ['pass', 'pass'];
+      const said = /^\d+$/.test(amount) ? amount : amount.toLowerCase();
+      return [trump ? `bid ${said} in ${trump}` : `bid ${said}`, `bid ${said}`];
     }
     case 'passCards':
       return [`pass ${listOf(state, cards)}`, `pass the ${cards.length} cards lit up`];
