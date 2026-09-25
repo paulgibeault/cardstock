@@ -20,9 +20,10 @@
 //
 // WHAT THIS MODULE DELIBERATELY DOES NOT DO: decide whether a move is LEGAL.
 // A `propose` that is structurally perfect is still just a request; only the
-// host's validateMove says yes, and it says so against the real state. Shape
-// and legality are different questions and conflating them is how a client
-// talks its way into a move.
+// host's `rules.validate` says yes, and it says so against the real state.
+// Shape and legality are different questions and conflating them is how a
+// client talks its way into a move. (Which parts of the move shape are
+// card-specific, and what a non-card game would swap: src/match/README.md.)
 
 /**
  * Bump when a frame's meaning changes. Carried in `lobby` and checked by every
