@@ -332,6 +332,31 @@ test("a joiner's view: a new table is a new session, the same table is replaced 
   assert.strictEqual(solo.state, null, "and the solo table the felt owned is ended with it");
 });
 
+test("the felt takes a borrowed table's bots over before it schedules its own (#225)", async () => {
+  // ONE SET OF BOT-DRIVER SLOTS PER TABLE. A hosted table the felt was not
+  // showing has been playing itself on the headless driver (src/ui/party.js),
+  // in the very slots the felt's driver is about to use — so coming back to it
+  // drops that pending turn, its beats and the persona rolls behind them. Left
+  // to the felt's own scheduling to overwrite, a paused table or an open review
+  // (which schedule nothing) would let the headless turn play under the pause.
+  const h = doorsHarness();
+  await h.doors.openTable("hearts");
+  const { state, seats, seating } = h.slots.session.table;
+  const host = hostTable("hearts", { state, seats, seating });
+  const dropped = [];
+  host.botTimer = { cancel: () => dropped.push("turn") };
+  host.announceTimers = [{ cancel: () => dropped.push("beat") }];
+  host.botCallDecision.set(2, true);
+
+  h.reset();
+  await h.doors.resumeHostedTable({ table: host });
+  assert.deepStrictEqual(dropped.sort(), ["beat", "turn"], "the headless driver's turn survived the felt taking over");
+  assert.strictEqual(host.botTimer, null);
+  assert.strictEqual(host.botCallDecision.size, 0, "a roll made headless carried into the felt's window");
+  // BEFORE the felt's own scheduling, which is the last thing adoptMatch does.
+  assert.deepStrictEqual(tail(h.calls, 2), ["scheduleNextTurn", "scheduleAnnouncementBeats"]);
+});
+
 // THE SLOTS, AND WHO WRITES THEM. table.js keeps `session` and `epoch` because
 // the felt reads them everywhere; the doors are the only writers and reach them
 // through setters. A write that grows back in table.js outside those two

@@ -16,6 +16,9 @@ import { test } from "node:test";
 import assert from "node:assert";
 import { createSession, stopSession, inputEndsHeldBeat } from "../src/ui/session.js";
 import { createTableSession } from "../src/match/tableSession.js";
+import fs from "node:fs";
+import path from "node:path";
+import { ROOT } from "../tools/stage.mjs";
 
 // THE MATCH IS A TABLE, AND THE SESSION POINTS AT IT (#225). A solo table is the
 // felt's own; a hosted one is borrowed from the party.
@@ -160,6 +163,53 @@ test("stopSession is safe on null and safe twice — closeTable may be reached e
   assert.doesNotThrow(() => stopSession(null));
   const s = fakeSession();
   assert.doesNotThrow(() => { stopSession(s); stopSession(s); });
+});
+
+/**
+ * THE HAND-OVER IS AN ORDER OF EVENTS (#225). A table has one set of bot-driver
+ * slots, shared by the felt's driver and the headless one in src/ui/party.js,
+ * so "who is moving this table's bots" changes hands by sequence: the felt lets
+ * go of the table it was showing (stopSession cancels what it scheduled there),
+ * takes the new one over, and only then does the registry re-bind — which hands
+ * every other hosted table to the headless driver. In the other order the felt
+ * letting go cancels the headless turn the bind has just scheduled, and a hosted
+ * game behind the felt sits on a bot's turn.
+ *
+ * A SOURCE SCAN, because src/main.js and src/ui/party.js touch the DOM at import
+ * and no Node test can load them; tests/repo-gates.test.js says why that is the
+ * honest tool for a whole-file rule here.
+ */
+test("the felt lets go of a table before the registry re-binds it (#225)", () => {
+  const read = (rel) => fs.readFileSync(path.join(ROOT, rel), "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  const main = read("src/main.js");
+  const lobby = main.slice(main.indexOf("async function goToLobby("));
+  assert.ok(lobby.indexOf("closeTable();") >= 0 && lobby.indexOf("leaveFelt();") >= 0);
+  assert.ok(lobby.indexOf("closeTable();") < lobby.indexOf("leaveFelt();"),
+    "goToLobby unbinds before it closes: the close cancels the headless turn the unbind just scheduled");
+
+  const party = read("src/ui/party.js");
+  const body = (name) => {
+    const at = party.indexOf(`function ${name}(`);
+    assert.ok(at >= 0, `${name} must still exist`);
+    return party.slice(at, party.indexOf("\n}\n", at));
+  };
+  const onView = party.slice(party.indexOf("onView: (view"), party.indexOf("onReject:"));
+  for (const [where, text] of [["onView", onView], ["switchToSeat", body("switchToSeat")]]) {
+    assert.ok(text.indexOf("adoptSharedView(") >= 0 && text.indexOf("bindFelt(") >= 0, `${where} must still draw and bind`);
+    assert.ok(text.indexOf("adoptSharedView(") < text.indexOf("bindFelt("),
+      `${where} binds before the felt has let go of the table it was showing`);
+  }
+  for (const name of ["returnToOurTable", "dealParty"]) {
+    const text = body(name);
+    assert.ok(text.indexOf("HostedTable(") < text.indexOf("bindFelt("),
+      `${name} binds before the felt has taken the table over`);
+    assert.ok(!/\.cancelBots\(\)/.test(text.slice(text.indexOf("bindFelt("))),
+      `${name} cancels the table's bots after the felt took it over — that is the felt's own turn`);
+  }
+  const bind = body("bindFelt");
+  assert.match(bind, /if \(other === bound\) continue;/,
+    "bindFelt cancels the bots of the table it binds, which by then are the felt's");
 });
 
 /* ------------------------------------------------------------------ *
