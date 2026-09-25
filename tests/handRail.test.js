@@ -10,7 +10,10 @@
  * felt's corner (#155).
  *
  * There is no DOM in `npm test` (src/ui/table.js touches document at import),
- * so this is a MARKUP, STYLESHEET AND SOURCE gate. It pins the things that
+ * so this is mostly a MARKUP, STYLESHEET AND SOURCE gate. The sheet's own
+ * behaviour is not: src/ui/helpSheet.js takes its elements as parameters
+ * (#223 seam 7), so item 5's order and the Hint line's reasons are DRIVEN
+ * below, and tests/helpSheet.test.js asks the rest. It pins the things that
  * would let the regression back in rather than the pixels, which are measured
  * with playwright and written up in docs/notes/IMPLEMENTATION_NOTES:
  *
@@ -33,6 +36,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { ROOT } from "../tools/stage.mjs";
 import { tableCss } from "./fixtures/tableCss.js";
+import { helpSheetHarness } from "./fixtures/chrome.js";
+import { HINT_OFFER } from "../src/ui/helpSheet.js";
+import { packRules } from "../src/ui/rules.js";
+import { createState } from "../src/engine/state.js";
+import { makeCtx } from "../src/engine/context.js";
+import { loadPackFromDisk } from "../tools/pack-test.mjs";
 
 const read = (f) => fs.readFileSync(path.join(ROOT, f), "utf8");
 const html = read("index.html");
@@ -255,7 +264,8 @@ test("a left-handed band swaps the ends and leaves the token between them", () =
 
 test("the hint offer has left the rail entirely", () => {
   for (const [name, source] of [
-    ["index.html", html], ["table.js", tableJs], ["handFan.js", handFanJs], ["the stylesheet", cssRaw],
+    ["index.html", html], ["table.js", tableJs], ["handFan.js", handFanJs],
+    ["helpSheet.js", read("src/ui/helpSheet.js")], ["the stylesheet", cssRaw],
   ]) {
     assert.doesNotMatch(source, /hint-button|hintButton/,
       `${name} still knows about the rail's hint button`);
@@ -308,35 +318,60 @@ test("the mark sits on the felt, out of the way of everything that is a move", (
     "a flex box needs its own [hidden] rule, or a closed sheet is an open one");
 });
 
-test("the sheet's two lines reach the rules panel and the ranking", () => {
-  const rules = blockAfter(tableJs, "el.helpRules.addEventListener");
-  assert.match(rules, /showRules\(packRules\(livePack\(\)\)\)/,
-    "How to play opens the same panel the scoreboard's does");
-  assert.match(rules, /setHelpOpen\(false\)/, "and closes the sheet behind it");
+test("the sheet's two lines reach the rules panel and the ranking", async () => {
+  const pack = await loadPackFromDisk("crazy-eights");
+  const state = createState({ pack, seats: 4, seed: "rail:help" });
+  pack.template.setup(makeCtx(state));
+  const h = helpSheetHarness({
+    renderSelection: () => h.calls.push(["ring", h.el.helpSheet.hidden]),
+  });
+  h.sheet.wire();
+  h.pack = pack;
+  h.state = state;
 
-  const hint = blockAfter(tableJs, "el.helpHint.addEventListener");
-  assert.match(hint, /showHint\(\)/, "Hint asks for the ranking");
+  h.sheet.setHelpOpen(true);
+  h.el.helpRules.fire("click");
+  assert.deepStrictEqual(h.calls, [["showRules", packRules(pack)]],
+    "How to play opens the same panel the scoreboard's does");
+  assert.strictEqual(h.sheet.helpOpen(), false, "and closes the sheet behind it");
+
+  h.calls.length = 0;
+  h.sheet.setHelpOpen(true);
+  h.el.helpHint.fire("click");
+  assert.ok(h.session.hint, "Hint asks for the ranking");
   // THE ORDER IS THE POINT. A hint's answer is a ring round cards on the felt,
   // and a sheet left standing over them answers the question with the answer
   // hidden behind it.
-  assert.ok(hint.indexOf("setHelpOpen(false)") < hint.indexOf("showHint()"),
-    "the sheet closes before the hint runs");
+  assert.deepStrictEqual(h.calls[0], ["ring", true], "the sheet closes before the hint runs");
 });
 
-test("the hint line is offered or explained, never simply missing", () => {
-  const offer = blockAfter(tableJs, "function hintOffer(");
+test("the hint line is offered or explained, never simply missing", async () => {
+  const pack = await loadPackFromDisk("crazy-eights");
+  const state = createState({ pack, seats: 4, seed: "rail:offer" });
+  pack.template.setup(makeCtx(state));
+  const h = helpSheetHarness();
   // The same five conditions the lamp was shown under, each with something to
   // say for itself: a disabled line teaches, an absent one does not.
-  for (const condition of [/state\.isView/, /state\.gameOver/, /humanActs/, /suggestion/, /movesFor\(/]) {
-    assert.match(offer, condition, `hintOffer no longer asks about ${condition}`);
+  const refusals = [
+    [{ ...state, isView: true }, true, null, 2, HINT_OFFER.view],
+    [{ ...state, gameOver: true }, true, null, 2, HINT_OFFER.over],
+    [state, false, null, 2, HINT_OFFER.turn],
+    [state, true, { text: "showing" }, 2, HINT_OFFER.showing],
+    [state, true, null, 1, HINT_OFFER.forced],
+  ];
+  for (const [s, humanActs, suggestion, moves, why] of refusals) {
+    h.moves = moves;
+    h.sheet.renderHelpOffer(s, humanActs, suggestion);
+    assert.strictEqual(h.el.helpHint.disabled, true, `${why}: the line is disabled rather than hidden`);
+    assert.strictEqual(h.el.helpHint.hidden, false, `${why}: and never hidden`);
+    assert.strictEqual(h.el.helpHintNote.textContent, why, "and it says why");
   }
-  const whys = offer.match(/HINT_OFFER\.\w+/g) || [];
-  assert.ok(whys.length >= 5, `every branch carries a reason, found ${whys.length}`);
-  const paint = blockAfter(tableJs, "function renderHelpOffer(");
-  assert.match(paint, /el\.helpHint\.disabled\s*=/, "the line is disabled rather than hidden");
-  assert.match(paint, /el\.helpHintNote\.textContent\s*=/, "and it says why");
+  h.moves = 2;
+  h.sheet.renderHelpOffer(state, true, null);
+  assert.strictEqual(h.el.helpHint.disabled, false);
+  assert.strictEqual(h.el.helpHintNote.textContent, HINT_OFFER.ready);
   // Repainted from renderRail, which is the function BOTH render paths run —
   // a hint that only updated on a full render would still be offered after the
   // tap that answered it.
-  assert.match(renderRail, /renderHelpOffer\(/, "the offer follows the position");
+  assert.match(renderRail, /helpSheet\.renderHelpOffer\(/, "the offer follows the position");
 });

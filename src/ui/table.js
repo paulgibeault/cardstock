@@ -53,8 +53,13 @@
 // results and the round sheet open onto it — in src/ui/reviewController.js
 // (#223 seam 5), and CARDS IN FLIGHT — where a seat, a pile or a meld card
 // sits on screen and what a move flies between them — in src/ui/moveFlight.js
-// (#223 seam 6). What is left here is the rest of the felt: piles, what a tap
-// on a card means, and the loop that turns a move into sound, motion and a save.
+// (#223 seam 6), and THE CHROME — the status line, the score and speed chips,
+// the table's own counters and the shared board — in src/ui/statusBar.js, the
+// HELP MARK and the hint behind it in src/ui/helpSheet.js, and the option list
+// the felt's bot driver shares with party.js's headless one in
+// src/ui/botSeams.js (#223 seam 7). What is left here is the rest of the felt:
+// piles, what a tap on a card means, and the loop that turns a move into
+// sound, motion and a save.
 //
 // THE MOVE LOOP STILL DECIDES WHEN A ROUND ENDING HAPPENS, which is the boundary
 // between this file and that one: `afterMove` reads the event window, asks
@@ -74,13 +79,12 @@ import { makeCtx, actingSeats, announcementsFor as enumerateAnnouncementsFor } f
 import { validateMove, applyMove, legalMovesFor } from '../engine/movePipeline.js';
 import { baseId } from '../engine/selectors.js';
 import { handValue } from '../engine/scoring.js';
-import { hasSides } from '../engine/sides.js';
-import { opponentRing, scoreBearers, seatSideMarks } from './seatRing.js';
+import { opponentRing, seatSideMarks } from './seatRing.js';
 // THE OPPONENT ROW (#223, seam 1). Everything the row decides that a Node test
 // can be asked about is over there now, importable, because src/ui/seatRow.js
 // takes its elements as parameters instead of resolving them — see its header.
 import {
-  createSeatRow, showsScores, scoreChipFor, seatCountersFor,
+  createSeatRow, seatCountersFor,
 } from './seatRow.js';
 // THE ROUND ENDING (#223, seam 2), for the same reason — src/ui/roundEnding.js
 // takes `el`, `session` and `epoch` in, so the rules of the held beat and the
@@ -102,10 +106,17 @@ import { createReviewController } from './reviewController.js';
 // screen, and what a move flies between them; the row's unfinished scroll is
 // read through `seatRow.pendingSeatShift`, and the flying itself is flight.js's.
 import { createMoveFlight } from './moveFlight.js';
+// THE CHROME, THE HELP SHEET AND THE BOT SEAMS (#223, seam 7). The bar's
+// speed readers are module functions over there, so the flights above can be
+// handed `currentFlightMs` before the bar itself is built; botSeams.js is the
+// option list this file's bot driver and party.js's headless one share.
+import { createStatusBar, currentFlightMs } from './statusBar.js';
+import { createHelpSheet } from './helpSheet.js';
+import { botDriverSeams } from './botSeams.js';
 import { makeCardRenderer } from './cardStyles/index.js';
 import { fetchPack } from './packSource.js';
 import {
-  motionAllowed, flightLayer, rectOf, flightDurationMs,
+  motionAllowed, flightLayer, rectOf,
 } from './flight.js';
 // NOTHING FROM src/ui/session.js IS IMPORTED HERE ANY MORE. The felt's own
 // Node-clean decisions over there are imported by the seams that need them:
@@ -114,7 +125,6 @@ import {
 // src/ui/roundEnding.js, and `createSession`/`stopSession` by
 // src/ui/matchDoors.js, which is where a session is born and ends.
 import { createBotDriver, botVerb } from './botDriver.js';
-import { suggestMove } from './hint.js';
 import { schedule } from './clock.js';
 import { line } from './dom.js';
 import { promptChoice, closeChoiceDialog } from './choiceDialog.js';
@@ -127,8 +137,6 @@ import { feltClock } from '../match/clock.js';
 import { createMatchRecord } from './matchRecord.js';
 import { watchHandGestures } from './handGestures.js';
 import { createZoneRenderer } from './zoneRenderer.js';
-import { renderCounterTrack } from './counterTrack.js';
-import { sharedBoard, renderSharedBoard, updateSharedBoard } from './sharedBoard.js';
 import { closeConfirm, confirmAction } from './confirm.js';
 import { createDragController } from './dragController.js';
 import { attachInspector, hideInspector } from './inspector.js';
@@ -136,8 +144,7 @@ import {
   cardName, possessive, agrees,
 } from './describe.js';
 import {
-  interactionMode, buildUiModel, dropCandidates, draggableSources,
-  commitPromptFor,
+  buildUiModel, dropCandidates, draggableSources,
   pruneSelection, toggleHandSelection, isSelected, handAddress,
 } from './interaction.js';
 import { classifyHandGesture } from './handOrder.js';
@@ -150,9 +157,8 @@ import {
 import { packRules } from './rules.js';
 import { trickRevealPlan, finalShowPlan } from './roundBeat.js';
 import { lastHandSentence } from './scoreDirection.js';
-import { speedLevel, speedForDelay, nextSpeed } from './speed.js';
 import {
-  loadSettings, saveSettings, saveMatch,
+  saveMatch,
 } from '../arcade/storage.js';
 import {
   playCardPlayed, playDraw, playShuffle, playInvalid, playWin, playAnnouncement,
@@ -255,8 +261,9 @@ let onLocalMove = null;
 // The screen's own furniture, not the match's.
 //
 // THERE IS DELIBERATELY NO COPY OF THE PREFERENCES BLOB HERE (#203). The felt
-// used to keep one — see `currentDelayMs` for the story — and by the end every
-// consumer read storage instead, so the snapshot was write-only.
+// used to keep one — see `currentDelayMs` (src/ui/statusBar.js) for the
+// story — and by the end every consumer read storage instead, so the snapshot
+// was write-only.
 let exitToLobby = () => {};
 // Pointer choreography for lifting a card (src/ui/dragController.js), created
 // once at init and reused by every match.
@@ -1016,117 +1023,6 @@ function renderAnnounceBar(state) {
   }
 }
 
-/** Is this card part of the hint on the bar right now? */
-function hintedCard(cardId) {
-  return !!session?.hint?.cardIds?.has(cardId);
-}
-
-/**
- * The Hint button: what a player at the chosen difficulty would do, from this
- * exact position (src/ui/hint.js).
- *
- * THE SAME DIAL THE OPPONENTS ARE ON. The new-game sheet's difficulty is read
- * fresh here, as the bot driver reads it, so "what would a Sharp player do" is
- * a question about the bot the player is actually up against — and asking it
- * at Easy gets Easy's answer, which is the honest one for a game being learnt.
- *
- * NOTHING IS LOGGED. A hint changes no state and a replay never learns one
- * was asked for. The ranking happens synchronously on the tap: `hard` is
- * capped at its think budget (src/engine/bot.js), so the longest a tap can
- * stall for is the budget the bots already spend on every turn.
- */
-function showHint() {
-  const state = liveState();
-  if (!state || state.isView || state.gameOver || !actingSeatsOf(state).some(isMySeat)) return;
-  const hint = suggestMove(state, mySeat(), { difficulty: loadSettings().botDifficulty });
-  if (!hint) return;
-  session.hint = hint;
-  session.hintsTaken += 1;
-  // THE SENTENCE OUTLIVED THE BAR THAT SHOWED IT. What a sighted player gets
-  // is the ring on the felt — the cards, the pile, the meld the suggestion
-  // touches — and a ring says nothing to a screen reader. #log is the live
-  // region, it sits below the felt where it costs the hand no room, and this
-  // is exactly the kind of thing it exists to say. It is the ONLY place the
-  // wording appears now, which is why suggestionText still exists.
-  el.log.textContent = hint.text;
-  renderSelection(state);
-  // Counted, and the count is part of what a resume brings back.
-  persistMatch();
-}
-
-/* ------------------------------------------------------------------ *
- * The help mark, and the two questions behind it (#155)
- * ------------------------------------------------------------------ */
-
-/** What the Hint line says about itself when it cannot be taken. */
-const HINT_OFFER = Object.freeze({
-  turn: 'Only while it is your turn',
-  view: 'A joined table holds a view, not the cards',
-  over: 'The game is over',
-  showing: 'The hint is on the felt',
-  forced: 'There is only one play',
-  ready: 'What a player at this level would do',
-});
-
-/**
- * Whether a ranking can be asked for, and what to say when it cannot.
- *
- * THE SAME FIVE CONDITIONS THE LAMP IN THE RAIL WAS SHOWN UNDER, moved rather
- * than rewritten: the hint asks the engine to rank the position, so it is
- * offered only where the felt HOLDS the position — a joiner's view has no
- * opponents' hands to fork and gets a reason rather than a guess
- * (src/ui/hint.js) — and only where there is a choice to make. One legal move
- * is not a hint. It also steps aside once its answer is showing, so a player
- * cannot ask the same question twice and have it counted twice.
- *
- * WHAT CHANGED IS THAT A REFUSAL NOW SAYS SOMETHING. In the rail the offer
- * simply went invisible, which is the right treatment for an icon in a column
- * of controls and the wrong one for a line in a sheet somebody has just opened
- * looking for help: they would find a hint that had disappeared and learn
- * nothing. Disabled, with the reason on it, is both answers at once.
- */
-function hintOffer(state, humanActs, suggestion) {
-  if (!state || state.isView) return { ready: false, why: HINT_OFFER.view };
-  if (state.gameOver) return { ready: false, why: HINT_OFFER.over };
-  if (!humanActs) return { ready: false, why: HINT_OFFER.turn };
-  if (suggestion) return { ready: false, why: HINT_OFFER.showing };
-  if (movesFor(state, mySeat()).length <= 1) return { ready: false, why: HINT_OFFER.forced };
-  return { ready: true, why: HINT_OFFER.ready };
-}
-
-/** Repaint the sheet's Hint line. Called from renderRail, open sheet or not. */
-function renderHelpOffer(state, humanActs, suggestion) {
-  const offer = hintOffer(state, humanActs, suggestion);
-  el.helpHint.disabled = !offer.ready;
-  // The note is part of the button's accessible NAME rather than a description
-  // beside it: "Hint, only while it is your turn" is one thing to hear, and a
-  // disabled control's description is the half a screen reader may skip.
-  el.helpHintNote.textContent = offer.why;
-}
-
-function helpOpen() {
-  return !el.helpSheet.hidden;
-}
-
-/**
- * Open or close the sheet.
- *
- * FOCUS GOES IN AND COMES BACK. Opening moves it to the first line, so the
- * sheet is usable from a keyboard at all; closing returns it to the mark, but
- * only when it is still inside the sheet — a close that fires because the
- * player tapped a card must not steal the focus off that card.
- */
-function setHelpOpen(open) {
-  if (open === helpOpen()) return;
-  el.helpSheet.hidden = !open;
-  el.helpButton.setAttribute('aria-expanded', String(open));
-  if (open) {
-    el.helpRules.focus({ preventScroll: true });
-  } else if (el.helpSheet.contains(document.activeElement)) {
-    el.helpButton.focus({ preventScroll: true });
-  }
-}
-
 /**
  * The rail beside the hand: the turn token, the fan's sort toggle, the action
  * button (index.html says why it is a rail and not a bar).
@@ -1158,7 +1054,7 @@ function setHelpOpen(open) {
 function renderRail(state, ui, humanActs) {
   // A SUGGESTION IS A HIGHLIGHT NOW, NOT A SENTENCE. What the hint touches is
   // ringed on the felt and its wording goes to #log for anyone who cannot see
-  // a ring (showHint); the rail itself only has to stop offering a hint whose
+  // a ring (helpSheet.showHint); the rail itself only has to stop offering a hint whose
   // answer is already showing. It lasts exactly as long as the position does —
   // every applied move clears it (applyStateChange).
   const suggestion = humanActs && session?.hint ? session.hint : null;
@@ -1177,7 +1073,7 @@ function renderRail(state, ui, humanActs) {
   // now (#155), and it is repainted from here because this is the function
   // both render paths run — renderSelection repaints the rail without
   // rebuilding the fan, and "is there a hint to be had" changes on a tap.
-  renderHelpOffer(state, humanActs, suggestion);
+  helpSheet.renderHelpOffer(state, humanActs, suggestion);
 
   // THE TWO CONTROLS, AND NEITHER OF THEM IN THE OTHER'S WAY (#154). Both
   // conditions are answered here rather than half of them in renderHand:
@@ -1237,340 +1133,6 @@ function renderRail(state, ui, humanActs) {
   }
 }
 
-function renderStatusBar(state, acting) {
-  el.statusText.textContent = statusTextFor(state, acting);
-  // Repainted on every render rather than only when it is tapped, because the
-  // new-game sheet can change this between two hands and the chip has to agree
-  // with the felt it is sitting above.
-  paintSpeedChip();
-  // `session.roundBeat` for the same reason `render` reads it: while the felt
-  // holds a finished hand, nobody is on turn and the bar must not say so. A
-  // trick reveal is the same claim for one beat (#123).
-  const humanActs = acting.some(isMySeat) && !session?.roundBeat && !session?.trickBeat && !session?.review;
-  el.status.classList.toggle('status-bar--your-turn', humanActs);
-  el.status.classList.toggle('status-bar--thinking', !state.gameOver && !humanActs);
-
-  const scored = showsScores(state);
-  el.scoreChip.hidden = !scored;
-  if (scored) {
-    // ONE READING, TWO RENDERINGS. The digits and the spoken label used to be
-    // computed separately — the chip through `scoreChipFor` and the aria off
-    // `state.scores` — which agreed for as long as nothing folded. In a
-    // partnership they are two different numbers and the screen reader gets the
-    // wrong one.
-    const chip = scoreChipFor(state, mySeat());
-    // THE HUMAN GETS THE SAME BOARD THE OPPONENT HAS. Every seat plate draws
-    // its primary counter as a track where the template says it is one — and
-    // the human's own seat is not a plate, so at a cribbage table there was
-    // exactly one `.seat__track` in the document and it belonged to the bot
-    // (#124, item 39). The player's own peg, the thing the whole game is read
-    // off, was a bare number in the chrome.
-    //
-    // The same renderer, the same numbers, the same accessible sentence — this
-    // is `renderCounterTrack` being DOM-parameterised for the second time and
-    // not a second board. A pack whose primary counter is an ordinary quantity
-    // renders nothing here and keeps the plain pill.
-    //
-    // AND WHERE THE FELT DRAWS THE SHARED BOARD (#136), NOT HERE EITHER. The
-    // chip's track is 90px in the top-right corner, which is the one place on
-    // the felt the eye never goes mid-hand; once your own lane is on the road
-    // in the middle of the table, this goes back to being the plain pill it
-    // was before #124 and says the number once.
-    const board = session?.board
-      ? null
-      : renderCounterTrack(seatCountersFor(state, mySeat(), { minimized: false })[0]);
-    el.scoreChipTrack.replaceChildren(...(board ? [board] : []));
-    // The track prints the number itself; two of them in one pill is the same
-    // score twice.
-    el.scoreChipValue.hidden = !!board;
-    if (!board) el.scoreChipValue.textContent = chip.long;
-    el.scoreChip.setAttribute('aria-label',
-      `Your ${hasSides(state.pack, state.seats) ? "side's score" : 'score'}: `
-      + `${board ? board.getAttribute('aria-label') : chip.long}. `
-      + 'Open the scoreboard.');
-  }
-  renderTableCounters(state);
-}
-
-/* ------------------------------------------------------------------ *
- * How fast a card crosses the felt (#175)
- * ------------------------------------------------------------------ */
-
-/**
- * The number behind the rung, read LIVE — from storage, every single time.
- *
- * THE FELT KEEPS NO COPY OF IT, and that is a decision rather than an omission.
- * It used to: a module-level snapshot of the preferences blob, assigned in
- * exactly two places — at boot, and on a re-render after a resume or a change to
- * the SDK's own settings. THE NEW-GAME SHEET IS NEITHER: src/ui/lobby.js writes
- * the chosen rung to storage and then opens the table. So a snapshot read handed
- * the first match of a session the rung from before the sheet, and a table dealt
- * at Slow flew at Brisk until the tab was reloaded. The bot driver's
- * `difficulty` was moved to a live read for this in #91, this number in #184 and
- * `currentPace` in #181 — which left the snapshot with no readers at all, so
- * #203 deleted it.
- *
- * THE STORED NUMBER, NOT THE TREAD IT LIGHTS. `speedForDelay` snaps to the
- * NEAREST rung on purpose, so a save hand-edited to 700 lights Brisk while
- * still flying at 700 (src/ui/speed.js). Everything that does arithmetic on the
- * setting comes through here rather than through the rung, so that stays true.
- */
-function currentDelayMs() {
-  return loadSettings().botDelayMs;
-}
-
-/** The rung to put a name on: the chip's word, and the sheet's lit button. */
-function currentSpeed() {
-  return speedForDelay(currentDelayMs());
-}
-
-/**
- * ONE DURATION FOR THE WHOLE TABLE, at the rung in force the moment a card
- * launches. Asked rather than cached for the reason above, and asked at every
- * call site rather than once per match because the status bar's chip can move
- * the rung mid-hand.
- */
-function currentFlightMs() {
-  return flightDurationMs(currentDelayMs());
-}
-
-/**
- * The chip: one short word, and the sentence behind it on `aria-label`.
- *
- * THE LABEL IS THE RUNG, NOT THE NUMBER. A chip reading "600ms" would be the
- * text field src/ui/speed.js exists to avoid, in a smaller font.
- */
-function paintSpeedChip() {
-  const level = currentSpeed();
-  el.speedChipLabel.textContent = level.label;
-  el.speedChip.setAttribute('aria-label',
-    `Card speed: ${level.label}. ${level.description} Tap to change.`);
-}
-
-/**
- * Move to the next rung, on the tap that asked for it.
- *
- * STORAGE IS THE ONLY WRITE, BECAUSE STORAGE IS THE ONLY READ. The next flight
- * is precisely the one the player is watching for — the reason they reached for
- * this is that the last one went past too fast — and it picks the new rung up
- * without a settings event coming back round through main.js, because
- * `currentDelayMs` asks storage as the card launches. There is deliberately no
- * snapshot to update in the same breath: a second copy of this number is a
- * second thing to forget, and forgetting it is the bug this control shipped on
- * top of. (#203 removed the felt's last snapshot entirely; this was already the
- * rule here.)
- *
- * NOTHING IN FLIGHT IS RESTARTED. Unlike the pace control, which cancels and
- * re-arms a countdown it may have shortened, this changes nothing that has
- * already been scheduled: a card mid-air keeps the duration it launched with,
- * and a bot already sitting on its think timer plays when it was always going
- * to. Both are over in well under a second, and a card that changed speed
- * halfway across the table would be the opposite of legible.
- *
- * ANNOUNCED IN #log, the felt's live region, because otherwise the only
- * evidence the tap did anything is the chip's own word changing — which is
- * nothing at all to a screen reader, and easy to miss with eyes on the felt.
- */
-function cycleSpeed() {
-  const level = speedLevel(nextSpeed(currentSpeed().id));
-  const stored = loadSettings();
-  saveSettings({ ...stored, botDelayMs: level.delayMs });
-  paintSpeedChip();
-  el.log.textContent = `Card speed: ${level.label}. ${level.description}`;
-}
-
-/**
- * WHAT THE TABLE ITSELF IS COUNTING — the running count in cribbage, and
- * nothing at all for every pack that declares none.
- *
- * `seatCounters` one rung out. Some facts a felt has to keep on screen are not
- * any seat's: the count in the play is the table's, it changes with every card
- * from either hand, and a player who cannot see it is doing arithmetic off two
- * piles to find out why three of their four cards are greyed out (#124, item
- * 38). It was already in the state — cribbage publishes `count` in its
- * `publicVars` — and simply not drawn.
- *
- * A hook rather than a `pack.id ===`, for the reason every row of the
- * presentation table in src/templates/CONTRACT.md is a hook: the question
- * "what is this table counting" has an answer in more games than this one, and
- * the default — no strip at all — costs a pack that has nothing to say nothing.
- */
-function renderTableCounters(state) {
-  const declared = state.pack.template.tableCounters?.(makeCtx(state)) || [];
-  el.tableCounters.replaceChildren();
-  el.tableCounters.hidden = !declared.length;
-  for (const counter of declared) {
-    const chip = document.createElement('div');
-    chip.className = 'table-counter';
-    const label = document.createElement('span');
-    label.className = 'table-counter__label';
-    label.textContent = counter.label;
-    const value = document.createElement('span');
-    value.className = 'table-counter__value';
-    value.textContent = counter.text;
-    chip.append(label, value);
-    // One name for the pair, for the same reason the track carries one: "Count
-    // 17" read as two unrelated things is worse than the sentence.
-    chip.setAttribute('role', 'img');
-    chip.setAttribute('aria-label', counter.aria || `${counter.label} ${counter.text}`);
-    el.tableCounters.appendChild(chip);
-  }
-}
-
-/**
- * EVERY SEAT'S BOARD, AS ONE BOARD (#136).
- *
- * `seatCounters` one rung the other way from `tableCounters`: not a number the
- * table owns, but the same number from every seat drawn on one picture. A
- * cribbage board is one object with both players on it, and the reason it is
- * one object is that the only question worth asking of it is comparative —
- * am I ahead, by how much, and did that hand close the gap. Two 88px tracks
- * in the two corners of the felt the eye never goes (the opponent's plate and
- * the status bar's own chip) made that a subtraction; #124 shipped them and
- * round 5 came back with "where is my board and pegs?".
- *
- * WHICH SEATS GET A LANE is the table's question and not the component's, so
- * it is answered here: ring order from the chair on your left (seatRing.js),
- * with your own lane last so it lands nearest your hand, and one lane per
- * SIDE rather than per seat — `scoreBearers` is the same rule the score chips
- * use, and for the same reason. A partnership has one score and drawing it
- * twice reads as two scores that happen to be equal.
- *
- * WHICH seats have a board at all is nobody's question here either: a lane
- * exists where `counterTrack()` says the seat's primary counter is a position
- * on a road, and a pack whose seats count things gets no board and no row.
- */
-function sharedBoardFor(state) {
-  const seat = mySeat();
-  const bearers = scoreBearers(state.pack, state.seats, seat);
-  const order = [...opponentRing(state.seats, seat), seat]
-    .filter((s) => Number.isInteger(s) && s >= 0 && s < state.seats && bearers.has(s));
-  return sharedBoard(order.map((s) => {
-    const identity = identityOf(s);
-    const marks = seatSideMarks(state.pack, state.seats, seat, s);
-    return {
-      seat: s,
-      counter: seatCountersFor(state, s, { minimized: false })[0],
-      name: seatLabel(s),
-      // The roster's mark, exactly as the plate and the trick's owner tags
-      // wear it — never a manifest value reaching the felt (§7b).
-      mark: identity.icon || identity.initials || String(s + 1),
-      color: identity.color,
-      mine: isMySeat(s),
-      partner: marks.partner,
-      side: marks.side,
-    };
-  }));
-}
-
-/**
- * The board on the felt, repainted rather than rebuilt.
- *
- * THE PEGS ONLY MOVE IF THE NODES SURVIVE. A render rebuilds the felt, and an
- * element created fresh at 37% has never been anywhere else — its transition
- * on `left` has no old value to run from, so a rebuilt board teleports and the
- * one piece of motion this component is allowed never happens. So the handle
- * from the last render is offered the new model first, and a full rebuild is
- * what happens when the seats or the road actually change (a new match).
- *
- * `session.board` is the model, and it is what the seat plate and the status
- * chip read to know their own small track is now redundant — which is why
- * this runs FIRST in `render`.
- */
-function renderSharedBoardRow(state) {
-  const model = sharedBoardFor(state);
-  session.board = model;
-  el.tableBoard.hidden = !model;
-  // The middle only wraps for a table that HAS a board. A permanently wrapping
-  // middle would let Milestones' contract ladder fall under the piles on a
-  // narrow window, which is a layout for a problem nobody has.
-  el.feltMiddle.classList.toggle('felt-middle--boarded', !!model);
-  if (!model) {
-    el.tableBoard.replaceChildren();
-    session.boardHandle = null;
-    return;
-  }
-  if (session.boardHandle && updateSharedBoard(session.boardHandle, model)) return;
-  session.boardHandle = renderSharedBoard(model);
-  el.tableBoard.replaceChildren(session.boardHandle.node);
-}
-
-function statusTextFor(state, acting) {
-  // REVIEWING IS NOBODY'S TURN. The reel under the felt says where in the
-  // match this is; the bar says only that the table is not waiting on anyone.
-  if (session?.review) return 'Reviewing';
-  if (state.gameOver) return `Game over — ${winnerSentence(state)}`;
-  // THE ROUND BEAT IS NOBODY'S TURN. The felt is holding the position the hand
-  // ended in (runRoundBeat) and this state's `turn` is whatever the template
-  // left it on — cribbage's show leaves it on the last player, so the bar read
-  // "Your turn" over a table where the player's hand was empty and nothing was
-  // tappable. It is not a turn; it is the end of the hand.
-  //
-  // AND WHAT CONTINUES IT, WHEN THE COUNT IS WAITING FOR A PERSON (#181). The
-  // gate is the tell rather than the rung: `session.beatResume` is set during
-  // the round beat by exactly one thing, a count of a show that has no clock on
-  // it (runShowSequence), so this promises the tap at precisely the moments a
-  // tap is the only thing there is. Three motionless counts read as a hang
-  // otherwise — the same sentence the trick hold says below, for the same
-  // reason, and #log carries the whole of it.
-  if (session?.roundBeat) {
-    return session.beatResume ? 'Round over. Tap to go on.' : 'Round over.';
-  }
-  // THE TRICK BEAT IS NOBODY'S TURN EITHER (#123). The posed position's `turn`
-  // is still on whoever played the fourth card — the trick has not been
-  // resolved on this copy — so the bar would read "Your turn" over four cards
-  // that are about to be swept and a hand that cannot be played from. It says
-  // who is taking them instead, which is the question the beat exists to
-  // answer.
-  //
-  // AND WHAT ENDS IT, AT THE RUNG WHERE NOTHING ELSE WILL (#176). A hold with a
-  // clock on it needs no instructions — it is over before the sentence has been
-  // read. The Manual rung's hold has no clock, and "North's trick." over a table
-  // that will never move again on its own reads as a frozen game rather than as
-  // a beat. `waits` is the plan's own `holdMs == null`, carried here by
-  // runTrickReveal, so the felt promises a tap exactly when a tap is the only
-  // thing there is. The same sentence goes to #log, which is the announced half.
-  if (session?.trickBeat) {
-    const whose = `${seatPossessive(session.trickBeat.seat)} trick.`;
-    return session.trickBeat.waits ? `${whose} Tap to go on.` : whose;
-  }
-  // A BID IS THE OTHER SENTENCE THIS BAR ASKS FOR RATHER THAN WRITES. It goes
-  // round the table one seat at a time, so "whose turn" is already the right
-  // shape — what it adds is WHICH KIND of turn, which is the whole difference
-  // between a phase where you tap a card and one where the only live control is
-  // a button in the rail.
-  //
-  // ASKED OF THE MODE, NOT THE PHASE NAME (#219), exactly as the commit below
-  // is: `turn.phase === 'bid'` was trick-taking's word for its own phase, seven
-  // lines under the comment that follows. The words are the template's
-  // (`commitPrompt`), and the voice goes with the question because "Nell is
-  // bidding…" is a NAME, which is this table's to know and not a template's.
-  if (interactionMode(state) === 'bid') {
-    const mine = acting.some(isMySeat);
-    const seat = mine ? mySeat() : state.turn.seat;
-    const prompt = commitPromptFor(state, seat, legalMovesFor(state, seat), voiceOf());
-    return mine ? prompt.staging : prompt.waiting;
-  }
-  // HOW MANY, HERE, because nothing else says it in time. The commit button
-  // only appears once exactly that many cards are staged, so its label cannot
-  // be where a player learns the number — and the sentence that used to say it
-  // stood in a bar above the hand that no longer exists
-  // (src/ui/interaction.js). This slot is 122px at 375px, which is why the
-  // count replaces "your pick" rather than joining it.
-  //
-  // ASKED OF THE MODE, NOT THE PHASE NAME. `turn.phase === 'pass'` was a
-  // platform file knowing one template's word for its own phase; cribbage's is
-  // `discard`, Pinochle's is `meld`, and both mean the same thing to this bar.
-  // Every sentence comes from the template's `commitPrompt` now (#107, #106).
-  if (interactionMode(state) === 'pass') {
-    const mine = acting.some(isMySeat);
-    const seat = mine ? mySeat() : state.turn.seat;
-    const prompt = commitPromptFor(state, seat, legalMovesFor(state, seat), voiceOf());
-    return mine ? prompt.staging : prompt.waiting;
-  }
-  return acting.some(isMySeat) ? 'Your turn' : `${seatPossessive(state.turn.seat)} turn`;
-}
-
 /**
  * A SELECTION changed, and nothing else did.
  *
@@ -1610,11 +1172,11 @@ function renderSelection(state) {
     const cardId = wrapper.dataset.cardId;
     const selected = isSelected(session.selection, handAddr, cardId) || committedPass.includes(cardId);
     wrapper.classList.toggle('card-face-wrap--selected', selected);
-    wrapper.classList.toggle('card-face-wrap--hinted', hintedCard(cardId));
+    wrapper.classList.toggle('card-face-wrap--hinted', helpSheet.hintedCard(cardId));
     wrapper.setAttribute('aria-pressed', String(selected));
   }
   for (const node of el.stageTray.querySelectorAll('.stage-card[data-card-id]')) {
-    node.classList.toggle('card-face-wrap--hinted', hintedCard(node.dataset.cardId));
+    node.classList.toggle('card-face-wrap--hinted', helpSheet.hintedCard(node.dataset.cardId));
   }
   for (const stack of el.screen.querySelectorAll('.pile-stack[data-zone]')) zones.paintPileState(stack, ui);
   for (const chip of el.screen.querySelectorAll('.meld-chip[data-meld]')) zones.paintMeldState(chip, ui);
@@ -1660,8 +1222,8 @@ function render(state, message) {
   // score chip and every seat plate ask `session.board` whether the felt is
   // already drawing this road, and draw their own small track only if it is
   // not (#136).
-  renderSharedBoardRow(state);
-  renderStatusBar(state, acting);
+  statusBar.renderSharedBoardRow(state);
+  statusBar.renderStatusBar(state, acting);
   seatRow.renderSeats(state, stagger, acting, ui);
   if (ladder) ladder.render(state);
   // The contract in force — trump, the bid and whose it is, your own meld.
@@ -1881,6 +1443,11 @@ let reviewer = null;
 // Cards in flight (src/ui/moveFlight.js): where a seat, a pile or a meld card
 // sits on screen, and the copy a move sends between them.
 let moveFlight = null;
+// The chrome above the felt (src/ui/statusBar.js): the status line, the score
+// and speed chips, the table's own counters and the shared board.
+let statusBar = null;
+// The help mark and its sheet (src/ui/helpSheet.js), and the hint it asks for.
+let helpSheet = null;
 
 // THE BANNER AND THE SHOW CARD ARE ONE SLOT. The card replaces the banner for
 // a scoring step (#152) and they must never be on the felt together — so every
@@ -2382,7 +1949,7 @@ async function fillPendingChoices(state, move, myEpoch) {
         // #123: the auction's rows, dressed from the roster.
         context: dressedContext(state, ask.context),
       });
-      if (ask.status && liveState()) renderStatusBar(state, actingSeatsOf(state));
+      if (ask.status && liveState()) statusBar.renderStatusBar(state, actingSeatsOf(state));
       // Backed out, or the table closed while the prompt was open — either way
       // this move belongs to a match that is no longer the one on screen.
       if (picked === null || myEpoch !== epoch) return null;
@@ -2712,6 +2279,33 @@ export function isTableOpen() {
 export function initTable({ onExit }) {
   exitToLobby = onExit;
 
+  // THE CHROME AND THE HELP SHEET FIRST, because the seams below are handed
+  // their functions by reference: the round ending repaints the bar, the hand
+  // asks which cards the hint rings, and the doors close the sheet.
+  statusBar = createStatusBar({
+    el,
+    session: () => session,
+    isMySeat,
+    mySeat,
+    identityOf,
+    seatLabel,
+    seatPossessive,
+    voiceOf,
+    winnerSentence,
+  });
+  helpSheet = createHelpSheet({
+    el,
+    session: () => session,
+    liveState,
+    livePack,
+    isMySeat,
+    mySeat,
+    movesFor,
+    renderSelection,
+    persistMatch,
+    showRules,
+  });
+
   // THE ROW IS CONSTRUCTED BEFORE ANYTHING LISTENS. `placeOpenPlate` is handed
   // to two listeners below as a reference rather than called, so the object it
   // hangs off has to exist by then; `zones`, `drag` and the session are reached
@@ -2770,7 +2364,7 @@ export function initTable({ onExit }) {
     feltState,
     render,
     animateMove: moveFlight.animateMove,
-    renderStatusBar,
+    renderStatusBar: statusBar.renderStatusBar,
     seatLabel,
     seatPossessive,
     mySeat,
@@ -2810,7 +2404,7 @@ export function initTable({ onExit }) {
     render,
     cardById,
     art,
-    hintedCard,
+    hintedCard: helpSheet.hintedCard,
     markEntry,
     committedSelectionOf,
     onHandCard,
@@ -2844,7 +2438,7 @@ export function initTable({ onExit }) {
     cancelBotTurn,
     cancelAnnouncementBeats,
     hideBanner,
-    setHelpOpen,
+    setHelpOpen: helpSheet.setHelpOpen,
     reportTableError,
     hideAllPanels,
     closeChoiceDialog,
@@ -2885,30 +2479,9 @@ export function initTable({ onExit }) {
     reviewMapNode,
   });
 
-  // THE HELP MARK (#155). Two questions about the game — how is this played,
-  // and what would a good player do here — behind one `?` in the felt's
-  // corner, instead of the rules two taps deep in the scoreboard and the hint
-  // in among the buttons that commit.
-  el.helpButton.addEventListener('click', () => setHelpOpen(!helpOpen()));
-  el.helpRules.addEventListener('click', () => {
-    setHelpOpen(false);
-    if (livePack()) showRules(packRules(livePack()));
-  });
-  // CLOSED FIRST, AND THAT IS THE POINT OF THE ORDER: what a hint produces is
-  // a ring round cards on the felt, and a sheet standing over them answers the
-  // question with the answer hidden behind it.
-  el.helpHint.addEventListener('click', () => {
-    setHelpOpen(false);
-    showHint();
-  });
-  // A tap anywhere else closes it, the way the seat plate below answers the
-  // same gesture. Capturing, so the tap still reaches whatever it was aimed
-  // at: this closes a sheet, it does not swallow a move.
-  document.addEventListener('pointerdown', (event) => {
-    if (!helpOpen()) return;
-    if (el.helpSheet.contains(event.target) || el.helpButton.contains(event.target)) return;
-    setHelpOpen(false);
-  }, true);
+  // THE HELP MARK (#155): the mark, the sheet's two lines and a tap outside
+  // (src/ui/helpSheet.js). Escape is answered in the keydown listener below.
+  helpSheet.wire();
 
   // AN OPEN SEAT PLATE IS DISMISSIBLE, by the two gestures every other overlay
   // on this screen already answers to. Wired once here rather than per render,
@@ -3030,8 +2603,8 @@ export function initTable({ onExit }) {
     }
     if (event.key !== 'Escape') return;
     // The sheet is the innermost thing open, so it is the first thing closed.
-    if (helpOpen()) {
-      setHelpOpen(false);
+    if (helpSheet.helpOpen()) {
+      helpSheet.setHelpOpen(false);
       return;
     }
     const node = seatRow.openPlateSeat();
@@ -3134,20 +2707,17 @@ export function initTable({ onExit }) {
   // scheduled rather than here: session time for solo, the host's wall clock
   // for a table other people are sitting at, whose hand does not stop because
   // the host pocketed their phone.
-  bots = createBotDriver({
+  //
+  // WHAT BOTH DRIVERS SHARE — the two live reads of the settings, the seat
+  // lens, the acting-seats question — is spelled once in src/ui/botSeams.js,
+  // which party.js's headless driver is built with too. What is left here is
+  // what the felt answers differently.
+  bots = createBotDriver(botDriverSeams(() => session, {
     clock: feltClock({ shared: () => !!session?.shared }),
-    currentEpoch: () => epoch,
-    // READ FRESH, NOT OFF THE SNAPSHOT — both of these. `settings` is loaded
-    // when the table is initialised and refreshed on a re-render, and the
-    // new-game sheet can change either between the two: deal a Sharp game
-    // straight after a Steady one, or a Slow one after a Brisk one, and the
-    // snapshot would still say Steady and Brisk. The driver asks at fire time
-    // (src/ui/botDriver.js) precisely so both can be answered late.
-    botDelayMs: () => currentDelayMs(),
-    difficulty: () => loadSettings().botDifficulty,
-    me,
+    // Still a module slot here, so passed; #225 moves it onto the session.
+    epoch: () => epoch,
     identityOf,
-    actingSeatsOf,
+    // The view-aware wrapper: a joiner's view carries the host's list.
     announcementsFor,
     playMove: (state, move, seat) => {
       const from = move.type === 'draw'
@@ -3158,7 +2728,7 @@ export function initTable({ onExit }) {
     },
     playAnnouncement: (state, move, myEpoch) => performAnnouncement(state, move, myEpoch),
     onError: reportTableError,
-  });
+  }));
 
   initPanels({
     onReview: () => reviewer.enterReview(),
@@ -3192,7 +2762,7 @@ export function initTable({ onExit }) {
   });
 
   el.lobbyButton.addEventListener('click', () => exitToLobby());
-  el.speedChip.addEventListener('click', () => cycleSpeed());
+  el.speedChip.addEventListener('click', () => statusBar.cycleSpeed());
   el.scoreChip.addEventListener('click', () => openScoreboard());
 
   // The reel's own buttons (index.html #review-bar).
@@ -3205,7 +2775,7 @@ export function initTable({ onExit }) {
   // The bar is on screen before the first render, so the chip needs its word
   // now rather than at the first `renderStatusBar` — an empty pill in the
   // chrome reads as a bug, not as a control waiting for a state.
-  paintSpeedChip();
+  statusBar.paintSpeedChip();
   el.handSort.addEventListener('click', () => handFan.cycleHandSort());
 }
 

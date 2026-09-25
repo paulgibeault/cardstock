@@ -58,7 +58,7 @@
 // behaviour change in #176 and #181 and it is intended. What keeps it a beat
 // rather than a freeze is that every one of those waits ends on a tap anywhere
 // on the felt or on Enter/Space, and that the felt SAYS so at exactly the rungs
-// where nothing else will: src/ui/table.js's `statusTextFor` reads "<seat>'s
+// where nothing else will: src/ui/statusBar.js's `statusTextFor` reads "<seat>'s
 // trick. Tap to go on." and "Round over. Tap to go on." whenever the beat has no
 // clock on it, and the same sentence goes to #log. A shared table is the one
 // place those gates are closed for you (src/ui/roundBeat.js's

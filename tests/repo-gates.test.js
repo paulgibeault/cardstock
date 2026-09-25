@@ -11,6 +11,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { ROOT } from "../tools/stage.mjs";
 import { listPackIds, validatePackFiles } from "../tools/pack-test.mjs";
+import { botDriverSeams } from "../src/ui/botSeams.js";
 
 const tracked = execSync("git ls-files -z", { cwd: ROOT, encoding: "utf8" })
   .split("\0").filter(Boolean);
@@ -308,13 +309,25 @@ test("the default grace is one constant, and party.js reads it rather than keepi
  * Deliberately a grep, for the reason the rules.* gate above gives: the
  * question is "does the felt's driver read the shared flag", and the cheapest
  * honest answer is the right one.
+ *
+ * TWO HALVES SINCE #223 SEAM 7. The call site still names its clock — that is
+ * the grep — but the option list is built by `botDriverSeams`
+ * (src/ui/botSeams.js), which party.js's headless driver shares. That builder
+ * CAN be loaded, so the other half is asked of it: the clock the felt names is
+ * the clock the driver gets, and there is no default for a forgotten one to
+ * fall back to. Either failing is the #71 bug with the call site untouched.
  */
 test("the felt's bot driver picks its clock from the match, not from the tab", () => {
   const src = fs.readFileSync(path.join(ROOT, "src/ui/table.js"), "utf8");
-  // The driver's option list is long; only its FIRST option matters here, and
-  // it is the line straight after the call opens.
-  const opener = src.match(/createBotDriver\(\{\s*\n\s*clock:\s*([^\n]*)/);
-  assert.ok(opener, "src/ui/table.js no longer opens its bot driver with a `clock:` option");
+  // ONE DRIVER ON THE FELT. A second construction further down the file would
+  // be a driver this gate never looked at.
+  const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  assert.strictEqual((code.match(/createBotDriver\(/g) || []).length, 1,
+    "src/ui/table.js builds more than one bot driver — every one of them has to pick its clock per match");
+  // The seams' list is long; only its FIRST option matters here, and it is the
+  // line straight after the call opens.
+  const opener = src.match(/createBotDriver\(botDriverSeams\(\(\) => session, \{\s*\n\s*clock:\s*([^\n]*)/);
+  assert.ok(opener, "src/ui/table.js no longer opens its bot driver's seams with a `clock:` option");
   assert.match(opener[1], /feltClock\(/,
     "the felt's driver must take feltClock — a fixed clock is the solo answer for the life of the tab");
   // The predicate itself, captured rather than pattern-matched around: a
@@ -325,6 +338,16 @@ test("the felt's bot driver picks its clock from the match, not from the tab", (
   assert.match(predicate, /session/,
     `feltClock must read the MATCH on the felt, not a constant — found \`shared: () => ${predicate}\`, `
     + "which is the #71 bug restored");
+
+  // THE BUILDER HANDS THAT CLOCK THROUGH, AND HAS NONE OF ITS OWN.
+  const noop = () => {};
+  const hooks = { identityOf: noop, playMove: noop, playAnnouncement: noop, onError: noop };
+  const felt = { kind: "felt", after: noop, at: noop, now: () => 0 };
+  assert.strictEqual(botDriverSeams(() => null, { clock: felt, ...hooks }).clock, felt,
+    "botDriverSeams must hand the driver the clock its caller named — a clock of its own is a "
+    + "fixed answer for the life of the tab");
+  assert.throws(() => botDriverSeams(() => null, hooks), /clock/,
+    "botDriverSeams must refuse a missing clock rather than default one — the default is the #71 bug");
 });
 
 /**

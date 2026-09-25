@@ -18,6 +18,9 @@
 // table.js all touch `document` at import time, so no Node test can load them
 // and ask what they render. The list and the arithmetic are the parts that CAN
 // be imported, and what cannot is asserted the cheapest honest way instead.
+// THE CHIP AND THE READERS ARE IMPORTABLE NOW: they left table.js for
+// src/ui/statusBar.js in #223 seam 7, and the bot driver's read for
+// src/ui/botSeams.js, so those gates below drive them instead of grepping.
 
 import { test } from "node:test";
 import assert from "node:assert";
@@ -32,6 +35,18 @@ import { SKILL_LEVELS } from "../src/ui/difficulty.js";
 import { PACE_LEVELS } from "../src/ui/pace.js";
 import { SETTINGS_DEFAULTS } from "../src/arcade/storage.js";
 import { tableCss } from "./fixtures/tableCss.js";
+import { statusBarHarness } from "./fixtures/chrome.js";
+import { currentDelayMs, currentFlightMs } from "../src/ui/statusBar.js";
+import { botDriverSeams } from "../src/ui/botSeams.js";
+import { createState } from "../src/engine/state.js";
+import { makeCtx } from "../src/engine/context.js";
+import { loadPackFromDisk } from "../tools/pack-test.mjs";
+
+/** Every file the felt reads card speed in, prose stripped. */
+const FELT_FILES = ["src/ui/table.js", "src/ui/statusBar.js", "src/ui/botSeams.js",
+  "src/ui/roundEnding.js", "src/ui/moveFlight.js"];
+const feltCode = () => FELT_FILES.map(read).join("\n")
+  .replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), "utf8");
 
@@ -230,28 +245,38 @@ test("index.html carries the chip, in the bar, with its own label element", () =
     "see the NOTE in table.css: a blanket rule here repaints the score chip as a white box");
 });
 
-test("the chip cycles the rung, and the very next flight uses it", () => {
+test("the chip cycles the rung, and the very next flight uses it", async () => {
   const src = read("src/ui/table.js");
-  assert.match(src, /el\.speedChip\.addEventListener\('click', \(\) => cycleSpeed\(\)\)/,
+  assert.match(src, /el\.speedChip\.addEventListener\('click', \(\) => statusBar\.cycleSpeed\(\)\)/,
     "the chip must be wired, or it is a pill that does nothing");
-  const cycle = src.match(/function cycleSpeed\(\) \{[\s\S]*?\n\}/);
-  assert.ok(cycle, "cycleSpeed must exist — it is the whole of the in-match control");
-  assert.match(cycle[0], /saveSettings\(/,
+  const h = statusBarHarness();
+  h.store.set("settings", { ...SETTINGS_DEFAULTS, botDelayMs: 600 });
+  h.bar.cycleSpeed();
+  const stored = h.store.get("settings").botDelayMs;
+  assert.notStrictEqual(stored, 600,
     "cycling must persist immediately — the setting outlives the match, like pace and difficulty");
   // AND NOTHING ELSE. This also wrote the module snapshot when it shipped,
   // because every reader read that snapshot. Now every reader asks storage (see
-  // the test below), so a second copy here is only a second thing to forget.
-  assert.doesNotMatch(cycle[0], /settings\.botDelayMs =/,
+  // the test below), so the next flight takes the rung with nothing to refresh.
+  assert.strictEqual(currentFlightMs(), flightDurationMs(stored),
     "the snapshot must not be written: `currentDelayMs` reads storage at the moment a "
     + "card launches, and a cached copy beside it is what broke the new-game sheet");
-  assert.match(cycle[0], /el\.log\.textContent/,
+  assert.match(h.el.log.textContent, /^Card speed: /,
     "the change must be announced — #log is the live region, and a chip's word changing "
     + "is nothing at all to a screen reader");
   // The chip has to agree with the felt it sits above, including after the
   // new-game sheet has changed the setting between two hands.
-  assert.match(src, /function renderStatusBar\(state, acting\) \{[\s\S]*?paintSpeedChip\(\)/,
+  const pack = await loadPackFromDisk("crazy-eights");
+  const state = createState({ pack, seats: 4, seed: "speed:chip" });
+  pack.template.setup(makeCtx(state));
+  h.store.set("settings", { ...SETTINGS_DEFAULTS, botDelayMs: 1100 });
+  h.bar.renderStatusBar(state, [0]);
+  assert.strictEqual(h.el.speedChipLabel.textContent, "Slow",
     "renderStatusBar must repaint the chip, or the sheet can leave it showing a stale rung");
-  assert.match(src, /speedForDelay\(currentDelayMs\(\)\)/,
+  // The chip reads the rung the same way the flights read the number.
+  h.store.set("settings", { ...SETTINGS_DEFAULTS, botDelayMs: 700 });
+  h.bar.paintSpeedChip();
+  assert.strictEqual(h.el.speedChipLabel.textContent, speedForDelay(700).label,
     "the chip must read the rung the same way the flights do, or it can sit above a felt "
     + "moving at a speed its own word denies");
 });
@@ -272,26 +297,27 @@ test("the chip cycles the rung, and the very next flight uses it", () => {
 // and no Node test can load it — the same constraint every "the wiring the
 // tests above cannot import" block in this file works around.
 test("the speed is read from storage, not from a snapshot the lobby cannot refresh", () => {
-  const src = read("src/ui/table.js");
-  const fn = src.match(/function currentDelayMs\(\) \{[\s\S]*?\n\}/);
-  assert.ok(fn, "currentDelayMs must exist — it is the one place the felt asks for the number");
-  assert.match(fn[0], /loadSettings\(\)\.botDelayMs/,
-    "the number must be read fresh at the moment it is needed");
-  assert.doesNotMatch(fn[0], /settings \?/,
-    "reading the module snapshot first is the bug: the new-game sheet writes storage "
-    + "and never touches that snapshot, so a rung picked in the lobby does not reach "
+  // DRIVEN since #223 seam 7: the readers live in src/ui/statusBar.js.
+  const h = statusBarHarness();
+  h.store.set("settings", { ...SETTINGS_DEFAULTS, botDelayMs: 1100 });
+  assert.strictEqual(currentDelayMs(), 1100,
+    "currentDelayMs must exist — it is the one place the felt asks for the number");
+  h.store.set("settings", { ...SETTINGS_DEFAULTS, botDelayMs: 350 });
+  assert.strictEqual(currentDelayMs(), 350,
+    "the number must be read fresh at the moment it is needed: the new-game sheet writes "
+    + "storage and never touches a snapshot, so a rung picked in the lobby would not reach "
     + "the felt until the tab is reloaded");
 
   // AND EVERY CONSUMER GOES THROUGH IT. One fresh read helps nobody if the five
   // flights and the bot driver still reach past it for the snapshot, which is
   // exactly the state #91 left this number in: `difficulty` beside it was fixed
   // and `botDelayMs` was not.
-  assert.ok(!/settings\??\.botDelayMs/.test(src),
+  const code = feltCode();
+  assert.ok(!/settings\??\.botDelayMs/.test(code),
     "no consumer may read botDelayMs off the snapshot — `currentDelayMs` and "
     + "`currentFlightMs` are the two ways to ask");
-  const flight = src.match(/function currentFlightMs\(\) \{[\s\S]*?\n\}/);
-  assert.ok(flight, "currentFlightMs must exist — the five flight sites share one arithmetic");
-  assert.match(flight[0], /flightDurationMs\(currentDelayMs\(\)\)/,
+  h.store.set("settings", { ...SETTINGS_DEFAULTS, botDelayMs: 850 });
+  assert.strictEqual(currentFlightMs(), flightDurationMs(850),
     "the duration must come off the live number");
   // More than the five flights since the review workstream (#196): the trick
   // reveal's and the round beat's plans, the final show's plan and the final
@@ -304,21 +330,29 @@ test("the speed is read from storage, not from a snapshot the lobby cannot refre
   // so counted a comment that happened to quote `currentFlightMs()` — the tally
   // was 8 for 7 call sites, and deleting a paragraph failed a test about flight
   // timing. The neighbour gate below strips comments for exactly this reason.
-  // AND ACROSS THE ROUND ENDING TOO (#223): `beginRoundEnding` asks for the round
-  // beat's flight in src/ui/roundEnding.js now, handed `currentFlightMs` in, and
-  // a move's own flight asks from src/ui/moveFlight.js (seam 6) the same way.
-  const code = (src + read("src/ui/roundEnding.js") + read("src/ui/moveFlight.js"))
-    .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  // AND ACROSS EVERY FILE CARVED OUT OF table.js (#223): the round beat's flight
+  // is asked in src/ui/roundEnding.js, a move's own in src/ui/moveFlight.js, and
+  // the definition lives in src/ui/statusBar.js (seam 7).
   assert.strictEqual((code.match(/currentFlightMs\(\)/g) || []).length, 6,
     "every flight-duration call site must ask currentFlightMs, plus its own definition — "
     + "a site left on the snapshot is a card that still flies at the stale rung");
-  assert.match(src, /botDelayMs: \(\) => currentDelayMs\(\)/,
+  // The bot driver asks at fire time, the way `difficulty` beside it does (#91) —
+  // through the one option list both drivers are built with.
+  const noop = () => {};
+  const seams = botDriverSeams(() => null, {
+    clock: {}, identityOf: noop, playMove: noop, playAnnouncement: noop, onError: noop,
+  });
+  h.store.set("settings", { ...SETTINGS_DEFAULTS, botDelayMs: 1100 });
+  assert.strictEqual(seams.botDelayMs(), 1100);
+  h.store.set("settings", { ...SETTINGS_DEFAULTS, botDelayMs: 350 });
+  assert.strictEqual(seams.botDelayMs(), 350,
     "the bot driver must ask at fire time, the way `difficulty` beside it does (#91)");
 
   // THE RAW NUMBER, NOT THE TREAD. `speedForDelay` snaps to the nearest rung, so
   // routing a flight through it would retime every off-ladder save: a hand-edited
   // 700 reads as Brisk (the test above) and would start flying at 600's duration.
-  assert.doesNotMatch(src, /flightDurationMs\(\s*currentSpeed\(\)/,
+  h.store.set("settings", { ...SETTINGS_DEFAULTS, botDelayMs: 700 });
+  assert.strictEqual(currentFlightMs(), flightDurationMs(700),
     "a flight must not be timed off the rung the number rounds to — see speedForDelay");
 });
 
@@ -361,7 +395,10 @@ test("a setting the new-game sheet can change is never read from a snapshot olde
   // with it `currentPace`, the one reader of `pace` — lives in
   // src/ui/roundEnding.js, and the doors a match opens through, `adoptMatch`
   // among them, in src/ui/matchDoors.js.
-  const code = (read("src/ui/table.js") + read("src/ui/roundEnding.js") + read("src/ui/matchDoors.js"))
+  // And since seam 7 the chrome, the help sheet's hint and the bot seams, which
+  // read card speed and difficulty.
+  const code = ["src/ui/table.js", "src/ui/roundEnding.js", "src/ui/matchDoors.js",
+    "src/ui/statusBar.js", "src/ui/helpSheet.js", "src/ui/botSeams.js"].map(read).join("\n")
     .replace(/\/\*[\s\S]*?\*\//g, '')
     .replace(/^\s*\/\/.*$/gm, '');
   // Indented or not: the carved modules hold their functions inside a factory.

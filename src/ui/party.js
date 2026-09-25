@@ -39,7 +39,7 @@ import { wallClock } from '../match/clock.js';
 // The lobby's own waits are session timers (§6c); `schedule` is the one door
 // onto them, and it is the same door the felt uses (#213).
 import { schedule } from './clock.js';
-import { actingSeats, announcementsFor } from '../engine/context.js';
+import { actingSeats } from '../engine/context.js';
 import { chooseBotMove } from '../engine/bot.js';
 import { enumerateLegalMoves } from '../engine/movePipeline.js';
 import { rehydrateMatch } from '../engine/replay.js';
@@ -49,8 +49,9 @@ import { createSessionRegistry } from '../match/sessionRegistry.js';
 import { EMOTES, mintTableId } from '../match/protocol.js';
 import { botById, initialsOf, pickBotIds } from '../players/roster.js';
 import { createBotDriver } from './botDriver.js';
+import { botDriverSeams } from './botSeams.js';
 import {
-  loadSettings, saveHostMatch, clearHostMatch, hostMatches, loadHostMatch,
+  saveHostMatch, clearHostMatch, hostMatches, loadHostMatch,
   clearSeatStub, sweepStaleTables, seatStubs,
 } from '../arcade/storage.js';
 import {
@@ -62,7 +63,7 @@ import {
   setLocalMoveListener, afterRemoteMove, setTablePaused, rerenderTable,
 } from './table.js';
 import { motionAllowed } from './flight.js';
-import { createSeatTable, createSeatLens, deserializeSeatTable } from '../players/seats.js';
+import { createSeatTable, deserializeSeatTable } from '../players/seats.js';
 import { sidesOf } from '../engine/sides.js';
 import { createTableSightings } from './tableSightings.js';
 import { nextFocus } from './partyFocus.js';
@@ -1924,32 +1925,24 @@ async function rehydrateOne(tableId) {
  * ------------------------------------------------------------------ */
 
 function headlessBotsFor(session) {
-  const seatLens = createSeatLens(() => session.seats);
-  return createBotDriver({
+  // THE SHARED HALF IS src/ui/botSeams.js — the settings read at fire time,
+  // the seat lens, the acting-seats question, and this session's own epoch.
+  // What follows is what this driver answers differently from the felt's.
+  return createBotDriver(botDriverSeams(() => session, {
     // The WALL clock, for the same reason the turn timer takes it: a shared
     // hand does not stop because this tab stopped painting. The felt's driver
     // takes the SESSION clock, which freezes with a suspended frame — right for
     // solo, wrong for a table other people are sitting at.
     clock: wallClock(),
-    currentEpoch: () => session.epoch,
-    botDelayMs: () => loadSettings().botDelayMs,
-    // THE HOST'S SETTING, FOR EVERY BOT AT ITS TABLE. Whoever is hosting owns
-    // the house players, the same way they own the turn clock — and a joiner
-    // whose own dial said something else would otherwise be arguing with the
-    // only device that actually runs the chooser.
-    difficulty: () => loadSettings().botDifficulty,
-    me: seatLens,
     identityOf: (seat) => session.seating?.[seat]
       || { seat, name: nameForSeat(seat, session) || `Seat ${seat}`, icon: '', color: '#6b7280', isBot: true },
-    actingSeatsOf: actingSeats,
-    announcementsFor,
     // THE ONLY REAL DIFFERENCE FROM THE FELT'S DRIVER. No animation, no log
     // line, no sound — `applyLocal` applies the move and publishes it, which is
     // the same door every other move at this table goes through.
     playMove: (_state, move) => { session.host?.applyLocal(move); },
     playAnnouncement: (_state, move) => { session.host?.applyLocal(move); },
     onError: (message) => setNotice(message),
-  });
+  }));
 }
 
 /**

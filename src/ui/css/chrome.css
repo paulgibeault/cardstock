@@ -754,7 +754,7 @@ body {
    answering a question the player just asked, so it has their attention. The
    sentence still exists and still goes to #log, the live region below the felt,
    because a player who cannot see a ring is exactly the player a hint is for
-   (src/ui/table.js showHint). */
+   (src/ui/helpSheet.js showHint). */
 .card-face-wrap--hinted .card-face,
 .stage-card.card-face-wrap--hinted .card-face {
   box-shadow: 0 0 0 3px var(--hint), 0 3px 4px var(--card-shadow);
@@ -941,7 +941,7 @@ body {
 .help-sheet__item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .help-sheet__label { font-size: 0.85rem; font-weight: 600; }
 /* The second line is the reason as often as it is the promise — see
-   `hintOffer` in src/ui/table.js — so it is styled as a note either way and
+   `hintOffer` in src/ui/helpSheet.js — so it is styled as a note either way and
    never as an error. */
 .help-sheet__note { font-size: 0.7rem; opacity: 0.72; }
 
