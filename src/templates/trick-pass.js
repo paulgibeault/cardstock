@@ -172,6 +172,14 @@ export const passPhase = {
   // A commit-by-button phase: pick cards out of the fan, watch them stage,
   // commit with the action button (src/ui/interaction.js).
   interactionMode: 'pass',
+  /**
+   * NOTHING IS LED WHILE A PASS IS OUTSTANDING (#253). The phase stays open
+   * until every seat has committed (`apply` below), so a phase-wide refusal is
+   * exactly "while any seat's pass is uncommitted". The enumerator never offers
+   * a card and the felt never stages one, but a `playCard` proposed over the
+   * wire by the turn seat was judged by the play rules alone — and led.
+   */
+  playBlocked: 'The pass is not finished.',
   weights: PASS_WEIGHTS,
 
   /**

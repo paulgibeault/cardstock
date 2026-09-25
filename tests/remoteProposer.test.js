@@ -31,7 +31,7 @@ import assert from 'node:assert';
 
 import { createState } from '../src/engine/state.js';
 import { makeCtx } from '../src/engine/context.js';
-import { enumerateLegalMoves } from '../src/engine/movePipeline.js';
+import { enumerateLegalMoves, validateMove } from '../src/engine/movePipeline.js';
 import { createSeatTable } from '../src/players/seats.js';
 import { createTableHost } from '../src/match/host.js';
 import { createTableClient } from '../src/match/client.js';
@@ -258,7 +258,38 @@ function corpus({ state, seat }) {
       frame: { ...proposeFrame('h14', { ...withFrom, from: otherHand }), tableId: TID },
     });
   }
+  // A CARD LED THROUGH AN OPEN PASS (#253). No pass move is a `playCard`, so
+  // nothing above reaches the play rules while a pass is open — and the play
+  // rules alone would take this one. The card is chosen as one the play phase
+  // WOULD accept from this seat, so the only thing that can refuse it is the
+  // pass itself, and `rule` says which refusal it has to be.
+  if (state.turn.phase === 'pass') {
+    const lead = playableOnceThePassIsDone(state, seat);
+    if (lead) {
+      cases.push({
+        name: 'a card from the seat\'s own hand, led while the pass is still open',
+        frame: { ...proposeFrame('h15', { actor: seat, type: 'playCard', cards: [lead] }), tableId: TID },
+        rule: 'phase',
+      });
+    }
+  }
   return { cases, expressible: { withCards: !!withCards, withFrom: !!withFrom } };
+}
+
+/**
+ * A card from `seat`'s hand that the PLAY rules would accept as a lead, asked
+ * of the play phase and then put back — the phase word is the only thing
+ * changed, and it is restored before anything else reads the state.
+ */
+function playableOnceThePassIsDone(state, seat) {
+  const phase = state.turn.phase;
+  state.turn.phase = 'play';
+  try {
+    return state.zones.cards(`hand.${seat}`)
+      .find((card) => validateMove(state, { actor: seat, type: 'playCard', cards: [card] }).legal) ?? null;
+  } finally {
+    state.turn.phase = phase;
+  }
 }
 
 /* ------------------------------------------------------------------ *
@@ -270,7 +301,7 @@ for (const packId of listPackIds()) {
     const t = await tableFor(packId);
     const { cases } = corpus(t);
 
-    for (const { name, frame, silentOk } of cases) {
+    for (const { name, frame, silentOk, rule } of cases) {
       const before = fingerprint(t.state);
       t.rejects.length = 0;
       t.hostErrors.length = 0;
@@ -282,6 +313,10 @@ for (const packId of listPackIds()) {
       if (!silentOk) {
         assert.ok(t.rejects.length || t.hostErrors.length,
           `${packId}: "${name}" was dropped in silence — the client will retry forever`);
+      }
+      if (rule) {
+        assert.equal(t.rejects[0]?.rule, rule,
+          `${packId}: "${name}" was refused for the wrong reason`);
       }
     }
 
@@ -316,4 +351,28 @@ test('the rate limit stops reading a flood without ever letting one through', as
   }
 
   assert.equal(fingerprint(t.state), before, 'a flood of illegal proposals moved the state');
+});
+
+test('Hearts: no seat leads a card while the pass is open (#253)', async () => {
+  // The cheaper pin, straight through validateMove on a dealt Hearts hand:
+  // every card in every hand, from the turn seat, while no seat has passed.
+  // The case in the corpus above proves the same over the wire.
+  const pack = await loadPackFromDisk('hearts');
+  const state = createState({ pack, seats: 4, seed: 'hostile:pass-blocks-play' });
+  pack.template.setup(makeCtx(state));
+  assert.equal(state.turn.phase, 'pass', 'the first Hearts hand opens on a pass');
+
+  let tried = 0;
+  for (let seat = 0; seat < state.seats; seat++) {
+    state.turn.seat = seat;
+    assert.ok(playableOnceThePassIsDone(state, seat),
+      `seat ${seat} holds no card the play rules would take — this pins nothing`);
+    for (const card of state.zones.cards(`hand.${seat}`)) {
+      const check = validateMove(state, { actor: seat, type: 'playCard', cards: [card] });
+      assert.equal(check.legal, false, `seat ${seat} led ${card} through an open pass`);
+      assert.equal(check.rule, 'phase', `seat ${seat} leading ${card} was refused for the wrong reason`);
+      tried++;
+    }
+  }
+  assert.equal(tried, 52, 'every card in every hand was tried');
 });
