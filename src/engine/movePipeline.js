@@ -1,7 +1,7 @@
 // propose -> validate -> apply -> [round boundary] -> log (design doc §5). Engine-level
 // checks run first (cheapest), then the template's rules. Pack-hook validation
 // (logic.js) is not wired yet — none of the five launch packs need it; see
-// IMPLEMENTATION_NOTES.md.
+// docs/notes/IMPLEMENTATION_NOTES.md.
 
 import { makeCtx, actingSeats } from './context.js';
 import { emitEvent, clearAllZones } from './state.js';
@@ -93,8 +93,9 @@ function maybeFinishRound(state) {
     template.startRound(ctx);
   } else {
     // Default: a fresh deal with nothing carried over. Templates with meta-state
-    // that outlives a round (contract progression) implement startRound.
-    state.playerVars = state.playerVars.map(() => ({}));
+    // that outlives a round (contract progression) implement startRound, and
+    // say what survives with the same call plus a keep-list.
+    ctx.resetPlayerVars();
     template.setup(makeCtx(state));
   }
   emitEvent(state, 'roundStart', { round: state.roundNumber });

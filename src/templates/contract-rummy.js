@@ -13,12 +13,12 @@
 //   ./contract-rummy-ui.js   two human affordances (arrange a tapped selection,
 //                            suggest a meld), which decide nothing
 
-import { initializeDeckInto } from '../engine/state.js';
 import { selectorMatches } from '../engine/selectors.js';
 import { resolveByPlayers, recycleDiscardIntoDraw } from '../engine/deal.js';
 import { applyEffect as runEffect, hasKnownEffect } from '../engine/effects.js';
+import { handCounter } from '../engine/templateKit.js';
 import {
-  isWildCard, resolveMeld, resolveHit, itemsMatchContract,
+  resolveMeld, resolveHit, itemsMatchContract,
   getMeldGroups, meldKindOf, pinnedAttr, wildHitValues,
 } from './melds.js';
 import {
@@ -41,7 +41,7 @@ function skipNextTurnFrom(ctx, seat) {
 // player vars, flip the starter. Zones are already empty on both paths — fresh
 // from createState, or cleared by the pipeline's round boundary.
 function dealRound(ctx) {
-  initializeDeckInto(ctx.state, 'draw');
+  ctx.placeDeck('draw');
   ctx.dealEach(resolveByPlayers(ctx.rules.deal, ctx.seats));
   for (let s = 0; s < ctx.seats; s++) {
     ctx.setPlayerVar(s, 'laidDown', false);
@@ -358,7 +358,7 @@ const contractRummy = {
     if (move?.type === 'hit' && !move.choice?.wilds) {
       const cardId = move.cards?.[0];
       const card = cardId && ctx.cardById(cardId);
-      if (!card || !isWildCard(ctx, card)) return null;
+      if (!card || !ctx.isWild(card)) return null;
       const { seat: targetSeat, meld: meldIndex } = move.choice || {};
       if (targetSeat === undefined || meldIndex === undefined) return null;
       const group = getMeldGroups(ctx, targetSeat)[meldIndex];
@@ -448,13 +448,7 @@ const contractRummy = {
    * has laid down.
    */
   seatCounters(ctx, seat) {
-    const hand = ctx.countIn(`hand.${seat}`);
-    const counters = [{
-      text: String(hand),
-      aria: `${hand} ${hand === 1 ? 'card' : 'cards'}`,
-      label: 'Cards',
-      kind: 'hand',
-    }];
+    const counters = [handCounter(ctx, seat)];
     const melds = getMeldGroups(ctx, seat).length;
     if (melds > 0) {
       counters.push({
@@ -535,7 +529,7 @@ const contractRummy = {
   },
 
   isRoundOver(ctx) {
-    return ctx.state.roundEnded;
+    return ctx.roundEnded();
   },
 
 

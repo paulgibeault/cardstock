@@ -53,7 +53,9 @@ import {
   loadSettings, saveHostMatch, clearHostMatch, hostMatches, loadHostMatch,
   clearSeatStub, sweepStaleTables, seatStubs,
 } from '../arcade/storage.js';
-import { fetchPack, fetchPackManifest } from './packSource.js';
+import {
+  fetchPack, fetchPackManifest, knownManifest, askedForManifest,
+} from './packSource.js';
 import { confirmAction } from './confirm.js';
 import {
   adoptSharedView, leaveSharedTable, tableContext, setSeating, dealHostedTable, resumeHostedTable,
@@ -66,6 +68,9 @@ import { createTableSightings } from './tableSightings.js';
 import { nextFocus } from './partyFocus.js';
 import {
   partyModel, tableOf, packState, seatingFromRoster as seatingOf, emptyBeliefs,
+  // HOW LONG A SEAT GETS when the host never chose. One number, and it lives
+  // with the model because the model cannot import this file — see its note.
+  DEFAULT_GRACE_MS,
 } from './partyModel.js';
 
 const el = {
@@ -90,17 +95,7 @@ const el = {
 const EMOTE_COOLDOWN_MS = 1500;
 
 /**
- * How long a remote seat may sit there before the house takes one turn for it.
- *
- * GENEROUS ON PURPOSE. This is not a chess clock; it exists so that one person
- * putting their phone down does not stop the game for everybody else. A minute
- * is long enough that nobody thinking about a real decision ever meets it, and
- * short enough that a table does not die of one distraction.
- */
-const TURN_TIMEOUT_MS = 60_000;
-
-/**
- * What a host may choose instead (plan §7).
+ * What a host may choose instead of that default (plan §7).
  *
  * A SHORT LIST, NOT A FIELD. "How many seconds should a turn get" is a question
  * with no good answer typed into a box: too small a number breaks the table for
@@ -111,13 +106,13 @@ const TURN_TIMEOUT_MS = 60_000;
  */
 const GRACE_CHOICES = Object.freeze([
   { ms: 30_000, label: '30 seconds', hint: 'everyone here, playing fast' },
-  { ms: TURN_TIMEOUT_MS, label: '1 minute', hint: 'the usual' },
+  { ms: DEFAULT_GRACE_MS, label: '1 minute', hint: 'the usual' },
   { ms: 300_000, label: '5 minutes', hint: 'a game across the evening' },
 ]);
 
 /** The grace a table runs on, falling back for a host who never chose. */
 function graceOf(session) {
-  return session?.graceMs || TURN_TIMEOUT_MS;
+  return session?.graceMs || DEFAULT_GRACE_MS;
 }
 
 /** "1 minute", for a grace that may not be one of the three we offer. */
@@ -398,8 +393,8 @@ function model() {
     sightings: tables.all(),
     sessions: sessions.all(),
     stubs: seatStubs(),
-    packNameOf: (packId) => packNames.get(packId) || null,
-    packTeamsOf: (packId) => packTeams.get(packId) ?? null,
+    packNameOf: (packId) => knownManifest(packId)?.name || null,
+    packTeamsOf,
     focusedKey: activeKey,
     now: Date.now(),
     beliefs,
@@ -935,32 +930,28 @@ function renderStrip(view = attachedView()) {
   el.strip.hidden = !el.strip.childElementCount;
 }
 
-/** packId -> the manifest's own name, fetched once per pack we are offered. */
-const packNames = new Map();
-
 /**
- * packId -> `players.teams`, filled from the SAME fetch as the name above.
+ * WHAT A PACK IS CALLED, AND WHICH CHAIRS ARE A PAIR — both out of its
+ * manifest, and out of the ONE cache that holds manifests.
  *
- * The seat picker has to say which chairs are a pair before anything is dealt,
- * and the only place that is written down is the manifest. Kept beside the name
- * rather than fetched separately so there is one request per pack and one
- * moment at which both facts become known.
+ * This module kept two Maps of its own, `packNames` and `packTeams`, filled
+ * from `fetchPackManifest` and refilled by hand wherever it was awaited. They
+ * were a second cache of a fetch src/ui/packSource.js already caches: three
+ * write sites for one fact, a `null` sentinel standing in for "in flight", and
+ * a pack whose manifest failed once remembered as being called by its id for
+ * the life of the page. `knownManifest` is the same answer read from the only
+ * copy — and the retry comes free, because a failed fetch is not cached there.
+ *
+ * The seat picker needs the teams before anything is dealt, and the only place
+ * that is written down is the manifest, so both questions are one lookup.
  */
-const packTeams = new Map();
+const packName = (packId) => knownManifest(packId)?.name || packId;
+const packTeamsOf = (packId) => knownManifest(packId)?.players?.teams ?? null;
 
-/** What to call a game in a sentence, before its manifest has landed. */
-const packName = (packId) => packNames.get(packId) || packId;
-
+/** Start the one fetch this pack ever needs, and repaint when it lands. */
 function rememberPackName(packId) {
-  if (!packId || packNames.has(packId)) return;
-  packNames.set(packId, null); // in flight; never ask twice
-  fetchPackManifest(packId)
-    .then((manifest) => {
-      packNames.set(packId, manifest?.name || packId);
-      packTeams.set(packId, manifest?.players?.teams ?? null);
-      repaint();
-    })
-    .catch(() => { packNames.set(packId, packId); });
+  if (!packId || askedForManifest(packId)) return; // in flight or held; never ask twice
+  fetchPackManifest(packId).then(repaint, () => {});
 }
 
 /**
@@ -1736,8 +1727,6 @@ export async function hostGame(packId) {
 
   const manifest = await fetchPackManifest(packId);
   const count = Math.max(2, manifest?.players?.best ?? manifest?.players?.min ?? 2);
-  packNames.set(packId, manifest?.name || packId);
-  packTeams.set(packId, manifest?.players?.teams ?? null);
 
   // THE TABLE IS BORN HERE, and everything it owns is born with it. The seat
   // table, the pack, the minted id and (after the deal) the state all belong to
@@ -2194,7 +2183,7 @@ async function joinTable(entry) {
     tableId: entry.key,
     packId: frame.packId,
     role: 'joiner',
-    packName: packNames.get(frame.packId) || frame.packId,
+    packName: packName(frame.packId),
   });
   session.pack = pack;
   session.lobbyFrame = frame;

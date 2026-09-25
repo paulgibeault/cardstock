@@ -14,7 +14,7 @@
 //                       recycled are both exhausted a table can have no legal
 //                       move at all. The fix is a house rule the reaction
 //                       vocabulary cannot express yet, not an engine change —
-//                       see the TODO in IMPLEMENTATION_NOTES.md.
+//                       see the TODO in docs/notes/IMPLEMENTATION_NOTES.md.
 //
 // Gating that at 100% would mean a permanently red suite; gating it at nothing
 // means a real regression could land unnoticed. So it gets a FLOOR, set below

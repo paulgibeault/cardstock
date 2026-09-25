@@ -10,7 +10,7 @@
 // loaded by `node --test`, which is the standing reason this file is half
 // RUNTIME (the templates' own answers, which are pure) and half SOURCE GATES
 // (the call sites that draw them). The felt itself was verified in a browser at
-// 375x812 and 1280x860 — see IMPLEMENTATION_NOTES.md; these are what stop it
+// 375x812 and 1280x860 — see docs/notes/IMPLEMENTATION_NOTES.md; these are what stop it
 // regressing into a row of anonymous numbers again.
 import { test } from "node:test";
 import assert from "node:assert";

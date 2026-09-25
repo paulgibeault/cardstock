@@ -2,6 +2,7 @@
 // Built-in decks + pack-supplied deck-file expansion (forEach Cartesian product).
 
 import { selectorMatches } from './selectors.js';
+import { memoOnPack } from './templateKit.js';
 
 export const SUITS = ['clubs', 'diamonds', 'hearts', 'spades'];
 export const RANKS = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'];
@@ -218,8 +219,6 @@ export function distinctValues(cardsById, attr) {
 /** A rank the ladder does not name. Below every card that has a place on it. */
 const OFF_LADDER = -1;
 
-const RANK_LADDERS = new WeakMap();
-
 const EMPTY_LADDER = Object.freeze({
   ranks: Object.freeze([]),
   rankIndex: new Map(),
@@ -286,31 +285,28 @@ function indexOfEach(values) {
  */
 export function rankLadderOf(pack) {
   if (!pack || typeof pack !== 'object') return EMPTY_LADDER;
-  let ladder = RANK_LADDERS.get(pack);
-  if (ladder) return ladder;
+  return memoOnPack(pack, 'cards:rankLadder', () => {
+    const cards = pack.cardsById ? [...pack.cardsById.values()] : [];
+    const declaredRanks = pack.rankLadder ?? pack.manifest?.rankLadder ?? null;
+    const declaredSuits = pack.suitLadder ?? pack.manifest?.suitLadder ?? null;
 
-  const cards = pack.cardsById ? [...pack.cardsById.values()] : [];
-  const declaredRanks = pack.rankLadder ?? pack.manifest?.rankLadder ?? null;
-  const declaredSuits = pack.suitLadder ?? pack.manifest?.suitLadder ?? null;
+    let ranks;
+    if (Array.isArray(declaredRanks) && declaredRanks.length) {
+      const named = new Set(declaredRanks.map((r) => String(r)));
+      const unnamed = deckDerivedRanks(cards).filter((r) => !named.has(String(r)));
+      ranks = [...unnamed, ...declaredRanks];
+    } else {
+      ranks = deckDerivedRanks(cards);
+    }
 
-  let ranks;
-  if (Array.isArray(declaredRanks) && declaredRanks.length) {
-    const named = new Set(declaredRanks.map((r) => String(r)));
-    const unnamed = deckDerivedRanks(cards).filter((r) => !named.has(String(r)));
-    ranks = [...unnamed, ...declaredRanks];
-  } else {
-    ranks = deckDerivedRanks(cards);
-  }
-
-  const suits = Array.isArray(declaredSuits) && declaredSuits.length ? declaredSuits.slice() : null;
-  ladder = Object.freeze({
-    ranks: Object.freeze(ranks),
-    rankIndex: indexOfEach(ranks),
-    suits: suits && Object.freeze(suits),
-    suitIndex: suits ? indexOfEach(suits) : null,
+    const suits = Array.isArray(declaredSuits) && declaredSuits.length ? declaredSuits.slice() : null;
+    return Object.freeze({
+      ranks: Object.freeze(ranks),
+      rankIndex: indexOfEach(ranks),
+      suits: suits && Object.freeze(suits),
+      suitIndex: suits ? indexOfEach(suits) : null,
+    });
   });
-  RANK_LADDERS.set(pack, ladder);
-  return ladder;
 }
 
 /** Where `rank` sits on `ladder`, or −1 for a rank it does not name. */

@@ -23,14 +23,14 @@ import { viewFor } from '../src/engine/view.js';
 import { buildUiModel } from '../src/ui/interaction.js';
 import { modelFromState, modelFromView, isHiddenCardId } from '../src/ui/tableModel.js';
 import { loadPackFromDisk } from '../tools/pack-test.mjs';
+import { actingSeats } from './fixtures/engine.js';
 
 async function tableFor(packId, seats = 3, moves = 0) {
   const pack = await loadPackFromDisk(packId);
   const state = createState({ pack, seats, seed: 20260810 });
   pack.template.setup(makeCtx(state));
   for (let i = 0; i < moves; i++) {
-    const acting = pack.template.actingSeats
-      ? pack.template.actingSeats(makeCtx(state)) : [state.turn.seat];
+    const acting = actingSeats(state);
     const move = chooseBotMove(state, acting[0]);
     if (!move) break;
     applyMove(state, move);
@@ -249,9 +249,7 @@ test('A CLIENT BUILDS THE SAME UI MODEL AS THE HOST, for its own seat', async ()
   for (const packId of ['crazy-eights', 'wildfire', 'hearts', 'milestones', 'stockpile']) {
     const table = await tableFor(packId, 3, 5);
     for (let seat = 0; seat < table.state.seats; seat++) {
-      const acting = table.pack.template.actingSeats
-        ? table.pack.template.actingSeats(makeCtx(table.state))
-        : [table.state.turn.seat];
+      const acting = actingSeats(table.state);
       const acts = acting.includes(seat);
       const moves = acts ? enumerateLegalMoves(table.state, seat) : [];
 

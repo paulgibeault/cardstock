@@ -36,7 +36,7 @@
 // penalty it has always been. A UI that disagreed with the bot about which way
 // is up would be the same bug wearing different clothes.
 
-import { sidesOf, sideOfSeat, sideScores, foldToSides } from '../engine/sides.js';
+import { sidesOf, sideMembers, sideScores, foldToSides } from '../engine/sides.js';
 
 /**
  * 'highestScore' | 'lowestScore' | null — the pack's own declaration, and null
@@ -211,14 +211,6 @@ export function lastHandSentence(pack, seats, ev, labelOf) {
 /* ------------------------------------------------------------------ *
  * The trick banner
  * ------------------------------------------------------------------ */
-
-/**
- * The seats on the side `seat` plays for. A teamless pack answers `[seat]`,
- * which is what lets everything below speak sides and nothing else.
- */
-function sideMembers(pack, seats, seat) {
-  return sidesOf(pack, seats)[sideOfSeat(pack, seats, seat)] || [seat];
-}
 
 /**
  * How many tricks this seat's SIDE has taken, counting the one just won.

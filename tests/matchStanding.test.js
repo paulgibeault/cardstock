@@ -21,6 +21,7 @@ import { applyMove } from "../src/engine/movePipeline.js";
 import { chooseBotMove } from "../src/engine/bot.js";
 import { createRng } from "../src/engine/rng.js";
 import { loadPackFromDisk } from "../tools/pack-test.mjs";
+import { actingSeats } from "./fixtures/engine.js";
 
 async function dealt(packId, seats, seed) {
   const pack = await loadPackFromDisk(packId);
@@ -52,9 +53,8 @@ const key = (move) => JSON.stringify(move);
 
 /** Walk a bot-vs-bot game, calling `visit(state, seat)` before each move. */
 function walk(state, limit, visit) {
-  const template = state.pack.template;
   for (let i = 0; i < limit && !state.gameOver; i++) {
-    const acting = template.actingSeats ? template.actingSeats(makeCtx(state)) : [state.turn.seat];
+    const acting = actingSeats(state);
     let move = null;
     let actor = null;
     for (const seat of acting) {

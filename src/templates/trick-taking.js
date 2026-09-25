@@ -6,7 +6,11 @@
 import { distinctValues, rankLadderOf, rankOrder } from '../engine/cards.js';
 import { selectorMatches } from '../engine/selectors.js';
 import { cardValue, handValue } from '../engine/scoring.js';
+import {
+  tricksOf, contractSeatOf, sideContract, sideTricks, bagsOf, bankedOf, prizeSign,
+} from '../engine/contracts.js';
 import { sidesOf, sideOfSeat, arePartners } from '../engine/sides.js';
+import { handCounter, memoOnPack, rivalExtreme } from '../engine/templateKit.js';
 import { detectDeclaredMelds } from './melds.js';
 
 /* ------------------------------------------------------------------ *
@@ -415,11 +419,11 @@ function rejectPlayCard(ctx, seat, cardId, hand) {
  * per candidate card per turn, which is the point at which a per-pack answer
  * recomputed per call stops being free.
  */
-const packPeril = new WeakMap();
-
 function perilOf(ctx) {
-  let cached = packPeril.get(ctx.pack);
-  if (cached) return cached;
+  return memoOnPack(ctx.pack, 'trick-taking:peril', () => buildPeril(ctx));
+}
+
+function buildPeril(ctx) {
   const scoring = ctx.pack.scoring || {};
   const ladder = rankLadderOf(ctx.pack);
   const peril = new Map();
@@ -450,9 +454,7 @@ function perilOf(ctx) {
     if (!card.suit || value <= 0) continue;
     if (rank > (peril.get(card.suit) ?? -Infinity)) peril.set(card.suit, rank);
   }
-  cached = { peril, topRank, topValue, lowValue, suits };
-  packPeril.set(ctx.pack, cached);
-  return cached;
+  return { peril, topRank, topValue, lowValue, suits };
 }
 
 function perilRankBySuit(ctx) {
@@ -726,7 +728,7 @@ function pipsBadge(ctx, seat) {
   if (!ctx.rules.bidding || bidUnitOf(ctx) !== 'tricks') return null;
   const badge = bidBadge(ctx, seat);
   const bid = bidOf(ctx, seat);
-  const taken = tricksTakenBy(ctx, seat);
+  const taken = tricksOf(ctx, seat);
   const over = bid !== null && bid > 0 ? Math.max(0, taken - bid) : 0;
   // The picture is the pips; this is the whole of it in words, because the
   // circles are `aria-hidden` and the badge they replace said both numbers.
@@ -797,28 +799,6 @@ function highestBidSoFar(ctx) {
   return best;
 }
 
-/**
- * The seat holding the contract at a points auction — the highest bidder.
- *
- * DERIVED RATHER THAN STORED, for the reason src/engine/scoring.js gives about
- * the same question: every other seat passed with a 0, a bid has to beat what
- * came before it, so the maximum is unique and every seat watched it being
- * made. A stored copy is a second version of a public fact, free to disagree
- * with it after a replay.
- */
-function contractSeatOf(ctx) {
-  let seat = null;
-  let best = 0;
-  for (let s = 0; s < ctx.seats; s++) {
-    const bid = bidOf(ctx, s) ?? 0;
-    if (bid > best) {
-      best = bid;
-      seat = s;
-    }
-  }
-  return seat;
-}
-
 function everySeatHasBid(ctx) {
   for (let seat = 0; seat < ctx.seats; seat++) {
     if (bidOf(ctx, seat) === null) return false;
@@ -850,63 +830,6 @@ function maxBidOf(ctx, seat) {
   const max = ctx.rules.bidding?.max;
   if (Number.isInteger(max)) return max;
   return ctx.countIn(ctx.zoneAddr('hand', seat));
-}
-
-/** How many tricks this seat has taken: its won pile, a trick at a time. */
-function tricksTakenBy(ctx, seat) {
-  return Math.floor(ctx.countIn(ctx.zoneAddr('won', seat)) / ctx.seats);
-}
-
-function sideMembers(ctx, seat) {
-  return sidesOf(ctx.pack, ctx.seats)[sideOfSeat(ctx.pack, ctx.seats, seat)];
-}
-
-/** What this side has promised between them: every positive bid, added up. */
-function sideContract(ctx, seat) {
-  let contract = 0;
-  let bid = false;
-  for (const s of sideMembers(ctx, seat)) {
-    const own = bidOf(ctx, s);
-    if (own === null) continue;
-    bid = true;
-    // A NIL ADDS NOTHING TO THE CONTRACT. It is its own promise, kept or broken
-    // by the seat that made it — the same reading src/engine/scoring.js takes.
-    if (own > 0) contract += own;
-  }
-  return bid ? contract : null;
-}
-
-/** How many tricks this side has taken so far, between them. */
-function sideTricks(ctx, seat) {
-  let tricks = 0;
-  for (const s of sideMembers(ctx, seat)) tricks += tricksTakenBy(ctx, s);
-  return tricks;
-}
-
-/**
- * THE BAGS THIS SIDE IS CARRYING — banked, plus the ones it has already taken
- * this hand.
- *
- * Null for a pack that does not bag at all (`scoring.bids.bags`), which is the
- * only gate: bags are Spades' arithmetic, declared, and Hearts and Pinochle
- * have none.
- *
- * THE LIVE ONES COUNT. `bags` in playerVars is what the round boundary banked
- * (src/engine/scoring.js keeps it on the side's first seat and this template's
- * `startRound` carries it across the wipe); a trick taken past the contract in
- * THIS hand is already a bag by the time it is taken — the scorer adds
- * `tricks - contract` whenever the contract is made, and a side past its
- * contract has made it. So the number on the felt is the number that will be
- * banked, and it does not sit still for a whole hand and then jump.
- */
-function bagsOf(ctx, seat) {
-  if (!ctx.pack.scoring?.bids?.bags) return null;
-  const members = sideMembers(ctx, seat);
-  let banked = 0;
-  for (const s of members) banked += Number(ctx.playerVar(s, 'bags')) || 0;
-  const contract = sideContract(ctx, seat);
-  const live = contract === null ? 0 : Math.max(0, sideTricks(ctx, seat) - contract);
-  return banked + live;
 }
 
 /**
@@ -1410,25 +1333,6 @@ function applyDeclareMeld(ctx, move) {
 }
 
 /**
- * WHICH WAY IS UP, from the one manifest field that says so.
- *
- * `scoring.gameOver.winner: 'highestScore'` means points are the PRIZE;
- * anything else means they are the penalty. The bot layer already reads this
- * for its match standing (src/engine/bot.js) and the tournament reads it again
- * independently — and an evaluator that ignored it is the failure that hook's
- * comment warns about: a pack that gets it wrong "gets a bot that plays to
- * lose, and nothing else in the codebase would notice".
- *
- * Both evaluators below are written in the direction the SCORE moves and
- * turned round here, once. Hearts is `lowestScore`, so its sign is −1 and its
- * evaluator is arithmetic for arithmetic the one that was measured (see
- * `evaluateState`).
- */
-function prizeSign(ctx) {
-  return ctx.pack.scoring?.gameOver?.winner === 'highestScore' ? 1 : -1;
-}
-
-/**
  * How well the trick on the table is likely to HOLD for whoever is winning it
  * — the discount the existing evaluator applies and this one wants too. A
  * trump on the shelf is above the ladder entirely, so this clamps at certain.
@@ -1543,9 +1447,9 @@ function evaluatePointsContract(ctx, seat, w = WEIGHTS) {
 
   const holds = holdsUp(ctx, taking);
 
-  const bankedBy = (side) => sides[side].reduce((sum, s) => sum
-    + (Number(ctx.playerVar(s, 'meld')?.points) || 0)
-    + handValue(ctx.cardsIn(ctx.zoneAddr('won', s)), scoring), 0);
+  // What a side has already put away — the same sum src/engine/scoring.js
+  // finally prices the round with (`bankedOf`), folded to the side.
+  const bankedBy = (side) => sides[side].reduce((sum, s) => sum + bankedOf(ctx, s), 0);
 
   /**
    * WHAT IS STILL IN THIS SEAT'S OWN HAND, AND WHY THE EVALUATOR IS WRONG
@@ -1597,7 +1501,7 @@ function evaluatePointsContract(ctx, seat, w = WEIGHTS) {
     rival = Math.max(rival, valueOfSide(side));
   }
   const value = valueOfSide(mine) - (Number.isFinite(rival) ? rival * w.CONTRACT_RIVAL_SHARE : 0);
-  return prizeSign(ctx) * value;
+  return prizeSign(ctx.pack) * value;
 }
 
 function evaluateContract(ctx, seat, w = WEIGHTS) {
@@ -1679,7 +1583,7 @@ function evaluateContract(ctx, seat, w = WEIGHTS) {
     let value = 0;
     for (const s of members) {
       const bid = bidOf(ctx, s);
-      tricks += tricksTakenBy(ctx, s);
+      tricks += tricksOf(ctx, s);
       if (bid !== null && bid > 0) contract += bid;
     }
 
@@ -1688,7 +1592,7 @@ function evaluateContract(ctx, seat, w = WEIGHTS) {
     for (const s of members) {
       if (bidOf(ctx, s) !== 0) continue;
       const worth = bidIsBlind(ctx, s) ? w.NIL_WORTH * 2 : w.NIL_WORTH;
-      const clean = tricksTakenBy(ctx, s) === 0;
+      const clean = tricksOf(ctx, s) === 0;
       value += clean ? worth : -worth;
       // The trick on the table is how a live nil dies. This is the term that
       // makes a nil bidder duck rather than follow high.
@@ -1728,7 +1632,7 @@ function evaluateContract(ctx, seat, w = WEIGHTS) {
     rival = Math.max(rival, valueOfSide(side));
   }
   const value = valueOfSide(mine) - (Number.isFinite(rival) ? rival * w.CONTRACT_RIVAL_SHARE : 0);
-  return prizeSign(ctx) * value;
+  return prizeSign(ctx.pack) * value;
 }
 
 /* ------------------------------------------------------------------ *
@@ -1781,7 +1685,7 @@ function trickBand(ctx) {
  * Hearts has to be reasoned about.
  */
 function isLiveNil(ctx, seat) {
-  return seat !== null && bidOf(ctx, seat) === 0 && tricksTakenBy(ctx, seat) === 0;
+  return seat !== null && bidOf(ctx, seat) === 0 && tricksOf(ctx, seat) === 0;
 }
 
 function scorePlayCard(ctx, move) {
@@ -1843,7 +1747,7 @@ function scorePlayCard(ctx, move) {
   // PENALTY (`scoring.gameOver.winner`, read once by `prizeSign`) wants the
   // exact opposite of "take it if you can", and the old ranking — lowest card,
   // cheapest card — is already the right answer there.
-  if (prizeSign(ctx) !== 1) return base;
+  if (prizeSign(ctx.pack) !== 1) return base;
   return base + (wins ? band : 0);
 }
 
@@ -2006,7 +1910,7 @@ function passTarget(ctx, seat, direction) {
 function passDirectionForRound(ctx) {
   const passing = ctx.rules.passing;
   if (!passing) return null;
-  const idx = (ctx.state.roundNumber - 1) % passing.schedule.length;
+  const idx = (ctx.roundNumber() - 1) % passing.schedule.length;
   return passing.schedule[idx];
 }
 
@@ -2094,10 +1998,7 @@ function dealAll(ctx) {
   const count = ctx.rules.dealAll === true ? ids.length : ids.length - (ids.length % ctx.seats);
   let seat = ctx.openingSeat();
   for (let i = 0; i < count; i++) {
-    const id = ids[i];
-    const addr = ctx.zoneAddr('hand', seat);
-    ctx.zone(addr).cards.push(id);
-    ctx.state.cardLocation.set(id, addr);
+    ctx.placeDeck(ctx.zoneAddr('hand', seat), [ids[i]]);
     seat = ctx.nextSeat(seat, 1);
   }
 }
@@ -2164,13 +2065,17 @@ const trickTaking = {
    * that does not bid gets the round boundary it always had. Hearts' seats end
    * a round with no `bags` at all, so this carries nothing and its serialised
    * bytes are unchanged (tests/replayIdentity.test.js).
+   *
+   * A BANKED ZERO NOW SURVIVES THE BOUNDARY, where the four lines this replaced
+   * dropped it (`if (carried[seat])`). `roundScoreBidsAndBags` writes a literal
+   * 0 to every non-banker seat, so those seats used to arrive at the next hand
+   * with no `bags` key rather than with a zero one. Every reader coerces
+   * (`Number(...) || 0`, `bagsOf`), so the count a seat plays and the badge it
+   * draws are identical either way; the sheet simply says "none" instead of
+   * saying nothing.
    */
   startRound(ctx) {
-    const carried = Array.from({ length: ctx.seats }, (unused, seat) => ctx.playerVar(seat, 'bags'));
-    ctx.state.playerVars = ctx.state.playerVars.map(() => ({}));
-    for (let seat = 0; seat < ctx.seats; seat++) {
-      if (carried[seat]) ctx.setPlayerVar(seat, 'bags', carried[seat]);
-    }
+    ctx.resetPlayerVars({ keep: ['bags'] });
     trickTaking.setup(ctx);
   },
 
@@ -2532,13 +2437,7 @@ const trickTaking = {
    * tricks the seat's own score chip already reports.
    */
   seatCounters(ctx, seat) {
-    const hand = ctx.countIn(`hand.${seat}`);
-    const counters = [{
-      text: String(hand),
-      aria: `${hand} ${hand === 1 ? 'card' : 'cards'}`,
-      label: 'Cards',
-      kind: 'hand',
-    }];
+    const counters = [handCounter(ctx, seat)];
 
     // WHAT A SEAT PROMISED, AND WHAT IT HAS. A bid is public the moment it is
     // made and there is nowhere else on a minimized face to read it; the two
@@ -2562,7 +2461,7 @@ const trickTaking = {
         // trick count in one mark.
         ...(pips || passed ? { openOnly: true } : {}),
       });
-      const tricks = tricksTakenBy(ctx, seat);
+      const tricks = tricksOf(ctx, seat);
       counters.push({
         text: String(tricks),
         aria: `${tricks} ${tricks === 1 ? 'trick' : 'tricks'} taken`,
@@ -2801,7 +2700,11 @@ const trickTaking = {
    * declarations were emitted in.
    */
   describeEvent(ev, { seatLabel, viewerSeat } = {}) {
-    const name = (seat) => (seat === viewerSeat ? 'You' : (seatLabel?.(seat) ?? `Seat ${seat}`));
+    // `seatLabel` already answers "You" for the reader's own seat, so the
+    // `seat === viewerSeat ? 'You' : …` that used to be here was the platform's
+    // rule written out a second time. `viewerSeat` is still read below, for the
+    // clauses that change wholesale in the second person ("are stuck with").
+    const name = (seat) => seatLabel?.(seat) ?? `Seat ${seat}`;
     if (ev.type === 'contractSet') {
       if (!ev.trump) return null;
       const suit = suitLabel(ev.trump);
@@ -3005,14 +2908,11 @@ const trickTaking = {
     // when everybody is trying to take nothing — and DEARER THAN THE DEAREST
     // is the same sentence at a pack where the points are the prize, which is
     // why the rival is picked by the same sign the whole answer is turned by.
-    const prize = prizeSign(ctx);
-    let rival = prize === 1 ? -Infinity : Infinity;
-    for (let s = 0; s < ctx.seats; s++) {
-      if (s === seat) continue;
-      const theirs = handValue(ctx.cardsIn(ctx.zoneAddr('won', s)), scoring);
-      rival = prize === 1 ? Math.max(rival, theirs) : Math.min(rival, theirs);
-    }
-    const total = Number.isFinite(rival) ? score + rival * w.RIVAL_SHARE : score;
+    const prize = prizeSign(ctx.pack);
+    const rival = rivalExtreme(ctx, seat,
+      (s) => handValue(ctx.cardsIn(ctx.zoneAddr('won', s)), scoring),
+      prize === 1 ? 'max' : 'min');
+    const total = rival === null ? score : score + rival * w.RIVAL_SHARE;
     // Written in the direction the SCORE moves — every term above is a bill —
     // and turned round for a pack whose points are the prize. Hearts is
     // `lowestScore`, so this is the identity there and the measured behaviour

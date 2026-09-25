@@ -15,22 +15,14 @@
 // same length — and not merely "did not crash".
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import fs from "node:fs";
-import path from "node:path";
-import { loadPack } from "../src/engine/packLoader.js";
 import { createState } from "../src/engine/state.js";
 import { makeCtx } from "../src/engine/context.js";
-import { ROOT } from "../tools/stage.mjs";
 import { meldDisplayOrder, resolveHit } from "../src/templates/melds.js";
+import { loadPackFromDiskSync } from "../tools/lib/packs.mjs";
 
 /** Milestones is the pack with melds AND wilds, which is the whole subject. */
 function ctxFor(packId = "milestones", seed = "meld-order") {
-  const dir = path.join(ROOT, "packs", packId);
-  const manifest = JSON.parse(fs.readFileSync(path.join(dir, "manifest.json"), "utf8"));
-  const deckPath = path.join(dir, "deck.json");
-  const deckJson = fs.existsSync(deckPath)
-    ? JSON.parse(fs.readFileSync(deckPath, "utf8")) : undefined;
-  const pack = loadPack(manifest, { deckJson });
+  const pack = loadPackFromDiskSync(packId);
   const state = createState({ pack, seats: 3, seed });
   pack.template.setup(makeCtx(state));
   return makeCtx(state);

@@ -15,13 +15,13 @@
 //
 // KEYED BY `hostDeviceId`, FOR NOW. A device hosts at most one table today, so
 // the host's identity IS the table's, and that is the whole reason this stage
-// needs no protocol change (TABLES_PLAN.md §5). When a real `tableId` goes on
+// needs no protocol change (docs/plans/TABLES_PLAN.md §5). When a real `tableId` goes on
 // the wire the key changes and nothing else here does — which is the reason the
 // key is read from a frame in one place rather than by every caller.
 //
 // NO DOM, NO ENGINE, NO SDK. Same discipline as src/players/seats.js: this runs
 // under `node --test` with no globals, and it is one of the pieces a second
-// game inherits whole (TABLES_PLAN.md §10).
+// game inherits whole (docs/plans/TABLES_PLAN.md §10).
 
 /**
  * The key a frame files under.

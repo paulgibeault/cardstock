@@ -1,6 +1,12 @@
 # Cardstock Multiplayer — Design & Work Plan
 
-**Status: design, approved for implementation.** This document is the full design for
+**Shipped.** Phase 8 is built and multiplayer is live; `TABLES_PLAN.md` then
+rebuilt what §8 assumed about one match at a time. See
+[docs/notes/IMPLEMENTATION_NOTES.md](../notes/IMPLEMENTATION_NOTES.md)
+§"Multiplayer, and then tables (2026-08)". The plan below is kept as written and
+is still the authoritative design for the wire.
+
+This document is the full design for
 Phase 8 (multiplayer) and supersedes the protocol sketches in
 `CARD_PLATFORM_DESIGN.md` §8 and §17.4–17.5 where they differ (the differences are
 listed in §13). Work is organized into GitHub work packages (§12); each issue links

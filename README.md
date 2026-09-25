@@ -26,8 +26,8 @@ looking at is a seed and a log in storage, not a process, so no bot plays
 a card in a game you closed. A **hosted** table is the deliberate
 exception — other people are sitting at it, so it keeps arbitrating and
 keeps playing its bots whether or not it is the table on your screen
-(see [TABLES_PLAN.md](TABLES_PLAN.md) §3). See
-[LOBBY_PLAN.md](LOBBY_PLAN.md) for the lobby design and
+(see [docs/plans/TABLES_PLAN.md](docs/plans/TABLES_PLAN.md) §3). See
+[docs/plans/LOBBY_PLAN.md](docs/plans/LOBBY_PLAN.md) for the lobby design and
 [src/ui/table.js](src/ui/table.js) for how the solo invariant is
 structural rather than policed.
 
@@ -53,7 +53,7 @@ transport: one device hosts, holds the only engine state, and arbitrates —
 every other device sends *requests* and receives a per-seat view. The seed
 reconstructs the whole shuffle, so it never leaves the host; a joiner is
 told only its own hand ([src/engine/view.js](src/engine/view.js)).
-[MULTIPLAYER_PLAN.md](MULTIPLAYER_PLAN.md) is the design.
+[docs/plans/MULTIPLAYER_PLAN.md](docs/plans/MULTIPLAYER_PLAN.md) is the design.
 
 **Tables outlive the screen.** A device can host one table per pack and
 hold a seat at one table per pack, at the same time. A hosted game belongs
@@ -62,11 +62,13 @@ rather than to the felt, so it survives leaving the table, keeps playing
 its bots unwatched, and comes back after a reload from seed + log under
 `mpMatch.<tableId>`. A seat you hold at a table whose host is away shows
 as **offline** and wakes on its own when they return.
-[TABLES_PLAN.md](TABLES_PLAN.md) is the design; the three-launcher suite
-(`npm run mp-acceptance`) drives it on the real transport.
+[docs/plans/TABLES_PLAN.md](docs/plans/TABLES_PLAN.md) is the design; the
+three-launcher suite (`npm run mp-acceptance`) drives it on the real transport.
 
-See **[IMPLEMENTATION_NOTES.md](IMPLEMENTATION_NOTES.md)** for what
-simulation caught and fixed, and known limitations.
+See **[CHANGELOG.md](CHANGELOG.md)** for the build record — one entry per
+issue, newest first — and
+**[docs/notes/IMPLEMENTATION_NOTES.md](docs/notes/IMPLEMENTATION_NOTES.md)**
+for what simulation caught and fixed, and the known limitations.
 
 ## Running it
 
@@ -101,16 +103,28 @@ through the shared fleet pipeline on every push to `main`.
 - **[CARD_PLATFORM_DESIGN.md](CARD_PLATFORM_DESIGN.md)** — the design
   document: architecture, engine primitives, genre templates, pack format,
   sync model, roadmap. Start here.
-- **[IMPLEMENTATION_NOTES.md](IMPLEMENTATION_NOTES.md)** — milestone 1
-  status: what's built, bugs simulation caught, known limitations.
-- **[ARCADE_ENHANCEMENTS.md](ARCADE_ENHANCEMENTS.md)** — the canonical
-  arcade-integration implementation plan (v2), phase by phase, including
-  the multiplayer work breakdown. Its v1 platform asks (capability flags,
-  targeted send, peer roster, message meta) all shipped in the launcher
-  SDK; multiplayer boot-gates on those caps with no fallback protocol.
-- **[ARCADE_COMPLIANCE.md](ARCADE_COMPLIANCE.md)** — the evaluation the
-  plan came from: scorecard against `GAME_INTEGRATION.md`, findings A–G
-  with file:line references, and the five resolved decisions.
+- **[CHANGELOG.md](CHANGELOG.md)** — the build record, one entry per issue,
+  newest first: what changed, why the code reads the way it does, and what
+  verifying it turned up.
+- **[REVIEW_PLAN.md](REVIEW_PLAN.md)** — the open workstream (#188): the
+  end-of-hand hold, the match map, and the "play from here" sandbox.
+- **[THIRTEEN_RULES.md](THIRTEEN_RULES.md)** — the rules reference the
+  climbing template and its tests are written against.
+- **[src/templates/CONTRACT.md](src/templates/CONTRACT.md)** — the template
+  contract: every hook a genre template may export, required and optional.
+  `tests/templateContract.test.js` enforces it, and the two must change
+  together.
+- **[docs/notes/IMPLEMENTATION_NOTES.md](docs/notes/IMPLEMENTATION_NOTES.md)**
+  — milestone 1: what's built, the bugs simulation caught, the two known
+  limitations, and the bot-tuning findings.
+- **[docs/plans/](docs/plans/)** — the shipped plans, kept as written next to
+  what they produced. `ARCADE_ENHANCEMENTS.md` is the arcade-integration plan
+  (v2) phase by phase including multiplayer; `ARCADE_COMPLIANCE.md` is the
+  evaluation it came from (scorecard, findings A–G with file:line, the five
+  resolved decisions); `MULTIPLAYER_PLAN.md` and `TABLES_PLAN.md` remain the
+  authoritative designs for the wire and for table concurrency. The rest are
+  the UX, chrome, card-art, lobby, meld/seat and playtest passes, plus
+  `FEEDBACK_INBOX.md`, the raw playtest log.
 - **`schema/`** — JSON Schemas for the pack manifest, deck files, and rule
   tests. Normative for those formats.
 - **`packs/`** — the five launch packs: `crazy-eights`, `wildfire`,
@@ -132,7 +146,7 @@ through the shared fleet pipeline on every push to `main`.
   patterns, the lobby's chooser tiles, and `index.js`, the factory that
   picks a pack's style from its manifest and is the only entry point the
   rest of the UI imports. A pack's manifest never reaches a style
-  ungated — see [CARD_ART_PLAN.md](CARD_ART_PLAN.md).
+  ungated — see [docs/plans/CARD_ART_PLAN.md](docs/plans/CARD_ART_PLAN.md).
 - **`packs/index.json`** — the catalog the lobby fetches, because a browser
   cannot list a directory. Its order is the grid's order;
   `tests/repo-gates.test.js` keeps its contents matching `packs/`.

@@ -1,6 +1,6 @@
 // TWO SESSIONS AT ONCE, HEADLESSLY — the net that goes under T3 (#48).
 //
-// T3 rewires session ownership in src/ui/table.js, which MULTIPLAYER_PLAN.md
+// T3 rewires session ownership in src/ui/table.js, which docs/plans/MULTIPLAYER_PLAN.md
 // names as the one code path in this repo with no unit coverage. Everything
 // here is written against the CURRENT code, so it passes before that refactor
 // and keeps passing after it; the point is that a refactor which breaks one of
@@ -34,6 +34,7 @@ import { createTableClient } from '../src/match/client.js';
 import { createTurnTimer } from '../src/match/turnTimer.js';
 import { wallClock } from '../src/match/clock.js';
 import { FRAME } from '../src/match/protocol.js';
+import { byeFrame, claimSeatFrame, proposeFrame, viewFrame } from '../src/match/frames.js';
 import { createPeerNetwork } from '../tools/peer-stub.mjs';
 import { loadPackFromDisk } from '../tools/pack-test.mjs';
 
@@ -194,7 +195,7 @@ test('one host closing ends one client, and leaves the other playing', async () 
   ada.host.start();
   dana.host.start();
 
-  adaPort.send({ k: FRAME.BYE, why: 'closed', tableId: 'tbl-ada' });
+  adaPort.send({ ...byeFrame('closed'), tableId: 'tbl-ada' });
 
   assert.deepStrictEqual(atAda.seen.ends.map((e) => e.why), ['closed'],
     'the client of the table that closed was told');
@@ -284,7 +285,7 @@ test('a re-claim is a rebind, not a refusal', async () => {
   ada.host.start();
 
   // The whole of a returning player: ask again for the seat you already hold.
-  kitPort.send({ k: FRAME.CLAIM_SEAT, seat: 1, localIndex: 0, tableId: 'tbl-ada' }, { to: 'ada' });
+  kitPort.send({ ...claimSeatFrame(1, 0), tableId: 'tbl-ada' }, { to: 'ada' });
 
   assert.strictEqual(ada.seats.seatOf('kit', 0), 1, 'the seat is still theirs');
   const snapshots = net.deliveredTo('kit').filter((f) => f.k === FRAME.SNAPSHOT);
@@ -304,9 +305,11 @@ test('a gap in seq asks for a snapshot rather than guessing', async () => {
   net.clearLog();
   // A view from the future: the client missed one and must not interpolate.
   adaPort.send({
-    tableId: 'tbl-ada', k: FRAME.VIEW, seq: 99,
-    view: viewFor(ada.state, 1, { moves: [], announcements: [], deadlines: [], seq: 99 }),
-    events: [],
+    ...viewFrame({
+      seq: 99,
+      view: viewFor(ada.state, 1, { moves: [], announcements: [], deadlines: [], seq: 99 }),
+    }),
+    tableId: 'tbl-ada',
   }, { to: 'kit' });
 
   const asked = net.deliveredTo('ada').filter((f) => f.k === FRAME.SNAPSHOT_REQ);
@@ -322,7 +325,7 @@ test('the propose budget is per device, and says so when it bites', async () => 
 
   const move = enumerateLegalMoves(ada.state, ada.state.turn.seat)[0];
   for (let i = 0; i < 60; i++) {
-    kitPort.send({ k: FRAME.PROPOSE, pid: `p${i}`, move: { ...move, actor: 1 }, tableId: 'tbl-ada' }, { to: 'ada' });
+    kitPort.send({ ...proposeFrame(`p${i}`, { ...move, actor: 1 }), tableId: 'tbl-ada' }, { to: 'ada' });
   }
   assert.ok(ada.errors.some((e) => e.kind === 'rate-limited' && e.deviceId === 'kit'),
     'a refusal nobody is told about is indistinguishable from a crashed host');
@@ -358,7 +361,7 @@ test('two hosts on one device do not answer each other’s frames', async () => 
   hearts.host.start();
 
   // Kit sits down at ONE table.
-  kitPort.send({ k: FRAME.CLAIM_SEAT, seat: 1, localIndex: 0, tableId: 'tbl-hearts' }, { to: 'hub' });
+  kitPort.send({ ...claimSeatFrame(1, 0), tableId: 'tbl-hearts' }, { to: 'hub' });
 
   assert.strictEqual(hearts.seats.seatOf('kit', 0), 1, 'the table they asked for seated them');
   assert.strictEqual(eights.seats.seatOf('kit', 0), null,

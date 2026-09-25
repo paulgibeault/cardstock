@@ -23,6 +23,7 @@ import { applyMove, enumerateLegalMoves } from "../src/engine/movePipeline.js";
 import { chooseBotMove, rankMoves } from "../src/engine/bot.js";
 import { isWild } from "../src/engine/cards.js";
 import { loadPackFromDisk } from "../tools/pack-test.mjs";
+import { actingSeats } from "./fixtures/engine.js";
 
 async function dealt(packId, seats, seed) {
   const pack = await loadPackFromDisk(packId);
@@ -60,9 +61,8 @@ const find = (state, ids, fn) => ids.find((id) => fn(state.pack.cardsById.get(id
 
 /** Walk a bot-vs-bot game, calling `visit(state, seat, move)` on each move. */
 function walk(state, limit, difficulty, visit) {
-  const template = state.pack.template;
   for (let i = 0; i < limit && !state.gameOver; i++) {
-    const acting = template.actingSeats ? template.actingSeats(makeCtx(state)) : [state.turn.seat];
+    const acting = actingSeats(state);
     let move = null;
     let actor = null;
     for (const seat of acting) {

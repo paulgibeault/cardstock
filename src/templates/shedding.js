@@ -2,11 +2,11 @@
 // Match-and-discard: play a card matching the active state on any matchOn attribute
 // (or a wild), first to empty hand wins.
 
-import { initializeDeckInto } from '../engine/state.js';
 import { resolveByPlayers, recycleDiscardIntoDraw } from '../engine/deal.js';
-import { distinctValues, isWild } from '../engine/cards.js';
+import { distinctValues } from '../engine/cards.js';
 import { applyEffect as runEffect } from '../engine/effects.js';
 import { cardValue } from '../engine/scoring.js';
+import { handCounter, rivalExtreme } from '../engine/templateKit.js';
 
 /* ------------------------------------------------------------------ *
  * What a position is worth (see `evaluateState` at the foot of this file)
@@ -65,15 +65,6 @@ export const WEIGHTS = Object.freeze({
   CARD_IN_HAND, EXIT_WORTH, WILD_WORTH, DEADWOOD_WORTH, RIVAL_SHARE,
   DUMP_VALUE_SHARE, DUMP_EFFECT_WORTH,
 });
-
-/**
- * A card that plays on anything. Asked of the shared predicate rather than of
- * the effect type alone, so a pack that tags its wilds is understood here the
- * same way contract-rummy and sequencing understand theirs.
- */
-function isWildCard(ctx, card) {
-  return isWild(card, ctx.rules.wilds);
-}
 
 function effectOf(card) {
   return card.effect || null;
@@ -147,7 +138,7 @@ function getActiveValue(ctx, attr) {
 }
 
 function cardMatchesActive(ctx, card) {
-  if (isWildCard(ctx, card)) return true;
+  if (ctx.isWild(card)) return true;
   return ctx.rules.matchOn.some((attr) => {
     const active = getActiveValue(ctx, attr);
     return active !== undefined && card[attr] === active;
@@ -336,7 +327,7 @@ function applyPlayCard(ctx, move) {
   // the discard shows a wild, and what the table now has to match is a colour
   // that exists only in a var. The event carries the chosen values so the felt
   // can show them without knowing which attribute this pack chooses on.
-  if (isWildCard(ctx, card)) {
+  if (ctx.isWild(card)) {
     const chosen = {};
     for (const attr of ctx.rules.matchOn) {
       const value = getActiveValue(ctx, attr);
@@ -493,7 +484,7 @@ const shedding = {
   },
 
   setup(ctx) {
-    initializeDeckInto(ctx.state, 'draw');
+    ctx.placeDeck('draw');
     ctx.dealEach(resolveByPlayers(ctx.rules.deal, ctx.seats));
     // Flip the starting discard card, burying wilds until a natural one turns up.
     //
@@ -508,11 +499,10 @@ const shedding = {
     // Buried to the bottom rather than reshuffled: it stays in play, and it
     // costs no RNG draws, so a seed still deals the same game.
     let starter;
-    const drawPile = ctx.zone('draw').cards;
-    for (let guard = drawPile.length; guard > 0; guard--) {
-      const top = drawPile[drawPile.length - 1];
+    for (let guard = ctx.countIn('draw'); guard > 0; guard--) {
+      const top = ctx.topOf('draw');
       if (top === undefined) break;
-      if (!isWildCard(ctx, ctx.cardById(top))) {
+      if (!ctx.isWild(ctx.cardById(top))) {
         starter = top;
         break;
       }
@@ -660,7 +650,7 @@ const shedding = {
    */
   enumerateAnnouncements(ctx, seat) {
     const cfg = ctx.rules.lastCardCall;
-    if (!cfg || ctx.state.gameOver) return [];
+    if (!cfg || ctx.gameOver()) return [];
     const out = [];
     if (isVulnerable(ctx, cfg, seat)) {
       out.push({ actor: seat, type: 'announce', id: cfg.id, label: cfg.label || 'Last card!' });
@@ -727,7 +717,7 @@ const shedding = {
   },
 
   isRoundOver(ctx) {
-    return ctx.state.roundEnded;
+    return ctx.roundEnded();
   },
 
 
@@ -815,20 +805,16 @@ const shedding = {
    * never declared wears the Catch! button, and one that did, does not.
    */
   seatCounters(ctx, seat) {
-    const hand = ctx.cardIdsIn(ctx.zoneAddr('hand', seat)).length;
+    const hand = ctx.countIn(ctx.zoneAddr('hand', seat));
     const cfg = ctx.rules.lastCardCall;
     const atCall = !!cfg && hand > 0 && hand <= callCountOf(cfg);
-    return [{
-      text: String(hand),
-      aria: atCall
-        ? `${hand} ${hand === 1 ? 'card' : 'cards'} left — down to their last`
-        : `${hand} ${hand === 1 ? 'card' : 'cards'}`,
-      label: 'Cards',
+    return [handCounter(ctx, seat, {
+      suffix: atCall ? ' left — down to their last' : '',
       // The KIND is the escalation. It is still the hand count in the primary
       // slot either way (CONTRACT.md: the badge in a given spot must not change
       // what it measures); only how loudly it is drawn changes.
       kind: atCall ? 'lastcard' : 'hand',
-    }];
+    })];
   },
 
   /** The shape of a turn, for the generated rules page (src/ui/rules.js). */
@@ -909,7 +895,7 @@ const shedding = {
     // drawing — and never while something natural fits. Wilds that also attack
     // (Wildfire's wild-draw4) are held on the same terms: the four cards it
     // costs somebody are worth less than the turn it buys you later.
-    if (isWildCard(ctx, card)) return 0;
+    if (ctx.isWild(card)) return 0;
     // Prefer dumping high-value / action cards first — simple, deliberately
     // dumb, and the one part of this function a tuner may reach (see the
     // WEIGHTS block's note on bands versus opinions).
@@ -953,7 +939,7 @@ const shedding = {
       const card = ctx.cardById(id);
       // A wild is an exit AND an exit that chooses the next active value, so it
       // counts twice; anything matching the active value is one way out.
-      if (isWildCard(ctx, card)) {
+      if (ctx.isWild(card)) {
         // AND IT IS NOT DEADWOOD. Both packs price a wild at the top of the
         // deck — 50 — and at DEADWOOD_WORTH that is 2.5 against a WILD_WORTH
         // of 1.5, so the evaluator used to rate the hand that had just thrown
@@ -973,12 +959,8 @@ const shedding = {
       score -= cardValue(card, scoring) * w.DEADWOOD_WORTH;
     }
 
-    let rivalCards = Infinity;
-    for (let s = 0; s < ctx.seats; s++) {
-      if (s === seat) continue;
-      rivalCards = Math.min(rivalCards, ctx.countIn(ctx.zoneAddr('hand', s)));
-    }
-    return Number.isFinite(rivalCards) ? score + rivalCards * w.RIVAL_SHARE : score;
+    const rivalCards = rivalExtreme(ctx, seat, (s) => ctx.countIn(ctx.zoneAddr('hand', s)), 'min');
+    return rivalCards === null ? score : score + rivalCards * w.RIVAL_SHARE;
   },
 
   /** The evaluator's numbers, for a caller that wants to play with different ones. */

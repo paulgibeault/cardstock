@@ -1,6 +1,6 @@
 // THE FIRST UNIT COVERAGE ANY PARTY-SIDE CODE HAS EVER HAD.
 //
-// TABLES_PLAN §11 records the gap and what it cost: "src/ui/party.js, table.js
+// docs/plans/TABLES_PLAN §11 records the gap and what it cost: "src/ui/party.js, table.js
 // and lobby.js still have no unit coverage. Every bug listed above was found by
 // driving the real thing" — three browsers, a real transport, and a scenario
 // written after each bug rather than before it.
@@ -20,6 +20,7 @@ import assert from 'node:assert';
 
 import {
   partyModel, tableOf, focusedTable, boundTable, packState, emptyBeliefs, SETTLE_MS,
+  DEFAULT_GRACE_MS,
 } from '../src/ui/partyModel.js';
 import { createTableSession } from '../src/match/tableSession.js';
 import { createTableDirectory } from '../src/match/tableDirectory.js';
@@ -471,7 +472,14 @@ test("a table's grace is the host's rule, not a constant compiled into our build
   assert.strictEqual(model.tables[0].graceMs, 300_000);
 
   const silent = partyModel({ ...base, sightings: sightingsOf(lobbyFrame({ graceMs: 0 })) });
-  assert.strictEqual(silent.tables[0].graceMs, 60_000, 'a host who never chose gets the default');
+  // THE CONSTANT, NOT A COPY OF ITS VALUE. It was written twice — here and as
+  // `TURN_TIMEOUT_MS` in party.js, which is the number the host's own timer
+  // actually runs on — and nothing made the two stay equal, so a host who
+  // never opened the grace menu could have run a timer the tiles disagreed
+  // with. Asserting the literal would be the same mistake a third time.
+  assert.strictEqual(silent.tables[0].graceMs, DEFAULT_GRACE_MS,
+    'a host who never chose gets the default');
+  assert.strictEqual(DEFAULT_GRACE_MS, 60_000, 'and the default is still a minute');
 });
 
 test('an empty room is an empty model, not a crash', () => {

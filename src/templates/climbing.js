@@ -34,6 +34,7 @@
 
 import { cardOrder, groupByRank, rankIndexOf, rankLadderOf, rankWindow } from '../engine/cards.js';
 import { selectorMatches } from '../engine/selectors.js';
+import { handCounter, kCombinations, memoOnPack } from '../engine/templateKit.js';
 
 /* ------------------------------------------------------------------ *
  * What a greedy bot thinks a move is worth (see `botHeuristic`)
@@ -115,8 +116,6 @@ function parseShape(entry) {
  */
 const FIXED_SIZE = Object.freeze({ single: 1, pair: 2, triple: 3, quad: 4 });
 
-const VOCABULARIES = new WeakMap();
-
 /**
  * The pack's `rules.combinations`, resolved to `kind -> { min }`.
  *
@@ -129,16 +128,15 @@ const VOCABULARIES = new WeakMap();
  * list and nothing else.
  */
 function vocabularyOf(ctx) {
-  let vocab = VOCABULARIES.get(ctx.pack);
-  if (vocab) return vocab;
-  vocab = new Map();
-  for (const entry of ctx.rules.combinations || []) {
-    const shape = parseShape(entry);
-    if (!shape) continue;
-    vocab.set(shape.kind, { min: FIXED_SIZE[shape.kind] ?? shape.size ?? 1 });
-  }
-  VOCABULARIES.set(ctx.pack, vocab);
-  return vocab;
+  return memoOnPack(ctx.pack, 'climbing:vocabulary', () => {
+    const vocab = new Map();
+    for (const entry of ctx.rules.combinations || []) {
+      const shape = parseShape(entry);
+      if (!shape) continue;
+      vocab.set(shape.kind, { min: FIXED_SIZE[shape.kind] ?? shape.size ?? 1 });
+    }
+    return vocab;
+  });
 }
 
 /**
@@ -478,10 +476,11 @@ function advance(ctx, from) {
  * whatever is left over is OUT OF PLAY (D-11: three players see 39 of the 52,
  * which is genuinely how it is played short-handed).
  *
- * Writing the zone arrays directly rather than going through ctx.moveCards is
- * sanctioned for the initial deal only — src/templates/CONTRACT.md — because
- * there is nothing for a zoneEmpty reaction to respond to while the deck is
- * being handed out.
+ * `ctx.placeDeck` rather than ctx.moveCards, because the cards are coming from
+ * outside the table rather than from another zone, and because no reaction
+ * should fire while the deck is being handed out — there is nothing for a
+ * zoneEmpty to respond to mid-deal. Sanctioned for the initial deal only
+ * (src/templates/CONTRACT.md).
  */
 function dealHands(ctx) {
   const per = ctx.rules.deal;
@@ -493,9 +492,7 @@ function dealHands(ctx) {
     for (let n = 0; n < ctx.seats; n++) {
       if (at >= ids.length) return;
       const id = ids[at++];
-      const addr = ctx.zoneAddr('hand', seat);
-      ctx.zone(addr).cards.push(id);
-      ctx.state.cardLocation.set(id, addr);
+      ctx.placeDeck(ctx.zoneAddr('hand', seat), [id]);
       // `nextSeat(from, dir)` — a STEP COUNT was being passed as the direction
       // (`nextSeat(first, n)`), which happened to visit every seat exactly once
       // and so dealt a correct but CLOCKWISE hand at a counter-clockwise table.
@@ -551,16 +548,13 @@ function offerFor(rules, seats) {
  * It goes face down beside the pile nobody takes — out of play, unseen, which
  * is exactly what the flat deal does with its own remainder.
  *
- * Writes the zone arrays directly for the same reason `dealHands` does — the
+ * Goes through `ctx.placeDeck` for the same reason `dealHands` does — the
  * initial deal is sanctioned (src/templates/CONTRACT.md).
  */
 function dealOffer(ctx, offer) {
   const ids = ctx.rng.shuffle([...ctx.pack.cardsById.keys()]);
   const per = Math.floor(ids.length / offer.piles);
-  const put = (addr, id) => {
-    ctx.zone(addr).cards.push(id);
-    ctx.state.cardLocation.set(id, addr);
-  };
+  const put = (addr, id) => ctx.placeDeck(addr, [id]);
   let at = 0;
   for (let n = 1; n <= offer.piles; n++) {
     for (let i = 0; i < per; i++) put(offerAddress(n), ids[at++]);
@@ -843,21 +837,6 @@ function extendSuited(chains, here) {
   return chains;
 }
 
-function combinationsFrom(cards, k) {
-  if (k > cards.length) return [];
-  const out = [];
-  const pick = (start, chosen) => {
-    if (chosen.length === k) { out.push(chosen.slice()); return; }
-    for (let i = start; i < cards.length; i++) {
-      chosen.push(cards[i]);
-      pick(i + 1, chosen);
-      chosen.pop();
-    }
-  };
-  pick(0, []);
-  return out;
-}
-
 /** Every combination the seat could form, as card-id lists. Shape-bounded. */
 function candidateSets(ctx, seat, { kind = null, size = null } = {}) {
   const ladder = rankLadderOf(ctx.pack);
@@ -883,7 +862,7 @@ function candidateSets(ctx, seat, { kind = null, size = null } = {}) {
     const group = byRank.get(at);
     for (const [k, n] of Object.entries(FIXED_SIZE)) {
       if (!vocab.has(k) || group.length < n || !wants(k, n)) continue;
-      for (const chosen of combinationsFrom(group, n)) out.push(chosen.map((e) => e.id));
+      for (const chosen of kCombinations(group, n)) out.push(chosen.map((e) => e.id));
     }
   }
 
@@ -942,7 +921,7 @@ function candidateSets(ctx, seat, { kind = null, size = null } = {}) {
         if (here.length < 2) break;
         const pairs = j - i + 1;
         if (pairs >= strip.min && wants('consecutive-pairs', pairs)) {
-          for (const topPair of combinationsFrom(here, 2)) {
+          for (const topPair of kCombinations(here, 2)) {
             out.push([...cardsSoFar.map((e) => e.id), ...topPair.map((e) => e.id)]);
           }
         }
@@ -1673,7 +1652,7 @@ const climbing = {
   },
 
   isRoundOver(ctx) {
-    return ctx.state.roundEnded;
+    return ctx.roundEnded();
   },
 
   /* ---------------------------------------------------------------- *
@@ -1735,12 +1714,7 @@ const climbing = {
    */
   seatCounters(ctx, seat) {
     const hand = ctx.countIn(ctx.zoneAddr('hand', seat));
-    const counters = [{
-      text: String(hand),
-      aria: `${hand} ${hand === 1 ? 'card' : 'cards'} left`,
-      label: 'Cards',
-      kind: 'hand',
-    }];
+    const counters = [handCounter(ctx, seat, { suffix: ' left' })];
 
     // WHO IS STILL IN THIS TRICK (#148). The whole shape of a climbing trick is
     // that seats drop out of it one at a time and the last one standing leads
@@ -1831,8 +1805,15 @@ const climbing = {
    * else's pass, and "the trick is yours" never appeared on the felt at all
    * (#122, round-5 item 22).
    */
-  describeEvent(ev, { seatLabel, viewerSeat }) {
-    const who = (seat) => (seat === viewerSeat ? 'You' : seatLabel(seat));
+  describeEvent(ev, { seatLabel, viewerSeat } = {}) {
+    // `seatLabel` ALREADY SAYS "You" for the reader's own seat (src/ui/table.js)
+    // — rebuilding that here was a second copy of a rule the platform owns, and
+    // the copy is the thing that goes stale when the rule changes. `viewerSeat`
+    // stays for the clauses below that are a DIFFERENT sentence in the second
+    // person rather than merely a different name (CONTRACT.md, "Naming a seat").
+    // The bag is defaulted because both call sites pass it whole and a direct
+    // `describeEvent(ev)` — from a test, or a future caller — should not throw.
+    const who = (seat) => seatLabel?.(seat) ?? `Seat ${seat}`;
     const mine = (seat) => seat === viewerSeat;
     if (ev.type === 'passed') {
       return { text: `${who(ev.seat)} passed`, tone: 'neutral' };

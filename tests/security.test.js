@@ -1,4 +1,4 @@
-// Untrusted-input gates (GAME_INTEGRATION §7b, ARCADE_COMPLIANCE.md C1–C4).
+// Untrusted-input gates (GAME_INTEGRATION §7b, docs/plans/ARCADE_COMPLIANCE.md C1–C4).
 //
 // Card fields are pack-supplied. Today every pack is ours, but the design's own
 // roadmap points at pack SHARING (§7d config exchange) and Phase 8 puts card
@@ -228,31 +228,27 @@ test("no chooser tile can be talked into a colour the repo did not generate", ()
 // half — a hostile name rendering inert in a real browser, on a real table —
 // is scenario 7 of tools/mp-acceptance.mjs.
 test("the wire carries a hostile peer name through, bounded and unmangled", async () => {
-  const { validateFrame, FRAME, PROTOCOL_VERSION } = await import("../src/match/protocol.js");
-  const verdict = validateFrame({
+  const { validateFrame } = await import("../src/match/protocol.js");
+  const { lobbyFrame } = await import("../src/match/frames.js");
+  // THE FRAME IS ORDINARY; THE NAME IS THE PAYLOAD. Built the way the host
+  // builds it, so what this measures is the validator's treatment of a hostile
+  // string rather than a fixture's resemblance to a real lobby frame.
+  const hostile = (name) => ({
+    ...lobbyFrame({
+      packId: "crazy-eights",
+      variants: [],
+      hostDeviceId: "host",
+      seatCount: 2,
+      seats: [{ seat: 0, kind: "device", deviceId: "host", name }],
+    }),
     tableId: "tbl-hostile-name",
-    k: FRAME.LOBBY,
-    protocol: PROTOCOL_VERSION,
-    packId: "crazy-eights",
-    variants: [],
-    hostDeviceId: "host",
-    seatCount: 2,
-    seats: [{ seat: 0, kind: "device", deviceId: "host", name: PAYLOAD }],
   });
+  const verdict = validateFrame(hostile(PAYLOAD));
   assert.ok(verdict.ok, verdict.reason);
   assert.equal(verdict.frame.seats[0].name, PAYLOAD,
     "the validator rewrote a name — escaping is the DOM's job and doing it here hides the payload");
 
-  const long = validateFrame({
-    tableId: "tbl-hostile-name",
-    k: FRAME.LOBBY,
-    protocol: PROTOCOL_VERSION,
-    packId: "crazy-eights",
-    variants: [],
-    hostDeviceId: "host",
-    seatCount: 2,
-    seats: [{ seat: 0, kind: "device", deviceId: "host", name: "x".repeat(5000) }],
-  });
+  const long = validateFrame(hostile("x".repeat(5000)));
   assert.ok(long.ok);
   assert.ok(long.frame.seats[0].name.length <= 60, "an unbounded name reached the roster");
 });

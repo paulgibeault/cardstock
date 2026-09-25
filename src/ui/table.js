@@ -15,7 +15,7 @@
 // Solo only, deliberately. Session timers freeze with the frame (§6c), which
 // is right for one player and wrong for a shared table: a game that stopped
 // while one player glanced at another tab would desync every peer. Phase 8
-// replaces them with host-wall-clock timeout events (ARCADE_ENHANCEMENTS §8.2).
+// replaces them with host-wall-clock timeout events (docs/plans/ARCADE_ENHANCEMENTS §8.2).
 //
 // RENDERING IS ZONE-DRIVEN. The table no longer hard-codes "a draw pile and a
 // center pile": every shared zone the pack declares (draw, discard, trick,
@@ -130,7 +130,7 @@ import {
   rememberPack, loadSettings, saveSettings, saveMatch, loadMatch, clearMatch, recordForfeit,
   loadHandPrefs, saveHandPrefs, recordDailyResult,
 } from '../arcade/storage.js';
-import { dailyRunFor, applyDailyLadder } from '../engine/dailyLadder.js';
+import { dailyRunFor, applyDailyLadder } from '../templates/contract-rummy-daily.js';
 import {
   playDeal, playCardPlayed, playDraw, playShuffle, playInvalid, playWin, playAnnouncement,
 } from '../arcade/audio.js';
@@ -5965,7 +5965,7 @@ function startGame(pack, seats, { seed, daily = null } = {}) {
  * The ladder is DERIVED, never stored: everything about the day comes back out
  * of `<packId>|<YYYY-MM-DD>`, so a resume re-derives it from the seed the save
  * already carries rather than trusting ten contracts that were written to disk
- * (src/engine/dailyLadder.js says why that matters). The pack object is the
+ * (src/templates/contract-rummy-daily.js says why that matters). The pack object is the
  * private clone `fetchPack` just handed us, so rewriting its rules affects this
  * table and nothing else.
  */

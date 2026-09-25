@@ -1,6 +1,11 @@
 # Cardstock Tables — Design & Work Plan
 
-**Status: design, approved for implementation.** This document is the full design for
+**Shipped** (#43, closed). See
+[docs/notes/IMPLEMENTATION_NOTES.md](../notes/IMPLEMENTATION_NOTES.md)
+§"Multiplayer, and then tables (2026-08)". The plan below is kept as written and
+is still the authoritative design for table concurrency and lifetime.
+
+This document is the full design for
 issue #43 (multiple concurrent tables, and games that last). It supersedes
 `MULTIPLAYER_PLAN.md` §8's "one live multiplayer match at a time" rule and the single
 `mpMatch` slot; everything else in that plan — the recovery ladder, host-only saves,

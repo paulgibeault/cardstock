@@ -8,7 +8,7 @@
 // device, with no serialization of zones, card locations or generator state.
 //
 // This shape is load-bearing beyond save/resume, which is why it is here and
-// not inlined in the storage adapter (ARCADE_ENHANCEMENTS.md Phase 8,
+// not inlined in the storage adapter (docs/plans/ARCADE_ENHANCEMENTS.md Phase 8,
 // "pre-commitments owed by earlier phases"):
 //
 //   - a resumed solo match      → rehydrateMatch(pack, stored)

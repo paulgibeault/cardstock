@@ -171,7 +171,7 @@ test("the hand's z-order ladder climbs with its lifts", () => {
     "the hand lift states could not be read out of src/ui/css/felt.css");
 });
 
-// PROVE THE GATE BITES (TABLES_PLAN.md §11) — a green run on a stylesheet that
+// PROVE THE GATE BITES (docs/plans/TABLES_PLAN.md §11) — a green run on a stylesheet that
 // is already correct says nothing about whether the check can fail.
 test("the ladder check refuses a shared rung and an unranked lift", () => {
   const good = `

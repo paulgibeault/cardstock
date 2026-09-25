@@ -28,6 +28,7 @@
 import { rankLadderOf, rankOrder } from '../engine/cards.js';
 import { selectorMatches } from '../engine/selectors.js';
 import { cardValue } from '../engine/scoring.js';
+import { handCounter, kCombinations, memoOnPack, rivalExtreme } from '../engine/templateKit.js';
 import { scoreHand, scorePlay, namedParts, scoredParts } from './cribbage-score.js';
 
 /* ------------------------------------------------------------------ *
@@ -105,8 +106,6 @@ export const WEIGHTS = Object.freeze({
  * numbers for six of the thirteen ranks and the game turns on the difference —
  * J-Q-K is a run and 10-J-Q-K-K is not a fifteen.
  */
-const packScorers = new WeakMap();
-
 /**
  * RESOLVED PER CARD, ONCE, not per question.
  *
@@ -122,26 +121,24 @@ const packScorers = new WeakMap();
  * about on the hot path.
  */
 function scorersFor(ctx) {
-  let cached = packScorers.get(ctx.pack);
-  if (cached) return cached;
-  const scoring = ctx.pack.scoring || {};
-  const ladder = rankLadderOf(ctx.pack);
-  const nobs = ctx.rules.nobs;
-  const values = new Map();
-  const orders = new Map();
-  const nobsCards = new Set();
-  for (const card of ctx.pack.cardsById.values()) {
-    values.set(card, cardValue(card, scoring));
-    orders.set(card, rankOrder(card, ladder));
-    if (nobs && selectorMatches(card, nobs)) nobsCards.add(card);
-  }
-  cached = {
-    valueOf: (card) => values.get(card) ?? 0,
-    orderOf: (card) => orders.get(card) ?? -1,
-    isNobs: (card) => nobsCards.has(card),
-  };
-  packScorers.set(ctx.pack, cached);
-  return cached;
+  return memoOnPack(ctx.pack, 'cribbage:scorers', () => {
+    const scoring = ctx.pack.scoring || {};
+    const ladder = rankLadderOf(ctx.pack);
+    const nobs = ctx.rules.nobs;
+    const values = new Map();
+    const orders = new Map();
+    const nobsCards = new Set();
+    for (const card of ctx.pack.cardsById.values()) {
+      values.set(card, cardValue(card, scoring));
+      orders.set(card, rankOrder(card, ladder));
+      if (nobs && selectorMatches(card, nobs)) nobsCards.add(card);
+    }
+    return {
+      valueOf: (card) => values.get(card) ?? 0,
+      orderOf: (card) => orders.get(card) ?? -1,
+      isNobs: (card) => nobsCards.has(card),
+    };
+  });
 }
 
 /** The seat whose crib it is this hand. Rotates with the deal, like everything else. */
@@ -237,7 +234,7 @@ function partsOf(breakdown, scored) {
  * every caller checks, and that check is what implements "the show stops".
  */
 function peg(ctx, seat, points, reason) {
-  if (ctx.state.roundEnded || ctx.state.gameOver) return false;
+  if (ctx.roundEnded() || ctx.gameOver()) return false;
   if (points <= 0) return true;
   ctx.setPlayerVar(seat, 'backPeg', ctx.score(seat));
   ctx.addScore(seat, points);
@@ -373,7 +370,7 @@ function advancePlay(ctx, from) {
     // The last card down is worth a point unless it made thirty-one, which was
     // already worth two and must not be paid for twice.
     if ((ctx.var('count') ?? 0) < limit) peg(ctx, from, ctx.rules.lastCard, 'last-card');
-    if (ctx.state.roundEnded) return;
+    if (ctx.roundEnded()) return;
     theShow(ctx);
     return;
   }
@@ -613,11 +610,7 @@ const cribbage = {
   },
 
   setup(ctx) {
-    const ids = ctx.rng.shuffle([...ctx.pack.cardsById.keys()]);
-    for (const id of ids) {
-      ctx.zone('draw').cards.push(id);
-      ctx.state.cardLocation.set(id, 'draw');
-    }
+    ctx.placeDeck('draw');
     ctx.setVar('dealer', ctx.openingSeat());
     ctx.dealEach(ctx.rules.deal);
     ctx.setVar('count', 0);
@@ -636,9 +629,7 @@ const cribbage = {
    * before your last score, and a hand boundary is not a score.
    */
   startRound(ctx) {
-    const back = Array.from({ length: ctx.seats }, (_, s) => ctx.playerVar(s, 'backPeg') ?? 0);
-    ctx.state.playerVars = ctx.state.playerVars.map(() => ({}));
-    for (let s = 0; s < ctx.seats; s++) ctx.setPlayerVar(s, 'backPeg', back[s]);
+    ctx.resetPlayerVars({ keep: ['backPeg'] });
     cribbage.setup(ctx);
   },
 
@@ -682,7 +673,7 @@ const cribbage = {
         if (ctx.countIn(handAddr(ctx, s)) > kept) return;
       }
       cutStarter(ctx);
-      if (ctx.state.roundEnded) return;
+      if (ctx.roundEnded()) return;
       startPlay(ctx);
       return;
     }
@@ -704,20 +695,10 @@ const cribbage = {
       const hand = ctx.cardIdsIn(handAddr(ctx, seat));
       const need = ctx.rules.crib;
       if (hand.length <= ctx.rules.deal - need) return [];
-      const out = [];
-      const choose = (start, picked) => {
-        if (picked.length === need) {
-          out.push({ actor: seat, type: 'discard', cards: picked.slice() });
-          return;
-        }
-        for (let i = start; i < hand.length; i++) {
-          picked.push(hand[i]);
-          choose(i + 1, picked);
-          picked.pop();
-        }
-      };
-      choose(0, []);
-      return out;
+      // Index order, which is the order the hand-rolled walk this replaced
+      // enumerated in — and the order the bot's tie-break reads (#216).
+      return kCombinations(hand, need)
+        .map((picked) => ({ actor: seat, type: 'discard', cards: picked }));
     }
     if (ctx.turn.phase !== 'play') return [];
     if (seat !== ctx.turn.seat) return [];
@@ -738,7 +719,7 @@ const cribbage = {
   },
 
   isRoundOver(ctx) {
-    return ctx.state.roundEnded;
+    return ctx.roundEnded();
   },
 
   /**
@@ -758,7 +739,7 @@ const cribbage = {
 
   /**
    * HOW FAR ALONG THE MATCH A SEAT IS — the rollout's terminal signal
-   * (src/engine/CONTRACT.md, "what the `hard` bot asks of you").
+   * (src/templates/CONTRACT.md, "what the `hard` bot asks of you").
    *
    * It has to be exported rather than left to the default for one reason: the
    * default is the accumulated score SIGNED BY `scoring.gameOver.winner`, and
@@ -771,12 +752,8 @@ const cribbage = {
    * across the round boundary.
    */
   matchStanding(ctx, seat) {
-    let best = -Infinity;
-    for (let s = 0; s < ctx.seats; s++) {
-      if (s === seat) continue;
-      best = Math.max(best, ctx.score(s));
-    }
-    return ctx.score(seat) - (Number.isFinite(best) ? best : 0);
+    const best = rivalExtreme(ctx, seat, (s) => ctx.score(s), 'max');
+    return ctx.score(seat) - (best ?? 0);
   },
 
   /* ---------------------------------------------------------------- *
@@ -862,7 +839,6 @@ const cribbage = {
     const value = ctx.score(seat);
     const from = ctx.playerVar(seat, 'backPeg') ?? 0;
     const of = ctx.rules.target;
-    const hand = ctx.countIn(handAddr(ctx, seat));
     return [
       {
         text: String(value),
@@ -873,13 +849,7 @@ const cribbage = {
         from,
         of,
       },
-      {
-        text: String(hand),
-        aria: `${hand} ${hand === 1 ? 'card' : 'cards'} in hand`,
-        label: 'Cards',
-        kind: 'hand',
-        minimizedOnly: true,
-      },
+      handCounter(ctx, seat, { suffix: ' in hand', minimizedOnly: true }),
     ];
   },
 
@@ -998,13 +968,12 @@ const cribbage = {
     const starter = starterId ? ctx.cardById(starterId) : null;
 
     let score = ctx.score(seat) * w.PEGGED_WORTH;
-    let best = -Infinity;
     for (let s = 0; s < ctx.seats; s++) {
       if (s === seat) continue;
       score -= ctx.score(s) * w.PEGGED_WORTH / Math.max(1, ctx.seats - 1);
-      best = Math.max(best, ctx.score(s));
     }
-    if (Number.isFinite(best)) score += (ctx.score(seat) - best) * w.LEAD_WORTH;
+    const best = rivalExtreme(ctx, seat, (s) => ctx.score(s), 'max');
+    if (best !== null) score += (ctx.score(seat) - best) * w.LEAD_WORTH;
 
     // What is still to come at the show. During the play the four cards are
     // split between hand and the seat's own played pile, and both halves count
