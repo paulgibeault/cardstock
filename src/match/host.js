@@ -15,15 +15,17 @@
 // the interesting case is not a bug.
 //
 // EVERY MOVE GOES THROUGH THE SAME DOOR. A remote proposal, a local player's
-// tap and a bot's turn all reach the engine through `applyMove` and all leave
+// tap and a bot's turn all reach the engine through `rules.apply` and all leave
 // the same log entry. There is no privileged path, which is what keeps replay,
 // resume and resync honest — and it is why a timeout is a move (src/match/turnTimer.js)
 // rather than something the table does to a seat.
 
-import { validateMove, applyMove, enumerateLegalMoves } from '../engine/movePipeline.js';
-import { actingSeats, announcementsFor } from '../engine/context.js';
-import { viewFor, eventsFor } from '../engine/view.js';
-import { baseId } from '../engine/selectors.js';
+//
+// THE HOST KNOWS NO RULES OF ITS OWN. Legality, application, the moves a seat
+// may make and what each seat may see all come in as one `rules` object from
+// the construction site (cardstock's is src/engine/tableRules.js), so this
+// file imports nothing from the engine and a second game can hand in its own
+// (#50; src/match/README.md).
 import { FRAME, validateFrame, isSafeId, EMOTES } from './protocol.js';
 import {
   lobbyFrame, viewFrame, rejectFrame, emoteFrame, byeFrame,
@@ -66,7 +68,17 @@ export function needsHostDecision(status) {
   return status === 'gone';
 }
 
+/** What a host needs from its rules object — see src/engine/tableRules.js. */
+const HOST_RULES = [
+  'validate', 'apply', 'enumerateMoves', 'actingSeats', 'announcementsFor',
+  'viewFor', 'eventsFor', 'cardExists',
+];
+
 /**
+ * @param rules     the game's rules: { validate, apply, enumerateMoves,
+ *                  actingSeats, announcementsFor, viewFor, eventsFor,
+ *                  cardExists } — cardstock's is src/engine/tableRules.js.
+ *                  Required; the host has no rules to fall back on.
  * @param peer      the peer port: send/onMessage/onReady/onPeersChange/peers/self/caps/queue
  * @param seats     the seat ownership table (src/players/seats.js)
  * @param liveState () => the engine state, or null between matches
@@ -83,6 +95,7 @@ export function needsHostDecision(status) {
  * @param hooks     { onSeatsChanged, onApplied, onEmote, onError, onBye }
  */
 export function createTableHost({
+  rules,
   peer,
   seats,
   tableId,
@@ -98,6 +111,8 @@ export function createTableHost({
   hooks = {},
 }) {
   if (!isSafeId(tableId)) throw new Error('createTableHost: a table needs an id');
+  const missing = HOST_RULES.filter((k) => typeof rules?.[k] !== 'function');
+  if (missing.length) throw new Error(`createTableHost: rules lacks ${missing.join(', ')}`);
   const unsubscribes = [];
   const budgets = new Map(); // deviceId -> {count, until}
   let started = false;
@@ -253,13 +268,13 @@ export function createTableHost({
   function sendViewTo(seat, deviceId, { kind = FRAME.VIEW, events = [] } = {}) {
     const state = liveState();
     if (!state) return false;
-    const acting = actingSeats(state).includes(seat);
+    const acting = rules.actingSeats(state).includes(seat);
     return sendTo(deviceId, viewFrame({
       kind,
       seq,
-      view: viewFor(state, seat, {
-        moves: acting ? enumerateLegalMoves(state, seat) : [],
-        announcements: acting ? announcementsFor(state, seat) : [],
+      view: rules.viewFor(state, seat, {
+        moves: acting ? rules.enumerateMoves(state, seat) : [],
+        announcements: acting ? rules.announcementsFor(state, seat) : [],
         // A CLIENT RENDERS A COUNTDOWN; IT NEVER OWNS ONE. These are absolute
         // host-clock instants, so a client can show the time left without ever
         // being in a position to decide that it ran out — which would be a
@@ -267,7 +282,7 @@ export function createTableHost({
         deadlines: deadlines(),
         seq,
       }),
-      events: eventsFor(state, seat, events),
+      events: rules.eventsFor(state, seat, events),
     }));
   }
 
@@ -316,7 +331,7 @@ export function createTableHost({
    */
   function cardsExist(state, move) {
     if (!Array.isArray(move.cards)) return true;
-    return move.cards.every((id) => state.pack.cardsById.has(baseId(id)));
+    return move.cards.every((id) => rules.cardExists(state, id));
   }
 
   function handleClaim(fromDeviceId, frame) {
@@ -361,11 +376,11 @@ export function createTableHost({
     }
 
     // THE FULL VALIDATOR, AND VALIDATE-THEN-APPLY RATHER THAN TRY/CATCH.
-    // `applyMove` throws on an illegal move, and a throw from inside a message
+    // `rules.apply` throws on an illegal move, and a throw from inside a message
     // handler is a table that stops. Asking first means a refused proposal
     // leaves the state bit-identical, which is the property the engine test
     // pins.
-    const check = validateMove(state, move);
+    const check = rules.validate(state, move);
     if (!check.legal) {
       return void sendTo(fromDeviceId, rejectFrame(
         frame.pid,
@@ -465,9 +480,9 @@ export function createTableHost({
   function applyLocal(move) {
     const state = liveState();
     if (!state) return null;
-    const check = validateMove(state, move);
+    const check = rules.validate(state, move);
     if (!check.legal) return check;
-    applyMove(state, move);
+    rules.apply(state, move);
     const events = state.events.slice();
     publish(events);
     hooks.onApplied?.(state, move, events);

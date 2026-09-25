@@ -30,6 +30,7 @@ import { enumerateLegalMoves } from '../src/engine/movePipeline.js';
 import { viewFor, cardIdsIn } from '../src/engine/view.js';
 import { createSeatTable } from '../src/players/seats.js';
 import { createTableHost } from '../src/match/host.js';
+import { tableRules } from '../src/engine/tableRules.js';
 import { createTableClient } from '../src/match/client.js';
 import { createTurnTimer } from '../src/match/turnTimer.js';
 import { wallClock } from '../src/match/clock.js';
@@ -94,6 +95,7 @@ async function buildTable({ packId = 'crazy-eights', seed, hostDeviceId, port, j
   const errors = [];
   const emotes = [];
   const host = createTableHost({
+    rules: tableRules,
     peer: port,
     seats,
     tableId,
@@ -111,6 +113,7 @@ async function buildTable({ packId = 'crazy-eights', seed, hostDeviceId, port, j
 function watchedClient(port, hostDeviceId, expects, tableId) {
   const seen = { views: [], lobbies: [], ends: [], emotes: [], problems: [] };
   const client = createTableClient({
+    rules: tableRules,
     peer: port,
     host: hostDeviceId,
     tableId,

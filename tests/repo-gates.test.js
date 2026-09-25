@@ -849,39 +849,60 @@ test("`!important` appears only under prefers-reduced-motion", () => {
 });
 
 /**
- * src/match/ IMPORTS NOTHING FROM THE ENGINE OR THE UI — EXCEPT WHAT #50 HAS YET
- * TO INJECT.
+ * src/match/ IMPORTS NOTHING FROM THE ENGINE OR THE UI.
  *
- * #50 (T5) makes src/match/ a game-agnostic kit: the rules come in as an object
- * from the construction site in src/ui/, so a second game can supply its own.
- * That boundary does not hold yet — createTableHost still imports the engine's
- * pipeline, and the client the engine's view version — and those are listed
- * below, EXACTLY: a new engine import in either file fails, and so does one of
- * these disappearing, which is the prompt to shrink the list. Every other file
- * in the directory is held to the boundary already. #225 put a solo match on a
- * TableSession (src/match/tableSession.js) without teaching it any rules — the
- * pack and state are handed in — and this is what keeps it that way.
- *
- * When #50 lands, NOT_YET_INJECTED empties and this becomes the gate it asks for.
+ * #50 (T5) made src/match/ a game-agnostic kit: the rules come in as one object
+ * from the construction site (cardstock's is src/engine/tableRules.js, handed
+ * to createTableHost / createTableClient by src/ui/party.js, tools/simulate.mjs
+ * and the tests), so a second game can supply its own. #225 held every file but
+ * host.js and client.js to this already, with a ratchet listing the five engine
+ * imports those two still had; #50 injected them and deleted the ratchet, so
+ * there are no exceptions. A solo match's TableSession is handed its pack and
+ * state the same way. An import from ../engine/ or ../ui/ anywhere in the
+ * directory is a rule the kit learned instead of being told — pass it in.
  */
-const NOT_YET_INJECTED = {
-  "src/match/host.js": [
-    "../engine/movePipeline.js", "../engine/context.js", "../engine/view.js", "../engine/selectors.js",
-  ],
-  "src/match/client.js": ["../engine/view.js"],
-};
-
-test("src/match/ reaches into neither the engine nor the UI (#50, ratcheted by #225)", () => {
+test("src/match/ reaches into neither the engine nor the UI (#50)", () => {
   const files = tracked.filter((f) => /^src\/match\/[^/]+\.js$/.test(f));
-  assert.ok(files.includes("src/match/tableSession.js"), "the walk found no src/match/ files at all");
+  assert.ok(files.includes("src/match/host.js") && files.includes("src/match/tableSession.js"),
+    "the walk found no src/match/ files at all");
+  const offenders = [];
   for (const f of files) {
     const code = fs.readFileSync(path.join(ROOT, f), "utf8")
       .replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
     // `from '…'`, a bare `import '…'`, and a dynamic `import('…')`.
     const specifiers = [...code.matchAll(/(?:\bfrom\s*|\bimport\s*\(?\s*)['"]([^'"]+)['"]/g)].map((m) => m[1]);
-    const outside = specifiers.filter((s) => /^\.\.\/(engine|ui)\//.test(s)).sort();
-    assert.deepStrictEqual(outside, [...(NOT_YET_INJECTED[f] || [])].sort(),
-      `${f} imports ${JSON.stringify(outside)} from outside the kit — src/match/ is handed its rules, `
-      + "it does not import them (#50). If an import went away, shrink NOT_YET_INJECTED to match.");
+    for (const s of specifiers) {
+      if (/^\.\.\/(engine|ui)\//.test(s)) offenders.push(`${f} imports ${s}`);
+    }
   }
+  assert.deepStrictEqual(offenders, [],
+    "src/match/ is handed its rules, it does not import them (#50) — add what it needs to "
+    + "the rules object (src/engine/tableRules.js) and pass it in at the construction site");
+});
+
+/*
+ * AND EVERY CONSTRUCTION SITE HANDS THEM IN. createTableHost / createTableClient
+ * throw without a `rules` object, but the two calls in src/ui/party.js are only
+ * reached over the real transport (mp-acceptance) — no node test hosts through
+ * the lobby — so a site that dropped the argument would be green here and dead
+ * on the first "Play together". This reads each call's argument list instead.
+ */
+test("every createTableHost / createTableClient call passes `rules` (#50)", () => {
+  const offenders = [];
+  let calls = 0;
+  for (const f of tracked.filter((t) => /^(src|tools)\/.*\.m?js$/.test(t))) {
+    const code = fs.readFileSync(path.join(ROOT, f), "utf8");
+    for (const m of code.matchAll(/\bcreateTable(Host|Client)\(\{/g)) {
+      calls += 1;
+      // `rules` is the FIRST key, by convention and so that this can check it
+      // without parsing: only whitespace and line comments may come before it.
+      const rest = code.slice(m.index + m[0].length);
+      if (!/^(?:\s|\/\/[^\n]*\n)*rules\b/.test(rest)) {
+        offenders.push(`${f}:${code.slice(0, m.index).split("\n").length} createTable${m[1]}`);
+      }
+    }
+  }
+  assert.ok(calls >= 5, `found only ${calls} construction sites — the scan has stopped seeing them`);
+  assert.deepStrictEqual(offenders, [],
+    "hand the table its rules, as the first key: `rules: tableRules` (src/engine/tableRules.js)");
 });

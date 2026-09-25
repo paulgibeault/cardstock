@@ -35,9 +35,15 @@ import {
 import {
   claimSeatFrame, proposeFrame, snapshotReqFrame, emoteFrame, byeFrame, seatOfSelf,
 } from './frames.js';
-import { VIEW_VERSION } from '../engine/view.js';
+
+// THE CLIENT RUNS NO RULES — it holds a view — but it has to know which view
+// shape it can draw. That comes in on the same `rules` object the host is
+// handed (cardstock's is src/engine/tableRules.js), so this file imports
+// nothing from the engine (#50).
 
 /**
+ * @param rules     the game's rules object; the client reads only `viewVersion`,
+ *                  the view shape this build draws. Required.
  * @param peer      the peer port (Arcade.peer or a stub)
  * @param expects   () => ({ packId, packVersion, variants }) this build has loaded
  * @param host      WHICH table this is a client of, when the caller knows. See
@@ -47,8 +53,10 @@ import { VIEW_VERSION } from '../engine/view.js';
  *                  them it meant to sit down with.
  * @param hooks     { onLobby, onView, onReject, onEmote, onIncompatible, onError, onEnd }
  */
-export function createTableClient({ peer, expects, host = null, tableId, hooks = {} }) {
+export function createTableClient({ rules, peer, expects, host = null, tableId, hooks = {} }) {
   if (!isSafeId(tableId)) throw new Error('createTableClient: a table needs an id');
+  if (rules?.viewVersion === undefined) throw new Error('createTableClient: rules lacks viewVersion');
+  const { viewVersion } = rules;
   const unsubscribes = [];
   let started = false;
   let hostDeviceId = host || null;
@@ -133,8 +141,8 @@ export function createTableClient({ peer, expects, host = null, tableId, hooks =
    * ---------------------------------------------------------------- */
 
   function acceptView(frame) {
-    if (frame.view.v !== VIEW_VERSION) {
-      hooks.onIncompatible?.({ why: 'view', theirs: frame.view.v, ours: VIEW_VERSION });
+    if (frame.view.v !== viewVersion) {
+      hooks.onIncompatible?.({ why: 'view', theirs: frame.view.v, ours: viewVersion });
       return;
     }
 

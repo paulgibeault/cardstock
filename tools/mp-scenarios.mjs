@@ -365,6 +365,7 @@ const unknownTarget = {
     // over to everybody is the one failure this design cannot have.
     const surfaced = await frames.H.evaluate(async () => {
       const { createTableHost } = await window.__mod('src/match/host.js');
+      const { tableRules } = await window.__mod('src/engine/tableRules.js');
       const table = await window.__mod('src/ui/table.js');
       // A REAL STATE, because a view is what gets sent and a view needs a pack.
       // Only the peer and the seat ownership are stand-ins, and they are the
@@ -373,6 +374,7 @@ const unknownTarget = {
       const seen = [];
       const sent = [];
       const host = createTableHost({
+        rules: tableRules,
         tableId: 'tbl-unreachable',
         peer: {
           self: () => ({ deviceId: 'host' }),

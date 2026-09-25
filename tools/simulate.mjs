@@ -22,6 +22,7 @@ import { createSeatTable } from '../src/players/seats.js';
 import { createTableHost } from '../src/match/host.js';
 import { createTableClient } from '../src/match/client.js';
 import { cardIdsIn } from '../src/engine/view.js';
+import { tableRules } from '../src/engine/tableRules.js';
 import { createPeerNetwork } from './peer-stub.mjs';
 import { PACKS_DIR, readJson, listPackIds, loadPackFromDisk } from './lib/packs.mjs';
 import { pickMove, stepRound, noMoveReason } from './lib/botLoop.mjs';
@@ -547,6 +548,9 @@ function playOneOverProtocol(pack, seatCount, seed) {
   let clock = 0;
   const faults = [];
   const host = createTableHost({
+    // THE SECOND CONSUMER IN MINIATURE (#50): the kit is handed its rules the
+    // way any caller hands them, not by importing the engine itself.
+    rules: tableRules,
     // One table per simulated run (protocol v2 names every frame's table).
     tableId: 'tbl-sim',
     peer: hostPort,
@@ -564,6 +568,7 @@ function playOneOverProtocol(pack, seatCount, seed) {
     const deviceId = `d${seat}`;
     const port = net.createDevice(deviceId, { name: `Player ${seat}` });
     const client = createTableClient({
+      rules: tableRules,
       tableId: 'tbl-sim',
       peer: port,
       expects: packInfo,

@@ -34,6 +34,7 @@ import { makeCtx } from '../src/engine/context.js';
 import { enumerateLegalMoves, validateMove } from '../src/engine/movePipeline.js';
 import { createSeatTable } from '../src/players/seats.js';
 import { createTableHost } from '../src/match/host.js';
+import { tableRules } from '../src/engine/tableRules.js';
 import { createTableClient } from '../src/match/client.js';
 // THE ENVELOPE IS BUILT; THE MOVE IS THE HOSTILE PART. Every case below is a
 // structurally perfect `propose` carrying a lie, which is the only shape that
@@ -80,7 +81,7 @@ async function tableFor(packId) {
   seats.claim(0, { deviceId: 'host' });
 
   const hostErrors = [];
-  const host = createTableHost({ tableId: TID,
+  const host = createTableHost({ rules: tableRules, tableId: TID,
     peer: hostPort,
     seats,
     liveState: () => state,
@@ -94,7 +95,7 @@ async function tableFor(packId) {
   });
 
   const rejects = [];
-  const a = createTableClient({ tableId: TID,
+  const a = createTableClient({ rules: tableRules, tableId: TID,
     peer: aPort,
     expects: () => ({
       packId: pack.id,

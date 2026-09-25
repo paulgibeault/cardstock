@@ -23,6 +23,7 @@ import assert from 'node:assert';
 
 import { createSeatTable } from '../src/players/seats.js';
 import { createTableHost } from '../src/match/host.js';
+import { tableRules } from '../src/engine/tableRules.js';
 import { createTableClient } from '../src/match/client.js';
 import { createTableDirectory, tableKeyOf } from '../src/match/tableDirectory.js';
 import { FRAME, validateFrame, isAuthentic } from '../src/match/protocol.js';
@@ -53,6 +54,7 @@ async function twoHostParty() {
     return {
       seats,
       host: createTableHost({
+        rules: tableRules,
         peer,
         seats,
         tableId: `tbl-${deviceId}`,
@@ -146,6 +148,7 @@ test('a client of one table is unmoved by the other table’s frames', async () 
   const lobbies = [];
   const problems = [];
   const client = createTableClient({
+    rules: tableRules,
     peer: party.ports.kit,
     tableId: 'tbl-ada',
     // The table Kit sat down at, NAMED. Without this the client falls back to
@@ -183,6 +186,7 @@ test('a frame for OUR table from the wrong device is still a spoof', async () =>
   const party = await twoHostParty();
   const problems = [];
   const client = createTableClient({
+    rules: tableRules,
     peer: party.ports.kit,
     host: 'ada',
     tableId: 'tbl-ada',
