@@ -401,8 +401,8 @@ export function describeContract(items) {
 export const ACTION_LABEL_MAX_CHARS = 11;
 
 /**
- * WHAT A SIMULTANEOUS COMMIT WANTS, AND WHAT IT IS CALLED — the template's
- * answer, with a generic fallback that says nothing it cannot know.
+ * WHAT A COMMIT WANTS, AND WHAT IT IS CALLED — the template's answer, with a
+ * generic fallback that says nothing it cannot know.
  *
  * The `pass` mode is "multi-select exactly N, commit with the action button",
  * and everything specific about it — how many N is, what the button says, what
@@ -410,14 +410,30 @@ export const ACTION_LABEL_MAX_CHARS = 11;
  * per-genre. Hearts wants three cards passed left; cribbage wants two thrown to
  * somebody's crib. Neither of those belongs in this file.
  *
+ * AND THE `bid` MODE IS THE SAME QUESTION WITH NO CARDS IN IT (#219). A bid is
+ * one button and a dialog, and the button said `'Bid'` and made a
+ * `{type: 'bid'}` move from a literal here, while src/ui/table.js's status bar
+ * branched on `turn.phase === 'bid'` — seven lines below the comment explaining
+ * why a phase name may not appear in that file. Both are this hook's answers now:
+ * `action`/`moveType` for the button, `staging`/`waiting` for the bar. The count
+ * fields simply go unread, the way `moveType` goes unread for a pass.
+ *
  * THE MOVE TYPE COMES FROM THE ENUMERATION, not from the prompt: the template
  * has already said what the commit move is called by offering one, and reading
  * it back is one fewer thing for a template to get out of step with itself.
  * `moveType` is null when the seat has nothing left to commit, which is exactly
- * when the button should not exist.
+ * when the button should not exist. A commit that carries NO CARDS — a bid, a
+ * meld of nothing — has no card-carrying move to read it off and names it
+ * instead.
+ *
+ * `voice` IS THE TABLE'S NAMES FOR ITS SEATS, and it is optional for the same
+ * reason `describeEvent`'s bag is defaulted: the caller that only wants the
+ * button (`buildUiModel`, below) is a pure function over state with no roster in
+ * it, so a prompt that needs a name says nothing rather than making one up, and
+ * the sentence falls back to this file's generic one.
  */
-export function commitPromptFor(state, seat, moves = []) {
-  const declared = state.pack.template.commitPrompt?.(makeCtx(state), seat) || null;
+export function commitPromptFor(state, seat, moves = [], voice = {}) {
+  const declared = state.pack.template.commitPrompt?.(makeCtx(state), seat, voice) || null;
   // The move the button makes. A template names it when it must — a commit of
   // ZERO cards has no card-carrying move to find it by (Pinochle's meld) — and
   // otherwise it is read off the enumeration, which has already said what the
@@ -589,8 +605,19 @@ export function buildUiModel(state, { seat, moves = [], acts = false, selection 
     // (`pendingChoice`, src/ui/table.js), exactly as a wild is asked its
     // colour. That is what keeps the felt free of anything that knows what a
     // trick is: one button, one dialog, both generic.
-    if (moves.some((move) => move.type === 'bid')) {
-      ui.action = { label: 'Bid', makeMove: () => ({ actor: seat, type: 'bid' }) };
+    //
+    // AND ITS WORDS AND ITS TYPE ARE THE TEMPLATE'S (#219). This said `'Bid'`
+    // and built `{type: 'bid'}` out of a literal — one template's word for its
+    // own move, in the file whose whole job is not to know one. `commitPrompt`
+    // names both, and `moveType` null means the enumerator is not offering the
+    // move, so the button does not exist. No cards go on it: a bid mode's hand
+    // is inert by definition.
+    const prompt = commitPromptFor(state, seat, moves);
+    if (prompt.moveType) {
+      ui.action = {
+        label: prompt.action,
+        makeMove: () => ({ actor: seat, type: prompt.moveType }),
+      };
     }
     return ui;
   }

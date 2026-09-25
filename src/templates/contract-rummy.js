@@ -19,7 +19,7 @@ import { applyEffect as runEffect, hasKnownEffect } from '../engine/effects.js';
 import { handCounter } from '../engine/templateKit.js';
 import {
   resolveMeld, resolveHit, itemsMatchContract,
-  getMeldGroups, meldKindOf, pinnedAttr, wildHitValues,
+  getMeldGroups, meldDisplayOrder, meldKindOf, pinnedAttr, wildHitValues,
 } from './melds.js';
 import {
   findContractLayDown, findHits, scoreDraw, scoreDiscard, evaluateState, WEIGHTS,
@@ -409,6 +409,26 @@ const contractRummy = {
    */
   getMeldGroups(ctx, seat) {
     return getMeldGroups(ctx, seat);
+  },
+
+  /**
+   * THE ORDER A LAID MELD READS IN, which is not the order it was laid in.
+   *
+   * A run held `6 3 W 5` is a legal run and reads as a scramble, so the chip
+   * and its inspector draw it sorted — and the STORED array stays exactly as
+   * the engine wrote it, because that array is match state (`meldDisplayOrder`
+   * in src/templates/melds.js says why at length).
+   *
+   * Exposed as a hook because the two surfaces that draw a meld —
+   * src/ui/zoneRenderer.js's chip and src/ui/table.js's landing slot — used to
+   * `import { meldDisplayOrder } from '../templates/melds.js'`, which is a
+   * platform file reaching into ONE template's internals for a rule only that
+   * template has (#219). The platform's default is the stored order, so a
+   * melding template that has no opinion implements nothing and a run laid in
+   * order is drawn in order either way.
+   */
+  meldCardOrder(ctx, group) {
+    return meldDisplayOrder(ctx, group);
   },
 
   /**

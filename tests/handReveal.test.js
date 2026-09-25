@@ -204,4 +204,23 @@ test("the step player says a reveal in the platform's words and lights the right
   assert.match(player, /revealSentence\(step,/);
   assert.match(player, /step\.reason === 'taken' \? 'won' : 'hand'/);
   assert.match(table.slice(table.indexOf("function showCardFor(")), /zeroLabel: step\.reason \? 'nothing'/);
+
+  // ...AND THE OTHER HALF OF THE SAME BRANCH IS THE TEMPLATE'S (#219). A step
+  // with no `reason` is a template's own count, and staging one used to mean
+  // spelling out four of cribbage's zone ids and two of its nouns in this file:
+  // `'show'`/`'crib'` for the pose, `'show'` or `play.<seat>` for the spotlight,
+  // `'starter'` for the cut, and "crib"/"hand" for the sentence.
+  assert.match(player, /const staging = showStepOf\(finalState, step\);/,
+    "the step player no longer asks the template how to stage its own count");
+  assert.match(player, /staging\?\.spotlight/,
+    "the felt is picking the zone to light for a template's count itself again");
+  // Comments stripped for the negative half: the fix is documented beside where
+  // the old code was, and a gate that fires on prose about itself teaches people
+  // to stop writing the prose (the rule tests/climbing.test.js states).
+  const code = table.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  for (const spelled of [/'starter'/, /'show', 'crib'/, /\? 'crib' : 'hand'/]) {
+    assert.doesNotMatch(code, spelled,
+      `src/ui/table.js spells ${spelled} — one template's zones and words, in the `
+      + "file src/templates/CONTRACT.md exists because of");
+  }
 });

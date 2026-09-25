@@ -203,15 +203,18 @@ platform file.
 | `zoneFocus` | `(ctx, address) -> {cards, label, seat?} \| null` | `describe.js`, `zoneRenderer.js` | none |
 | `zoneOnFelt` | `(ctx, address) -> false \| anything` | `src/ui/table.js` | the zone definition's own flags decide |
 | `scoreChip` | `(ctx, seat) -> {short, long, label?, aria} \| null` | `table.js` | the SIDE's total (the seat's own, where there are no sides), labelled `Score` |
-| `seatCounters` | `(ctx, seat) -> {text, aria, label, kind?, minimizedOnly?, openOnly?}[] \| null` | `table.js` | the hand count, labelled `Cards` |
+| `seatCounters` | `(ctx, seat) -> {text, aria, label, kind?, minimizedOnly?, openOnly?, mine?}[] \| null` | `table.js` | the hand count, labelled `Cards` |
 | `tableCounters` | `(ctx) -> {text, label, aria?}[] \| null` | `table.js` | no strip at all |
-| `commitPrompt` | `(ctx, seat) -> {action, staging, waiting, count \| min+max, moveType?} \| null` | `interaction.js`, `table.js` | count and move type read off the enumeration; the button says "Commit" |
+| `commitPrompt` | `(ctx, seat, voice?) -> {action, staging, waiting, count \| min+max, moveType?} \| null` | `interaction.js`, `table.js` | count and move type read off the enumeration; the button says "Commit" |
 | `poseMove` | `(ctx, move) -> boolean` | `src/ui/table.js` | no pose; the felt paints where the move ENDED |
 | `zoneReading` | `(ctx, inst) -> {badge, line?} \| null` | `src/ui/describe.js` | the pile's number is its card count |
 | `committedSelection` | `(ctx, seat) -> cardId[] \| null` | `table.js` | none |
 | `zoneCardOwners` | `(ctx, address) -> (seat\|null)[] \| null` | `src/ui/zoneRenderer.js` | none — a spread zone's cards carry no owner |
 | `contractChips` | `(ctx, seat) -> Chip[] \| null` | `src/ui/contractStrip.js` | none — the strip stays hidden |
 | `getMeldGroups` | `(ctx, seat) -> Group[]` | `table.js` | `[]` |
+| `meldCardOrder` | `(ctx, group) -> cardId[]` | `src/ui/zoneRenderer.js`, `table.js` | the order the group's cards are STORED in |
+| `showStep` | `(ctx, step) -> {pose?, spotlight?, starterId?, what?} \| null` | `src/ui/table.js` | the platform's own reveal — see below |
+| `roundLines` | `(ctx) -> (string\|null)[] \| null` | `table.js`, `src/ui/panels.js` | none — a round sheet row is a name, a delta and a total |
 | `describeEvent` | `(ev, {seatLabel, seatPossessive, seatVerb, viewerSeat} = {}) -> {text, tone, priority?} \| null` | `table.js`, `celebrations.js` | the engine-effect vocabulary |
 | `ruleLines` | `(rules) -> string[]` | `src/ui/rules.js` | none |
 | `endingLines` | `(pack) -> string[]` | `src/ui/rules.js` | none |
@@ -272,7 +275,7 @@ climbing enumerator is a shortlist by necessity (*Sound, not complete*, above),
 and a felt that offered only the shortlist would refuse plays the engine
 accepts.
 
-## `commitPrompt` — what a `pass`-mode commit button says and does
+## `commitPrompt` — what a commit button says and does
 
 `pass` is the gesture for **every** simultaneous commit: pick cards out of the
 fan, watch them stage, press the button. What is not shared is the *sentence*
@@ -321,6 +324,35 @@ costs one hook and leaves every existing pack on the default it already had.
 Note `min: 0` is real, and the platform handles it: with nothing picked up
 there is no `selection.from` to check, so an empty selection arms the button
 only when the floor is zero.
+
+### The `bid` mode asks the same question with no cards in it (#219)
+
+A bid is one button and one dialog — the hand is inert, and the number is asked
+through `pendingChoice` like any other. But the button's words and the move it
+makes were a literal in `src/ui/interaction.js` (`label: 'Bid'`,
+`{type: 'bid'}`), and the status bar branched on `state.turn.phase === 'bid'` in
+`src/ui/table.js`, seven lines below the comment in that file explaining why a
+phase name may not appear in it. Both read `commitPrompt` now; `count`, `min` and
+`max` simply go unread, the way `moveType` goes unread for a pass.
+
+```js
+commitPrompt(ctx, seat, { seatLabel } = {}) {
+  if (ctx.turn.phase === 'bid') return {
+    action: 'Bid', moveType: 'bid',
+    staging: 'Your bid',
+    waiting: seatLabel ? `${seatLabel(ctx.turn.seat)} is bidding…` : undefined,
+  };
+  …
+}
+```
+
+**The third argument is the `voice`** — `{seatLabel, seatPossessive, seatVerb,
+viewerSeat}`, the same bag `describeEvent` takes, for the same reason: WHAT A
+SEAT IS CALLED is the table's business (*Naming a seat in a sentence*, below).
+**Declare the `= {}` default**, because the caller that wants only the button
+(`buildUiModel`) is a pure function over state with no roster in it and passes
+nothing. A sentence that needs a name should answer `undefined` there rather than
+invent one; the platform's generic "Waiting…" stands in, and no surface shows it.
 
 ## `gathers` — the question a mode cannot answer
 
@@ -439,6 +471,78 @@ Keep it cheap and keep it a subset: a pose that emitted events, ended a round or
 moved a card the real move does not move would be a second set of rules living
 in the renderer. Trick-taking's is one statement — the card onto the trick —
 and it answers `false` for every play but the one that completes it.
+
+## `showStep` — how one count of a show is staged
+
+A `showScored` event is held up as a card, one count at a time, at the rung that
+waits (`showSteps` in `src/ui/roundBeat.js`, `playShowStep` in `src/ui/table.js`).
+Staging one meant knowing four things about cribbage, and the felt knew all four
+by name until #219: that the crib is turned over by moving `crib → show`, that a
+hand is counted in front of its seat in `play.<seat>` while the crib is counted in
+`show`, that the fifth card is the shared `starter`, and that the two piles are
+called a hand and a crib. Four zone ids and two nouns from one template, in the
+file this document exists because of.
+
+```js
+showStep(ctx, step) -> { pose?, spotlight?, starterId?, what? } | null
+```
+
+| Field | Meaning |
+|---|---|
+| `pose` | `{from, to}` — every card in `from` goes back to `to` BEFORE the show starts, and the position is released when this step's own count arrives. Cribbage's crib is turned face up inside the move that ends the hand, so without posing it back its "turn" is a caption on cards that have been face up through the other two counts (#152) |
+| `spotlight` | the zone address whose cards this count is counting; the felt rings them |
+| `starterId` | one more card drawn after the step's own, and the last position the part `at`s index: cribbage's cut, which belongs to all three counts |
+| `what` | the pile in one word — "hand", "crib" — for the fallback sentence under `describeEvent`'s |
+
+The pose is applied to a **throwaway fork** of the ending position, the same copy
+`poseMove` gets and under the same rule: it is never logged, saved, published or
+scored, and the felt paints the live state everywhere else. The platform keeps the
+fork, the "both zones exist and `from` is not empty" guards, and the release.
+
+**Answer `null` for a step that is not yours.** A step carrying a `reason` is the
+platform's own reveal (`emitReveal`, `src/engine/scoring.js`) — it prices the cards
+left in a hand at a round boundary and already says itself — so a template that
+answers for it puts its staging on somebody else's round ending.
+
+## `meldCardOrder` — what order a laid meld reads in
+
+```js
+meldCardOrder(ctx, group) -> cardId[]
+```
+
+A run held `6 3 W 5` is a legal run and reads as a scramble, so contract-rummy's
+chips draw it sorted while the STORED array stays exactly as the engine wrote it
+(that array is match state; `meldDisplayOrder` in `src/templates/melds.js` says why
+at length). Both surfaces that draw a meld — the chip in `src/ui/zoneRenderer.js`
+and the landing slot in `src/ui/table.js` — used to `import { meldDisplayOrder }
+from '../templates/melds.js'`: a platform file reaching into ONE template's
+internals for a rule only that template has.
+
+The default is the stored order, so a melding template with no opinion implements
+nothing. **The answer must be a permutation** — the same ids, the same length —
+and the platform checks rather than trusts, because a chip that silently renders
+three cards of a four-card meld is a worse bug than an unsorted one and no caller
+can tell by looking. An answer that lost, gained or renamed a card is discarded
+for the stored order.
+
+## `roundLines` — what the round sheet says about a seat
+
+```js
+roundLines(ctx) -> (string|null)[] | null
+```
+
+One phrase per seat for the round summary, beside the delta and the total
+(`showRoundSummary`, `src/ui/panels.js`): "Bid 4, took 5". A delta of `-30` is the
+arithmetic and this is the reason, and `src/ui/table.js` used to compose it itself
+out of the counters whose `kind` is `'bid'` and `'tricks'` — two of one template's
+slugs and two of its words, deciding on that template's behalf that the two
+numbers belong in one sentence in that order.
+
+Asked over the position the round ENDED in (#120's fork), which is the whole
+reason it is a hook over a state rather than a field on the `roundOver` event: by
+the time the sheet opens, the engine has crossed the round boundary and wiped
+every bid. Sparse is fine — a seat with nothing to say gets no note — and `null`
+is a pack with nothing to say at all, which is every pack that does not bid.
 
 ## Which cards on a pile are still live — `zoneFocus`
 
@@ -564,8 +668,20 @@ REPLACES — Spades' Bid and Tricks are `openOnly` because the pip row below say
 both of them in one mark, and printing all three would be the same hand said
 twice on the face that has least room for it. The plate keeps the digits, their
 captions and their spoken sentences, so nothing is lost where there is width to
-lose it in. A caller that wants the template's whole declaration rather than
-either face — the round summary does — asks `seatCountersFor(state, seat, { all: true })`.
+lose it in.
+
+`mine: true` is the third flag and it is about a seat with no plate at all
+(#219): the human's own numbers are repeated as a labelled strip above the hand
+(`buildMySeatStrip`, `src/ui/table.js`), because the felt has a plate for every
+chair but yours — so a bid was shown for all three opponents and nowhere for the
+player who made it (#123, item 28). Mark the counters that answer "what did I
+promise", not the ones the rail already says: a hand count is the fan itself, and
+a `minimizedOnly` counter is redundant on an open seat, which yours always is.
+The flag is opt-in and the strip is empty without it. It used to be a list of
+counter KINDS in `table.js` — which made two of trick-taking's slugs read like
+platform vocabulary, and they are not: a `kind` says how a counter is DRAWN, and
+whether a number is worth repeating for the plateless seat is a fact about the
+genre.
 
 **To keep the default AND add to it, ask for it** — `handCounter(ctx, seat)`
 from `src/engine/templateKit.js` returns the platform's own hand counter, which

@@ -59,10 +59,6 @@ import {
   flyCard, landOn, motionAllowed, flightLayer, rectOf, cardSizedRect,
   scrollCorrectedRect, flightDurationMs,
 } from './flight.js';
-// Leaf logic, and the same import src/ui/zoneRenderer.js takes for the same
-// reason: a card that has just joined a meld has to be found in the chip, and
-// the chip draws its cards in this order rather than the engine's.
-import { meldDisplayOrder } from '../templates/melds.js';
 import {
   createSession, stopSession,
   // The opponent row's pure decisions live over there so a Node test can reach
@@ -348,6 +344,17 @@ function seatPossessive(seat) {
  */
 function seatVerb(seat, verb) {
   return agrees(seatLabel(seat), verb);
+}
+
+/**
+ * THE THREE HELPERS AND THE READER, AS ONE BAG — the voice a template is handed
+ * whenever it has a sentence to write (src/templates/CONTRACT.md, *Naming a seat
+ * in a sentence*). `describeEvent` has taken it whole since #124; `commitPrompt`
+ * takes it too, because "Nell is bidding…" is a name and a name is this table's
+ * to know (#219).
+ */
+function voiceOf() {
+  return { seatLabel, seatPossessive, seatVerb, viewerSeat: mySeat() };
 }
 
 /**
@@ -986,13 +993,8 @@ function seatHasReadyTarget(state, seat, ui) {
  * thing the whole game is a race on, was the number it had put away.
  *
  * See `seatCounters` in src/templates/CONTRACT.md.
- *
- * `all` is for the callers that want the template's whole declaration rather
- * than what a face shows — the round summary reads the bid and the trick count
- * off it, and both of those are `openOnly` at a Spades table (#148), where the
- * minimized face wears the pip row instead.
  */
-function seatCountersFor(state, seat, { minimized, all = false }) {
+function seatCountersFor(state, seat, { minimized }) {
   const declared = state.pack.template.seatCounters?.(makeCtx(state), seat);
   const count = state.zones.count(`hand.${seat}`);
   // `label` on the DEFAULT too, and not only on the templates' own counters:
@@ -1021,7 +1023,6 @@ function seatCountersFor(state, seat, { minimized, all = false }) {
   // all three would be the same hand said twice. The digits are still what an
   // open plate shows, captioned and spoken, so nothing is lost where there is
   // width to lose it in.
-  if (all) return list;
   return minimized
     ? list.filter((counter) => !counter.openOnly)
     : list.filter((counter) => !counter.minimizedOnly);
@@ -2092,39 +2093,37 @@ function renderTablePlay(state, ui, draggable) {
 }
 
 /**
- * The counter kinds that belong on the HUMAN's own seat.
- *
- * A closed platform vocabulary, exactly like `COUNTER_TRACK_KINDS`
- * (src/ui/counterTrack.js), and for the same reason: which kind a counter is
- * remains the template's, and what the platform does with each kind is the
- * platform's. A kind this build has never heard of simply does not appear here,
- * which is the safe direction — the seat plates still show it.
- *
- * WHY THIS EXISTS. Every seat but one wears its numbers on a plate, and the one
- * that does not is yours: the human's seat is the hand, the rail and the piles,
- * and there is no plate anywhere on the felt with your name on it. So a bid —
- * the thing you promised, which the whole hand is then played against — was
- * shown for all three opponents and nowhere at all for you (#123, item 28: "not
- * on the status bar, not on any seat plate, not in the round summary". In a
- * partnership the contract is your bid plus your partner's, and half of it was
- * unreadable).
- *
- * What is NOT here is as deliberate: a hand count (the fan is right there), and
- * anything `minimizedOnly` (redundant when a seat is open, and yours always
- * is — the won pile beside this strip is the trick count in as many words).
- */
-const MY_SEAT_KINDS = ['bid', 'bags'];
-
-/**
  * Your side of the table's own numbers, as a row of labelled chips.
  *
  * Labelled, unlike a plate's badges, because there is room: the plates carry
  * bare numbers whose meaning is learned from position, and this row is read
  * once a hand rather than glanced at every turn.
+ *
+ * WHY THE STRIP EXISTS. Every seat but one wears its numbers on a plate, and the
+ * one that does not is yours: the human's seat is the hand, the rail and the
+ * piles, and there is no plate anywhere on the felt with your name on it. So a
+ * bid — the thing you promised, which the whole hand is then played against — was
+ * shown for all three opponents and nowhere at all for you (#123, item 28: "not
+ * on the status bar, not on any seat plate, not in the round summary". In a
+ * partnership the contract is your bid plus your partner's, and half of it was
+ * unreadable).
+ *
+ * WHICH COUNTERS, THOUGH, IS THE TEMPLATE'S (#219). This was a list of counter
+ * KINDS — `['bid', 'bags']`, two of trick-taking's own slugs, in a platform file
+ * — read as a closed platform vocabulary like `COUNTER_TRACK_KINDS`. It is not
+ * one: a kind says how a counter is DRAWN, and whether a number is worth
+ * repeating for the seat with no plate is a fact about the genre. `mine: true` on
+ * the counter is that fact, and it is opt-in, so a template that says nothing
+ * gets no strip — which is what every pack but Spades and Pinochle had anyway.
+ *
+ * What is NOT marked is as deliberate, and it is still enforced here: a hand
+ * count (the fan is right there), and anything `minimizedOnly` (redundant when a
+ * seat is open, and yours always is — the won pile beside this strip is the trick
+ * count in as many words).
  */
 function buildMySeatStrip(state) {
   const counters = seatCountersFor(state, mySeat(), { minimized: false })
-    .filter((counter) => MY_SEAT_KINDS.includes(counter.kind));
+    .filter((counter) => counter.mine);
   if (!counters.length) return null;
 
   const strip = document.createElement('div');
@@ -3198,12 +3197,22 @@ function statusTextFor(state, acting) {
     const whose = `${seatPossessive(session.trickBeat.seat)} trick.`;
     return session.trickBeat.waits ? `${whose} Tap to go on.` : whose;
   }
-  if (state.turn.phase === 'bid') {
-    // The bid goes round the table one seat at a time, so "whose turn" is
-    // already the right sentence — what this adds is WHICH KIND of turn, which
-    // is the whole difference between a phase where you tap a card and one
-    // where the only live control is a button in the rail.
-    return acting.some(isMySeat) ? 'Your bid' : `${seatLabel(state.turn.seat)} is bidding…`;
+  // A BID IS THE OTHER SENTENCE THIS BAR ASKS FOR RATHER THAN WRITES. It goes
+  // round the table one seat at a time, so "whose turn" is already the right
+  // shape — what it adds is WHICH KIND of turn, which is the whole difference
+  // between a phase where you tap a card and one where the only live control is
+  // a button in the rail.
+  //
+  // ASKED OF THE MODE, NOT THE PHASE NAME (#219), exactly as the commit below
+  // is: `turn.phase === 'bid'` was trick-taking's word for its own phase, seven
+  // lines under the comment that follows. The words are the template's
+  // (`commitPrompt`), and the voice goes with the question because "Nell is
+  // bidding…" is a NAME, which is this table's to know and not a template's.
+  if (interactionMode(state) === 'bid') {
+    const mine = acting.some(isMySeat);
+    const seat = mine ? mySeat() : state.turn.seat;
+    const prompt = commitPromptFor(state, seat, legalMovesFor(state, seat), voiceOf());
+    return mine ? prompt.staging : prompt.waiting;
   }
   // HOW MANY, HERE, because nothing else says it in time. The commit button
   // only appears once exactly that many cards are staged, so its label cannot
@@ -3219,7 +3228,7 @@ function statusTextFor(state, acting) {
   if (interactionMode(state) === 'pass') {
     const mine = acting.some(isMySeat);
     const seat = mine ? mySeat() : state.turn.seat;
-    const prompt = commitPromptFor(state, seat, legalMovesFor(state, seat));
+    const prompt = commitPromptFor(state, seat, legalMovesFor(state, seat), voiceOf());
     return mine ? prompt.staging : prompt.waiting;
   }
   return acting.some(isMySeat) ? 'Your turn' : `${seatPossessive(state.turn.seat)} turn`;
@@ -3741,11 +3750,12 @@ function animateLayDown(state, move, from, duration) {
  * Where a card that has just joined a meld now sits, as a node.
  *
  * The chip draws its cards in READING order rather than the order the engine
- * stored them (meldDisplayOrder — a run held `6 3 W 5` reads `3 W 5 6`), so the
- * slot a card landed in cannot be inferred from its position in the move. The
- * group is found by searching for the card rather than by trusting the move's
- * meld index, so this answers for a hit onto somebody else's meld and for a
- * lay-down's own fresh groups without knowing which it was asked about.
+ * stored them (the template's `meldCardOrder` — a run held `6 3 W 5` reads
+ * `3 W 5 6`), so the slot a card landed in cannot be inferred from its position
+ * in the move. The group is found by searching for the card rather than by
+ * trusting the move's meld index, so this answers for a hit onto somebody else's
+ * meld and for a lay-down's own fresh groups without knowing which it was asked
+ * about.
  */
 function meldCardNode(state, seat, cardId) {
   if (!zones || seat === undefined || seat === null) return null;
@@ -3757,7 +3767,7 @@ function meldCardNode(state, seat, cardId) {
   if (!cards) return null;
   // Filtered exactly as buildMeldStrip filters, or a card the renderer skipped
   // would shift every slot after it by one.
-  const ordered = meldDisplayOrder(makeCtx(state), groups[index])
+  const ordered = zones.meldCardOrder(state, groups[index])
     .filter((id) => cardById(state, id));
   return cards.children[ordered.indexOf(cardId)] || null;
 }
@@ -4519,22 +4529,46 @@ function endHeldBeat(event) {
 }
 
 /**
- * The same ending with the crib still face down.
+ * HOW A TEMPLATE WANTS ONE COUNT OF ITS SHOW STAGED, or null (#219).
+ *
+ * `showStep` answers where the cards being counted are, which card is the shared
+ * cut, what the pile is called and whether the position has to be posed back
+ * first — the four things this file used to know about cribbage by name (four
+ * zone ids and two nouns). Every reader below treats a missing answer as "the
+ * platform's own reveal", which is what every other pack's round ending is.
+ */
+function showStepOf(state, step) {
+  if (!state || !step) return null;
+  try {
+    return state.pack.template.showStep?.(makeCtx(state), step) || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The same ending with a step's pose still held — cribbage's crib face down.
  *
  * Cribbage turns the crib as part of the move that ends the hand — the reveal
  * IS `moveCards crib -> show` (src/templates/cribbage.js) — so the ending
  * position already has it face up. Posing it back is what makes the crib's step
  * an actual turn on the felt rather than a caption on cards that have been
- * sitting there through the other two counts.
+ * sitting there through the other two counts. WHICH cards go back where is the
+ * template's (`showStep`'s `pose`); the fork, the guards and the "a pose is
+ * never the live state" rule are this file's.
  */
 function posedForShow(finalState, plan) {
-  if (!plan.steps.some((s) => s.isCrib)) return finalState;
+  const poses = plan.steps.map((step) => showStepOf(finalState, step)?.pose).filter(Boolean);
+  if (!poses.length) return finalState;
   try {
     const posed = forkState(finalState);
-    if (!posed.zones.has('show') || !posed.zones.has('crib')) return finalState;
-    const ids = posed.zones.cards('show').slice();
-    if (!ids.length) return finalState;
-    makeCtx(posed).moveCards(ids, 'show', 'crib');
+    const ctx = makeCtx(posed);
+    for (const { from, to } of poses) {
+      if (!posed.zones.has(from) || !posed.zones.has(to)) return finalState;
+      const ids = posed.zones.cards(from).slice();
+      if (!ids.length) return finalState;
+      ctx.moveCards(ids, from, to);
+    }
     return posed;
   } catch {
     return finalState;
@@ -4650,9 +4684,12 @@ function spotlightZone(address) {
  * write, both facts, through the same join the trick hold uses.
  */
 function playShowStep(finalState, step, { waits = false } = {}) {
-  // The crib's step is the turn. Everything before it has been looking at the
-  // pose (posedForShow); this render is the four cards coming face up.
-  if (step.isCrib) {
+  const staging = showStepOf(finalState, step);
+  // A POSED STEP'S OWN COUNT IS THE TURN. Everything before it has been looking
+  // at the pose (posedForShow); this render is the cards coming face up — and it
+  // is the step that ASKED to be posed, so the felt never has to know that the
+  // pile in question is a crib.
+  if (staging?.pose) {
     session.roundFinalState = finalState;
     render(finalState);
   }
@@ -4665,43 +4702,48 @@ function playShowStep(finalState, step, { waits = false } = {}) {
       // two, a pair, his nobs — and a step stripped of them can only say a
       // number (#124, item 41).
       { type: 'showScored', seat: step.seat, isCrib: step.isCrib, points: step.points, parts: step.parts },
-      { seatLabel, seatPossessive, seatVerb, viewerSeat: mySeat() },
+      voiceOf(),
     );
+  // The pile in a word is the template's (`showStep`); "hand" is what the
+  // platform's own reveal counts and the default for a template with no opinion.
   const text = said?.text
-    || `${seatPossessive(step.seat)} ${step.isCrib ? 'crib' : 'hand'} is worth ${step.points}.`;
+    || `${seatPossessive(step.seat)} ${staging?.what || 'hand'} is worth ${step.points}.`;
   // THE CARD INSTEAD OF THE BANNER (#152), and the sentence still in the log —
   // which is the live region a screen reader hears, so nothing is lost by the
   // card being decorative. The banner is a fallback rather than a second
   // surface: a remote client's step has no card ids on it (cribbage.js's
   // `partsOf` explains why), and a card with no cards on it is a caption in a
   // box. `showCardFaces` returning empty is the test for that.
-  const model = showCardFor(finalState, step);
+  const model = showCardFor(finalState, step, staging);
   if (model) showShowCard(model);
   else showBanner(text, said?.tone || (step.points ? 'good' : 'neutral'));
   el.log.textContent = waits ? heldBeatLine(text) : text;
   pulseSeat(step.seat, said?.tone === 'bad' ? 'bad' : (step.points ? 'good' : 'neutral'));
+  // A reveal's cards are in the seat's own hand or won pile, which the platform
+  // priced and therefore knows; anything else is the template's to point at.
   spotlightZone(step.reason
     ? `${step.reason === 'taken' ? 'won' : 'hand'}.${step.seat}`
-    : (step.isCrib ? 'show' : `play.${step.seat}`));
+    : (staging?.spotlight || null));
 }
 
 /**
  * One step of a show as a show card, or null when the felt cannot draw one.
  *
- * THE STARTER IS READ OFF THE POSITION, not off the event. It is a shared zone
- * with `visibility: 'all'` and it is right there in the ending fork, so putting
- * its id on the wire would be a second copy of a public fact, travelling
- * outside the one field the view filter knows how to check (src/engine/view.js).
- * The ending fork is also the only state that still HAS it by now: the engine
- * crossed the round boundary inside this same move and the live state is
- * already holding the next deal's cut.
+ * THE EXTRA CARD IS READ OFF THE POSITION, not off the event — cribbage's cut,
+ * named by `showStep`'s `starterId` (#219; this file used to read the zone
+ * `'starter'` itself). It is a shared zone with `visibility: 'all'` and it is
+ * right there in the ending fork, so putting its id on the wire would be a
+ * second copy of a public fact, travelling outside the one field the view filter
+ * knows how to check (src/engine/view.js). The ending fork is also the only state
+ * that still HAS it by now: the engine crossed the round boundary inside this
+ * same move and the live state is already holding the next deal's cut.
  *
  * The positions in `step.parts` are relative to `[...step.cards, starter]`,
  * which is the order `theShow` scored them in and the order drawn here.
  */
-function showCardFor(finalState, step) {
+function showCardFor(finalState, step, staging = null) {
   if (!Array.isArray(step.cards) || !step.cards.length) return null;
-  const starterId = finalState.zones.has('starter') ? finalState.zones.cards('starter')[0] : null;
+  const starterId = staging?.starterId ?? null;
   const ids = starterId ? [...step.cards, starterId] : step.cards.slice();
   const cards = ids.map((id) => cardById(finalState, id) ?? null);
   if (!cards.some(Boolean)) return null;
@@ -4713,41 +4755,46 @@ function showCardFor(finalState, step) {
     cards,
     starterAt: starterId ? ids.length - 1 : null,
     // A reveal's card is titled for what it shows and says "nothing" for a
-    // zero; "nineteen" is cribbage's joke and stays on cribbage's counts.
-    what: step.reason === 'taken' ? 'penalty cards' : null,
+    // zero; "nineteen" is cribbage's joke and stays on cribbage's counts. A
+    // template's own count is titled for the pile it is counting (`showStep`).
+    what: step.reason === 'taken' ? 'penalty cards' : (staging?.what || null),
     zeroLabel: step.reason ? 'nothing' : undefined,
   });
 }
 
 /**
  * WHAT EACH SEAT PROMISED AND WHAT IT TOOK, for the sheet that shows what that
- * was worth.
+ * was worth — one phrase per seat, or null for a pack with nothing to say.
  *
  * Read off the ENDING position rather than the live one, and that is the whole
- * reason it is computed here: by the time the summary opens, the engine has
+ * reason it is asked here: by the time the summary opens, the engine has
  * crossed the round boundary and wiped every bid (src/engine/movePipeline.js),
  * so `state.playerVars[seat].bid` is already the next hand's nothing. The fork
- * #120 keeps for the felt still has them.
+ * #120 keeps for the felt still has them. Null on the multiplayer path too,
+ * where there is no fork.
  *
- * The words are the template's own counters — a bid that reads "nil" reads
- * "nil" here too — so nothing in this file knows what a bid is. Null for a pack
- * that does not bid, and on the multiplayer path, where there is no fork.
+ * THE SENTENCE IS THE TEMPLATE'S (#219, `roundLines`). This used to read the
+ * counters whose `kind` is `'bid'` and `'tricks'` and compose "Bid 4, took 5"
+ * out of them — two of one template's slugs and two of its words, in a platform
+ * file, deciding on that template's behalf that the two numbers belong in one
+ * sentence in that order. What is left here is the one thing the felt owns: the
+ * position the phrase is true of, and the row it is drawn in
+ * (src/ui/panels.js's `showRoundSummary`).
  */
 function roundContractLines(finalState) {
   if (!finalState) return null;
+  const declared = finalState.pack.template.roundLines?.(makeCtx(finalState));
+  if (!Array.isArray(declared)) return null;
+  // A sparse array is the shape: one entry per seat that has something to say,
+  // and the sheet skips the seats with nothing (`contract?.[s]`). Anything that
+  // is not a string is dropped rather than printed as "undefined".
   const rows = [];
   let any = false;
   for (let seat = 0; seat < finalState.seats; seat++) {
-    // `all`: the template's whole declaration, not what either kind of face
-    // shows. A Spades bid and its trick count are `openOnly` since #148 — the
-    // minimized face wears the pip row in their place — and a sheet that asked
-    // for the minimized list would have quietly lost both words.
-    const counters = seatCountersFor(finalState, seat, { all: true });
-    const bid = counters.find((c) => c.kind === 'bid');
-    const tricks = counters.find((c) => c.kind === 'tricks');
-    if (!bid) continue;
+    const line = declared[seat];
+    if (typeof line !== 'string' || !line) continue;
     any = true;
-    rows[seat] = `Bid ${bid.text}${tricks ? `, took ${tricks.text}` : ''}`;
+    rows[seat] = line;
   }
   return any ? rows : null;
 }

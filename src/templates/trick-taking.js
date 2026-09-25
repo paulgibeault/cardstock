@@ -2401,10 +2401,34 @@ const trickTaking = {
    * than a `count`, and it NAMES its move, because a commit of zero cards has
    * no card-carrying move for the platform to read the type off.
    *
+   * THE BID (#219): not a commit of cards at all — the `bid` interaction mode is
+   * one button and one dialog — and here for exactly the reason the other two
+   * are. `'Bid'` was the button's label written into src/ui/interaction.js and
+   * `{type: 'bid'}` was built there out of a literal, while the status bar in
+   * src/ui/table.js branched on `turn.phase === 'bid'`, this template's own word
+   * for its own phase, seven lines below the comment saying a phase name may not
+   * appear in that file. Nothing changes on the felt: the button still says
+   * "Bid", the bar still says "Your bid" and "Nell is bidding…".
+   *
+   * WHOSE TURN IT IS HAS TO BE SAID BY THE TABLE. `seatLabel` arrives from the
+   * status bar and nowhere else (it is the roster's answer, and "You" for the
+   * seat reading it — src/templates/CONTRACT.md's *Naming a seat in a sentence*),
+   * so the waiting line says nothing at all rather than a name of its own when a
+   * caller that has no roster — `buildUiModel`, which only wants the button —
+   * asks. The platform's generic "Waiting…" stands in, and no surface shows it.
+   *
    * Returning null takes the platform's default, which is what every other
    * template does by not implementing this at all.
    */
-  commitPrompt(ctx, seat) {
+  commitPrompt(ctx, seat, { seatLabel } = {}) {
+    if (ctx.turn.phase === 'bid') {
+      return {
+        action: 'Bid',
+        moveType: 'bid',
+        staging: 'Your bid',
+        waiting: seatLabel ? `${seatLabel(ctx.turn.seat)} is bidding…` : undefined,
+      };
+    }
     if (ctx.turn.phase === 'meld') {
       return {
         action: 'Declare',
@@ -2457,6 +2481,13 @@ const trickTaking = {
         ...bidBadge(ctx, seat),
         label: 'Bid',
         kind: 'bid',
+        // AND ON THE HUMAN'S OWN STRIP (#219). The seat with no plate is the one
+        // whose bid was nowhere on the felt (#123, item 28), and `mine` is how
+        // this template says so — src/ui/table.js used to keep the list of kinds
+        // that earn a chip there, which made two of these slugs platform
+        // vocabulary. What you promised is the number the whole hand is played
+        // against, so it is the first thing on that strip.
+        mine: true,
         // Replaced on the face by the pip row, which says this number and the
         // trick count in one mark.
         ...(pips || passed ? { openOnly: true } : {}),
@@ -2492,6 +2523,10 @@ const trickTaking = {
           aria: `${bags} bag${bags === 1 ? '' : 's'}`,
           label: 'Bags',
           kind: 'bags',
+          // On your own strip beside the bid, for the same reason: the bags are
+          // what the overtricks have turned into, and a hundred of them arriving
+          // as a penalty three hands later is the thing nobody could see coming.
+          mine: true,
         });
       }
     }
@@ -2530,6 +2565,31 @@ const trickTaking = {
       });
     }
     return counters;
+  },
+
+  /**
+   * WHAT THE ROUND SHEET SAYS ABOUT EACH SEAT — "Bid 4, took 5" (#219).
+   *
+   * A delta of `-30` is the arithmetic and this is the reason, and the reason was
+   * nowhere on that sheet (#123, item 28) least of all for the human, whose own
+   * bid was not shown anywhere at all. src/ui/table.js built the phrase itself,
+   * out of the counters whose `kind` is `'bid'` and `'tricks'`: two of this
+   * template's slugs and two of its words, in the file that is not supposed to
+   * know a bid exists. The platform keeps what is genuinely its own — WHICH
+   * position the phrase is true of (the round ending's fork, because the live
+   * state has already wiped every bid) and which row it is drawn in.
+   *
+   * ONE ENTRY PER SEAT, and the same words the seat plates wear, because they
+   * come from the same place: `bidBadge` is the one reading of a bid in this
+   * template (a nil reads "nil" here too), and the trick count is the same
+   * integer the plate's Tricks digit is. Null for a pack that does not bid —
+   * Hearts has nothing to promise, so its sheet keeps the plain rows it had.
+   */
+  roundLines(ctx) {
+    if (!ctx.rules.bidding) return null;
+    return Array.from({ length: ctx.seats }, (_, seat) => (
+      `Bid ${bidBadge(ctx, seat).text}, took ${tricksOf(ctx, seat)}`
+    ));
   },
 
   /**

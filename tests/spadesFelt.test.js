@@ -17,8 +17,8 @@
 // Every one of those is a number the TEMPLATE owns and the platform draws, so
 // this file tests the template's side of each: the counters, the pile's
 // reading, and the dialog's context rows. What the platform does with them is
-// DOM (src/ui/table.js's `MY_SEAT_KINDS` strip, src/ui/choiceDialog.js's
-// context row) and is verified on the felt.
+// DOM (src/ui/table.js's own-seat strip, src/ui/choiceDialog.js's context row)
+// and is verified on the felt.
 import { test } from "node:test";
 import assert from "node:assert";
 import { createState } from "../src/engine/state.js";
@@ -89,6 +89,43 @@ test("a pack that does not bag has no bag counter", async () => {
     for (let seat = 0; seat < 4; seat++) {
       assert.equal(pack.template.seatCounters(makeCtx(state), seat).find((c) => c.kind === "bags"),
         undefined, `${id} grew a bag counter`);
+    }
+  }
+});
+
+/* ------------------------------------------------------------------ *
+ * Item 28 — the numbers the seat with no plate gets shown anyway
+ * ------------------------------------------------------------------ */
+
+// WHICH OF ITS COUNTERS BELONG ON THE HUMAN'S OWN STRIP IS THE TEMPLATE'S ANSWER
+// (#219). src/ui/table.js kept the list — `MY_SEAT_KINDS = ['bid', 'bags']`, two
+// of this template's slugs read as though a `kind` were platform vocabulary. It
+// is not: a kind says how a counter is DRAWN, and whether a number is worth
+// repeating for the one chair with no plate on it is a fact about the genre.
+test("a bid and its bags are the human's own numbers; the hand and the pile are not", async () => {
+  const { pack, state } = await table({ tricks: [4, 1, 3, 1], banked: { 0: 2 } });
+  const mine = pack.template.seatCounters(makeCtx(state), 0).filter((c) => c.mine);
+  assert.deepEqual(mine.map((c) => c.kind), ["bid", "bags"],
+    "what you promised and what the overtricks have turned into, in that order");
+  // NOT THE HAND (the fan is right there), NOT THE PIPS OR THE TRICKS (the won
+  // pile beside the strip is that number in as many words, and the pip row is
+  // the minimized face's).
+  for (const kind of ["hand", "tricks", "pips", "taken"]) {
+    assert.ok(!mine.some((c) => c.kind === kind), `${kind} is on the own-seat strip`);
+  }
+  // A MARKED COUNTER IS ONE THE OPEN FACE KEEPS, because the strip is read off
+  // the open list — a `minimizedOnly` counter marked `mine` would never be drawn.
+  for (const counter of mine) assert.ok(!counter.minimizedOnly, `${counter.kind} is minimizedOnly`);
+});
+
+test("a pack with nothing to promise marks nothing, and the strip stays empty", async () => {
+  for (const id of ["hearts", "cribbage", "milestones", "thirteen", "stockpile"]) {
+    const pack = await loadPackFromDisk(id);
+    const state = createState({ pack, seats: 2, seed: `mine-${id}` });
+    pack.template.setup(makeCtx(state));
+    for (let seat = 0; seat < 2; seat++) {
+      const marked = (pack.template.seatCounters?.(makeCtx(state), seat) || []).filter((c) => c.mine);
+      assert.deepEqual(marked, [], `${id} put ${marked.map((c) => c.kind)} on the human's strip`);
     }
   }
 });

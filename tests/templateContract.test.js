@@ -78,7 +78,20 @@ const OPTIONAL_FUNCTIONS = [
   // What a pile's number MEANS when the count of cards is not it: a won pile is
   // counted in tricks, and only the genre knows four cards are one (#123).
   "zoneReading",
-  "committedSelection", "getMeldGroups", "describeEvent",
+  "committedSelection", "getMeldGroups",
+  // WHAT ORDER A LAID MELD READS IN (#219) — src/ui/zoneRenderer.js's chip and
+  // src/ui/table.js's landing slot both used to `import { meldDisplayOrder }`
+  // from one template's own module. The default is the stored order.
+  "meldCardOrder",
+  // HOW ONE COUNT OF A SHOW IS STAGED (#219): the pile being counted, the shared
+  // card that belongs to every count, the position to pose back first and what
+  // the pile is called. Four cribbage zone ids and two of its nouns used to be
+  // spelled out in src/ui/table.js.
+  "showStep",
+  // WHAT THE ROUND SHEET SAYS ABOUT EACH SEAT (#219) — "Bid 4, took 5", which
+  // src/ui/table.js used to compose out of two counter kinds of its own choosing.
+  "roundLines",
+  "describeEvent",
   // Who played which card in a shared zone — the trick's owner tags
   // (src/ui/zoneRenderer.js). A rule the platform may not derive: which way
   // round a trick is played, and from whom, is the template's.
