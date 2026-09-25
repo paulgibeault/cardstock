@@ -43,6 +43,7 @@ import { actingSeats } from '../engine/context.js';
 import { chooseBotMove } from '../engine/bot.js';
 import { enumerateLegalMoves } from '../engine/movePipeline.js';
 import { rehydrateMatch } from '../engine/replay.js';
+import { tableRules } from '../engine/tableRules.js';
 import { createTableClient } from '../match/client.js';
 import { createTableSession } from '../match/tableSession.js';
 import { createSessionRegistry } from '../match/sessionRegistry.js';
@@ -1563,6 +1564,7 @@ function openHostSession({ tableId, packId, packName: name, variants, seats }) {
   sessions.add(session);
 
   session.attach({ host: createTableHost({
+    rules: tableRules,
     peer: port,
     seats: session.seats,
     tableId: session.tableId,
@@ -2214,6 +2216,7 @@ async function joinTable(entry) {
   sessions.add(session);
 
   session.attach({ client: createTableClient({
+    rules: tableRules,
     peer: port,
     // WHICH TABLE WE SAT DOWN AT, said rather than inferred — the device to
     // trust, and now the table on that device to listen for. The client can

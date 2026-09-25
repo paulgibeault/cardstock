@@ -24,6 +24,7 @@ import { makeCtx } from '../src/engine/context.js';
 import { enumerateLegalMoves } from '../src/engine/movePipeline.js';
 import { createSeatTable } from '../src/players/seats.js';
 import { createTableHost, seatStatus, needsHostDecision } from '../src/match/host.js';
+import { tableRules } from '../src/engine/tableRules.js';
 import { createTurnTimer } from '../src/match/turnTimer.js';
 import { wallClock } from '../src/match/clock.js';
 import { chooseBotMove } from '../src/engine/bot.js';
@@ -54,7 +55,7 @@ const TID = 'tbl-protocol';
  * A three-device table
  * ------------------------------------------------------------------ */
 
-async function threeSeatTable({ packId = 'crazy-eights', now } = {}) {
+async function threeSeatTable({ packId = 'crazy-eights', now, rules = tableRules, clientRules = rules } = {}) {
   const pack = await loadPackFromDisk(packId);
   const state = createState({ pack, seats: 3, seed: 20260810 });
   pack.template.setup(makeCtx(state));
@@ -68,7 +69,7 @@ async function threeSeatTable({ packId = 'crazy-eights', now } = {}) {
   seats.claim(0, { deviceId: 'host' });
 
   const errors = { host: [], a: [], b: [] };
-  const host = createTableHost({ tableId: TID,
+  const host = createTableHost({ rules, tableId: TID,
     peer: hostPort,
     seats,
     liveState: () => state,
@@ -90,7 +91,7 @@ async function threeSeatTable({ packId = 'crazy-eights', now } = {}) {
 
   const watched = () => ({ views: [], rejects: [], lobbies: [], bad: [], emotes: [], ends: [] });
   const seen = { a: watched(), b: watched() };
-  const mkClient = (port, key) => createTableClient({ tableId: TID,
+  const mkClient = (port, key) => createTableClient({ rules: clientRules, tableId: TID,
     peer: port,
     expects,
     hooks: {
@@ -119,6 +120,46 @@ function seatAll(t) {
   t.a.claimSeat(1);
   t.b.claimSeat(2);
 }
+
+/* ------------------------------------------------------------------ *
+ * The rules it is handed (#50)
+ * ------------------------------------------------------------------ */
+
+/**
+ * THE KIT RUNS ON THE RULES IT IS GIVEN, and on nothing else.
+ *
+ * src/match/ imports nothing from the engine (tests/repo-gates.test.js holds
+ * that); this is the other half — that the object handed in is what the host
+ * and client actually consult. A host that quietly fell back on a rule of its
+ * own would pass the import gate and still not be a kit a second game could
+ * use. So: no rules, no table; and a rules object that says every card is
+ * unknown, or that this build draws a different view shape, is obeyed.
+ */
+test('a table is built on the rules it is handed, and not without them (#50)', async () => {
+  const peer = { self: () => ({ deviceId: 'host' }) };
+  assert.throws(() => createTableHost({ tableId: TID, peer, seats: {} }), /rules lacks validate/);
+  assert.throws(() => createTableHost({ rules: { ...tableRules, apply: undefined }, tableId: TID, peer, seats: {} }),
+    /rules lacks apply/);
+  assert.throws(() => createTableClient({ tableId: TID, peer }), /rules lacks viewVersion/);
+
+  let viewed = 0;
+  const rules = {
+    ...tableRules,
+    cardExists: () => false,
+    viewFor: (...args) => { viewed += 1; return tableRules.viewFor(...args); },
+  };
+  const t = await threeSeatTable({ rules, clientRules: { ...tableRules, viewVersion: tableRules.viewVersion + 1 } });
+  seatAll(t);
+  t.state.turn.seat = 1;
+  const real = t.state.zones.cards('hand.1')[0];
+  t.a.propose({ actor: 1, type: 'playCard', cards: [real] });
+  assert.equal(t.seen.a.rejects.at(-1)?.rule, 'unknown-card',
+    "the host checked a real card against something other than the rules' cardExists");
+  t.host.republish();
+  assert.ok(viewed > 0, "the host drew a seat's view without the rules' viewFor");
+  assert.equal(t.seen.a.bad.at(-1)?.why, 'view',
+    "the client accepted a view its rules' viewVersion does not draw");
+});
 
 /* ------------------------------------------------------------------ *
  * The builders (#218)
@@ -657,7 +698,7 @@ test('a client on the wrong pack version refuses to seat itself', async () => {
   const aPort = net.createDevice('a', { name: 'Ada' });
 
   const bad = [];
-  const client = createTableClient({ tableId: TID,
+  const client = createTableClient({ rules: tableRules, tableId: TID,
     peer: aPort,
     expects: () => ({ packId: pack.id, packVersion: '9.9.9', variants: [] }),
     hooks: { onIncompatible: (why) => bad.push(why) },
@@ -682,7 +723,7 @@ test('a different variant set is a different rule set, and is refused', async ()
   const aPort = net.createDevice('a', { name: 'Ada' });
 
   const bad = [];
-  const client = createTableClient({ tableId: TID,
+  const client = createTableClient({ rules: tableRules, tableId: TID,
     peer: aPort,
     expects: () => ({ packId: pack.id, packVersion: undefined, variants: [] }),
     hooks: { onIncompatible: (why) => bad.push(why) },
@@ -1158,12 +1199,14 @@ async function undealtTable() {
   const pack = await loadPackFromDisk('crazy-eights');
 
   const host = createTableHost({
+    rules: tableRules,
     tableId: TID, peer: hostPort, seats,
     liveState: () => null,                       // nothing dealt
     packInfo: () => ({ packId: pack.id, packVersion: pack.manifest?.version, variants: [] }),
     nameFor: (seat) => `Seat ${seat}`,
   });
   const a = createTableClient({
+    rules: tableRules,
     tableId: TID, peer: aPort,
     expects: () => ({ packId: pack.id, packVersion: pack.manifest?.version, variants: [] }),
     hooks: {},
@@ -1290,6 +1333,7 @@ test('a lobby frame carries every seam the host was built with', async () => {
   const pack = await loadPackFromDisk('crazy-eights');
 
   const host = createTableHost({
+    rules: tableRules,
     tableId: TID, peer: hostPort, seats,
     liveState: () => null,
     packInfo: () => ({ packId: pack.id, packVersion: pack.manifest?.version, variants: ['a-variant'] }),
@@ -1326,6 +1370,7 @@ test('a view frame carries the deadlines seam', async () => {
 
   const DEADLINES = [{ seat: 1, expiresAt: 1_700_000_000_000 }];
   const host = createTableHost({
+    rules: tableRules,
     tableId: TID, peer: hostPort, seats,
     liveState: () => state,
     packInfo: () => ({ packId: pack.id, packVersion: pack.manifest?.version, variants: [] }),
