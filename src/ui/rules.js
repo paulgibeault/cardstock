@@ -43,7 +43,7 @@ function dealCount(rules) {
   const exceptions = Object.entries(by).map(([n, count]) => `${count} with ${n} players`);
   // A DIFFERENT DEAL IS NOT A DIFFERENT COUNT, which is why `byPlayers` cannot
   // say this one: Thirteen two-handed deals the whole pack into face-down
-  // hands and lets the players pick (`rules.offer`, src/templates/climbing.js).
+  // hands and lets the players pick (`rules.offer`, src/templates/climbing-offer.js).
   // Without it this line read "Deal 13 cards each" over the one table where
   // nobody is dealt a hand at all.
   if (rules.offer) {

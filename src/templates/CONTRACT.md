@@ -950,7 +950,7 @@ It cost **six files, not two** — and one of them is a genuine platform edit:
 
 | File | What it needed | Fair? |
 |---|---|---|
-| `src/templates/climbing.js` | the template | promised |
+| `src/templates/climbing.js` | the template | promised — **#220 split it four ways** (`climbing-shapes.js` the combination vocabulary, `climbing-offer.js` the two-handed pick phase, `climbing-bot.js` the strategy), the way contract-rummy is split. Still one template object, still one row in `index.js`; the extra files are this template's own layering, not a platform cost. |
 | `src/templates/registry.js` | its row (genre word, card art, playable) | promised |
 | `src/templates/index.js` | an import and a map entry | **the contract forgot this one.** It is the module that turns an id into a template; nothing can load without it, and it is not `registry.js`. Two entries, not one. |
 | `src/ui/interaction.js` | one new mode in `INTERACTION_MODES`, its `buildUiModel` and `dropCandidates` branches, and `selectionLegality` | **a real platform edit, and the contract already predicted it**: "the vocabulary is the platform's; which phase means which mode is the template's". A genre with a genuinely new input shape has to add one. A genre reusing an existing shape adds nothing. |
@@ -1065,7 +1065,9 @@ only one of them had ever been tested by somebody following it rather than
 somebody documenting it.
 
 **It cost one file.** `src/templates/climbing.js` grew a `weights` object of
-eight numbers, an `evaluateState`, and the two rules keys the variants needed;
+eight numbers, an `evaluateState`, and the two rules keys the variants needed
+(the first two moved to `src/templates/climbing-bot.js` in #220, and
+`template.weights` still publishes the bag — the tuner never sees the file);
 `schema/manifest.schema.json` grew those two keys because the schema is
 normative and closed. Nothing in `src/engine/` and nothing in `src/ui/` was
 touched. The bot layer, the tuner and the variant machinery all consumed it
