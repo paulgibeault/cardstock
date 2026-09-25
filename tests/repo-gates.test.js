@@ -23,6 +23,51 @@ test("every tracked JS file parses", () => {
   }
 });
 
+/*
+ * A key written twice in one object literal is legal JavaScript — the later
+ * one silently wins — so `node --check` passes it and the gate above never
+ * sees it. That is how the felt's `el` map carried two `feltMiddle` entries
+ * (#182). There is no parser in the repo, so this is a SOURCE SCAN (#183), a
+ * heuristic and not an AST: it tracks brace depth line by line, skips `//` and
+ * `/* *\/` comments, and collects the `key:` that starts each line per block.
+ * It catches the one-key-per-line shape every hand-written map here uses; it
+ * does not see quoted keys, a second key on the same line, or braces hiding in
+ * strings. A label (`outer: for`) reads as a key too, so two identical labels
+ * in one block would trip it — rename one.
+ */
+test("no object literal writes the same key twice", () => {
+  const files = tracked.filter((f) => /\.(js|mjs)$/.test(f));
+  const offenders = [];
+  for (const f of files) {
+    const lines = fs.readFileSync(path.join(ROOT, f), "utf8").split("\n");
+    const stack = [new Map()];
+    let inBlockComment = false;
+    lines.forEach((raw, i) => {
+      let s = raw;
+      if (inBlockComment) {
+        if (!s.includes("*/")) return;
+        s = s.slice(s.indexOf("*/") + 2);
+        inBlockComment = false;
+      }
+      s = s.replace(/\/\/.*$/, "").replace(/\/\*.*?\*\//g, "");
+      if (s.includes("/*")) { s = s.slice(0, s.indexOf("/*")); inBlockComment = true; }
+      const m = /^\s*([a-zA-Z_$][\w$]*)\s*:\s*\S/.exec(s);
+      if (m) {
+        const block = stack[stack.length - 1];
+        if (block.has(m[1])) offenders.push(`${f}:${i + 1} duplicate '${m[1]}' (first at line ${block.get(m[1])})`);
+        else block.set(m[1], i + 1);
+      }
+      for (const ch of s) {
+        if (ch === "{") stack.push(new Map());
+        else if (ch === "}" && stack.length > 1) stack.pop();
+      }
+    });
+  }
+  assert.ok(files.includes("src/ui/table.js"), "the walk found no tracked JS at all");
+  assert.deepStrictEqual(offenders, [],
+    "the later key silently wins and the earlier one is dead — delete one of the two");
+});
+
 test("every tracked JSON file parses", () => {
   for (const f of tracked.filter((f) => f.endsWith(".json"))) {
     assert.doesNotThrow(
