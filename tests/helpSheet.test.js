@@ -111,7 +111,7 @@ test('Hint closes the sheet FIRST, then rings the cards, then saves the count', 
   assert.equal(h.calls[0][2], true,
     'THE ORDER IS THE POINT: a sheet left standing over the ring hides the answer');
   assert.ok(h.session.hint, 'the suggestion is what the felt rings');
-  assert.equal(h.session.hintsTaken, 1);
+  assert.equal(h.session.table.hintsTaken, 1);
   assert.match(h.el.log.textContent, /^Sharp would /,
     'THE SAME DIAL THE OPPONENTS ARE ON, read fresh from storage — and #log is the only wording');
   const [card] = h.session.hint.cardIds;
@@ -132,7 +132,7 @@ test('a hint is never taken where the felt does not hold the position or the tur
     h.state = live;
     h.sheet.showHint();
     assert.equal(h.session.hint, null, `${why}: no hint`);
-    assert.equal(h.session.hintsTaken, 0, `${why}: nothing counted`);
+    assert.equal(h.session.table.hintsTaken, 0, `${why}: nothing counted`);
     assert.deepEqual(h.calls, [], `${why}: nothing rendered or saved`);
   }
 });

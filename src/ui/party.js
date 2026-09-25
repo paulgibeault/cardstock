@@ -51,9 +51,10 @@ import { botById, initialsOf, pickBotIds } from '../players/roster.js';
 import { createBotDriver } from './botDriver.js';
 import { botDriverSeams } from './botSeams.js';
 import {
-  saveHostMatch, clearHostMatch, hostMatches, loadHostMatch,
+  clearHostMatch, hostMatches, loadHostMatch,
   clearSeatStub, sweepStaleTables, seatStubs,
 } from '../arcade/storage.js';
+import { persistTable } from '../arcade/persist.js';
 import {
   fetchPack, fetchPackManifest, knownManifest, askedForManifest,
 } from './packSource.js';
@@ -182,7 +183,7 @@ const ourTable = () => {
     const shown = hosted.find((session) => session.tableId === activeKey);
     if (shown) return shown;
   }
-  const bound = hosted.find((session) => session.bound);
+  const bound = hosted.find((session) => sessions.isBound(session));
   return bound || hosted[0];
 };
 /**
@@ -208,7 +209,7 @@ const theirTable = () => {
     const shown = joined.find((session) => session.tableId === activeKey);
     if (shown) return shown;
   }
-  const bound = joined.find((session) => session.bound);
+  const bound = joined.find((session) => sessions.isBound(session));
   return bound || joined[0];
 };
 
@@ -397,6 +398,7 @@ function model() {
     packNameOf: (packId) => knownManifest(packId)?.name || null,
     packTeamsOf,
     focusedKey: activeKey,
+    boundKey: sessions.bound()?.tableId ?? null,
     now: Date.now(),
     beliefs,
   });
@@ -511,7 +513,7 @@ function shownIsOurs() {
  * call site rather than letting this reach for it.
  */
 function publishOwnTable(session) {
-  if (!session?.host || !session.seats || !session.pack) return;
+  if (!session?.host || !session.seats || !session.packId) return;
   const frame = ourLobbyFrame(session);
   if (frame) tables.sight(frame);
 }
@@ -1144,16 +1146,19 @@ function graceChooser() {
 async function returnToOurTable() {
   const session = ourTable();
   if (!session?.state) return false;
-  await resumeHostedTable({
-    packId: session.pack.packId,
-    variants: session.pack.variants,
-    state: session.state,
-    seats: session.seats,
-    seating: session.seating || seatingFromRoster(ourLobbyFrame(session)),
-  });
+  // THE TABLE ITSELF GOES TO THE FELT (#225), not its state, seats and seating
+  // as three loose copies — the felt draws this session and nothing else.
+  if (!session.seating) session.seating = seatingFromRoster(ourLobbyFrame(session));
+  // A LATER OPEN WON THE SCREEN while the pack was in flight: the felt never
+  // took this table over, so it is not bound and its headless driver keeps it
+  // playing — rather than a bound table whose bots nobody is running.
+  if (!(await resumeHostedTable({ table: session }))) return false;
+  // The felt took the bots over as it drew the table (src/ui/matchDoors.js
+  // `adoptMatch`): the headless driver's turn is gone from the table's slots and
+  // the felt's own is in them. Binding now hands every OTHER hosted table to the
+  // headless driver — and cancelling here, as this used to, would cancel the
+  // felt's turn, since there is one set of slots per table (#225).
   bindFelt(session.tableId);
-  // The felt drives the bots again, so the headless driver must let go.
-  session.cancelBots();
   goToTable();
   hidePartyScreen();
   repaint();
@@ -1194,7 +1199,7 @@ function renderActions() {
       el.actions.append(graceChooser());
       el.actions.append(button('Deal', () => { dealParty().catch(reportFailure); },
         { className: '' }));
-    } else if (!ourTable().bound) {
+    } else if (!sessions.isBound(ourTable())) {
       // OUR OWN GAME, RUNNING, AND NOT ON SCREEN. Without this the panel's only
       // offer was "Stop hosting" — which ends the very thing the player came
       // here to get back to.
@@ -1501,8 +1506,8 @@ function ourLobbyFrame(session) {
     // tile we draw from this and the tile a joiner draws from the wire are the
     // same table rather than two that merely look alike.
     tableId: session.tableId,
-    packId: session.pack.packId,
-    variants: session.pack.variants,
+    packId: session.packId,
+    variants: session.variants,
     hostDeviceId: selfId(),
     seatCount: session.seats.count,
     seats,
@@ -1548,8 +1553,12 @@ function buildSeatTable(count, me, manifest) {
  * a hook quietly goes missing and a restored table stops saving itself.
  */
 function openHostSession({ tableId, packId, packName: name, variants, seats }) {
-  const session = createTableSession({ tableId, packId, role: 'host', packName: name });
-  session.pack = { packId, variants, name };
+  // WHICH GAME IS `packId`/`variants`/`packName`, and `session.pack` stays null
+  // until a pack has actually been loaded (the felt's deal, or a rehydrate). It
+  // used to hold a `{ packId, variants, name }` descriptor here and the loaded
+  // pack on a joiner's table — one field, two shapes, and the felt could not
+  // read a hosted table's context without knowing which it had been handed.
+  const session = createTableSession({ tableId, packId, role: 'host', packName: name, variants });
   session.seats = seats;
   sessions.add(session);
 
@@ -1566,7 +1575,7 @@ function openHostSession({ tableId, packId, packName: name, variants, seats }) {
     // arbitrated against was whichever one was on screen — and therefore that
     // navigating away from a hosted table stopped it being a table at all.
     liveState: () => session.state,
-    packInfo: () => ({ packId: session.pack.packId, variants: session.pack.variants }),
+    packInfo: () => ({ packId: session.packId, variants: session.variants }),
     // BOUND TO THIS SESSION. `host.js` calls `nameFor(seat)` with a seat and
     // nothing else, so handing it the bare function was the implicit default at
     // its most expensive: two hosted tables, and each published the other's
@@ -1581,7 +1590,7 @@ function openHostSession({ tableId, packId, packName: name, variants, seats }) {
       // Unbound, the move is applied and published and nothing is drawn — which
       // is the whole of what "headless" means here.
       onApplied: (_state, move) => {
-        if (session.bound) afterRemoteMove(move);
+        if (sessions.isBound(session)) afterRemoteMove(move);
         armTimer(session);
         driveBots(session);
         persist(session);
@@ -1622,7 +1631,7 @@ function openHostSession({ tableId, packId, packName: name, variants, seats }) {
       const owner = session.seats?.ownerOf(seat);
       if (owner?.kind !== 'device') return false;
       const isOurs = owner.deviceId === selfId();
-      return !(isOurs && session.bound);
+      return !(isOurs && sessions.isBound(session));
     },
     onExpire: (state, seat) => {
       // A TURN THAT RAN OUT IS A MOVE. The house plays one for them and the
@@ -1769,12 +1778,9 @@ export async function dealParty() {
   // the moment the felt showed something else — see the notes at each of the
   // sites this fixes.
   session.seating = seatingFromRoster(ourLobbyFrame(session));
-  session.state = await dealHostedTable({
-    packId: session.pack.packId,
-    variants: session.pack.variants,
-    seats: session.seats,
-    seating: session.seating,
-  });
+  // DEALT INTO THE SESSION (#225): the felt puts the pack and the new state on
+  // this table rather than handing a state back to be copied onto it.
+  await dealHostedTable({ table: session });
   // THE FELT IS NOW SHOWING THIS ONE. Binding is about attention, not lifetime
   // — see src/match/tableSession.js. It is what tells a later background table
   // apart from the one in front of the player.
@@ -1814,18 +1820,14 @@ export async function dealParty() {
  * ------------------------------------------------------------------ */
 
 function persist(session) {
-  if (!session?.hosting() || !session.state || !session.seats) return;
-  // A VIEW IS NOT A MATCH. Only a host holds seed + log; a joiner keeps nothing
-  // across a reload and re-asks for a snapshot, which is what stops a client
-  // writing full information about hands it was never shown.
-  if (session.state.isView) return;
+  if (!session?.hosting()) return;
   try {
-    // A FINISHED MATCH IS NOT A RESUMABLE ONE. Clearing on the last move rather
-    // than waiting for "Stop hosting" means a host who closes the tab on a
-    // finished game does not come back to it — the same rule solo play follows
-    // when a match ends.
-    if (session.state.gameOver) clearHostMatch(session.tableId);
-    else saveHostMatch(session.tableId, session.state, session.seats, { graceMs: session.graceMs });
+    // ONE PERSIST PATH (#225, src/arcade/persist.js). The slot, "a view is not a
+    // match", and "a finished match is not a resumable one" — clearing on the
+    // last move rather than waiting for "Stop hosting", so a host who closes
+    // the tab on a finished game does not come back to it — are all decided
+    // there, from the table's role, for this table and the felt's alike.
+    persistTable(session);
   } catch (err) {
     // A save that fails is not a reason to stop the game. The launcher's own
     // quota handler (registerStorageErrorHandler) is what tells the player.
@@ -1892,6 +1894,7 @@ async function rehydrateOne(tableId) {
     variants: snapshot.variants || [],
     seats,
   });
+  session.pack = pack;
   session.state = state;
   // Restored before the first lobby frame goes out, so the grace the party
   // reconvenes on is the one they were playing with.
@@ -1961,7 +1964,7 @@ function headlessBotsFor(session) {
  */
 function driveBots(session) {
   if (!session?.hosting() || !session.bots || !session.state) return;
-  if (session.bound) return;
+  if (sessions.isBound(session)) return;
   session.bots.scheduleNextTurn(session, session.epoch);
   session.bots.scheduleAnnouncementBeats(session, session.epoch);
 }
@@ -1969,14 +1972,28 @@ function driveBots(session) {
 /**
  * Hand the table over between the felt and the headless driver.
  *
- * Binding cancels the headless timers first: the felt picks the turn up through
- * its own scheduler, and a pending headless turn would otherwise fire into an
- * animation pipeline that had just taken responsibility for the same seat.
+ * CALLED AFTER THE FELT HAS DRAWN THE TABLE, never before (#225). A table has
+ * one set of bot-driver slots, shared by whichever driver is moving it, so the
+ * hand-over is an order of events rather than two drivers each dropping their
+ * own copy:
+ *
+ *   1. the felt lets go of the table it was showing (src/ui/session.js
+ *      `stopSession` cancels what its driver scheduled there),
+ *   2. the felt takes the new one over (src/ui/matchDoors.js `adoptMatch`
+ *      cancels the headless turn in its slots, then schedules its own),
+ *   3. this binds it and hands every OTHER hosted table to the headless driver.
+ *
+ * So the bound table is deliberately left alone here: its slots already hold
+ * the felt's turn, and cancelling them — which is what this did while the felt
+ * kept a second set of its own — would stall the table on a bot's turn.
  */
 function bindFelt(tableId) {
-  for (const other of sessions.hosted()) other.cancelBots();
   const bound = sessions.bind(tableId);
-  for (const other of sessions.hosted()) if (other !== bound) driveBots(other);
+  for (const other of sessions.hosted()) {
+    if (other === bound) continue;
+    other.cancelBots();
+    driveBots(other);
+  }
   return bound;
 }
 
@@ -2211,18 +2228,24 @@ async function joinTable(entry) {
       },
       onView: (view, _events, meta) => {
         // THE VIEW IS THIS TABLE'S, and it is kept on this table's session — so
-        // a second table's view can arrive without overwriting it.
-        session.state = view;
-        bindFelt(session.tableId);
+        // a second table's view can arrive without overwriting it. The felt
+        // writes it there (#225): the model it draws becomes `session.state`,
+        // with the view itself inside it as `session.state.view`.
+        //
+        // DRAWN BEFORE IT IS BOUND. Adopting lets go of whatever table the felt
+        // was showing, and letting go cancels the bot turns scheduled on it; the
+        // bind below then hands every unbound hosted table to the headless
+        // driver. The other order would cancel the headless turn it had just
+        // scheduled, and a hosted game behind the felt would stall.
         adoptSharedView({
+          table: session,
           view,
-          pack: session.pack,
           // A joiner has no seed, so who is at the table is a fact the host
           // publishes rather than one we derive.
           seating: seatingFromRoster(session.lobbyFrame),
-          client: session.client,
           message: meta?.snapshot ? 'Caught up.' : '',
         });
+        bindFelt(session.tableId);
         goToTable();
         pulse();
         renderStrip();
@@ -2275,18 +2298,21 @@ function switchToSeat(tableId) {
   if (!session || session.hosting() || !session.client) return false;
 
   moveFocus({ kind: 'chosen', key: tableId });
-  bindFelt(tableId);
 
+  // Drawn BEFORE it is bound, for the reason `onView` gives: the felt lets go of
+  // the table it was showing first, then the bind hands that one to the
+  // headless driver.
   if (session.state && session.pack) {
     adoptSharedView({
-      view: session.state,
-      pack: session.pack,
+      table: session,
+      // The raw view the last model was built from (src/ui/tableModel.js).
+      view: session.state.view,
       seating: seatingFromRoster(session.lobbyFrame),
-      client: session.client,
       message: '',
     });
     goToTable();
   }
+  bindFelt(tableId);
   // Freshen. The answer arrives through the ordinary onView path, which
   // re-adopts and repaints — the same door a late joiner's snapshot comes in.
   session.client.requestSnapshot();

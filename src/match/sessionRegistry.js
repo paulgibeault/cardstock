@@ -31,6 +31,10 @@
 // it adds and removes nothing. A bound session is the one whose bots animate
 // and whose host player's seat the clock exempts (§3); every other session in
 // here is still running.
+//
+// AND THIS IS THE ONLY PLACE THAT ANSWER LIVES (#225). It used to be written onto
+// each session as well (`session.bound`) and derived a third time by the party
+// model; `isBound(session)` is now the one question, asked of the one pointer.
 
 /**
  * @param sessions  optional seed, for tests
@@ -80,7 +84,6 @@ export function createSessionRegistry() {
       if (!session) return null;
       sessions.delete(tableId);
       if (boundId === tableId) boundId = null;
-      session.bound = false;
       session.stop();
       return session;
     },
@@ -120,17 +123,25 @@ export function createSessionRegistry() {
      */
     bind(tableId) {
       const next = tableId ? sessions.get(tableId) || null : null;
-      for (const session of all()) session.bound = session === next;
       boundId = next ? next.tableId : null;
       return next;
     },
 
     unbind() {
-      for (const session of all()) session.bound = false;
       boundId = null;
     },
 
     /** The session the felt is showing, or null. */
     bound: () => (boundId ? sessions.get(boundId) || null : null),
+
+    /**
+     * IS THE FELT SHOWING THIS ONE. Not a question about whether the table is
+     * running — see the header. It is read by the timer rule (a host's own seat
+     * is exempt only at the table on screen) and by the bot drivers (a bound
+     * table's bots go through the felt's animation pipeline, an unbound one's
+     * do not). Identity, not id: a session this registry no longer holds is
+     * bound to nothing, whatever its id says.
+     */
+    isBound: (session) => !!session && boundId !== null && sessions.get(boundId) === session,
   };
 }

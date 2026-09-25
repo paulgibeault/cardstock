@@ -326,7 +326,7 @@ test("the felt's bot driver picks its clock from the match, not from the tab", (
     "src/ui/table.js builds more than one bot driver — every one of them has to pick its clock per match");
   // The seams' list is long; only its FIRST option matters here, and it is the
   // line straight after the call opens.
-  const opener = src.match(/createBotDriver\(botDriverSeams\(\(\) => session, \{\s*\n\s*clock:\s*([^\n]*)/);
+  const opener = src.match(/createBotDriver\(botDriverSeams\(\(\) => session\?\.table \?\? null, \{\s*\n\s*clock:\s*([^\n]*)/);
   assert.ok(opener, "src/ui/table.js no longer opens its bot driver's seams with a `clock:` option");
   assert.match(opener[1], /feltClock\(/,
     "the felt's driver must take feltClock — a fixed clock is the solo answer for the life of the tab");
@@ -737,4 +737,42 @@ test("`!important` appears only under prefers-reduced-motion", () => {
   assert.deepStrictEqual(offenders, [],
     "raise the losing rule's specificity or lower the winning one's "
     + "(`:where()` costs nothing) instead of shouting");
+});
+
+/**
+ * src/match/ IMPORTS NOTHING FROM THE ENGINE OR THE UI — EXCEPT WHAT #50 HAS YET
+ * TO INJECT.
+ *
+ * #50 (T5) makes src/match/ a game-agnostic kit: the rules come in as an object
+ * from the construction site in src/ui/, so a second game can supply its own.
+ * That boundary does not hold yet — createTableHost still imports the engine's
+ * pipeline, and the client the engine's view version — and those are listed
+ * below, EXACTLY: a new engine import in either file fails, and so does one of
+ * these disappearing, which is the prompt to shrink the list. Every other file
+ * in the directory is held to the boundary already. #225 put a solo match on a
+ * TableSession (src/match/tableSession.js) without teaching it any rules — the
+ * pack and state are handed in — and this is what keeps it that way.
+ *
+ * When #50 lands, NOT_YET_INJECTED empties and this becomes the gate it asks for.
+ */
+const NOT_YET_INJECTED = {
+  "src/match/host.js": [
+    "../engine/movePipeline.js", "../engine/context.js", "../engine/view.js", "../engine/selectors.js",
+  ],
+  "src/match/client.js": ["../engine/view.js"],
+};
+
+test("src/match/ reaches into neither the engine nor the UI (#50, ratcheted by #225)", () => {
+  const files = tracked.filter((f) => /^src\/match\/[^/]+\.js$/.test(f));
+  assert.ok(files.includes("src/match/tableSession.js"), "the walk found no src/match/ files at all");
+  for (const f of files) {
+    const code = fs.readFileSync(path.join(ROOT, f), "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+    // `from '…'`, a bare `import '…'`, and a dynamic `import('…')`.
+    const specifiers = [...code.matchAll(/(?:\bfrom\s*|\bimport\s*\(?\s*)['"]([^'"]+)['"]/g)].map((m) => m[1]);
+    const outside = specifiers.filter((s) => /^\.\.\/(engine|ui)\//.test(s)).sort();
+    assert.deepStrictEqual(outside, [...(NOT_YET_INJECTED[f] || [])].sort(),
+      `${f} imports ${JSON.stringify(outside)} from outside the kit — src/match/ is handed its rules, `
+      + "it does not import them (#50). If an import went away, shrink NOT_YET_INJECTED to match.");
+  }
 });

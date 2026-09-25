@@ -22,17 +22,19 @@
 //   identityOf        both read `session.seating` first; the fallback differs
 //                     (the felt: "Seat N", a bot unless it is this device's;
 //                     headless: the party's name for the seat, always a bot).
-//   epoch             the felt's epoch is still a module slot in table.js, so
-//                     it passes it; a party session carries its own, which is
-//                     the default. #225 (TableSession as sole owner) moves the
-//                     felt's onto its session and this argument goes away.
-//   announcementsFor  the felt passes its view-aware wrapper (a joiner's view
-//                     carries the host's list); the default is the engine's,
-//                     which is all a host-side session ever holds.
+//   epoch             the felt passes its own screen counter (src/ui/table.js
+//                     says why it cannot be the table's); the headless driver
+//                     takes the default, the table's own `epoch`.
 //
-// `session` is a THUNK, the same convention every carved seam of table.js
-// uses: the felt's driver is built once and outlives every match the tab
-// plays, so the session is asked for at fire time, never captured.
+// NO LONGER ON THE LIST (#225): `announcementsFor`. The felt used to pass its
+// view-aware wrapper and the headless driver took the engine's; the view-aware
+// one is the default now, and it is the engine's answer for every state that is
+// not a view — which is every state a host-side table holds.
+//
+// `session` is a THUNK returning the TABLE the driver moves
+// (src/match/tableSession.js) — its bot slots, its seats, its seating. The
+// felt's driver is built once and outlives every match the tab plays, so the
+// table is asked for at fire time, never captured.
 
 import { actingSeats, announcementsFor as enumerateAnnouncementsFor } from '../engine/context.js';
 import { createSeatLens } from '../players/seats.js';
@@ -40,10 +42,23 @@ import { loadSettings } from '../arcade/storage.js';
 import { currentDelayMs } from './statusBar.js';
 
 /**
- * The option object for `createBotDriver`, from a session and the seams that
+ * What a seat may SAY right now, out of turn (§E2). Never enumerated as a play.
+ *
+ * A CLIENT IS TOLD, IT DOES NOT WORK IT OUT. The host ships the acting seat's
+ * options with the view (design decision D3); enumerating here would mean
+ * running the template over a state with other people's hands missing. Every
+ * other state is the engine's to answer.
+ */
+export function announcementsFor(state, seat) {
+  if (state.isView) return state.announcements;
+  return enumerateAnnouncementsFor(state, seat);
+}
+
+/**
+ * The option object for `createBotDriver`, from a table and the seams that
  * differ between the felt and the headless driver.
  *
- * @param session  () => the match session, or null between matches
+ * @param session  () => the TableSession being driven, or null between matches
  * @param seams    { clock, identityOf, playMove, playAnnouncement, onError,
  *                   epoch?, announcementsFor? } — see the header
  */
@@ -52,7 +67,7 @@ export function botDriverSeams(session, seams = {}) {
     clock,
     epoch = () => session().epoch,
     identityOf,
-    announcementsFor = enumerateAnnouncementsFor,
+    announcementsFor: announcementsOf = announcementsFor,
     playMove,
     playAnnouncement,
     onError,
@@ -88,7 +103,7 @@ export function botDriverSeams(session, seams = {}) {
     me: createSeatLens(() => session()?.seats ?? null),
     identityOf,
     actingSeatsOf: actingSeats,
-    announcementsFor,
+    announcementsFor: announcementsOf,
     playMove,
     playAnnouncement,
     onError,

@@ -25,6 +25,13 @@
 // All of them but the joiner's end in `adoptMatch`, THE ONLY PLACE A SOLO OR
 // HOSTED SESSION IS BORN.
 //
+// EVERY DOOR SEATS A TABLE (#225). The felt's render session points at a
+// TableSession (src/match/tableSession.js) instead of carrying the match itself:
+// a solo door makes one of its own — role `'solo'`, born in `adoptMatch` and
+// ended when the felt lets go of it — and the hosted and joiner doors are handed
+// the party's, and fill it in. Nothing about the match is copied: a hosted table
+// on screen is the same object the party publishes from.
+//
 // WHO OWNS THE SLOTS. table.js keeps `session`, `epoch` and `sharedTable` —
 // the felt reads the session in well over a hundred places and hands it to
 // three other seams as a thunk, and the move loop compares the epoch on every
@@ -40,6 +47,7 @@ import { buildSeating } from '../players/roster.js';
 import { sidesOf } from '../engine/sides.js';
 import { makeCardRenderer } from './cardStyles/index.js';
 import { createSession, stopSession } from './session.js';
+import { createTableSession } from '../match/tableSession.js';
 import { clearSvgCache } from './dom.js';
 import { hideInspector } from './inspector.js';
 import {
@@ -102,7 +110,8 @@ export function seatsFor(pack, requested) {
  * @param deps.sharedTable      () => the joiner's table client, or null
  * @param deps.setSharedTable   (client | null) => void
  * @param deps.render           the whole-felt render every door ends in
- * @param deps.persistMatch     table.js's save, unchanged (#225 reworks it)
+ * @param deps.persistMatch     table.js's save — src/arcade/persist.js's
+ *                              `persistTable` of whatever table is on the felt
  */
 export function createMatchDoors({
   el, session, setSession, bumpEpoch, sharedTable, setSharedTable, drag, ladder,
@@ -126,7 +135,7 @@ export function createMatchDoors({
    * roll could survive into a match that had not been dealt when it was made.
    */
   function adoptMatch(pack, state, message, {
-    dealing = false, seats = null, seating = null, shared = false, hints = 0, daily = null,
+    dealing = false, table = null, hints = 0, daily = null,
   } = {}) {
     bumpEpoch();
     // NOTHING ABOUT THE PREFERENCES BLOB IS SNAPSHOTTED HERE (#184, then #203).
@@ -137,43 +146,29 @@ export function createMatchDoors({
     // the copy and this line with it. `hands` goes through `loadHandPrefs`, which
     // `createSession` just below calls fresh for this pack.
     stopSession(session());
+    // THE FELT TAKES A BORROWED TABLE OVER (#225). A hosted table the felt was
+    // not showing has been playing itself on the headless driver
+    // (src/ui/party.js), in the same slots the felt's driver is about to use —
+    // so its pending turn, its beats and the persona rolls behind them go now,
+    // before the felt schedules anything. Not left to the felt's own scheduling
+    // to overwrite: a paused table or an open review schedules nothing, and a
+    // headless turn left in the slot would then play under the pause. A solo
+    // table is new here and has nothing to cancel.
+    if (table) table.cancelBots();
     // A pre-move copy belongs to the match it was taken in, and this is a
     // different one (src/ui/roundEnding.js's notePreMove).
     roundEnding.forgetPreMove();
     if (drag()) drag().cancel();
     setSession(createSession({
-      pack,
-      state,
-      // WHO OWNS EACH SEAT, before who they are. Solo is one human on this device
-      // and bots in the rest — which is the whole reason ownership is a table
-      // rather than the number zero, because a HOSTED deal arrives with its
-      // seats already decided in the party panel and passes them in.
-      // `sides` is which chairs are a pair (src/engine/sides.js) — the pack's
-      // declaration, handed to the table that answers "whose seat is it" so the
-      // two never disagree about who is partnering whom.
-      seats: seats || soloSeatTable(state.seats, {
-        humanSeat: SOLO_HUMAN_SEAT, sides: sidesOf(pack, state.seats),
-      }),
-      // Who is at this table — derived from the match SEED, so a resumed game
-      // re-seats the same opponents and a fresh deal brings new ones. A hosted
-      // deal overrides it: some of those chairs hold people, and a seed knows
-      // nothing about people.
-      seating: seating || buildSeating(state.seed, state.seats, { humanSeat: SOLO_HUMAN_SEAT, humanName: humanName() }),
+      // THE TABLE THIS MATCH IS, filled in before the session exists — this
+      // function persists the match before it returns, so everything the write
+      // reads has to be on the table already.
+      table: table || soloTable(pack, state, { hints, daily }),
       // From the PACK rather than the manifest alone: the deck is what tells a
       // style which colours it actually has to draw. Built once per match rather
       // than per render — resolving a theme walks the whole deck.
       cardArt: makeCardRenderer(pack.manifest, pack.cardsById),
       handPrefs: loadHandPrefs(pack.id),
-      shared,
-      // Handed in with the session rather than patched on afterwards, because
-      // this function persists the match before it returns and a count set
-      // after that write is a count the next reload has already lost.
-      hintsTaken: hints,
-      // `{ date, seed }` when this is a daily run, null when it is an ordinary
-      // game. It decides which slot the match is written to and which record its
-      // ending goes into — both of which happen before the first render, so it
-      // has to arrive WITH the session rather than be set on it afterwards.
-      daily,
     }));
     // Set on the NEW session, not before it exists: a fresh deal staggers its
     // cards in, a resumed match must not (the cards have been there all along).
@@ -194,6 +189,41 @@ export function createMatchDoors({
     persistMatch();
     scheduleNextTurn();
     scheduleAnnouncementBeats();
+  }
+
+  /**
+   * A SOLO TABLE: nobody else is at it, so it has no id, no host, no client and
+   * no lobby frame — only the match (src/match/tableSession.js, role `'solo'`).
+   */
+  function soloTable(pack, state, { hints = 0, daily = null } = {}) {
+    const table = createTableSession({
+      packId: pack.id, role: 'solo', packName: pack.manifest.name, variants: pack.activeVariants ?? [],
+    });
+    table.pack = pack;
+    table.state = state;
+    // WHO OWNS EACH SEAT, before who they are. Solo is one human on this device
+    // and bots in the rest — which is the whole reason ownership is a table
+    // rather than the number zero, because a HOSTED deal arrives with its
+    // seats already decided in the party panel.
+    // `sides` is which chairs are a pair (src/engine/sides.js) — the pack's
+    // declaration, handed to the table that answers "whose seat is it" so the
+    // two never disagree about who is partnering whom.
+    table.seats = soloSeatTable(state.seats, {
+      humanSeat: SOLO_HUMAN_SEAT, sides: sidesOf(pack, state.seats),
+    });
+    // Who is at this table — derived from the match SEED, so a resumed game
+    // re-seats the same opponents and a fresh deal brings new ones. A hosted
+    // table brings its own: some of those chairs hold people, and a seed knows
+    // nothing about people.
+    table.seating = buildSeating(state.seed, state.seats, { humanSeat: SOLO_HUMAN_SEAT, humanName: humanName() });
+    // How many hints a resumed match had already taken — it rides beside the
+    // save, not in the log.
+    table.hintsTaken = hints;
+    // `{ date, seed }` when this is a daily run, null when it is an ordinary
+    // game. It decides which slot the match is written to and which record its
+    // ending goes into — both of which happen before the first render.
+    table.daily = daily;
+    return table;
   }
 
   /* ------------------------------------------------------------------ *
@@ -269,16 +299,23 @@ export function createMatchDoors({
    * does not derive the seating, because the seats were decided in the party
    * panel by the people sitting in them.
    *
-   * @param seats    the seat table the party agreed on (src/players/seats.js)
-   * @param seating  who those seats are, from the host's own lobby roster
+   * THE TABLE IS HANDED IN, AND DEALT INTO (#225). Its `seats` are the seat
+   * table the party agreed on (src/players/seats.js) and its `seating` is who
+   * those seats are, from the host's own lobby roster; this puts the pack and
+   * the new state on it, so the party's session and the felt hold one match
+   * rather than one each.
+   *
+   * @param table  the host's TableSession (src/match/tableSession.js)
+   * @returns the dealt state, or null when a later open superseded this one
    */
-  async function dealHostedTable({ packId, variants, seats, seating, message = '' }) {
-    const pack = await hostedPack(packId, variants);
+  async function dealHostedTable({ table, message = '' }) {
+    const pack = await hostedPack(table.packId, table.variants);
     if (!pack) return null;
 
-    const state = dealFresh(pack, seats.count, Date.now());
-    adoptMatch(pack, state, message || `Playing ${pack.manifest.name}.`,
-      { dealing: true, seats, seating, shared: true });
+    const state = dealFresh(pack, table.seats.count, Date.now());
+    table.pack = pack;
+    table.state = state;
+    adoptMatch(pack, state, message || `Playing ${pack.manifest.name}.`, { dealing: true, table });
     return state;
   }
 
@@ -290,16 +327,17 @@ export function createMatchDoors({
    * be a way back to one. It deals nothing and consults no storage — the state is
    * handed in, because the session has been holding it the whole time.
    *
-   * @param state    the host's live engine state, from its TableSession
-   * @param seats    that table's seat table, likewise
-   * @param seating  who those seats are, from the host's own roster
+   * @param table  the host's TableSession — its live state, its seat table and
+   *               who those seats are, all read off it rather than handed over
+   *               as copies
    */
-  async function resumeHostedTable({ packId, variants, state, seats, seating, message = '' }) {
-    const pack = await hostedPack(packId, variants);
+  async function resumeHostedTable({ table, message = '' }) {
+    const pack = await hostedPack(table.packId, table.variants);
     if (!pack) return null;
 
-    adoptMatch(pack, state, message || `Back at ${pack.manifest.name}.`, { seats, seating, shared: true });
-    return state;
+    table.pack = pack;
+    adoptMatch(pack, table.state, message || `Back at ${pack.manifest.name}.`, { table });
+    return table.state;
   }
 
   /**
@@ -316,10 +354,18 @@ export function createMatchDoors({
    * have one. Who is at a shared table is a fact the host publishes in its lobby
    * frame, so the caller that read that frame is the one that knows.
    *
-   * @param client  the table client (src/match/client.js), for proposing moves
+   * THE JOINER'S TABLE HOLDS WHAT THE FELT DRAWS (#225). The model built from
+   * each view is written onto the joiner's TableSession as its `state` — the
+   * raw view rides inside it as `state.view` — together with the seat table and
+   * seating it implies, so the felt reads the joiner's table exactly as it reads
+   * a solo or hosted one and there is no copy of it on the felt to go stale.
+   *
+   * @param table  the joiner's TableSession: its loaded `pack`, and its `client`
+   *               (src/match/client.js) for proposing moves
    */
-  function adoptSharedView({ view, pack, seating, client, message = '' }) {
-    setSharedTable(client || sharedTable());
+  function adoptSharedView({ table, view, seating, message = '' }) {
+    const pack = table.pack;
+    setSharedTable(table.client || sharedTable());
     const model = modelFromView(view, pack);
 
     const seats = createSeatTable({
@@ -329,25 +375,32 @@ export function createMatchDoors({
       seats.claim(view.seat, { deviceId: LOCAL_VIEWER });
     }
 
-    if (!session() || session().pack?.id !== pack.id) {
+    // A NEW TABLE IS A NEW SESSION; THE SAME TABLE IS UPDATED IN PLACE. This
+    // was keyed on the pack id while the felt had no idea which table it was
+    // drawing — so a solo Hearts game on screen when a Hearts view arrived was
+    // "updated in place" into somebody else's table, its own bot timers still
+    // armed. The table itself is the honest key now that the felt holds one.
+    const fresh = !session() || session().table !== table;
+    if (fresh) {
       bumpEpoch();
       stopSession(session());
       if (drag()) drag().cancel();
+    }
+    table.state = model;
+    table.seats = seats;
+    table.seating = seating;
+    if (fresh) {
       setSession(createSession({
-        pack, state: model, seats, seating, cardArt: makeCardRenderer(pack.manifest, pack.cardsById),
+        table, cardArt: makeCardRenderer(pack.manifest, pack.cardsById),
         handPrefs: loadHandPrefs(pack.id),
       }));
       clearSvgCache();
       hideAllPanels();
       hideBanner();
-    } else {
-      // AN ORDINARY VIEW IS A REPLACEMENT, NOT A NEW MATCH (design decision D2).
-      // Swapping the model in place is what lets a card animate from where it
-      // was to where it is, instead of the table blinking on every move.
-      session().state = model;
-      session().seats = seats;
-      session().seating = seating;
     }
+    // AN ORDINARY VIEW IS A REPLACEMENT, NOT A NEW MATCH (design decision D2).
+    // Swapping the model in place is what lets a card animate from where it
+    // was to where it is, instead of the table blinking on every move.
     render(model, message);
   }
 

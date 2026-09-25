@@ -369,14 +369,16 @@ test('a device hosting two packs answers about each table separately', () => {
   const hearts = lobbyFrame({ tableId: 't1a1a1a1a1a1a1a1a1a', hostDeviceId: ME, packId: 'hearts', started: true });
   const eights = lobbyFrame({ tableId: 't2b2b2b2b2b2b2b2b2b', hostDeviceId: ME, packId: 'crazy-eights', started: false });
   const dealt = hostSession('t1a1a1a1a1a1a1a1a1a', 'hearts', { state: { isView: false } });
-  dealt.bound = true;
   const model = partyModel({
     ...base,
     sightings: sightingsOf(hearts, eights),
     sessions: [dealt, hostSession('t2b2b2b2b2b2b2b2b2b', 'crazy-eights')],
     focusedKey: 't2b2b2b2b2b2b2b2b2b',
+    // THE REGISTRY'S POINTER, handed in (#225) — a session no longer says so itself.
+    boundKey: 't1a1a1a1a1a1a1a1a1a',
   });
-  assert.strictEqual(boundTable(model).tableId, 't1a1a1a1a1a1a1a1a1a');
+  assert.strictEqual(boundTable(model)?.tableId, 't1a1a1a1a1a1a1a1a1a',
+    'the table the registry says the felt is showing is the bound one');
   assert.strictEqual(focusedTable(model).tableId, 't2b2b2b2b2b2b2b2b2b');
   assert.strictEqual(tableOf(model, 't1a1a1a1a1a1a1a1a1a').hasState, true);
   assert.strictEqual(tableOf(model, 't2b2b2b2b2b2b2b2b2b').hasState, false);

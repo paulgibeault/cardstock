@@ -103,7 +103,9 @@ export function chromeSession(extra = {}) {
     board: null,
     boardHandle: null,
     hint: null,
-    hintsTaken: 0,
+    // The match the felt is drawing (src/match/tableSession.js, #225). The chrome
+    // reads one field of it: how many hints this match has taken.
+    table: { hintsTaken: 0 },
     ...extra,
   };
 }

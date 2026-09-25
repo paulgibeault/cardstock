@@ -35,16 +35,42 @@ test('a session refuses a tableId that is not a SAFE_ID', () => {
   assert.throws(() => createTableSession({ tableId: null, packId: 'hearts', role: 'host' }));
 });
 
-test('a session refuses a role that is neither host nor joiner', () => {
+test('a session refuses a role that is neither host, joiner nor solo', () => {
   assert.throws(() => createTableSession({ tableId: ID.hearts, packId: 'hearts', role: 'spectator' }));
 });
 
-test('unbinding does not end the table — the whole point of the inversion', () => {
-  const { session, stopped } = sessionFor(ID.hearts, 'hearts', 'host');
-  session.state = { turn: { seat: 0 } };
-  session.bound = true;
+test('a solo table is a table with nobody else at it: no id, and it says so (#225)', () => {
+  // SOLO PLAY IS A TABLE TOO. The felt's render session used to carry a solo
+  // match itself; now it points at one of these, so a solo match and a hosted
+  // one are the same kind of object to everything that draws or saves them.
+  const solo = createTableSession({ packId: 'hearts', role: 'solo' });
+  assert.equal(solo.tableId, null, 'nothing on the wire ever names a solo table');
+  assert.equal(solo.local(), true);
+  assert.equal(solo.hosting(), false);
+  assert.equal(solo.seatedAt(), null);
+  assert.equal(solo.daily, null);
+  assert.equal(solo.hintsTaken, 0);
+  assert.equal(solo.concluded, false);
+  assert.equal(createTableSession({ tableId: ID.hearts, packId: 'hearts', role: 'host' }).local(), false);
+  // An id on a solo table would be a table the registry could be asked about
+  // and that no peer could ever reach.
+  assert.throws(() => createTableSession({ tableId: ID.hearts, packId: 'hearts', role: 'solo' }), /solo/);
+});
 
-  session.bound = false;
+test('bound is the registry\'s answer and nowhere else\'s (#225)', () => {
+  const { session } = sessionFor(ID.hearts, 'hearts', 'host');
+  assert.ok(!('bound' in session),
+    'a `bound` field on the session is a second copy of the registry\'s pointer, free to disagree with it');
+});
+
+test('unbinding does not end the table — the whole point of the inversion', () => {
+  const reg = createSessionRegistry();
+  const { session, stopped } = sessionFor(ID.hearts, 'hearts', 'host');
+  reg.add(session);
+  session.state = { turn: { seat: 0 } };
+  reg.bind(ID.hearts);
+
+  reg.unbind();
 
   assert.equal(session.liveState().turn.seat, 0, 'the state outlives the felt looking away');
   assert.ok(session.host, 'and so does the host');
@@ -131,14 +157,21 @@ test('binding moves attention and never membership', () => {
   const b = reg.add(sessionFor(ID.eights, 'eights', 'host').session);
 
   reg.bind(ID.hearts);
-  assert.equal(a.bound, true);
-  assert.equal(b.bound, false);
+  assert.equal(reg.isBound(a), true);
+  assert.equal(reg.isBound(b), false);
 
   reg.bind(ID.eights);
-  assert.equal(a.bound, false, 'exactly one felt, so exactly one bound session');
-  assert.equal(b.bound, true);
+  assert.equal(reg.isBound(a), false, 'exactly one felt, so exactly one bound session');
+  assert.equal(reg.isBound(b), true);
   assert.equal(reg.size(), 2, 'and both tables are still live');
   assert.equal(reg.bound().tableId, ID.eights);
+
+  // IDENTITY, NOT ID. A session the registry does not hold is bound to nothing,
+  // even one that happens to carry the bound table's id.
+  assert.equal(reg.isBound(sessionFor(ID.eights, 'eights', 'host').session), false);
+  assert.equal(reg.isBound(null), false);
+  reg.unbind();
+  assert.equal(reg.isBound(b), false);
 });
 
 test('unbinding leaves both tables running', () => {
@@ -174,6 +207,7 @@ test('remove ends the table it drops — no host left answering frames', () => {
 
   assert.equal(reg.size(), 0);
   assert.equal(reg.bound(), null, 'and takes the binding with it');
+  assert.equal(reg.isBound(session), false);
   assert.equal(stopped.host, true);
   assert.equal(stopped.timer, true);
   assert.equal(reg.remove(ID.hearts), null, 'removing twice is not an error');

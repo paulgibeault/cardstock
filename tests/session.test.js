@@ -15,12 +15,24 @@
 import { test } from "node:test";
 import assert from "node:assert";
 import { createSession, stopSession, inputEndsHeldBeat } from "../src/ui/session.js";
+import { createTableSession } from "../src/match/tableSession.js";
+import fs from "node:fs";
+import path from "node:path";
+import { ROOT } from "../tools/stage.mjs";
 
-function fakeSession() {
+// THE MATCH IS A TABLE, AND THE SESSION POINTS AT IT (#225). A solo table is the
+// felt's own; a hosted one is borrowed from the party.
+function soloTable() {
+  const table = createTableSession({ packId: "crazy-eights", role: "solo" });
+  table.pack = { id: "crazy-eights" };
+  table.state = { seats: 3 };
+  table.seating = [{ seat: 0 }];
+  return table;
+}
+
+function fakeSession(table = soloTable()) {
   return createSession({
-    pack: { id: "crazy-eights" },
-    state: { seats: 3 },
-    seating: [{ seat: 0 }],
+    table,
     cardArt: {},
     handPrefs: { mode: "auto", order: [] },
   });
@@ -34,27 +46,44 @@ test("a fresh session carries nothing from anywhere else", () => {
   assert.strictEqual(s.peek, null);
   assert.strictEqual(s.dealAnimation, false);
   assert.strictEqual(s.roundSummaryOpen, false);
-  assert.strictEqual(s.botTimer, null);
   assert.strictEqual(s.bannerTimer, null);
-  assert.deepStrictEqual(s.announceTimers, []);
   assert.deepStrictEqual(s.beatTimers, []);
   assert.strictEqual(s.revealTimer, null);
   assert.strictEqual(s.advanceTimer, null);
   assert.strictEqual(s.beatResume, null);
   assert.strictEqual(s.beatOpenedAt, null);
-  assert.strictEqual(s.botCallDecision.size, 0);
-  assert.strictEqual(s.botCatchDecision.size, 0);
   assert.strictEqual(s.shownCardKeys.size, 0);
+  // The bot driver's slots are the TABLE's, and a new table starts empty.
+  assert.strictEqual(s.table.botTimer, null);
+  assert.deepStrictEqual(s.table.announceTimers, []);
+  assert.strictEqual(s.table.botCallDecision.size, 0);
+  assert.strictEqual(s.table.botCatchDecision.size, 0);
+});
+
+test("the session holds no copy of the match — it points at the table (#225)", () => {
+  // THE COPY IS THE BUG THIS REMOVED. A hosted table on screen had its state,
+  // seats and seating on the felt's session AND on its TableSession, a second
+  // set of bot timers here, and a persist path of its own; a field about the
+  // game itself that grows back on this object is that copy returning.
+  const table = soloTable();
+  const s = fakeSession(table);
+  assert.strictEqual(s.table, table);
+  for (const field of ["pack", "state", "seats", "seating", "shared", "daily", "hintsTaken",
+    "botTimer", "announceTimers", "botCallDecision", "botCatchDecision"]) {
+    assert.ok(!(field in s), `the felt's session carries its own \`${field}\` again — it is the table's`);
+  }
+  assert.throws(() => createSession({ cardArt: {}, handPrefs: {} }), /table/,
+    "a session with no table would be a felt drawing nothing in particular");
 });
 
 test("two sessions share nothing — a new match cannot inherit the last one's caches", () => {
   const a = fakeSession();
-  a.botCallDecision.set(1, true);
+  a.table.botCallDecision.set(1, true);
   a.shownCardKeys.add("hand:spades-Q");
   a.selection = { from: "hand.0", cardIds: ["spades-Q"] };
 
   const b = fakeSession();
-  assert.strictEqual(b.botCallDecision.size, 0, "a bot's roll survived into a new match");
+  assert.strictEqual(b.table.botCallDecision.size, 0, "a bot's roll survived into a new match");
   assert.strictEqual(b.shownCardKeys.size, 0, "the felt remembered another match's cards");
   assert.strictEqual(b.selection, null);
 });
@@ -64,9 +93,9 @@ test("stopSession cancels every timer and clears every decision", () => {
   const cancelled = [];
   const timer = (name) => ({ cancel: () => cancelled.push(name) });
 
-  s.botTimer = timer("bot");
+  s.table.botTimer = timer("bot");
   s.bannerTimer = timer("banner");
-  s.announceTimers = [timer("beat-a"), timer("beat-b")];
+  s.table.announceTimers = [timer("beat-a"), timer("beat-b")];
   // THE ROUND ENDING'S OWN THREE (#150). The summary now deals itself, so
   // between a round-ending move and the next deal there are up to three live
   // timers: the show's steps, the completed trick's hold, and the countdown on
@@ -77,8 +106,8 @@ test("stopSession cancels every timer and clears every decision", () => {
   s.beatTimers = [timer("step-1"), timer("summary")];
   s.revealTimer = timer("reveal");
   s.advanceTimer = timer("advance");
-  s.botCallDecision.set(1, false);
-  s.botCatchDecision.set("1>2", true);
+  s.table.botCallDecision.set(1, false);
+  s.table.botCatchDecision.set("1>2", true);
   s.beatResume = () => {};
   s.beatOpenedAt = 1234.5;
   s.selection = { from: "hand.0", cardIds: ["x"] };
@@ -90,26 +119,97 @@ test("stopSession cancels every timer and clears every decision", () => {
   assert.deepStrictEqual(cancelled.sort(),
     ["advance", "banner", "beat-a", "beat-b", "bot", "reveal", "step-1", "summary"],
     "a timer left running is a table that keeps playing a match nobody is looking at");
-  assert.strictEqual(s.botTimer, null);
+  assert.strictEqual(s.table.botTimer, null);
   assert.strictEqual(s.bannerTimer, null);
-  assert.deepStrictEqual(s.announceTimers, []);
+  assert.deepStrictEqual(s.table.announceTimers, []);
   assert.deepStrictEqual(s.beatTimers, []);
   assert.strictEqual(s.revealTimer, null);
   assert.strictEqual(s.advanceTimer, null);
   assert.strictEqual(s.beatResume, null);
   assert.strictEqual(s.beatOpenedAt, null,
     "a stamp left on a stopped session dates a hold that no longer exists");
-  assert.strictEqual(s.botCallDecision.size, 0);
-  assert.strictEqual(s.botCatchDecision.size, 0);
+  assert.strictEqual(s.table.botCallDecision.size, 0);
+  assert.strictEqual(s.table.botCatchDecision.size, 0);
   assert.strictEqual(s.selection, null);
   assert.strictEqual(s.peek, null);
   assert.strictEqual(s.pendingRender, null);
+  // A SOLO TABLE IS THE FELT'S, so it ends with the session.
+  assert.strictEqual(s.table.state, null, "a solo table outlived the felt that owned it");
+});
+
+test("stopSession lets go of a borrowed table without ending it", () => {
+  // A HOSTED TABLE OUTLIVES THE FELT: leaving it is a change of attention, and
+  // the headless driver (src/ui/party.js) picks it up from here. Only what the
+  // felt's driver scheduled on it goes.
+  const table = createTableSession({ tableId: "t1a1a1a1a1a1a1a1a1a", packId: "hearts", role: "host" });
+  const state = { seats: 4 };
+  table.state = state;
+  const stopped = [];
+  table.attach({ host: { stop: () => stopped.push("host") } });
+  const cancelled = [];
+  table.botTimer = { cancel: () => cancelled.push("bot") };
+  table.announceTimers = [{ cancel: () => cancelled.push("beat") }];
+  table.botCallDecision.set(2, true);
+
+  stopSession(fakeSession(table));
+  assert.deepStrictEqual(cancelled.sort(), ["beat", "bot"], "the felt's bot turn must not outlive its attention");
+  assert.strictEqual(table.botTimer, null);
+  assert.strictEqual(table.botCallDecision.size, 0);
+  assert.strictEqual(table.state, state, "a hosted game keeps its state when the felt walks away");
+  assert.deepStrictEqual(stopped, [], "and keeps its host answering the other players");
 });
 
 test("stopSession is safe on null and safe twice — closeTable may be reached either way", () => {
   assert.doesNotThrow(() => stopSession(null));
   const s = fakeSession();
   assert.doesNotThrow(() => { stopSession(s); stopSession(s); });
+});
+
+/**
+ * THE HAND-OVER IS AN ORDER OF EVENTS (#225). A table has one set of bot-driver
+ * slots, shared by the felt's driver and the headless one in src/ui/party.js,
+ * so "who is moving this table's bots" changes hands by sequence: the felt lets
+ * go of the table it was showing (stopSession cancels what it scheduled there),
+ * takes the new one over, and only then does the registry re-bind — which hands
+ * every other hosted table to the headless driver. In the other order the felt
+ * letting go cancels the headless turn the bind has just scheduled, and a hosted
+ * game behind the felt sits on a bot's turn.
+ *
+ * A SOURCE SCAN, because src/main.js and src/ui/party.js touch the DOM at import
+ * and no Node test can load them; tests/repo-gates.test.js says why that is the
+ * honest tool for a whole-file rule here.
+ */
+test("the felt lets go of a table before the registry re-binds it (#225)", () => {
+  const read = (rel) => fs.readFileSync(path.join(ROOT, rel), "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  const main = read("src/main.js");
+  const lobby = main.slice(main.indexOf("async function goToLobby("));
+  assert.ok(lobby.indexOf("closeTable();") >= 0 && lobby.indexOf("leaveFelt();") >= 0);
+  assert.ok(lobby.indexOf("closeTable();") < lobby.indexOf("leaveFelt();"),
+    "goToLobby unbinds before it closes: the close cancels the headless turn the unbind just scheduled");
+
+  const party = read("src/ui/party.js");
+  const body = (name) => {
+    const at = party.indexOf(`function ${name}(`);
+    assert.ok(at >= 0, `${name} must still exist`);
+    return party.slice(at, party.indexOf("\n}\n", at));
+  };
+  const onView = party.slice(party.indexOf("onView: (view"), party.indexOf("onReject:"));
+  for (const [where, text] of [["onView", onView], ["switchToSeat", body("switchToSeat")]]) {
+    assert.ok(text.indexOf("adoptSharedView(") >= 0 && text.indexOf("bindFelt(") >= 0, `${where} must still draw and bind`);
+    assert.ok(text.indexOf("adoptSharedView(") < text.indexOf("bindFelt("),
+      `${where} binds before the felt has let go of the table it was showing`);
+  }
+  for (const name of ["returnToOurTable", "dealParty"]) {
+    const text = body(name);
+    assert.ok(text.indexOf("HostedTable(") < text.indexOf("bindFelt("),
+      `${name} binds before the felt has taken the table over`);
+    assert.ok(!/\.cancelBots\(\)/.test(text.slice(text.indexOf("bindFelt("))),
+      `${name} cancels the table's bots after the felt took it over — that is the felt's own turn`);
+  }
+  const bind = body("bindFelt");
+  assert.match(bind, /if \(other === bound\) continue;/,
+    "bindFelt cancels the bots of the table it binds, which by then are the felt's");
 });
 
 /* ------------------------------------------------------------------ *

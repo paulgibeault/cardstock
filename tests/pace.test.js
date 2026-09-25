@@ -500,7 +500,9 @@ test("the felt builds its trick plan with the player's rung and its own shared f
   assert.match(call[0], /pace: currentPace\(\)\.id/,
     "without the rung the trick hold is the default for everybody, whatever dial "
     + "the player set");
-  assert.match(call[0], /shared: !!session\?\.shared/,
+  // THE TABLE'S ROLE since #225: whether other people are at it is the table's
+  // answer (`hosting()`), not a flag copied onto the felt's session.
+  assert.match(call[0], /shared: !!session\?\.table\.hosting\(\)/,
     "without the shared flag an indefinite hold gates one device's queue while "
     + "three other players keep playing");
 
@@ -517,7 +519,7 @@ test("the felt builds its trick plan with the player's rung and its own shared f
   // `session()` rather than `session` because the seam is handed a thunk — it is
   // replaced wholesale by adoptMatch, so a captured object would be a closure
   // over a match that has gone (src/ui/roundEnding.js's header).
-  assert.match(round[0], /shared: !!session\(\)\?\.shared/,
+  assert.match(round[0], /shared: !!session\(\)\?\.table\.hosting\(\)/,
     "without the shared flag a count with no clock on it stalls one device's queue "
     + "three times a hand while the other players keep playing");
 });
@@ -544,7 +546,7 @@ test("both paths that end a round plan it through the one shared builder", () =>
 
   const builder = ending.match(/function beginRoundEnding\([\s\S]*?\n  \}/);
   assert.ok(builder, "beginRoundEnding must exist — it is the shared round-ending tail");
-  assert.match(builder[0], /shared: !!session\(\)\?\.shared/,
+  assert.match(builder[0], /shared: !!session\(\)\?\.table\.hosting\(\)/,
     "the shared builder must carry the table's own shared flag, or EVERY path that "
     + "ends a round leaves a hosted device gated on taps nobody else can make");
 

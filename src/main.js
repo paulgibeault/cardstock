@@ -44,8 +44,15 @@ async function goToLobby() {
   // stop LOOKING at it — which is what `leaveFelt` means. Bots at a table
   // nobody is watching keep playing; ending it is the "Stop hosting" button,
   // which says so.
-  leaveFelt();
+  //
+  // CLOSE FIRST, THEN UNBIND (#225). A table has one set of bot-driver slots,
+  // shared by the felt's driver and the headless one: closing is the felt
+  // letting go of the turn it scheduled there, and unbinding is the headless
+  // driver picking the table up. In the other order the close would cancel the
+  // headless turn the unbind had just scheduled, and a hosted game left
+  // running behind the lobby would sit on a bot's turn until somebody moved.
   closeTable();
+  leaveFelt();
   hideInspector();
   hidePartyScreen();
   document.getElementById('table-screen').hidden = true;
