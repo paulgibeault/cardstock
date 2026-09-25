@@ -292,12 +292,14 @@ test("the felt still asks for everything the hooks answer", () => {
     "src/ui/zoneRenderer.js no longer asks who played what");
 
   // A simultaneous commit gets its own mark; the turn token means one turn.
-  // The whole choice, for the same reason as above: `committingToken()` alone
-  // matches the function's own declaration, so deleting every CALL left this
-  // green.
-  assert.match(table, /const token = committing \? committingToken\(\) : turnToken\(\);/,
+  // In src/ui/seatRow.js since #223 — the row is its own module now, and it takes
+  // both chips as parameters. The whole choice, for the same reason as above:
+  // `committingToken()` alone matches the parameter it arrives as, so deleting
+  // every CALL would leave this green.
+  const row = code(read("src/ui/seatRow.js"));
+  assert.match(row, /const token = committing \? committingToken\(\) : turnToken\(\);/,
     "the meld and pass phases are back on the platform's turn token");
-  assert.match(table, /interactionMode\(state\) === 'pass'/,
+  assert.match(row, /interactionMode\(state\) === 'pass'/,
     "the commit phase is being recognised some other way than by its mode");
 });
 

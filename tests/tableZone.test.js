@@ -83,7 +83,9 @@ test("the felt reads the flag in all three places it has to", () => {
   // the filtered list; both the seat plate (and the popup it opens, which is
   // the same builder) and the human's own pile row have to use it, or the
   // sequence is back in two or three places at once.
-  assert.match(table, /const seatZones = ownZoneInstances\(state, seat\);/,
+  // The plate's own list lives in src/ui/seatRow.js since #223, and it is handed
+  // the filtered accessor rather than re-deriving it.
+  assert.match(code(read("src/ui/seatRow.js")), /const seatZones = ownZoneInstances\(state, seat\);/,
     "a seat plate is drawing every per-player zone again, so a `table` zone is "
     + "back on the plate as a mini pile");
   assert.match(table, /for \(const inst of ownZoneInstances\(state, mySeat\(\)\)\)/,
