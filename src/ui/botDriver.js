@@ -43,7 +43,10 @@ import { thinkTimeMs } from '../players/roster.js';
  *                      (§6c); a shared table passes the HOST wall clock,
  *                      because a hand does not stop when one player pockets
  *                      their phone.
- * @param currentEpoch  () => the table's epoch, read at fire time
+ * @param currentEpoch  () => the epoch a turn must still be under when it
+ *                      fires: the table's own for the headless driver, the
+ *                      felt's SHOWING counter for the felt's (#264,
+ *                      src/ui/botSeams.js)
  * @param botDelayMs    () => the player's bot-speed setting
  * @param difficulty    () => how deeply the house thinks ('easy' | 'medium' |
  *                      'hard', src/engine/bot.js). Read at fire time like the
