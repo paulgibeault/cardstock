@@ -305,8 +305,9 @@ test("the speed is read from storage, not from a snapshot the lobby cannot refre
   // was 8 for 7 call sites, and deleting a paragraph failed a test about flight
   // timing. The neighbour gate below strips comments for exactly this reason.
   // AND ACROSS THE ROUND ENDING TOO (#223): `beginRoundEnding` asks for the round
-  // beat's flight in src/ui/roundEnding.js now, handed `currentFlightMs` in.
-  const code = (src + read("src/ui/roundEnding.js"))
+  // beat's flight in src/ui/roundEnding.js now, handed `currentFlightMs` in, and
+  // a move's own flight asks from src/ui/moveFlight.js (seam 6) the same way.
+  const code = (src + read("src/ui/roundEnding.js") + read("src/ui/moveFlight.js"))
     .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
   assert.strictEqual((code.match(/currentFlightMs\(\)/g) || []).length, 6,
     "every flight-duration call site must ask currentFlightMs, plus its own definition — "

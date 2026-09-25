@@ -1209,8 +1209,9 @@ export function createSeatRow({
    * The seat row's unfinished scroll, as scrollCorrectedRect wants it, or null.
    *
    * `holds` is asked of the node rather than assumed, because the correction is
-   * applied by the general-purpose `liveRect` below and most of what that
-   * measures — the hand, the centre piles, the discard — is nowhere near the row.
+   * applied by the general-purpose `liveRect` (src/ui/moveFlight.js) and most of
+   * what that measures — the hand, the centre piles, the discard — is nowhere
+   * near the row.
    */
   function pendingSeatShift(node) {
     const pending = pendingSeatScroll;

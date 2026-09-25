@@ -28,6 +28,7 @@ import {
   flightDurationMs, scrollCorrectedRect, motionAllowed,
   FLIGHT_MS, FLIGHT_MIN_MS, FLIGHT_MAX_MS, SCROLL_SETTLE_MS,
 } from "../src/ui/flight.js";
+import { installBrowser, flightTable } from "./fixtures/moveFlight.js";
 
 /* ------------------------------------------------------------------ *
  * How long a card is in the air
@@ -232,7 +233,7 @@ test("with no scroll running, the rect is the rect", () => {
 
 test("a node outside the scrolling row is not corrected", () => {
   // The correction is applied by a general-purpose `liveRect` in
-  // src/ui/table.js, and most of what that measures — the player's own hand,
+  // src/ui/moveFlight.js, and most of what that measures — the player's own hand,
   // the draw pile, the discard — is nowhere near the seat row. Shifting those
   // would be the same bug pointed at different furniture.
   const r = rect(500);
@@ -306,13 +307,36 @@ function moveTypesInSource() {
   return found;
 }
 
-/** What `animateMove` actually branches on, read out of the function itself. */
-function animatedMoveTypes() {
-  const source = fs.readFileSync(path.join(ROOT, "src/ui/table.js"), "utf8");
-  const body = source.match(/function animateMove\([\s\S]*?\n}/);
-  assert.ok(body, "animateMove has been renamed or removed");
-  return new Set([...body[0].matchAll(/move\.type\s*[!=]==\s*['"]([A-Za-z]+)['"]/g)]
-    .map((m) => m[1]));
+/**
+ * The move types `animateMove` actually flies a card for, found by asking it.
+ *
+ * IT WAS A REGEX over the function's body in src/ui/table.js, which could not be
+ * loaded here — so "animated" meant "named in a `move.type ===` comparison",
+ * and a branch that compared the type and then flew nothing still counted.
+ * src/ui/moveFlight.js takes its elements in (#223 seam 6), so each type is now
+ * played on a table where everything a card could aim at exists
+ * (tests/fixtures/moveFlight.js): a hand, an opponent's fan, a pile that takes a
+ * play or a discard, and a meld holding the card. A type is animated when a copy
+ * really left for somewhere. The lay-down's first card flies on a timer of 0,
+ * so the drive waits one macrotask before it counts.
+ */
+async function animatedMoveTypes(types = moveTypesInSource().keys()) {
+  const animated = new Set();
+  for (const type of types) {
+    const browser = installBrowser();
+    try {
+      const { flight, state } = flightTable({ meldGroups: { 1: [{ cards: ["m1"] }] } });
+      const move = {
+        type, actor: 1, cards: ["m1"], choice: { seat: 1, melds: [{ cards: ["m1"] }] },
+      };
+      flight.animateMove(state, move, rect(10));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      if (browser.flights.length > 0) animated.add(type);
+    } finally {
+      browser.restore();
+    }
+  }
+  return animated;
 }
 
 /**
@@ -351,22 +375,22 @@ const NOT_ANIMATED = {
   declareMeld: "a meld is scored, not laid down — no card leaves any zone",
 };
 
-test("every move type the source can build is either animated or deliberately not", () => {
-  const animated = animatedMoveTypes();
+test("every move type the source can build is either animated or deliberately not", async () => {
+  const animated = await animatedMoveTypes();
   const unclassified = [];
   for (const [type, file] of moveTypesInSource()) {
     if (animated.has(type) || Object.hasOwn(NOT_ANIMATED, type)) continue;
     unclassified.push(`${type} (first built in ${file})`);
   }
   assert.deepStrictEqual(unclassified, [],
-    "animateMove (src/ui/table.js) neither flies these nor is on record as "
+    "animateMove (src/ui/moveFlight.js) neither flies these nor is on record as "
     + "declining to. Give each one a branch, or an entry in NOT_ANIMATED saying "
     + "why the felt stays still — a move that silently animates nothing is how "
     + "a laid-down contract came to appear out of thin air.");
 });
 
-test("the lay-down is animated, which is the bug this gate was written for", () => {
-  const animated = animatedMoveTypes();
+test("the lay-down is animated, which is the bug this gate was written for", async () => {
+  const animated = await animatedMoveTypes(["layDown", "draw", "hit", "playCard", "discard"]);
   assert.ok(animated.has("layDown"),
     "a contract going down is the single biggest event in a Milestones round");
   // The four that were already there, so a refactor cannot quietly drop one.
@@ -375,8 +399,8 @@ test("the lay-down is animated, which is the bug this gate was written for", () 
   }
 });
 
-test("nothing is on both lists", () => {
-  const animated = animatedMoveTypes();
+test("nothing is on both lists", async () => {
+  const animated = await animatedMoveTypes();
   const both = Object.keys(NOT_ANIMATED).filter((type) => animated.has(type));
   assert.deepStrictEqual(both, [],
     "a move cannot both fly and be on record as not flying — the list has gone "

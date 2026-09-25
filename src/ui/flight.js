@@ -97,7 +97,7 @@ export function cardSizedRect(rect, width) {
  *     the same pitch in the opposite direction.
  *
  * The correction is applied where rects are MEASURED (seatRect, zoneRect and
- * the meld-chip lookup in src/ui/table.js) rather than where flights are
+ * the meld-chip lookup in src/ui/moveFlight.js) rather than where flights are
  * launched, which is what fixes the celebration sites too without their
  * knowing that the row scrolls at all.
  */

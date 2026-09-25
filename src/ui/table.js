@@ -51,9 +51,10 @@
 // src/ui/matchDoors.js (#223 seam 4), and THE REVIEW LENS — the felt at any
 // turn of the match, the reel, the map beside or over it and the two maps the
 // results and the round sheet open onto it — in src/ui/reviewController.js
-// (#223 seam 5). What is left here is the rest of the
-// felt: piles, what a tap on a card means, and the loop that turns a move into
-// sound, motion and a save.
+// (#223 seam 5), and CARDS IN FLIGHT — where a seat, a pile or a meld card
+// sits on screen and what a move flies between them — in src/ui/moveFlight.js
+// (#223 seam 6). What is left here is the rest of the felt: piles, what a tap
+// on a card means, and the loop that turns a move into sound, motion and a save.
 //
 // THE MOVE LOOP STILL DECIDES WHEN A ROUND ENDING HAPPENS, which is the boundary
 // between this file and that one: `afterMove` reads the event window, asks
@@ -97,11 +98,14 @@ import { createMatchDoors } from './matchDoors.js';
 // is this file's slot; where a review opens, what it draws and what leaving it
 // puts back are over there.
 import { createReviewController } from './reviewController.js';
+// CARDS IN FLIGHT (#223, seam 6). Where a seat, a pile or a meld card sits on
+// screen, and what a move flies between them; the row's unfinished scroll is
+// read through `seatRow.pendingSeatShift`, and the flying itself is flight.js's.
+import { createMoveFlight } from './moveFlight.js';
 import { makeCardRenderer } from './cardStyles/index.js';
 import { fetchPack } from './packSource.js';
 import {
-  flyCard, landOn, motionAllowed, flightLayer, rectOf, cardSizedRect,
-  scrollCorrectedRect, flightDurationMs,
+  motionAllowed, flightLayer, rectOf, flightDurationMs,
 } from './flight.js';
 // NOTHING FROM src/ui/session.js IS IMPORTED HERE ANY MORE. The felt's own
 // Node-clean decisions over there are imported by the seams that need them:
@@ -134,7 +138,7 @@ import {
 import {
   interactionMode, buildUiModel, dropCandidates, draggableSources,
   commitPromptFor,
-  pruneSelection, toggleHandSelection, isSelected, handAddress, implicitLandingZone,
+  pruneSelection, toggleHandSelection, isSelected, handAddress,
 } from './interaction.js';
 import { classifyHandGesture } from './handOrder.js';
 import {
@@ -1845,201 +1849,6 @@ function onDragLift(handle) {
 }
 
 /* ------------------------------------------------------------------ *
- * Geometry for card travel — the parts that need the table's own elements.
- * `rectOf` and `cardSizedRect` moved to src/ui/flight.js, which already owns
- * the flying and where dragController's verbatim copy of rectOf now points too.
- * ------------------------------------------------------------------ */
-
-/** A node's rect, corrected for a seat row that is still gliding under it. */
-function liveRect(node) {
-  return scrollCorrectedRect(rectOf(node), seatRow.pendingSeatShift(node));
-}
-
-/** Where a seat's cards live on screen — the source or target of a card in flight. */
-function seatRect(seat) {
-  if (isMySeat(seat)) return rectOf(el.hand);
-  const plate = el.opponentsTop.querySelector(`[data-seat="${seat}"]`);
-  if (!plate) return null;
-  const mini = plate.querySelector('.mini-hand');
-  // The fan's last child is the one genuinely rendered card; the rest are the
-  // cheap edge boxes renderSeats draws instead of real SVG. Preferring it gives
-  // a card-shaped rect where the row is a squat strip, which is what a card
-  // leaving this seat should be seen to launch from.
-  //
-  // FALLING BACK TO THE PLATE IS THE POINT, not a tidy-up. A seat whose fan is
-  // put away — collapsed to its face, or merely `display: none` at a compact
-  // table — has no rect at all (rectOf answers null for a zero-width node), and
-  // this returned null with it: every card that seat drew or played crossed the
-  // felt from nowhere, silently, on exactly the crowded tables where watching
-  // WHO acted matters most. The face is where the player is looking anyway.
-  //
-  // Which NODE won matters as much as its rect now: every one of these lives
-  // inside the scrolling row, and liveRect has to be told what it measured to
-  // know whether the row's unfinished scroll applies to it.
-  const node = firstSized([mini?.lastElementChild, mini, plate.querySelector('.seat__avatar'), plate]);
-  return liveRect(node);
-}
-
-/** The first of `nodes` that has a rect — the fallback ladder, as a node. */
-function firstSized(nodes) {
-  for (const node of nodes) if (rectOf(node)) return node;
-  return null;
-}
-
-function zoneRect(address) {
-  const node = zoneStackNode(address);
-  if (!node) return null;
-  // Corrected like a seat's, and for the same reason: an opponent's meld strip
-  // carries `data-zone="melds.N"` and is drawn INSIDE the seat row, so a hit
-  // aimed at one mid-scroll landed on the neighbour's melds.
-  return liveRect(node.querySelector?.('.pile-stack__top') || node) || liveRect(node);
-}
-
-/**
- * Send a copy of the moved card across the table, then reveal where it landed.
- *
- * Called after the reducer and the re-render, with `from` captured before
- * them — by which point the source card is already gone, which is exactly why
- * a copy flies instead of the card itself.
- */
-function animateMove(state, move, from) {
-  if (!from) return;
-  // ONE DURATION FOR THE WHOLE TABLE, and it is the player's own speed setting
-  // rather than a distinction between their cards and a bot's — see
-  // flightDurationMs.
-  const duration = currentFlightMs();
-  if (move.type === 'draw' || move.type === 'takeHand') {
-    // A draw has no single landing slot in a fanned hand, so it dissolves on
-    // arrival rather than pretending to become a particular card. The human's
-    // own draw is face-up because they are about to see it anyway.
-    //
-    // A WHOLE PILE TAKEN AS A HAND (#157) rides the same flight, and always
-    // face down: seventeen cards left that pile at once, nobody had seen any of
-    // them, and one back travelling from the pile to the seat says "that pile
-    // is now theirs" without picking one of the seventeen to stand for the
-    // rest.
-    const to = cardSizedRect(seatRect(move.actor), from.width);
-    const card = move.type === 'draw' && isMySeat(move.actor)
-      ? cardById(state, state.zones.cards(handAddress(mySeat())).at(-1) || '')
-      : null;
-    flyCard(card ? art().face(card) : art().back(), from, to, { fade: true, duration });
-    return;
-  }
-  if (move.type === 'hit') {
-    const card = cardById(state, move.cards?.[0]);
-    if (!card) return;
-    // IT USED TO DISSOLVE. `fade: true` was right while the destination was a
-    // whole meld strip with no slot to land on; the chip's card nodes are a
-    // stable target, so the copy now lands ON the card it is a copy of and the
-    // real one is held invisible underneath until it does — the same deal a
-    // played card gets, and the difference between "a card arrived here" and
-    // "a card evaporated near here".
-    const seat = move.choice?.seat;
-    const landing = meldCardNode(state, seat, move.cards[0]);
-    const to = liveRect(landing) || cardSizedRect(zoneRect(`melds.${seat}`), from.width);
-    if (!to) return;
-    landOn(landing, flyCard(art().face(card), from, to, { duration }));
-    return;
-  }
-  if (move.type === 'layDown') { animateLayDown(state, move, from, duration); return; }
-  if (move.type !== 'playCard' && move.type !== 'discard') return;
-  const card = cardById(state, move.cards && move.cards[0]);
-  if (!card) return;
-  const address = implicitLandingZone(state, move);
-  if (!address) return;
-  const node = zoneStackNode(address);
-  const topNode = node ? node.querySelector('.pile-stack__top') : null;
-  landOn(topNode, flyCard(art().face(card), from, liveRect(topNode) || zoneRect(address), { duration }));
-}
-
-/**
- * How many cards of a lay-down are worth watching arrive.
- *
- * PENALTY_FLIGHT_MAX's reasoning (src/ui/celebrations.js) applied to the other
- * end: a contract is three to six cards in every pack shipped, but the contract
- * ladder is pack data and one that asks for four sets of four would buy sixteen
- * timers and sixteen SVG copies for a moment that has stopped reading as a
- * single event long before that. Cards past the cap are simply already there.
- */
-const LAYDOWN_FLIGHT_MAX = 8;
-
-/** The beat between one laid-down card and the next. */
-const LAYDOWN_STAGGER_MS = 80;
-
-/**
- * A contract, laid down and SEEN to be laid down.
- *
- * THE BIGGEST EVENT IN A MILESTONES ROUND HAD NO ANIMATION AT ALL. animateMove
- * handled draw, hit, playCard and discard and returned for everything else, so
- * a bot completing its contract put three to six cards on the felt between two
- * frames — the one moment in the game where you most need to know who did what
- * and it happened without a single pixel moving. tests/flight.test.js now
- * derives the move vocabulary from the templates themselves and fails on any
- * type that is neither animated nor deliberately silent, because a hardcoded
- * list of four is exactly what let this sit unnoticed.
- *
- * Staggered card by card, in meld order, because the count is half the news:
- * three cards arriving together are one event, three arriving in turn are three.
- * Same judgement as animatePenaltyDraw's, for the same reason.
- */
-function animateLayDown(state, move, from, duration) {
-  // BEFORE ANYTHING IS HIDDEN. Every card below is held invisible until its
-  // copy lands, and with motion off no copy is ever launched — so an early
-  // return here is the difference between "no animation" and "the meld you just
-  // laid down is blank". flyCard's own gate is too late to help.
-  if (!motionAllowed()) return;
-  const seat = move.actor;
-  const cardIds = (move.choice?.melds || []).flatMap((meld) => meld.cards || []);
-  const fallback = cardSizedRect(zoneRect(`melds.${seat}`), from.width);
-  const myEpoch = epoch;
-
-  cardIds.slice(0, LAYDOWN_FLIGHT_MAX).forEach((cardId, i) => {
-    const card = cardById(state, cardId);
-    const landing = meldCardNode(state, seat, cardId);
-    const to = liveRect(landing) || fallback;
-    if (!card || !to) return;
-    landOn(landing, new Promise((resolve) => {
-      // A PLAIN setTimeout, NOT `schedule` — which is the session clock, and
-      // what the rest of this file staggers with. The session clock stops with a
-      // suspended frame, and a stagger that never fires here is not a missing
-      // flight — it is a meld card left at opacity 0 for the rest of the round.
-      // Same rule as animationSettled's backstop: the honest timer is the one
-      // that still runs in the background.
-      setTimeout(() => {
-        if (myEpoch !== epoch) { resolve(); return; }
-        flyCard(art().face(card), from, to, { duration }).then(resolve);
-      }, i * LAYDOWN_STAGGER_MS);
-    }));
-  });
-}
-
-/**
- * Where a card that has just joined a meld now sits, as a node.
- *
- * The chip draws its cards in READING order rather than the order the engine
- * stored them (the template's `meldCardOrder` — a run held `6 3 W 5` reads
- * `3 W 5 6`), so the slot a card landed in cannot be inferred from its position
- * in the move. The group is found by searching for the card rather than by
- * trusting the move's meld index, so this answers for a hit onto somebody else's
- * meld and for a lay-down's own fresh groups without knowing which it was asked
- * about.
- */
-function meldCardNode(state, seat, cardId) {
-  if (!zones || seat === undefined || seat === null) return null;
-  const groups = zones.meldGroupsOf(state, seat) || [];
-  const index = groups.findIndex((group) => group.cards?.includes(cardId));
-  if (index < 0) return null;
-  const chip = meldChipNode(`${seat}:${index}`);
-  const cards = chip?.querySelector('.meld-chip__cards');
-  if (!cards) return null;
-  // Filtered exactly as buildMeldStrip filters, or a card the renderer skipped
-  // would shift every slot after it by one.
-  const ordered = zones.meldCardOrder(state, groups[index])
-    .filter((id) => cardById(state, id));
-  return cards.children[ordered.indexOf(cardId)] || null;
-}
-
-/* ------------------------------------------------------------------ *
  * Table moments — src/ui/celebrations.js owns the banners, the trick
  * gather, the action-card narration and the penalty flight. These are the
  * thin wrappers that hand it the open session.
@@ -2069,6 +1878,9 @@ let doors = null;
 // the reel, the map, and the doors in from the scoreboard, the results and the
 // round sheet.
 let reviewer = null;
+// Cards in flight (src/ui/moveFlight.js): where a seat, a pile or a meld card
+// sits on screen, and the copy a move sends between them.
+let moveFlight = null;
 
 // THE BANNER AND THE SHOW CARD ARE ONE SLOT. The card replaces the banner for
 // a scoring step (#152) and they must never be on the felt together — so every
@@ -2410,7 +2222,7 @@ function afterMove(state, move, from, message, { publish = true } = {}) {
         return;
       }
       render(state, message);
-      if (!reveal) animateMove(state, move, from);
+      if (!reveal) moveFlight.animateMove(state, move, from);
       closeTrick(state);
       look(false);
     };
@@ -2432,7 +2244,7 @@ function afterMove(state, move, from, message, { publish = true } = {}) {
     render(shown, message);
     // The played card has already flown onto the posed trick; flying it again
     // here would be the same card arriving twice.
-    if (!reveal) animateMove(shown, move, from);
+    if (!reveal) moveFlight.animateMove(shown, move, from);
     closeTrick(shown);
     // After the card has been seen to land. A show's own steps are the
     // narration, so nothing competes with them — the first `showScored` banner
@@ -2619,7 +2431,9 @@ async function performHumanMove(state, move, sourceNode) {
     render(state, `Can't do that: ${check.reason}`);
     return;
   }
-  const from = liveRect(sourceNode) || (move.from ? zoneRect(move.from) : null) || seatRect(mySeat());
+  const from = moveFlight.liveRect(sourceNode)
+    || (move.from ? moveFlight.zoneRect(move.from) : null)
+    || moveFlight.seatRect(mySeat());
   // NOT `selection = null`. The render inside afterMove prunes it per card
   // (pruneSelection), which drops exactly what this move consumed and leaves
   // the rest staged. Clearing wholesale is what made a Milestones meld
@@ -2873,7 +2687,7 @@ export function afterRemoteMove(move) {
   if (move.type === 'draw') playDraw();
   else if (move.type !== 'pass') playCardPlayed({ far: true });
   soundReactions(state);
-  afterMove(state, move, seatRect(move.actor), '', { publish: false });
+  afterMove(state, move, moveFlight.seatRect(move.actor), '', { publish: false });
 }
 
 /**
@@ -2923,6 +2737,24 @@ export function initTable({ onExit }) {
     isBusy: () => !!drag && drag.isDragging(),
   });
 
+  // AND THE FLIGHTS, RIGHT BEHIND THE ROW THEY MEASURE: the round ending below
+  // is handed `animateMove` by reference, and every seat rect asks the row how
+  // far it still has to scroll. `zones` is built further down, which is why it
+  // goes in as a thunk; a card only flies once the felt has been drawn.
+  moveFlight = createMoveFlight({
+    el,
+    epoch: () => epoch,
+    zones: () => zones,
+    seatRow,
+    isMySeat,
+    mySeat,
+    cardById,
+    art,
+    currentFlightMs,
+    zoneStackNode,
+    meldChipNode,
+  });
+
   // AND THE ROUND ENDING, BEFORE ANYTHING LISTENS FOR THE SAME REASON: the felt's
   // tap and the window's keydown both reach for `roundEnding.endHeldBeat` below,
   // and `initPanels` is handed the two doors out of the sheet.
@@ -2937,7 +2769,7 @@ export function initTable({ onExit }) {
     liveState,
     feltState,
     render,
-    animateMove,
+    animateMove: moveFlight.animateMove,
     renderStatusBar,
     seatLabel,
     seatPossessive,
@@ -3285,8 +3117,8 @@ export function initTable({ onExit }) {
     currentEpoch: () => epoch,
     el,
     art,
-    zoneRect,
-    seatRect,
+    zoneRect: moveFlight.zoneRect,
+    seatRect: moveFlight.seatRect,
     pulseSeat,
     cardById,
   });
@@ -3319,8 +3151,8 @@ export function initTable({ onExit }) {
     announcementsFor,
     playMove: (state, move, seat) => {
       const from = move.type === 'draw'
-        ? (zoneRect(move.from ?? 'draw') || seatRect(seat))
-        : seatRect(seat);
+        ? (moveFlight.zoneRect(move.from ?? 'draw') || moveFlight.seatRect(seat))
+        : moveFlight.seatRect(seat);
       applyStateChange(state, move, { far: true });
       afterMove(state, move, from, `${identityOf(seat).name} ${botVerb(state.pack.template, move.type)}.`);
     },
