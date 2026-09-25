@@ -37,6 +37,9 @@ import { tableCss } from "./fixtures/tableCss.js";
 const read = (f) => fs.readFileSync(path.join(ROOT, f), "utf8");
 const html = read("index.html");
 const tableJs = read("src/ui/table.js");
+// The hand and its tray left table.js for src/ui/handFan.js (#223, seam 3) and
+// share the rail's row, so the "nothing still knows about it" scan reads both.
+const handFanJs = read("src/ui/handFan.js");
 const cssRaw = tableCss();
 
 /** Every `@media` block, by brace matching — condition and body. */
@@ -178,7 +181,8 @@ test("each rung goes quiet by visibility, never by display", () => {
 });
 
 test("the rail is still the fixed width the fan is laid out against", () => {
-  // layoutHand subtracts the RAIL, so this number is the fan's room. It is
+  // layoutHand subtracts the RAIL, so this number is the fan's room (driven
+  // from the other side in tests/handFan.test.js). It is
   // pinned here because a control that outgrew it would re-fan the hand under
   // the player's finger (#13, in the inline axis).
   const rail = rulesFor((sel) => sel === ".hand-rail");
@@ -250,7 +254,9 @@ test("a left-handed band swaps the ends and leaves the token between them", () =
  * ------------------------------------------------------------------ */
 
 test("the hint offer has left the rail entirely", () => {
-  for (const [name, source] of [["index.html", html], ["table.js", tableJs], ["the stylesheet", cssRaw]]) {
+  for (const [name, source] of [
+    ["index.html", html], ["table.js", tableJs], ["handFan.js", handFanJs], ["the stylesheet", cssRaw],
+  ]) {
     assert.doesNotMatch(source, /hint-button|hintButton/,
       `${name} still knows about the rail's hint button`);
   }

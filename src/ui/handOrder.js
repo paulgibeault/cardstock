@@ -262,7 +262,7 @@ export function resolveCardWidth({ rendered, declared, fallback = 70 }) {
  * at in between.
  *
  * Pure so the rule can be pinned in tests — the DOM half is just two
- * measurements (layoutHand in src/ui/table.js).
+ * measurements (layoutHand in src/ui/handFan.js).
  *
  * @param count      cards in the hand
  * @param cardWidth  one card's width in px
@@ -345,7 +345,7 @@ const READABLE = 0.5;
  *
  * SO HEIGHT IS SPENT, AND ONLY WHERE THERE IS HEIGHT TO SPEND. `slack` is the
  * room the felt's middle actually has going spare, measured (layoutHand in
- * src/ui/table.js), never assumed: a staging phase — Pinochle's meld
+ * src/ui/handFan.js), never assumed: a staging phase — Pinochle's meld
  * declaration, Cribbage's crib discard — has already taken most of it, and a
  * second row bought there would push the felt off the bottom of the screen.
  * When the slack is not there the fan stays on one row and closes, which is the
