@@ -384,7 +384,7 @@ export function roundScoreBidsAndBags(ctx) {
  * where every seat's bid stands and each side owes the sum of its own two. A
  * points auction ends with exactly one number on the table, and the side that
  * said it either reaches it or loses the whole thing (`unit: 'points'`, and
- * the auction that produces it is src/templates/trick-taking.js).
+ * the auction that produces it is src/templates/trick-auction.js).
  *
  * WHO HOLDS IT IS DERIVED, NOT STORED. The seat with the highest bid is the
  * seat that won the auction — every other seat passed with a 0, and the auction

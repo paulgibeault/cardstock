@@ -805,7 +805,7 @@ function finishChoose(ctx) {
  * where the choice changes what the combination beats — is enumerated in full.
  *
  * This is the same discipline, and the same kind of shortlist, as
- * trick-taking's pass (src/templates/trick-taking.js:153): everything offered
+ * trick-taking's pass (src/templates/trick-pass.js): everything offered
  * is legal, and a human is not restricted to the list — the felt builds the
  * move from whatever cards were tapped and `validateMove` judges it on its own
  * terms (src/ui/interaction.js, mode 'combination').
