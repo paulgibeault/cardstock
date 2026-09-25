@@ -70,7 +70,7 @@ import { sidesOf } from '../engine/sides.js';
 import { createTableSightings } from './tableSightings.js';
 import { nextFocus } from './partyFocus.js';
 import {
-  partyModel, tableOf, packState, seatingFromRoster as seatingOf, emptyBeliefs,
+  partyModel, tableOf, packState, seatingFromRoster as seatingOf, reseatHostedTable, emptyBeliefs,
   // HOW LONG A SEAT GETS when the host never chose. One number, and it lives
   // with the model because the model cannot import this file — see its note.
   DEFAULT_GRACE_MS,
@@ -1460,12 +1460,16 @@ function refreshSeats(session) {
   // THE SESSION IS PASSED IN by every caller, because each host must refresh
   // ITS OWN roster: with two hosted tables, answering about whichever one the
   // panel is showing would republish one table's seats as the other's.
-  if (session) session.lobbyFrame = ourLobbyFrame(session);
-  if (lobbyFrame()) {
-    const seating = seatingFromRoster(lobbyFrame());
-    if (session) session.seating = seating;
-    setSeating(seating);
-  }
+  //
+  // AND IT IS THE SUBJECT OF THE SEATING TOO (#274): the seating comes from the
+  // frame just rebuilt for `session`, never the felt's, and the felt takes it
+  // only when the felt is showing this table.
+  const felt = reseatHostedTable(session, {
+    frameOf: ourLobbyFrame,
+    isBound: sessions.isBound,
+    ctx: { self: selfId(), myName: myName(), publishedName: publishedName(), peers: port?.peers() || [] },
+  });
+  if (felt) setSeating(felt);
   // Our own tile says what our own roster says, and it changed.
   publishOwnTable(session);
   rerenderTable();

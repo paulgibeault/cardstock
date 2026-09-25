@@ -36,7 +36,6 @@ import { createSeatTable } from '../src/players/seats.js';
 import { createTableHost } from '../src/match/host.js';
 import { tableRules } from '../src/engine/tableRules.js';
 import { createTableClient } from '../src/match/client.js';
-import { FRAME } from '../src/match/protocol.js';
 // THE ENVELOPE IS BUILT; THE MOVE IS THE HOSTILE PART. Every case below is a
 // structurally perfect `propose` carrying a lie, which is the only shape that
 // reaches validateMove at all — so the frame comes off the same builder the
@@ -232,11 +231,24 @@ function corpus({ state, seat }) {
       // JSON.parse defines `__proto__` as an OWN property, which an object
       // literal cannot express — this is the shape that actually arrives.
       //
-      // Aimed at a seat the sender does not hold, so the frame is refused on
-      // its merits: a pollution payload riding a move that would have been
-      // applied anyway proves nothing about either.
-      frame: JSON.parse(`{"k":"${FRAME.PROPOSE}","pid":"h12","move":{"actor":${otherSeat},`
-        + `"type":${JSON.stringify(anyMove.type)},"__proto__":{"pwned":true}}}`),
+      // #244: the pollution used to ride a move with no `tableId`, so
+      // `validateFrame` refused it at 'no tableId' before `cleanMove` — let
+      // alone `cleanChoice` — ever saw the payload. A broken guard would have
+      // left this case green forever.
+      //
+      // AIMED AT THE SENDER'S OWN SEAT, using the seat's own real legal move,
+      // so nothing else (a seat mismatch, a missing card) refuses the frame
+      // first. `cleanChoice` is the layer that actually looks at an object's
+      // own keys generically (every other field in `cleanMove` is read by a
+      // fixed name), so that is where the poison rides — a `__proto__` value
+      // that is itself an object fails `cleanChoice`'s allowlist (it is not a
+      // string, an integer, or an array) exactly like the "choice whose
+      // values are objects" case above, and the whole move is refused before
+      // it ever reaches the seat-authority check or `validateMove`.
+      frame: {
+        ...proposeFrame('h12', { ...anyMove, actor: seat, choice: JSON.parse('{"__proto__":{"pwned":true}}') }),
+        tableId: TID,
+      },
     },
     {
       name: 'a host-only frame from a client',

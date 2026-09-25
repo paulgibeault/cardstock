@@ -236,6 +236,42 @@ export function seatingFromRoster(frame, ctx) {
 }
 
 /**
+ * A table WE HOST had its roster change: rebuild THAT table's frame and
+ * seating, and say what the felt should take.
+ *
+ * THE SUBJECT IS THE SESSION, AND ONLY THE SESSION (#274). This lived inline in
+ * party.js's `refreshSeats`, which rebuilt `session.lobbyFrame` and then derived
+ * the seating from the felt's frame instead — so a joiner sitting down at a
+ * second hosted table, while the first was on screen, overwrote the second
+ * table's seating with the first one's. The bot faces are the same question:
+ * the seating a host keeps is THIS table's, never the panel's or the felt's.
+ *
+ * Returns the seating when `isBound(session)` — the felt shows this table and
+ * should be re-seated — and null otherwise: a table in the background keeps
+ * its own seating and leaves the felt alone.
+ *
+ *   frameOf(session)  the roster we publish for that table (`ourLobbyFrame`),
+ *                     null when we are not hosting it
+ *   isBound(session)  is the felt showing this table
+ *   ctx               `seatingFromRoster`'s context, minus the two "is this our
+ *                     own table" answers, which come from the frame itself
+ */
+export function reseatHostedTable(session, { frameOf, isBound, ctx }) {
+  if (!session) return null;
+  const frame = frameOf(session);
+  session.lobbyFrame = frame;
+  if (!frame) return null;
+  const ours = !!ctx.self && frame.hostDeviceId === ctx.self;
+  const seating = seatingFromRoster(frame, {
+    ...ctx,
+    ownSeating: ours ? session.seating || null : null,
+    trustOurRoster: ours,
+  });
+  session.seating = seating;
+  return isBound(session) ? seating : null;
+}
+
+/**
  * Every seat's presence, as this device can honestly know it.
  *
  * THE ASYMMETRY IS THE WHOLE FUNCTION, and it is a rule about honesty rather

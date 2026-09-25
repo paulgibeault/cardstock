@@ -125,6 +125,61 @@ test('a driver built from the seams plays a bot\'s turn through the caller\'s pl
   assert.equal(played[0].seat, 1);
 });
 
+// TWO EPOCHS, TWO LIFETIMES (#264). The table's epoch moves when the TABLE
+// stops; the felt's moves when what the felt SHOWS changes. The case where they
+// part is leaving a hosted table for the lobby: the felt's counter moves, the
+// table's does not, and the table plays on headless. A felt driver that read
+// the table's epoch would play a turn for a screen that is gone; a headless one
+// that read the felt's would drop every turn of a table nobody is looking at.
+test('the felt drops a turn when the SCREEN changes; the table\'s default drops it only when the table does', async () => {
+  installArcade({ state: true });
+  const pack = await loadPackFromDisk('crazy-eights');
+  const state = createState({ pack, seats: 3, seed: 4242 });
+  pack.template.setup(makeCtx(state));
+  state.turn.seat = 1;
+  const pending = [];
+  const clock = { kind: 'fake', now: () => 0, after(ms, fn) { pending.push(fn); return { cancel() {} }; } };
+  clock.at = clock.after;
+  // BOTH COUNTERS START LEVEL, so the only thing that can drop the felt's turn
+  // below is the showing moving — a driver reading the wrong counter plays it.
+  const table = { seats: soloSeatTable(3), epoch: 0, state, botTimer: null, announceTimers: [],
+    botCallDecision: new Map(), botCatchDecision: new Map() };
+  const played = [];
+  const driverFor = (who, extra = {}) => createBotDriver(botDriverSeams(() => table, seamsOf({
+    clock,
+    playMove: (_s, move, seat) => played.push({ who, seat }),
+    onError: (message) => assert.fail(message),
+    ...extra,
+  })));
+  let showing = 0;
+  const felt = driverFor('felt', { epoch: () => showing });
+  const headless = driverFor('headless');
+  const fire = () => { assert.equal(pending.length, 1, 'one turn armed'); pending.shift()(); };
+
+  // The felt's turn, armed under the showing it was scheduled in.
+  felt.scheduleNextTurn(table, showing);
+  // LEAVE FOR THE LOBBY: the doors bump the felt's counter; the table is unbound,
+  // not stopped, so its own epoch stays where it was.
+  showing += 1;
+  fire();
+  assert.deepEqual(played, [], 'the felt played a turn for a screen it has already left — '
+    + 'its driver is reading the table\'s epoch, not the showing counter it was handed');
+
+  // The same table, its epoch unmoved, plays on headless under the default seam.
+  headless.scheduleNextTurn(table, table.epoch);
+  fire();
+  assert.deepEqual(played, [{ who: 'headless', seat: 1 }],
+    'the headless driver must play on: the table did not end when the felt left it');
+
+  // And the default is the TABLE's lifetime: a stopped table drops its turn.
+  played.length = 0;
+  state.turn.seat = 1;
+  headless.scheduleNextTurn(table, table.epoch);
+  table.epoch += 1; // what TableSession.stop() does first
+  fire();
+  assert.deepEqual(played, [], 'the default seam must read the table\'s own epoch');
+});
+
 test('both drivers are built through the one builder, once each', () => {
   for (const file of ['src/ui/table.js', 'src/ui/party.js']) {
     const code = fs.readFileSync(path.join(ROOT, file), 'utf8')

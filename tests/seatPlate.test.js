@@ -31,6 +31,7 @@ import { defaultScoreChip } from "../src/ui/seatRing.js";
 import {
   createSeatRow, fillCounterBadge, seatCountersFor, seatScoreChip, directionBadge,
 } from "../src/ui/seatRow.js";
+import { buildUiModel } from "../src/ui/interaction.js";
 import { tableCss } from "./fixtures/tableCss.js";
 
 const read = (f) => fs.readFileSync(path.join(ROOT, f), "utf8");
@@ -552,7 +553,10 @@ function stubRowDocument() {
       appendChild(child) { node.children.push(child); return child; },
       replaceChildren(...kids) { node.children = kids; },
       setAttribute(name, value) { node.attrs[name] = String(value); },
-      addEventListener() {},
+      // Kept, so a test can press a control the row built (#270).
+      listeners: {},
+      addEventListener(type, handler) { (node.listeners[type] ||= []).push(handler); },
+      click() { for (const handler of node.listeners.click || []) handler(); },
       querySelector: () => null,
       getBoundingClientRect: () => ({ left: 0, top: 0, width: 900, height: 120, bottom: 120 }),
       cloneNode: () => make(tag),
@@ -632,4 +636,138 @@ test("the width refit repaints the felt's position, not the live one (#259)", as
     if (hadWindow) globalThis.window = before.window;
     else delete globalThis.window;
   }
+});
+
+/* ------------------------------------------------------------------ *
+ * The row's own controls repaint what the felt paints (#270)
+ * ------------------------------------------------------------------ */
+
+/**
+ * A row built under an OPEN REVIEW whose `render` is the real one's shape:
+ * handed a state, it rebuilds the row from that state. The reviewed position
+ * and the live one differ in the thing every seat draws — how many cards each
+ * opponent holds — so the row says which of the two a control repainted.
+ */
+async function reviewedRow(seatView, run) {
+  const pack = await loadPackFromDisk("hearts");
+  const live = createState({ pack, seats: 4, seed: "controls:270" });
+  pack.template.setup(makeCtx(live));
+  const reviewed = createState({ pack, seats: 4, seed: "controls:270" });
+  pack.template.setup(makeCtx(reviewed));
+  for (const [seat, count] of Object.entries({ 1: 9, 2: 10, 3: 11 })) {
+    reviewed.zones.cards(`hand.${seat}`).splice(count);
+  }
+  for (const seat of [1, 2, 3]) assert.equal(live.zones.count(`hand.${seat}`), 13);
+
+  const hadDocument = Object.prototype.hasOwnProperty.call(globalThis, "document");
+  const before = globalThis.document;
+  globalThis.document = stubRowDocument();
+  try {
+    const row = document.createElement("div");
+    const table = document.createElement("div");
+    // The two lookups the row makes of its own children, answered for real:
+    // renderSeats drops a pick whose seat it cannot find collapsed, and the
+    // toggle is taken down before the next one goes up.
+    row.querySelector = (selector) => {
+      const m = /^(?:\.([\w-]+))?\[data-seat="(\d+)"\]$/.exec(selector);
+      assert.ok(m, `the row asked for ${selector}, which this stub does not answer`);
+      return row.children.find((c) => c.dataset.seat === m[2]
+        && (!m[1] || c.className.split(/\s+/).includes(m[1]))) || null;
+    };
+    table.querySelector = (selector) => {
+      const cls = selector.slice(1);
+      const found = table.children.find((c) => c.className === cls) || null;
+      if (found) found.remove = () => { table.children = table.children.filter((c) => c !== found); };
+      return found;
+    };
+    const session = { review: { state: reviewed }, seatView };
+    const painted = [];
+    const paint = (state) => seam.renderSeats(state, false, [], buildUiModel(state, { seat: 0 }));
+    const seam = createSeatRow({
+      el: { opponentsTop: row, table, screen: document.createElement("div") },
+      session: () => session,
+      zones: () => null,
+      liveState: () => live,
+      feltState: () => reviewed,
+      render: (state) => { painted.push(state); paint(state); },
+      mySeat: () => 0,
+      isMySeat: (seat) => seat === 0,
+      identityOf: (seat) => ({ name: `Seat ${seat}`, color: "#345", icon: "", initials: `S${seat}` }),
+      art: () => ({ backPanel: "#123", back: () => "<svg></svg>" }),
+      markEntry: (node) => node,
+      turnToken: () => document.createElement("span"),
+      committingToken: () => document.createElement("span"),
+      humanAnnouncements: () => [],
+      heldValueText: () => "",
+      ownZoneInstances: () => [],
+      perPlayerZoneInstances: () => [],
+      performAnnouncement: () => {},
+      isBusy: () => false,
+    });
+    // The felt as table.js leaves it under the review: painted from the
+    // reviewed position.
+    paint(reviewed);
+    await run({ row, table, session, painted, reviewed });
+  } finally {
+    if (hadDocument) globalThis.document = before;
+    else delete globalThis.document;
+  }
+}
+
+/** Each opponent's hand count as the row draws it — the fan when open, the badge when minimized. */
+function drawnCounts(row) {
+  const drawn = {};
+  for (const wrap of row.children.filter((c) => c.dataset.seat !== undefined)) {
+    const mini = childByClass(wrap, "mini-hand");
+    if (mini) {
+      drawn[wrap.dataset.seat] = Number(mini.style["--mini-count"]);
+      continue;
+    }
+    const head = wrap.children.find((c) => c.className === "seat__head");
+    const badge = head && head.children.find((c) => c.className === "seat__count");
+    assert.ok(badge, `seat ${wrap.dataset.seat} drew neither a fan nor a count`);
+    drawn[wrap.dataset.seat] = Number(childByClass(badge, "seat__count-value").textContent);
+  }
+  return drawn;
+}
+
+test("the Minimize player cards toggle repaints the felt's position, not the live one (#270)", async () => {
+  await reviewedRow("minimized", ({ row, table, session, painted, reviewed }) => {
+    assert.deepEqual(drawnCounts(row), { 1: 9, 2: 10, 3: 11 }, "the row did not start on the reviewed position");
+    const toggle = table.children.find((c) => c.className === "opponent-row__toggle");
+    assert.ok(toggle, "no Minimize player cards toggle was built to press");
+    toggle.click();
+    // It did its own job…
+    assert.equal(session.seatView, "all", "the toggle did not change the seat view");
+    assert.ok(row.children.some((c) => childByClass(c, "mini-hand")), "the row did not open its fans");
+    // …and painted what the felt is showing.
+    assert.equal(painted.length, 1, "the toggle did not repaint the felt");
+    assert.ok(painted[0] === reviewed,
+      "the toggle repainted the felt from the live state — under an open review it replaces "
+      + "the reviewed position with the next deal (#270)");
+    assert.deepEqual(drawnCounts(row), { 1: 9, 2: 10, 3: 11 },
+      "after the toggle the row shows the live deal, not the reviewed position (#270)");
+  });
+});
+
+test("a collapsed seat head repaints the felt's position, not the live one (#270)", async () => {
+  await reviewedRow("minimized", ({ row, session, painted, reviewed }) => {
+    const wrap = row.children.find((c) => c.dataset.seat === "2");
+    const head = wrap && wrap.children.find((c) => c.className === "seat__head");
+    assert.ok(head && head.tag === "button", "seat 2 has no collapsed head to press");
+    assert.equal(head.attrs["aria-expanded"], "false", "seat 2's plate started open");
+    head.click();
+    // It did its own job…
+    assert.equal(session.openSeat, 2, "the seat head did not open seat 2's plate");
+    const again = row.children.find((c) => c.dataset.seat === "2");
+    assert.equal(again.children.find((c) => c.className === "seat__head").attrs["aria-expanded"], "true",
+      "the rebuilt row does not show seat 2 open");
+    // …and painted what the felt is showing.
+    assert.equal(painted.length, 1, "the seat head did not repaint the felt");
+    assert.ok(painted[0] === reviewed,
+      "the seat head repainted the felt from the live state — under an open review it replaces "
+      + "the reviewed position with the next deal (#270)");
+    assert.deepEqual(drawnCounts(row), { 1: 9, 2: 10, 3: 11 },
+      "after the seat head the row shows the live deal, not the reviewed position (#270)");
+  });
 });
