@@ -27,9 +27,9 @@
 
 import { rankLadderOf, rankOrder } from '../engine/cards.js';
 import { selectorMatches } from '../engine/selectors.js';
-import { cardValue } from '../engine/scoring.js';
+import { cardValue, namedParts, scoredParts } from '../engine/scoring.js';
 import { handCounter, kCombinations, memoOnPack, rivalExtreme } from '../engine/templateKit.js';
-import { scoreHand, scorePlay, namedParts, scoredParts } from './cribbage-score.js';
+import { scoreHand, scorePlay } from './cribbage-score.js';
 
 /* ------------------------------------------------------------------ *
  * What a position is worth (see `evaluateState` at the foot of this file)
@@ -213,12 +213,14 @@ function partsOf(breakdown, scored) {
  * Saying what scored
  * ------------------------------------------------------------------ */
 
-// `partPhrase` and `namedParts` USED TO LIVE HERE and now live beside the
-// scorer that produces the breakdown they name (src/templates/cribbage-score.js).
-// The show card (src/ui/showCard.js) prints one label per combination and this
-// template prints the same labels in a sentence; two copies of "double pair
-// royal" is how the felt ends up calling the same six points two different
-// things depending on which surface you read it on.
+// `partPhrase` and `namedParts` USED TO LIVE HERE, then beside the scorer that
+// produces the breakdown they name, and now beside the OTHER emitter of
+// `showScored` (src/engine/scoring.js's `heldParts`). The show card
+// (src/ui/showCard.js) prints one label per combination and this template prints
+// the same labels in a sentence; two copies of "double pair royal" is how the
+// felt ends up calling the same six points two different things depending on
+// which surface you read it on — and the show card reaching for them in a
+// template's own module is what #219 took out.
 
 /**
  * MOVE A PEG, AND STOP THE GAME IF IT WENT OUT.
@@ -851,6 +853,42 @@ const cribbage = {
       },
       handCounter(ctx, seat, { suffix: ' in hand', minimizedOnly: true }),
     ];
+  },
+
+  /**
+   * ONE COUNT OF THE SHOW, AS THE FELT HAS TO STAGE IT (#219).
+   *
+   * The show is three counts — pone, dealer, crib — and each one is a `showScored`
+   * event the platform holds up as a card (src/ui/roundBeat.js's `showSteps`,
+   * src/ui/table.js's `playShowStep`). Staging them meant knowing four things
+   * about THIS game, and src/ui/table.js knew all four by name: that the crib is
+   * turned over by moving `crib → show`, that a hand's cards are counted in front
+   * of the seat in `play.<seat>` while the crib's are in `show`, that the fifth
+   * card is the shared `starter`, and that the two piles are called a hand and a
+   * crib. Four zone ids and two nouns from one template, in the file
+   * src/templates/CONTRACT.md exists because of.
+   *
+   * | field      | what the felt does with it |
+   * |---|---|
+   * | `pose`     | `{from, to}` — a move to hold the felt in BEFORE this count, undone when the count itself arrives. The crib is turned face up inside the move that ends the hand (the reveal IS `moveCards crib -> show`), so without posing it back the crib's "turn" is a caption on cards that have been face up through the other two counts. |
+   * | `spotlight`| the zone whose cards this count is counting; the felt rings them. |
+   * | `starterId`| one more card to draw after the step's own, and the last position in the part `at`s: the cut, which belongs to all three counts. Read off the ENDING position rather than the event, because a shared `visibility: 'all'` zone is public already and a second copy on the wire is a fact travelling outside the one field the view filter checks. |
+   * | `what`     | the pile in a word — "hand", "crib" — for the fallback sentence under `describeEvent`'s. |
+   *
+   * NULL FOR THE PLATFORM'S OWN REVEAL. A step with a `reason` is
+   * `emitReveal`'s (src/engine/scoring.js), which prices the cards left in a hand
+   * and already says itself; this pack never emits one, and answering for it
+   * anyway would put cribbage's staging on somebody else's round ending.
+   */
+  showStep(ctx, step) {
+    if (!step || step.reason) return null;
+    const isCrib = !!step.isCrib;
+    return {
+      what: isCrib ? 'crib' : 'hand',
+      spotlight: isCrib ? 'show' : ctx.zoneAddr('play', step.seat),
+      starterId: ctx.hasZone('starter') ? (ctx.cardIdsIn('starter')[0] ?? null) : null,
+      pose: isCrib ? { from: 'show', to: 'crib' } : null,
+    };
   },
 
   ruleLines(rules) {

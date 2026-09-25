@@ -32,11 +32,12 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { ROOT } from "../tools/stage.mjs";
+import { tableCss } from "./fixtures/tableCss.js";
 
 const read = (f) => fs.readFileSync(path.join(ROOT, f), "utf8");
 const html = read("index.html");
 const tableJs = read("src/ui/table.js");
-const cssRaw = read("src/ui/table.css");
+const cssRaw = tableCss();
 
 /** Every `@media` block, by brace matching — condition and body. */
 function mediaBlocks(sheet) {
@@ -249,7 +250,7 @@ test("a left-handed band swaps the ends and leaves the token between them", () =
  * ------------------------------------------------------------------ */
 
 test("the hint offer has left the rail entirely", () => {
-  for (const [name, source] of [["index.html", html], ["table.js", tableJs], ["table.css", cssRaw]]) {
+  for (const [name, source] of [["index.html", html], ["table.js", tableJs], ["the stylesheet", cssRaw]]) {
     assert.doesNotMatch(source, /hint-button|hintButton/,
       `${name} still knows about the rail's hint button`);
   }

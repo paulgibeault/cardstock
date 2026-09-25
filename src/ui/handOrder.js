@@ -220,7 +220,7 @@ const FLOOR_PX = 10;
  *
  * A RENDERED CARD IS THE ONLY HONEST ANSWER, because the declaration often is
  * not a number. `--hand-card-w` is `clamp(70px, 8.6vh, 104px)` on a desktop
- * window (src/ui/table.css), and `getComputedStyle` hands a custom property
+ * window (src/ui/css/responsive.css), and `getComputedStyle` hands a custom property
  * back as the token stream that was written — no viewport units resolved, no
  * clamp evaluated. `parseFloat` reads "clamp(70px..." as NaN, the `|| 70` that
  * caught it substituted the phone's smallest card, and every desktop fan was

@@ -20,6 +20,7 @@ import { makeCtx } from "../src/engine/context.js";
 import { loadPackFromDisk } from "../tools/pack-test.mjs";
 import { ROOT } from "../tools/stage.mjs";
 import { chooserTile } from "../src/ui/cardStyles/chooser.js";
+import { tableCss } from "./fixtures/tableCss.js";
 
 const seatLabel = (seat) => ["You", "Nell", "Ada", "Bo"][seat] ?? `Seat ${seat}`;
 
@@ -325,10 +326,10 @@ test("the round sheet folds to sides rather than listing chairs", () => {
 });
 
 test("the trick's gather does not paint over the event banner", () => {
-  const css = read("src/ui/table.css");
+  const css = tableCss();
   const zOf = (selector) => {
     const block = new RegExp(`\\n${selector}\\s*\\{([^}]*)\\}`).exec(css);
-    assert.ok(block, `no ${selector} block in src/ui/table.css`);
+    assert.ok(block, `no ${selector} block in the table's stylesheet`);
     const z = /z-index:\s*(-?\d+)/.exec(block[1]);
     assert.ok(z, `${selector} declares no z-index`);
     return Number(z[1]);

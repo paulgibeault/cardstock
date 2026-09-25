@@ -1,0 +1,567 @@
+/* THE LOBBY — the first screen: the wordmark, the tiles, how to play, and the
+ * new-game sheet.
+ *
+ * File 8 of 11 — read after panels.css, before party.css. The
+ * order is the cascade; tokens.css says why and repo-gates.test.js pins it. */
+
+/* ------------------------------------------------------------------ *
+ * The lobby
+ * ------------------------------------------------------------------ */
+
+#lobby {
+  flex: 1;
+  padding: 1.5rem 1rem 2.5rem;
+  overflow-y: auto;
+}
+#lobby[hidden] { display: none; }
+
+.lobby__header { text-align: center; margin-bottom: 1.75rem; }
+
+.wordmark {
+  margin: 0;
+  font-size: 1.9rem;
+  font-weight: 300;
+  letter-spacing: 0.42em;
+  text-indent: 0.42em;      /* the tracking would otherwise push it off-centre */
+  text-transform: uppercase;
+}
+
+.wordmark__rule {
+  margin: 0.5rem 0 0.75rem;
+  display: flex;
+  justify-content: center;
+  gap: 0.6rem;
+  font-size: 0.85rem;
+  opacity: 0.55;
+}
+
+.lobby__note {
+  margin: 0;
+  font-size: 0.85rem;
+  opacity: 0.8;
+  min-height: 1.2em;
+}
+
+.lobby__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: 1rem;
+  max-width: 62rem;
+  margin: 0 auto;
+}
+
+/* ------------------------------------------------------------------ *
+ * Tables
+ * ------------------------------------------------------------------ */
+
+/* THE ROW ABOVE THE GAMES. Deliberately not a `.tile`: a game tile is a mat in
+   the pack's own colour, sized to be the thing you came here to tap, and a
+   table is smaller and busier — a line about people rather than an invitation
+   to a game. Making them look alike would be a lie about what tapping does.
+
+   `max-width` matches the grid below so the two rows share an edge. */
+.tables {
+  max-width: 62rem;
+  margin: 0 auto 1.5rem;
+}
+.tables[hidden] { display: none; }
+
+.tables__heading {
+  margin: 0 0 0.6rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  opacity: 0.65;
+}
+
+.tables__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  gap: 0.6rem;
+}
+
+.table-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.15rem;
+  padding: 0.7rem 0.85rem;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  background: var(--chip-bg);
+  border: 1px solid var(--tile-border);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: transform 0.18s ease, border-color 0.18s ease;
+}
+
+.table-tile:hover { transform: translateY(-2px); border-color: var(--accent); }
+
+/* OURS READS DIFFERENTLY FROM THEIRS, because "your party" and "a table you
+   could join" are two different offers and the accent is how every other
+   surface in this game says "this one is yours". */
+.table-tile--mine { border-color: var(--accent); }
+
+.table-tile__who {
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.table-tile__game {
+  font-size: 0.78rem;
+  opacity: 0.85;
+}
+
+.table-tile__state {
+  font-size: 0.72rem;
+  opacity: 0.7;
+}
+
+/* THE DEMOTED SOLO DOOR. Present when a pack holds both a party table and an
+   older solo save: the table takes the tile's face, and this keeps the solo
+   game one tap away rather than unreachable. Quiet on purpose — it is the
+   second thing on the tile, not a rival to the first. */
+.tile__solo {
+  font: inherit;
+  font-size: 0.72rem;
+  opacity: 0.75;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0.2rem 0.35rem;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.tile__solo:hover { opacity: 1; }
+
+/* HOW LONG A SEAT GETS, set before the cards are out. A row of three rather
+   than a field: see the note on GRACE_CHOICES in src/ui/party.js for why this
+   is a choice and not a number somebody types. */
+.party-grace {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  width: 100%;
+  margin-bottom: 0.4rem;
+}
+
+.party-grace__label {
+  font-size: 0.76rem;
+  opacity: 0.7;
+  margin-right: 0.15rem;
+}
+
+.party-grace__option {
+  font: inherit;
+  font-size: 0.76rem;
+  padding: 0.25rem 0.55rem;
+  color: inherit;
+  background: var(--chip-bg);
+  border: 1px solid var(--tile-border);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+/* The one that is chosen reads as chosen, in the accent every other surface
+   uses for "this one is yours". */
+.party-grace__option--on {
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* A TABLE WHOSE HOST IS NOT HERE. Greyed and flat: no pointer, no hover lift,
+   nothing that reads as tappable, because there is nobody on the other end of a
+   tap. It is still on the row rather than hidden — the whole point of the seat
+   stub is that the promise stays visible while the host is away, and a seat
+   that vanishes overnight is indistinguishable from one that was lost. */
+.table-tile--dormant {
+  cursor: default;
+  opacity: 0.55;
+  border-style: dashed;
+}
+
+.table-tile--dormant:hover { transform: none; border-color: var(--tile-border); }
+
+/* The one word that matters on a dormant tile, so it is not dimmed twice over
+   by the tile's own opacity. */
+.table-tile--dormant .table-tile__state {
+  opacity: 1;
+  font-weight: 600;
+}
+
+/* YOUR SEAT IS THE ONE FACT WORTH RAISING ITS VOICE FOR. Everything else on a
+   table tile is about the table; this is about you, and it is the reason to
+   come back to a game that has been sitting for a day. */
+.table-tile__seat {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+/* A tile is a mat on the felt in the pack's own colour — not a list row. The
+   accent arrives from the manifest through safeAccent() (§7b) and everything
+   else here is mixed from it, so one hex per pack dresses the whole tile.
+
+   The column layout plus `margin-top: auto` on the footer is what keeps every
+   tile's record line and CTA on the same baseline across the grid, however
+   many lines its tagline wraps to. */
+.tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  border-radius: 14px;
+  background: linear-gradient(160deg,
+    color-mix(in srgb, var(--tile-accent) var(--tile-accent-strong), var(--tile-bg)),
+    color-mix(in srgb, var(--tile-accent) var(--tile-accent-weak), var(--tile-bg)));
+  border: 1px solid var(--tile-border);
+  box-shadow: 0 6px 18px var(--card-shadow);
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+
+.tile:hover { transform: translateY(-3px); box-shadow: 0 12px 26px var(--card-shadow); }
+
+.tile--featured {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent), 0 10px 26px var(--card-shadow);
+}
+
+.tile__open {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  padding: 1.5rem 1rem 1rem;
+  gap: 0.2rem;
+  font: inherit;
+  color: inherit;
+  text-align: center;
+  background: none;
+  border: none;
+  border-radius: inherit;
+  cursor: pointer;
+}
+.tile__open:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Pinned to the tile's top edge, straddling it like a tab. */
+.tile__ribbon {
+  position: absolute;
+  top: -0.55rem;
+  left: 0.75rem;
+  right: 0.75rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--ribbon-text);
+  font-size: 0.68rem;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Three real faces from the pack, fanned. Zero art to ship, and every game is
+   recognisable before its name is read. */
+.tile__fan {
+  display: flex;
+  justify-content: center;
+  height: 78px;
+  margin-bottom: 0.5rem;
+}
+.tile__fan-card {
+  width: 54px;
+  display: block;
+  transform: rotate(calc(var(--fan-index) * 13deg))
+             translate(calc(var(--fan-index) * -13px), calc(var(--fan-index) * var(--fan-index) * 5px));
+  transition: transform 0.22s ease;
+}
+.tile__fan-card .card-face { width: 54px; }
+
+/* The fan opens when you reach for the tile. */
+.tile__open:hover .tile__fan-card {
+  transform: rotate(calc(var(--fan-index) * 18deg))
+             translate(calc(var(--fan-index) * -20px), calc(var(--fan-index) * var(--fan-index) * 6px));
+}
+
+.tile__name { font-size: 1.1rem; font-weight: 700; }
+
+.tile__genre {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  opacity: 0.7;
+}
+
+.tile__badge {
+  padding: 0.1rem 0.4rem;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  letter-spacing: 0.08em;
+  font-size: 0.6rem;
+}
+
+.tile__tagline {
+  font-size: 0.82rem;
+  opacity: 0.85;
+  margin: 0.35rem 0 0.6rem;
+}
+
+.tile__foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  width: 100%;
+  gap: 0.5rem;
+  margin-top: auto;
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--tile-border);
+  font-size: 0.75rem;
+}
+.tile__record { opacity: 0.75; }
+.tile__cta { font-weight: 700; color: var(--accent); }
+
+.tile__restart {
+  display: block;
+  width: 100%;
+  padding: 0.5rem;
+  font: inherit;
+  font-size: 0.72rem;
+  color: inherit;
+  opacity: 0.65;
+  background: none;
+  border: none;
+  border-top: 1px solid var(--tile-border);
+  cursor: pointer;
+}
+.tile__restart:hover { opacity: 1; background: var(--ghost-hover); }
+
+/* Shares the restart button's footer treatment: both are secondary doors on
+   the tile, and two different-looking small buttons under one card is noise. */
+.tile__rules {
+  display: block;
+  width: 100%;
+  padding: 0.5rem;
+  font: inherit;
+  font-size: 0.72rem;
+  color: inherit;
+  opacity: 0.65;
+  background: none;
+  border: none;
+  border-top: 1px solid var(--tile-border);
+  cursor: pointer;
+}
+.tile__rules:hover { opacity: 1; background: var(--ghost-hover); }
+
+/* Somebody is playing this one right now. Sits where the in-progress ribbon
+   sits and reads as its sibling — the ribbon is your own saved game, this is a
+   table with a chair in it. */
+.tile__party {
+  display: block;
+  padding: 0.3rem 0.5rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-align: center;
+  background: var(--chip-bg);
+  border-bottom: 1px solid var(--tile-border);
+}
+.tile__party[hidden] { display: none; }
+
+/* The party door, in the same footer as the other two secondary actions — but
+   not as quiet as them. "Play together" is the only one of the three that is
+   ever the reason somebody opened the lobby, and at 0.65 opacity beneath a card
+   fan it reads as a footnote. It also only appears when there is a party to
+   play with, so it is never competing for attention it has not earned. */
+.tile__together {
+  display: block;
+  width: 100%;
+  padding: 0.5rem;
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: inherit;
+  background: none;
+  border: none;
+  border-top: 1px solid var(--tile-border);
+  cursor: pointer;
+}
+.tile__together::before { content: '\1F465\A0'; }
+.tile__together:hover { background: var(--ghost-hover); }
+.tile__together[hidden] { display: none; }
+
+/* TODAY'S RUN. Two lines rather than one — the offer and what has become of it
+   — because "Daily run" alone says nothing about whether it is still there to
+   play, and that is the only question anybody has about a daily.
+
+   It sits in the same footer family as the three above and carries the accent,
+   which is this game's one way of saying "this one is yours today". Not a
+   pulse, not a badge: the tile already changes what it says when the run is
+   done, and a lobby that blinks at you is a lobby you stop reading. */
+.tile__daily {
+  display: block;
+  width: 100%;
+  padding: 0.45rem 0.5rem;
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: inherit;
+  text-align: center;
+  background: none;
+  border: none;
+  border-top: 1px solid var(--tile-border);
+  cursor: pointer;
+}
+.tile__daily::before { content: '\2600\FE0F\A0'; }
+button.tile__daily:hover { background: var(--ghost-hover); }
+.tile__daily-label { color: var(--accent); }
+.tile__daily-state {
+  display: block;
+  font-weight: 400;
+  font-size: 0.68rem;
+  opacity: 0.7;
+}
+
+/* A FINISHED RUN IS A STATEMENT, NOT A DEAD BUTTON. There is no second attempt
+   at a day, so it is rendered as text (a div, never a disabled control) and the
+   only thing left to press is the copy. */
+.tile__daily--done { cursor: default; }
+.tile__daily--done .tile__daily-label { color: inherit; opacity: 0.85; }
+
+.tile__daily-share {
+  display: block;
+  width: 100%;
+  padding: 0.4rem 0.5rem;
+  font: inherit;
+  font-size: 0.7rem;
+  color: inherit;
+  opacity: 0.65;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+.tile__daily-share:hover { opacity: 1; background: var(--ghost-hover); }
+
+/* ------------------------------------------------------------------ *
+ * How to play
+ * ------------------------------------------------------------------ */
+
+.rules__tagline {
+  margin: -0.5rem 0 1rem;
+  font-size: 0.9rem;
+  opacity: 0.75;
+}
+
+/* Capped and scrollable: a rules page is the one panel whose length is set by
+   the pack rather than by the layout, and Milestones lists ten contracts. */
+.rules__body {
+  max-height: min(60vh, 34rem);
+  overflow-y: auto;
+  text-align: left;
+  margin-bottom: 1rem;
+}
+
+.rules__heading {
+  margin: 1.1rem 0 0.35rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.6;
+}
+.rules__heading:first-child { margin-top: 0; }
+
+.rules__list {
+  margin: 0;
+  padding-left: 1.1rem;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+.rules__list li { margin: 0.2rem 0; }
+
+.tile--broken {
+  padding: 2rem 1rem;
+  text-align: center;
+  opacity: 0.7;
+}
+.tile--broken .tile__name,
+.tile--broken .tile__tagline { display: block; }
+
+/* ------------------------------------------------------------------ *
+ * The new-game sheet
+ * ------------------------------------------------------------------ */
+
+.new-game__body {
+  max-height: min(58vh, 30rem);
+  overflow-y: auto;
+  text-align: left;
+  margin-bottom: 1rem;
+}
+
+.new-game__heading {
+  margin: 1rem 0 0.5rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.6;
+}
+.new-game__heading:first-child { margin-top: 0; }
+
+.new-game__seats,
+.new-game__skills { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+
+/* The difficulty row is the seat row's twin on purpose: same chip, same
+   pressed state, so the sheet reads as one set of choices rather than as two
+   controls that happen to share a panel. Only the width differs — these hold
+   a word, not a digit. */
+.new-game__skill { min-width: 4.5rem; }
+
+.new-game__seat,
+.new-game__skill {
+  min-width: 2.2rem;
+  padding: 0.35rem 0.5rem;
+  font: inherit;
+  font-weight: 700;
+  color: var(--panel-text);
+  background: var(--chip-bg);
+  border: 1px solid var(--chip-border);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.new-game__seat[aria-pressed="true"],
+.new-game__skill[aria-pressed="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #10240f;
+}
+
+.new-game__seat-count {
+  display: block;
+  margin-top: 0.45rem;
+  font-size: 0.8rem;
+  opacity: 0.7;
+}
+
+/* A whole row is the hit target, not just the box — a 13px checkbox is not a
+   touch target, and this sheet is used on a phone. */
+.new-game__row {
+  display: flex;
+  gap: 0.6rem;
+  align-items: flex-start;
+  padding: 0.5rem 0.4rem;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.new-game__row:hover { background: var(--ghost-hover); }
+
+.new-game__check { margin-top: 0.2rem; flex: none; width: 1rem; height: 1rem; }
+.new-game__text { display: flex; flex-direction: column; gap: 0.15rem; }
+.new-game__name { font-size: 0.92rem; font-weight: 600; }
+.new-game__desc { font-size: 0.8rem; opacity: 0.72; line-height: 1.4; }

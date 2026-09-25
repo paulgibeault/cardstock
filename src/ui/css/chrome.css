@@ -1,0 +1,957 @@
+/* THE CHROME — the frame the felt sits inside: the status bar, the handedness
+ * rules the SDK stamps on <html>, the hand rail, and the help mark and its
+ * sheet. Nothing here is part of the game; it is what surrounds the game.
+ *
+ * File 2 of 11 — read after tokens.css, before seats.css. The
+ * order is the cascade; tokens.css says why and repo-gates.test.js pins it. */
+
+/* ------------------------------------------------------------------ *
+ * Nothing here is text you copy
+ * ------------------------------------------------------------------ *
+ *
+ * A card is an object, not a paragraph. Every string on screen — a rank, a
+ * name plate, a score, a hint — is a label ON something you are meant to
+ * touch, and there is nothing worth pasting anywhere else, so a selection can
+ * only ever be an accident of a gesture that meant something else.
+ *
+ * And the gestures here are the reason this is a global rule rather than a
+ * per-element one. The table is driven by taps and holds: hold a card to
+ * gather its whole meld (smartSelect), hold anything to open the inspector,
+ * drag a card to a pile. On iOS Safari a long press on selectable text starts
+ * the OS text-selection gesture instead — a magnifier and a blue highlight
+ * over the card you are trying to pick up, with the app's own hold losing the
+ * race. -webkit-touch-callout suppresses the share/copy sheet that follows.
+ *
+ * Selection is deliberately NOT re-enabled anywhere: this app has no text
+ * input, no user-authored content, and no long-form prose that reads as a
+ * document. (The rules page is the closest thing, and it is a page you read,
+ * not a source you quote.) None of this touches the accessibility tree —
+ * every one of these strings is still text to a screen reader, and
+ * aria-labels carry the ones the felt shortens.
+ */
+:root {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+
+  /* The review drawer's width. A layout constant rather than a theme token —
+     it is the same in both themes — but it is read by three rules six
+     thousand lines apart (#review-drawer, and the felt and the reel that give
+     up the room for it), so it is declared once, here, where the other
+     document-wide values are. */
+  --review-drawer-w: 24rem;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, sans-serif;
+  color: var(--chrome-text);
+  min-height: 100vh;
+  /* Reserve the scrollbar's width whether or not one is showing, so arriving
+     at a scrolling lobby cannot resize the felt behind it. */
+  scrollbar-gutter: stable;
+  display: flex;
+  flex-direction: column;
+  background:
+    radial-gradient(ellipse at 50% 35%, var(--felt-sheen), transparent 60%),
+    radial-gradient(ellipse at 50% 100%, var(--felt-vignette), transparent 65%),
+    repeating-linear-gradient(45deg, var(--felt-weave) 0 2px, transparent 2px 9px),
+    var(--felt);
+}
+
+/* An element given `display: flex` needs its own [hidden] rule — the UA
+   sheet's `display: none` loses to any later display declaration, and the
+   router relies on `hidden` alone to swap screens. */
+#table-screen {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  /* THE TABLE NEVER SCROLLS THE PAGE.
+     body is `min-height: 100vh`, so a felt taller than the window grew the
+     DOCUMENT — and a document scrollbar takes ~15px off the width, which near
+     a breakpoint re-sized every card on the table. A pile gaining a card could
+     change how big the player's own hand was drawn.
+     Capping the screen at the viewport keeps that scrollbar off the document.
+     The overflow is contained rather than hidden: a window genuinely too short
+     for a pack should let the player reach the rest of the felt, not clip the
+     hand off the bottom. `scrollbar-gutter` reserves the room whether or not
+     that inner bar shows, so it cannot restart the loop one level down.
+     The lobby keeps its own scrolling; this rule clamps the felt only. */
+  max-height: 100vh;
+  max-height: 100dvh;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+#table-screen[hidden] { display: none; }
+
+/* THE BAR'S HEIGHT IS FIXED, AND THAT IS THE POINT.
+   #table-screen is a viewport-capped flex column, so anything that makes this
+   bar taller pushes the whole felt down — mid-turn, under the hand the player
+   is reaching for. It used to `flex-wrap: wrap` with five items in it, and a
+   status string growing from "Your turn" to "Delphine's turn" was enough to
+   drop the score chip onto a second line and shove the table.
+   Three items now, `nowrap`, and the only elastic one is the status text,
+   which ellipsises rather than wrapping. */
+#status-bar {
+  padding: 0.5rem 1rem;
+  background: var(--chrome-bar);
+  font-size: 0.95rem;
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 0.6rem;
+  border-bottom: 3px solid transparent;
+  transition: border-color 0.3s ease;
+}
+
+/* The one item that gives: it takes the slack between the two controls and
+   centres in it, so the chip stays pinned to its edge and the Lobby button to
+   its own — neither moves as the sentence changes length. */
+#status-text {
+  flex: 1;
+  min-width: 0;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#status-bar.status-bar--your-turn {
+  border-bottom-color: var(--accent);
+}
+
+/* The opponent's turn is a *quieter* signal than your own, not a second loud
+   one: it says "waiting", and the seat chip is already pulsing. */
+#status-bar.status-bar--thinking {
+  border-bottom-color: var(--chip-border);
+}
+
+/* NOTE — there is deliberately no `#status-bar button` rule here.
+   There used to be, painting every button in the bar solid `--button-bg`
+   white. At 1-0-1 it out-ranked `.score-chip` (0-1-0) below, so the score
+   chip — which has always had a themed translucent pill of its own — was
+   drawn as an unexplained white box on the felt. The ghost buttons had been
+   rescued with a `#status-bar .ghost-button` counter-override; the chip never
+   was. Both controls in this bar style themselves, so the blanket rule is
+   gone rather than fought. Keep it that way. */
+
+.ghost-button {
+  font: inherit;
+  padding: 0.35rem 0.7rem;
+  border-radius: 6px;
+  border: 1px solid var(--ghost-border);
+  background: transparent;
+  color: var(--ghost-text);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.ghost-button:hover { background: var(--ghost-hover); }
+.ghost-button[hidden] { display: none; }
+
+/* Your score, in the status bar, doubling as the way into the full sheet.
+   The same translucent pill the seats wear for their own scores — a player
+   reading the table sees one vocabulary for "this is a score", whether it is
+   theirs or an opponent's. */
+.score-chip {
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  display: flex;
+  align-items: baseline;
+  gap: 0.3rem;
+  padding: 0.18rem 0.6rem;
+  border-radius: 999px;
+  border: 1px solid var(--chip-border);
+  background: var(--chip-bg);
+  color: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.score-chip:hover { border-color: var(--accent); }
+.score-chip[hidden] { display: none; }
+.score-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* "You" — because a bare number in the chrome is a number nobody can name.
+   Quiet enough that the score is still what the eye lands on. */
+.score-chip__label {
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  opacity: 0.65;
+}
+
+/* YOUR OWN BOARD, IN THE CHROME. The opponent wears their peg rail on their
+   seat plate; the human has no plate, so their board goes in the one place
+   that is always on screen and already says "this number is yours" (#124).
+   Empty for every pack whose primary counter is a quantity — no slot, no gap,
+   the pill is unchanged.
+
+   Narrower than the rail on a plate on purpose: this bar may never wrap
+   (see #status-bar), and every pixel the board takes comes out of the
+   sentence beside it, which ellipsises. Sixty pixels of road is enough to
+   read a position off; the printed number is right there for the value. */
+.score-chip__track:empty { display: none; }
+.score-chip__track { display: inline-flex; align-items: center; }
+.score-chip .seat__track { margin-left: 0; min-width: 0; }
+.score-chip .seat__track-rail { min-width: 3.2rem; }
+.score-chip .seat__track-value { min-width: 1.4rem; }
+.score-chip #score-chip-value[hidden] { display: none; }
+
+/* HOW FAST A CARD CROSSES THE FELT, in the one strip that is always there and
+   never counting down (#175). It styles itself, like everything else in this
+   bar — see the NOTE above about why there is no `#status-bar button` rule to
+   inherit from.
+
+   QUIETER THAN THE SCORE CHIP, and the same argument the round summary's pace
+   control is quiet for: this is an adjustment, not a reading. The score is a
+   fact about the game and wears a filled pill; this is a preference and wears
+   an outline. Whichever one the eye lands on mid-hand should be the score.
+
+   `flex: 0 0 auto` is not decoration. #status-text is the only item in this
+   bar allowed to give, and a fourth flexible item would mean the bar deciding
+   for itself which of two things ellipsises. */
+.speed-chip {
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 0.22rem;
+  flex: 0 0 auto;
+  padding: 0.18rem 0.5rem;
+  border-radius: 999px;
+  border: 1px solid var(--chip-border);
+  background: transparent;
+  color: inherit;
+  opacity: 0.75;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.speed-chip:hover { opacity: 1; border-color: var(--accent); }
+.speed-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.speed-chip__glyph { opacity: 0.6; }
+
+.danger-button {
+  font: inherit;
+  padding: 0.6rem 1.1rem;
+  border-radius: 8px;
+  border: none;
+  cursor: pointer;
+  font-weight: 600;
+  background: var(--danger-bg);
+  color: #fff;
+}
+.danger-button:hover { background: var(--danger-bg-hover); }
+
+/* HANDEDNESS (§5). The SDK stamps data-handedness on <html>. The two things
+   that have a side are the action button and the direction the hand fans, and
+   both flip together — a left-handed player's thumb covers the left edge, so
+   the newest card and the button both belong there. */
+[data-handedness="left"] #status-bar { flex-direction: row-reverse; }
+/* The ROW is what fans, not the hand: `.hand` is a column of rows now (#134),
+   so reversing it would stack the second row above the first rather than
+   mirroring either of them. Each row mirrors, and the reading order of the
+   hand — first row, then second — is not a thing handedness has an opinion
+   about. */
+[data-handedness="left"] .hand__row { flex-direction: row-reverse; }
+[data-handedness="left"] .opponent-row { flex-direction: row-reverse; }
+/* The sort toggle has a side too, and it is the same side as everything else
+   the thumb reaches for. */
+[data-handedness="left"] #hand-row { flex-direction: row-reverse; }
+
+/* THE RAIL. A green rectangle is a viewport; a green rectangle inside a
+   wooden edge is a table. The ring is a box-shadow rather than a border so it
+   sits outside the padding box and the felt keeps its own rounded corner, and
+   the hairline highlight on top of it is what keeps the wood from reading as
+   a flat brown stripe. */
+#table {
+  /* Every pile and card size on the felt derives from these, so the whole
+     table can step down together on a narrow screen (the breakpoint below).
+     Safe to scale: type on card faces is px-in-viewBox and rides the card. */
+  --pile-w: 90px;
+  --hand-card-w: 70px;
+  /* The cards ON THE OTHER PLAYERS' PLATES — their fan of backs, their laid-out
+     melds, their own small piles. These were three hand-tuned pixel values
+     scattered across the sheet, which meant the seats could not follow the
+     felt when it grew: on a tall window the deck and the hand took the room
+     and an opponent's melds stayed postage stamps. Named here, they scale with
+     everything else and each overlap below is derived from them rather than
+     tuned beside them. */
+  --seat-fan-w: 28px;      /* one card back in an opponent's fan */
+  --seat-fan-max: 118px;   /* how wide that fan may spread before it closes up */
+  --seat-meld-w: 26px;     /* a card in a laid-down meld chip */
+  --seat-pile-w: 34px;     /* a compact pile on a seat */
+  flex: 1;
+  /* Deliberately NOT `min-height: 0`. Letting the felt shrink below its
+     content does keep it inside the window, but it does it by sliding the
+     rows into each other — the deck ends up drawn over the contract ladder.
+     A row that cannot fit should be reachable, not overlapped, so the felt
+     keeps its natural height and #table-screen contains the overflow. */
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding: 1.25rem 1rem;
+  margin: 0.85rem;
+  border-radius: 18px;
+  box-shadow:
+    0 0 0 10px var(--rail),
+    0 0 0 11px var(--rail-edge),
+    0 10px 30px var(--rail-shadow),
+    inset 0 0 90px var(--felt-vignette);
+  background:
+    radial-gradient(ellipse at 50% 30%, var(--felt-sheen), transparent 62%),
+    repeating-linear-gradient(45deg, var(--felt-weave) 0 2px, transparent 2px 9px),
+    var(--felt);
+  /* The containing block for everything drawn OVER the felt rather than in
+     its flow: the action wash (#table::after), the seat-collapse toggle, an
+     open seat plate. */
+  position: relative;
+}
+
+.opponent-row {
+  display: flex;
+  justify-content: center;
+  /* The containing block for a seat's plate and its badges, which hang off
+     the row rather than sitting in it. */
+  position: relative;
+  /* NOT the default stretch, and NOT centred either.
+     Stretch made a collapsed seat a tall empty box with the face at the top
+     and its corner count badge stranded at the bottom. Centring fixed that and
+     introduced a worse one: the row's height changes with whoever is playing —
+     a seat holding melds is taller than one holding none — so every waiting
+     face slid up or down a few pixels EVERY TURN, on a row the player is
+     tracking. Pinned to the top, a face is in the same place all game and only
+     the seat that is actually playing changes shape. */
+  align-items: flex-start;
+  /* NOT wrap. Seats wrapping to a second row is how the felt loses its height
+     to the players and pushes the piles under the hand — and with the seat
+     picker a table can now be eight-handed. One row, always; when it will not
+     fit, the seats get smaller (below), and the ones that are not acting give
+     up their fan first. */
+  flex-wrap: nowrap;
+  gap: clamp(0.35rem, 1.5vw, 1.25rem);
+
+  /* THE SAFETY NET UNDER THE COLLAPSE RULES.
+     Collapsing seats is a seat-COUNT heuristic, and a count cannot promise a
+     fit: two full plates — whoever is playing, plus a seat you can catch —
+     next to three faces still ran 183px past a 509px felt. Overflow with no
+     scroller does not clip politely; it spills into #table-screen's own
+     scrollport, which is the "player cards extend beyond the screen" bug in
+     the first place, just one level up and harder to find.
+     So the row scrolls. In practice it almost never has to — the tiers above
+     keep it inside the felt — but when it does, every seat stays REACHABLE
+     instead of silently running off the table. */
+  overflow-x: auto;
+  /* `overflow-x` alone makes the block axis a scrollport too, which would clip
+     .seat--active's 2px lift and its glow. The block padding is the room for
+     them.
+     THE INLINE PADDING IS THE TOGGLE'S CORNER, KEPT CLEAR. The toggle is
+     positioned out of the row's flow, which stopped it pushing the seats off
+     centre — but out of flow also means the row will happily lay a seat under
+     it, and on an 820px window it did. Reserved on BOTH sides, so the corner
+     stays empty and the seats stay centred; one-sided padding would just move
+     the off-centre bug from the toggle to the padding. */
+  padding: 4px 2.9rem 2px;
+  /* How far the toggle's box reaches down into this row: it is positioned
+     against #table at `top: 0.5rem` and stands 18px tall, and the row's own
+     top edge is 15px below #table's — 11px of reach, measured at 375px. The
+     row that SCROLLS reserves this in the block axis because it cannot reserve
+     the corner in the inline one (see .opponent-row--carousel).
+     IN `rem`, NOT PIXELS, and with 3px to spare. The toggle's height is its
+     font's, and the launcher scales the root font — so a pixel constant would
+     hold at the default scale and fail at the large one, which is the setting
+     the players who need it are using. 0.9rem tracks the thing it is clearing
+     instead of guessing at it. */
+  --toggle-clearance: 0.9rem;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+/* Only a row that actually scrolls shows a bar, and only on approach — an
+   always-visible track under a row that fits is a line of chrome across the
+   felt saying nothing. */
+.opponent-row:hover { scrollbar-color: var(--chip-border) transparent; }
+.opponent-row::-webkit-scrollbar { height: 6px; }
+.opponent-row::-webkit-scrollbar-track { background: transparent; }
+.opponent-row::-webkit-scrollbar-thumb { background: transparent; border-radius: 999px; }
+.opponent-row:hover::-webkit-scrollbar-thumb { background: var(--chip-border); }
+
+/* THE BAND THAT HOLDS THE FAN AND THE RAIL, and it lives here rather than in
+   felt.css for a reason worth knowing: the portrait rule below rewraps this
+   row with `row-gap`, and `gap` here is the same declaration at the same
+   specificity. Source order is all that settles them, so the two cannot be
+   read out of two different files. */
+#hand-row {
+  display: flex;
+  justify-content: center;
+  align-items: flex-end;
+  gap: 0.5rem;
+}
+
+/* ------------------------------------------------------------------ *
+ * The rail
+ * ------------------------------------------------------------------ */
+
+/* EVERYTHING THAT USED TO STAND ABOVE THE HAND, STOOD BESIDE IT INSTEAD.
+   #action-bar was a full-width row between the felt and the fan holding a
+   turn token, a sentence of phase guidance, the Hint offer and the one action
+   button, and it reserved 53px of a 812px phone for the whole match whether
+   or not it had anything to say — directly above the cards the player was
+   reaching for. The felt is the thing that is short of room; the words were
+   the thing worth least. So the sentence is gone, the token and the offer are
+   icons, and all four sit in a column at the fan's edge.
+
+   THE RAIL OWES THE ROW A WIDTH AND NEVER A HEIGHT, and that is structural
+   rather than arithmetic. #hand-row sizes itself to its tallest item, so a
+   rail taller than the fan grows the row and moves the felt — #13 again, and
+   it did: measured at 320px the fan is 76px and a fully populated rail was
+   83px, so the row jumped 7px every time the turn came round. Keeping the
+   column "short enough" is a promise that has to be re-earned at every
+   viewport and by every control anyone adds. So the rail's own box is
+   ZERO-HEIGHT and the stack hangs off its bottom edge, out of flow: whatever
+   goes in it, #hand-row is exactly as tall as the fan.
+
+   ITS WIDTH IS FIXED for the mirror-image reason. The row centres the fan and
+   the rail as a group and layoutHand subtracts the rail from the room the fan
+   may use, so a rail that changed width would slide the hand sideways and
+   re-fan it — which is what a cycling "Deal order" → "By suit" → "By rank"
+   label did before its own width was pinned. Every control in here is laid out
+   to that fixed box rather than to its own label, so the width is a constant
+   and not a maximum.
+
+   THREE RUNGS, AND ALL THREE ALWAYS THERE (#154, #155). The sort toggle and
+   the action button used to take turns in one slot, which meant a bid, a
+   Hearts pass, a cribbage crib discard or a staged Thirteen combination hid
+   the sort control for the whole phase — the phase a player spends arranging
+   their hand to decide with. They have a rung each now, paid for by the Hint
+   lamp leaving for the help mark in the felt's corner: the stack was already
+   three rungs tall with the lamp in it, so it came out SHORTER — 73px with the
+   lamp, 69px with the sort toggle in its place, measured at 1280x860 — and the
+   rail is the same 5rem, so #hand-row and #hand are pixel-identical to what
+   they were and the fan's room is untouched.
+
+   It flips sides with handedness along with everything else that has a side. */
+.hand-rail {
+  width: 5rem;
+  flex: none;
+  align-self: flex-end;
+  position: relative;
+  height: 0;
+}
+.hand-rail__stack {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0.6rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+/* THE STACK IS ONE HEIGHT, ALWAYS. Every rung keeps its slot and only loses
+   `visibility` — `display: none` would shuffle the column upward every time
+   the turn changed hands or a phase ended, moving the controls under the thumb
+   while the thumb was reaching for them. (The rail's own box is zero-height
+   either way, so this is about the stack being still, not about the felt
+   moving.) `visibility` also takes a rung out of the tab order and off the
+   screen reader, which is what `hidden` was doing before.
+
+   THE ACTION BUTTON IS ONE OF THEM NOW (#154). It was `hidden`, because it
+   shared the bottom slot with the sort toggle and one of the two was always
+   standing in it; with a rung each, an empty thumb slot has to be an empty
+   slot rather than a missing row, or the sort toggle would step down into it
+   the moment a commit phase ended. */
+.hand-rail:not(.hand-rail--acting) .turn-token { visibility: hidden; }
+.hand-rail:not(.hand-rail--committing) #action-button { visibility: hidden; }
+.hand-rail:not(.hand-rail--sortable) .hand-sort { visibility: hidden; }
+
+/* The sort toggle's width is FIXED to the longest label it can wear, and now
+   also to the rail that holds it.
+   6.8em AND NOT 6.2: "Deal order" measured 75px against a floor of 69, so the
+   pill was re-centring itself by 3px every time the mode came round to the
+   long label — which nothing else in the rail depended on while the toggle
+   only appeared between phases, and which is 3px of movement under the eye now
+   that it stands beside the action button all match (#154). The floor is above
+   the longest of the four labels, so the box is a constant again. */
+.hand-sort {
+  font: inherit;
+  font-size: 0.7rem;
+  min-width: 6.8em;
+  text-align: center;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid var(--chip-border);
+  background: var(--chip-bg);
+  color: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+  opacity: 0.75;
+}
+.hand-sort:hover { opacity: 1; border-color: var(--accent); }
+.hand-sort:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ON A PORTRAIT PHONE THE RAIL LEAVES THE ROW.
+ *
+ * Beside the fan the rail is cheap in the axis a desktop has to spare and
+ * ruinous in the one a phone does not: at 375px it took 92px of a 332px row,
+ * so a thirteen-card hand was fanned across 220px and every card showed a
+ * 14.5px strip (#133 items 1–2). Above the fan it costs about 33px of the
+ * felt's height — which the middle has going spare on a phone, measured — and
+ * hands the fan all 312px. That alone is 22px a card; it is what makes two
+ * readable rows affordable (#134).
+ *
+ * ONLY HERE. `(orientation: portrait) and (max-width: 480px)` is a phone held
+ * upright: a landscape phone and a desktop are short of the other axis, and
+ * there the rail beside the fan is still the right trade. Everything outside
+ * this block is untouched.
+ *
+ * THE HEIGHT IS FIXED, WHICH IS THE SAME PROMISE THE ZERO-HEIGHT BOX WAS
+ * MAKING. A band that sized itself to its contents would grow the instant the
+ * turn token lit or the action button appeared, and the whole felt would step
+ * down under a thumb already reaching for it (#13). So the band is one height
+ * whatever is standing in it, and the stack is still absolutely positioned
+ * inside it — the same two elements doing the same two jobs, turned through
+ * ninety degrees.
+ *
+ * AND ITS WIDTHS ARE PINNED FOR THE MIRROR-IMAGE REASON: every control here
+ * has the width it is laid out to everywhere else, so nothing in the band
+ * slides sideways when a phase begins or ends. The rail beside the fan stacked
+ * its three rungs; the band stands them in a row, and the action button keeps
+ * the thumb's end of it whether or not there is an action in it (#154).
+ *
+ * THE TWO BUTTONS TAKE THE TWO ENDS, AND THE TOKEN THE MIDDLE. Packed against
+ * the thumb's end the three rungs read as one group of three, and the sort
+ * toggle was the pill NEXT TO the one that commits — the same neighbourhood
+ * that made a Pass turn into "Deal order" under a finger back when they shared
+ * a slot (#122, round-5 item 19). Sent to the far end it is plainly a different
+ * kind of control: arranging your own fan happens at the hand's left edge, and
+ * committing happens where the thumb already is.
+ *
+ * THE TOKEN IS CENTRED BY ARITHMETIC RATHER THAN BY A RULE OF ITS OWN. Both
+ * ends are the same 5rem and the band's padding is symmetric, so `space-between`
+ * puts the middle item on the row's centre line — over the middle of the fan,
+ * where "whose turn" is not standing next to anything that can be pressed. It
+ * stays centred when the turn is not the player's, because a quiet rung loses
+ * `visibility` and keeps its box. */
+@media (orientation: portrait) and (max-width: 480px) {
+  #hand-row {
+    flex-wrap: wrap;
+    row-gap: 0.15rem;
+  }
+  .hand-rail {
+    order: -1;
+    flex: 0 0 100%;
+    width: 100%;
+    height: 1.9rem;
+    align-self: auto;
+  }
+  .hand-rail__stack {
+    top: 0;
+    bottom: 0;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    padding: 0 0.15rem;
+  }
+  /* THE SORT TOGGLE LEADS THE ROW, and only here: the rail beside the fan is a
+     column where "first" means the rung farthest from the thumb, and its order
+     is the one #154 settled. `order` rather than a second markup order, so the
+     tab order stays the reading order in both shapes — sort, then commit. */
+  .hand-rail__stack .hand-sort { order: -1; }
+  /* The thumb reaches the same side it always did, and the sort toggle the
+     other one: reversing the row swaps the ends and leaves the token between
+     them. */
+  [data-handedness="left"] .hand-rail__stack { flex-direction: row-reverse; }
+  /* ONE WIDTH FOR BOTH — the rail's own 5rem, which is the width the action
+     button is laid out to everywhere else and the width its label budget
+     (ACTION_LABEL_MAX_CHARS, src/ui/interaction.js) is written against. Left to
+     size themselves the two come out a few pixels apart, and the token beside
+     them would step sideways every time the turn changed. */
+  .hand-rail__stack #action-button,
+  .hand-rail__stack .hand-sort {
+    flex: none;
+    width: 5rem;
+    min-width: 0;
+  }
+}
+
+/* THE HAND IS A COLUMN OF ROWS, AND USUALLY THERE IS ONE OF THEM.
+ *
+ * A fan closes to fit its row, and on a 375px phone a thirteen-card hand closed
+ * to 14.5px a card — the strip the playtest could not read (#133 items 1–2).
+ * Below that point the answer stops being horizontal: `fanLayout`
+ * (src/ui/handOrder.js) splits the fan into as few rows as it takes to get back
+ * above a readable step, and only while the felt has the height going spare to
+ * pay for them.
+ *
+ * THE ROWS ARE REAL CONTAINERS, and that is the whole reason the rest of the
+ * fan's machinery survives the change. The overlap is a negative margin on
+ * `:not(:first-child)` and the lift opens a gap with a general sibling
+ * combinator — both of which mean "within my row" by construction once a row
+ * exists, so a lifted card on row 1 cannot shove row 2 sideways and each row's
+ * leftmost card keeps its full width. Written as one flat wrapping list, every
+ * one of those rules would have had to learn about rows.
+ *
+ * `--fan-step` and `--lift-gap` stay on `.hand`: one fan, one spacing, however
+ * many rows it is drawn on. The rows inherit them.
+ */
+.hand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  /* What a second row costs beyond a card's own height. layoutHand reads this
+     back off the computed style rather than being told it twice, so the height
+     budget it spends is the one the stylesheet is actually charging. */
+  row-gap: 0.3rem;
+  padding: 0.5rem;
+  min-width: 0;
+}
+.hand__row {
+  display: flex;
+  min-width: 0;
+}
+
+/* THE FAN OVERLAPS BY MOVING THE WRAPPER, NOT THE CARD.
+ *
+ * It used to be a negative margin on `.card-face` with `:first-child` zeroing
+ * the leftmost one — which quietly stopped working the day each card gained a
+ * `.card-face-wrap` span, because every svg is then the first child of its OWN
+ * wrapper and every card matched the reset. The fan silently flattened into a
+ * row, and a ten-card hand ran off both sides of a phone. The wrapper is the
+ * real flex item, so the geometry belongs on it, and `:not(:first-child)` says
+ * what is meant instead of relying on a reset.
+ *
+ * `--fan-step` is how far each card sits from the one before it, computed per
+ * render from the space actually available (layoutHand in src/ui/table.js) so
+ * a big hand tightens its fan rather than overflowing. The fallback here is
+ * the natural spacing, for the first paint before JS measures.
+ */
+.hand .card-face-wrap:not(:first-child) {
+  margin-left: calc(var(--fan-step, calc(var(--hand-card-w, 70px) * 0.69)) - var(--hand-card-w, 70px));
+}
+
+.hand .card-face {
+  width: var(--hand-card-w, 70px);
+  transition: transform 0.1s ease;
+  cursor: pointer;
+}
+/* Z-ORDER FOLLOWS LIFT HEIGHT.
+ *
+ * An overlapped card that lifts has to come to the FRONT, or the neighbour
+ * covering it makes the lift look like a glitch. Two lift states SHARING a rung
+ * is that same bug wearing a hat: `:hover` and `--selected` both sat on
+ * z-index 2, the tie fell to DOM order, and because the fan overlaps by
+ * negative margin every later sibling wins — so hovering the card immediately
+ * to the RIGHT of your selection painted over the selected card's raised edge.
+ * The one that stands highest off the felt is the one you have to be able to
+ * see, so the rungs run in the order the transforms below lift them:
+ * --playable (-4px, auto) < --hinted (-8px) < :hover (-10px) <
+ * --selected (-14px) < --peek (-20px). Add a lift, add a rung; the two
+ * orderings are held together by tests/handZOrder.test.js.
+ */
+.hand .card-face-wrap { position: relative; }
+.hand .card-face-wrap--hinted { z-index: 1; }
+.hand .card-face-wrap:hover { z-index: 2; }
+.hand .card-face-wrap--selected { z-index: 3; }
+.hand .card-face:hover { transform: translateY(-10px); }
+
+/* AND EVERY RUNG OPENS A GAP BEHIND IT.
+ *
+ * Coming to the front is only half of a lift. The fan overlaps LEFTWARD, so
+ * each card is read by its own left edge and nothing else — and the card that a
+ * lifted one comes to the front of is precisely the neighbour whose left edge
+ * it lands on. The playtest measured that neighbour down to a single pip (#122
+ * item 23). Ranking the lift lower is not the answer: then the lift is the
+ * thing that disappears, which is the bug the ladder above exists to prevent.
+ *
+ * So the fan opens: every card AFTER a lifted one slides right by `--lift-gap`,
+ * which layoutHand sets to the overlap (capped by the room it reserved, and 0
+ * when the fan is not overlapping at all). A transform, so nothing re-lays-out
+ * and no card can be pushed off the row; a general sibling combinator, so one
+ * gap opens however many cards are lit at once.
+ *
+ * It cannot oscillate under a mouse: only the cards after the hovered one move,
+ * and the hovered card itself never does — so the pointer stays on whatever it
+ * landed on. Every state with a rung has a rule here; tests/handZOrder.test.js
+ * holds the two lists together. */
+.hand .card-face-wrap--hinted ~ .card-face-wrap,
+.hand .card-face-wrap:hover ~ .card-face-wrap,
+.hand .card-face-wrap--selected ~ .card-face-wrap,
+.hand .card-face-wrap--peek ~ .card-face-wrap {
+  transform: translateX(var(--lift-gap, 0px));
+  transition: transform 0.1s ease;
+}
+/* A card you cannot play lies FLAT on the felt — no shadow, no lift — on top
+   of being printed on grey stock by the card art itself (dullPaper/dullInk in
+   src/ui/cardStyles/shared.js, and the `.card-face--muted` rules below). The
+   stock does the talking; this is the quieter half of the same sentence, and
+   it is what makes a playable card stand OFF the felt by comparison. Neither
+   half costs a composited layer, which `opacity: 0.78` did for every
+   unplayable card in the hand, every frame. */
+.hand .card-face--disabled { cursor: default; box-shadow: none; }
+.hand .card-face--disabled:hover { transform: none; }
+
+/* A playable card is lifted a little even before you reach for it, so which
+   cards are legal is readable at a glance rather than only by what dims. */
+.card-face-wrap--playable .card-face { transform: translateY(-4px); }
+.card-face-wrap--playable .card-face:hover { transform: translateY(-14px); }
+
+/* A SELECTED card stands clear of the fan and glows: it is the one your next
+   pile tap will move (or one of the N you are about to pass). */
+.card-face-wrap--selected .card-face,
+.card-face-wrap--selected.card-face-wrap--playable .card-face {
+  transform: translateY(-14px);
+  /* Two stacked drop-shadow filters meant rasterising the card twice, every
+     frame it moved. The glow and the shadow are both shapes of the card's own
+     rounded rectangle, so both are box-shadows. */
+  box-shadow: 0 0 6px 2px var(--accent), 0 3px 4px var(--card-shadow);
+}
+
+/* THE CARD UNDER THE FINGER, RIGHT NOW.
+ *
+ * `:hover` above does this for a mouse. A finger has no hover, so on a phone
+ * the player was choosing from a row where each card shows a strip narrower
+ * than the finger covering it, and only found out what they had picked after
+ * committing. This raises the pressed card immediately and follows a finger
+ * sliding along the row (watchHandPeek in src/ui/table.js), which turns a tap
+ * into look-then-commit. Top of the ladder, because it is the deepest lift:
+ * whatever else a card is, the one you are touching has to be the one you can
+ * see. */
+.hand .card-face-wrap--peek { z-index: 4; }
+.hand .card-face-wrap--peek .card-face,
+.hand .card-face-wrap--peek.card-face-wrap--playable .card-face,
+.hand .card-face-wrap--peek.card-face-wrap--selected .card-face {
+  transform: translateY(-20px) scale(1.06);
+}
+
+/* A held card that has nothing to be gathered with. Held on the card rather
+   than said in the hint, because the question was asked of that card and an
+   empty answer is not an error — see armSmartSelect in src/ui/table.js. */
+.hand .card-face-wrap--nomatch .card-face {
+  animation: nomatch-nudge 0.36s ease-in-out;
+}
+@keyframes nomatch-nudge {
+  0%, 100% { margin-left: 0; }
+  30% { margin-left: -5px; }
+  65% { margin-left: 4px; }
+}
+
+/* ------------------------------------------------------------------ *
+ * The rail's controls
+ * ------------------------------------------------------------------ */
+
+/* WHAT A HINT LIGHTS — the lamp that used to sit in this rail is a line in the
+   help sheet now (#155, .help-sheet below), but what it produces is unchanged
+   and it is the felt rather than a sentence.
+   What the suggestion touches gets a ring in a colour of its own: the accent
+   already means "legal here", and a hint has to be tellable from that at a
+   glance — the ring says "this one", not "you may". Static, no pulse: it is
+   answering a question the player just asked, so it has their attention. The
+   sentence still exists and still goes to #log, the live region below the felt,
+   because a player who cannot see a ring is exactly the player a hint is for
+   (src/ui/table.js showHint). */
+.card-face-wrap--hinted .card-face,
+.stage-card.card-face-wrap--hinted .card-face {
+  box-shadow: 0 0 0 3px var(--hint), 0 3px 4px var(--card-shadow);
+}
+/* The rung that keeps this lift above an unhinted neighbour lives with the rest
+   of the hand's z-order ladder, beside `.hand .card-face`. */
+.hand .card-face-wrap--hinted .card-face { transform: translateY(-8px); }
+.pile-stack--hinted .pile-stack__top {
+  border-radius: 8px;
+  box-shadow: 0 0 0 3px var(--hint);
+}
+.meld-chip--hinted { box-shadow: 0 0 0 2px var(--hint); }
+.seat--hinted { outline: 2px solid var(--hint); outline-offset: 2px; border-radius: 12px; }
+
+/* THE CARDS BEING COUNTED, at a show.
+ *
+ * Cribbage counts three hands in a row out of piles that are all already face
+ * up on the felt, so the only thing that says WHICH four cards "worth eight"
+ * refers to is this ring (src/ui/table.js, playShowStep). It is deliberately
+ * static rather than a pulse: it is up for a second and a half at a time, three
+ * times running, and a table that throbbed through all of it would be harder to
+ * read rather than easier — which is also why it needs no entry in the
+ * reduced-motion list below and costs nothing against --arcade-pulse-count. */
+.pile-stack--counting {
+  border-radius: 10px;
+  box-shadow: 0 0 0 3px var(--accent), 0 0 18px -2px var(--accent);
+}
+
+/* THE THUMB SLOT, AND WHY IT IS ONE LINE.
+   The button is laid out to the rail's fixed width rather than to its own
+   label, and `nowrap` is the load-bearing declaration. Left to wrap, "Pass 3
+   across" took two lines, which measured 89px of rail against a fan 84px tall
+   — #hand-row grew by 14px and the felt shifted, which is the whole failure
+   the rail was built to end. A label is held to one line by the budget in
+   src/ui/interaction.js instead, and `nowrap` is the backstop: a label that
+   somehow breaches it spills sideways, which looks wrong and moves nothing,
+   rather than growing the column and moving everything.
+   It shares the slot with the sort toggle, which is the other reason neither
+   may grow the column (see .hand-rail). */
+#action-button {
+  font: inherit;
+  font-size: 0.72rem;
+  line-height: 1.15;
+  font-weight: 600;
+  width: 100%;
+  /* ITS BOX IS THE SAME BOX WITH NO LABEL IN IT. The button keeps its rung
+     when there is no action (see .hand-rail above), and an empty button is
+     nine pixels of padding — which measured as the stack standing 13px taller
+     the moment a commit phase began, with the sort toggle and the turn token
+     sliding up under a thumb already on them. One line of type plus this
+     rule's own padding, derived from the two declarations above rather than
+     typed as a number, so a change to either carries. */
+  min-height: calc(1.15em + 0.6rem);
+  padding: 0.3rem 0.25rem;
+  border-radius: 999px;
+  border: none;
+  cursor: pointer;
+  background: var(--action-bg);
+  color: var(--action-text);
+  white-space: nowrap;
+  text-align: center;
+}
+#action-button:hover { background: var(--action-bg-hover); }
+
+/* THE COMMIT, REFUSED. Same box, same slot, same height — only the button is
+   off, because the alternative measured on the felt was the Pass pill
+   disappearing the instant a card was tapped and the sort toggle taking the
+   thumb's place (#122 item 19). It reads as a control that is switched off
+   rather than as one that is missing, and the reason is on its accessible name
+   and its tooltip. */
+#action-button:disabled,
+#action-button.action-button--refused {
+  cursor: not-allowed;
+  background: var(--chip-bg);
+  color: var(--chrome-text);
+  opacity: 0.72;
+  border: 1px dashed var(--danger-bg);
+  padding: calc(0.3rem - 1px) calc(0.25rem - 1px);
+}
+#action-button:disabled:hover { background: var(--chip-bg); }
+
+/* ------------------------------------------------------------------ *
+ * The help mark, and its sheet
+ * ------------------------------------------------------------------ */
+
+/* A `?` IN THE CORNER THE SEATS DO NOT USE (#155).
+   The rules were two taps inside the scoreboard and the hint was a lamp among
+   the buttons that commit, so a player meeting a game for the first time had
+   nothing on the felt to reach for. This is that thing, and it is deliberately
+   the quietest mark on the table: a hairline disc in the register the
+   seat-view toggle set (.opponent-row__toggle, which is the same idea in the
+   other corner) — out of the seat row's flow so it leans on nothing, above the
+   felt at z-index 3 and far below the dialogs at 10.
+
+   ITS INK IS THE BAND ABOVE THE SEATS, AND ITS TARGET IS BIGGER THAN ITS INK.
+   That band is all the room this corner has: measured at 375x812 the seat row
+   starts 14px below the felt's top edge and a plate's own content 26px below
+   it, so a 32px disc in the corner sat on the first player's avatar and turn
+   chip — the one thing a mark in the corner may not do. The disc is therefore
+   1.4rem, the register the seat-view toggle already set opposite it, and the
+   tap target is grown by a pseudo-element UPWARDS and SIDEWAYS into the felt's
+   own edge rather than downwards into the row: 36x28 of target against the
+   toggle's own 22x18, and a plate's corner still answers its own taps.
+
+   It does not mirror with handedness: the toggle has the right corner under
+   both, and this is not a control anyone reaches for mid-trick — a mark that
+   swapped sides would land on top of it. */
+.table-help {
+  position: absolute;
+  top: 0.25rem;
+  left: 0.5rem;
+  z-index: 3;
+  width: 1.4rem;
+  height: 1.4rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font: inherit;
+  font-size: 0.8rem;
+  line-height: 1;
+  border-radius: 50%;
+  border: 1px solid var(--chip-border);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  opacity: 0.7;
+}
+/* The target, and NOT a hair of it below the disc: the seat row's first plate
+   begins half a pixel under this box on a phone, and a target that reached
+   into it would take the taps that belong to a player. */
+.table-help::after {
+  content: "";
+  position: absolute;
+  top: -6px;
+  left: -7px;
+  right: -7px;
+  bottom: 0;
+}
+.table-help:hover { opacity: 1; border-color: var(--accent); color: var(--accent); }
+.table-help:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.table-help[aria-expanded="true"] { opacity: 1; border-color: var(--accent); color: var(--accent); }
+
+/* THE SHEET HANGS OFF THE MARK, not off the middle of the screen. It is two
+   lines of furniture answering a tap in a corner, and a modal that took the
+   whole felt to say them would be the thing the rules panel already is. Above
+   the seats and the piles, below every dialog — including the rules panel it
+   opens, which is why it closes on the way there. */
+.help-sheet {
+  position: absolute;
+  top: 2rem;
+  left: 0.5rem;
+  z-index: 8;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 12rem;
+  max-width: min(16rem, calc(100% - 1.2rem));
+  padding: 0.3rem;
+  border-radius: 12px;
+  border: 1px solid var(--panel-border);
+  background: var(--panel-bg);
+  color: var(--panel-text);
+  box-shadow: 0 8px 24px var(--panel-shadow);
+}
+.help-sheet[hidden] { display: none; }
+
+.help-sheet__item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.1rem;
+  width: 100%;
+  padding: 0.4rem 0.55rem;
+  border: none;
+  border-radius: 9px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.help-sheet__item:hover { background: var(--chip-bg); }
+.help-sheet__item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.help-sheet__label { font-size: 0.85rem; font-weight: 600; }
+/* The second line is the reason as often as it is the promise — see
+   `hintOffer` in src/ui/table.js — so it is styled as a note either way and
+   never as an error. */
+.help-sheet__note { font-size: 0.7rem; opacity: 0.72; }
+
+/* OFF, AND SAYING WHY. A hint that cannot be given is a line that stays on the
+   sheet with its reason on it rather than one that disappears: somebody who
+   has just opened this is looking for help, and a control that is missing
+   teaches them nothing. Same box, dimmer ink — the treatment the refused
+   commit in the rail already uses. */
+.help-sheet__item:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+.help-sheet__item:disabled:hover { background: transparent; }

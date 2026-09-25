@@ -264,7 +264,7 @@ export function createDragController({
       frame: 0,
     };
     // Classes first, THEN measure: `.drop-target` only paints a pseudo-element
-    // ring (src/ui/table.css), so it moves nothing — but measuring after the
+    // ring (src/ui/css/felt.css), so it moves nothing — but measuring after the
     // write keeps the one forced layout of the whole drag right here, where it
     // is unavoidable, instead of once per pointer event.
     for (const target of drag.targets) target.node.classList.add('drop-target');

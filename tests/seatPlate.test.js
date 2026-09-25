@@ -21,6 +21,7 @@ import { makeCtx } from "../src/engine/context.js";
 import { loadPackFromDisk, listPackIds } from "../tools/pack-test.mjs";
 import { ROOT } from "../tools/stage.mjs";
 import { defaultScoreChip } from "../src/ui/seatRing.js";
+import { tableCss } from "./fixtures/tableCss.js";
 
 const read = (f) => fs.readFileSync(path.join(ROOT, f), "utf8");
 /** Comment lines stripped, so a gate cannot be satisfied by prose about it. */
@@ -116,7 +117,7 @@ test("the seat row actually draws the caption it asks templates for", () => {
 });
 
 test("a minimized face keeps the bare number", () => {
-  const css = read("src/ui/table.css");
+  const css = tableCss();
   assert.match(css, /\.seat--collapsed \.seat__count-label \{\s*display: none;\s*\}/,
     "captions are showing on collapsed faces — there is no room for them there, and "
     + "the crowded-row ladder other packs rely on is measured on that width");
@@ -152,7 +153,7 @@ test("the carousel says which way it still scrolls", () => {
 });
 
 test("the fade is a mask on the two edge classes and nothing else", () => {
-  const css = read("src/ui/table.css");
+  const css = tableCss();
   assert.match(css, /\.opponent-row--more-left,\n\.opponent-row--more-right \{[^}]*mask-image: linear-gradient\(to right,/,
     "the edge fade's mask is gone");
   assert.match(css, /\.opponent-row--more-left \{ --seat-fade-start: transparent; \}/,
@@ -165,7 +166,7 @@ test("the fade is a mask on the two edge classes and nothing else", () => {
     "every carousel row is being masked, including the ones with nothing to scroll to");
   // Battery contract (cardstock#24): the fade is a state, never an animation.
   const block = /\.opponent-row--more-left,\n\.opponent-row--more-right \{([^}]*)\}/.exec(css);
-  assert.ok(block, "no edge-fade block in src/ui/table.css");
+  assert.ok(block, "no edge-fade block in src/ui/css/seats.css");
   assert.doesNotMatch(block[1], /animation/,
     "the scroll affordance must not animate — no infinite animations (cardstock#24)");
 });
@@ -201,15 +202,50 @@ test("the row honours openOnly, and the round summary asks past it", () => {
     "seatCountersFor no longer drops openOnly counters from a minimized face");
   assert.match(table, /\n\s*: list\.filter\(\(counter\) => !counter\.minimizedOnly\);/,
     "seatCountersFor no longer drops minimizedOnly counters from an open seat");
-  // ...and the one caller that wants neither face. `roundContractLines` reads
-  // the bid and the trick count off this list to write "Bid 4, took 5"; asking
-  // for the minimized face would hand it a list with both of them filtered out
-  // and the sheet would lose the line without erroring.
-  assert.match(table, /const counters = seatCountersFor\(finalState, seat, \{ all: true \}\);/,
-    "the round summary is reading a FACE's counters — a Spades bid and its "
-    + "trick count are openOnly, so its rows would quietly disappear");
-  assert.match(table, /\n\s*if \(all\) return list;/,
-    "`all` no longer returns the template's whole declaration");
+  // ...and the sheet's own line no longer reads this list at all (#219). It used
+  // to find the counters whose `kind` is 'bid' and 'tricks' and compose "Bid 4,
+  // took 5" from them, which needed a third face — `{ all: true }` — because both
+  // of those are openOnly at a Spades table. The template writes the phrase now,
+  // so the words cannot go missing behind a filter; what this pins is that the
+  // felt asks rather than composes.
+  assert.match(table, /const declared = finalState\.pack\.template\.roundLines\?\.\(makeCtx\(finalState\)\);/,
+    "the round summary is building its own per-seat phrase again — the bid's "
+    + "words are the template's (src/templates/CONTRACT.md, `roundLines`)");
+  assert.doesNotMatch(table, /kind === 'bid'|kind === 'tricks'/,
+    "the felt is reading counter kinds by name to write a sentence out of them");
+  // ...and the human's own strip picks its counters the same way: the template
+  // marks them, rather than this file keeping a list of the kinds that qualify.
+  assert.match(table, /\.filter\(\(counter\) => counter\.mine\)/,
+    "the own-seat strip is choosing counters by kind again (#219) — which of a "
+    + "template's numbers the plateless seat needs is the template's answer");
+  assert.doesNotMatch(table, /MY_SEAT_KINDS/,
+    "the platform is back to keeping one template's counter slugs in a list");
+});
+
+// THE SHEET'S PHRASE ITSELF, off a real position — the half a source gate cannot
+// see. "Bid 4, took 5" is the reason a delta of -30 happened, and both numbers
+// have to be the seat plate's own words (a nil reads "nil" on both).
+test("a bidding pack writes one round-sheet line per seat, and Hearts writes none", async () => {
+  let checked = 0;
+  for (const packId of listPackIds()) {
+    const pack = await loadPackFromDisk(packId);
+    if (!pack.template.roundLines) continue;
+    const state = createState({ pack, seats: 4, seed: `sheet:${packId}` });
+    pack.template.setup(makeCtx(state));
+    const lines = pack.template.roundLines(makeCtx(state));
+    if (!pack.rules.bidding) {
+      assert.strictEqual(lines, null, `${packId}: a pack that does not bid wrote a sheet line`);
+      continue;
+    }
+    checked++;
+    assert.strictEqual(lines.length, state.seats, `${packId}: one line per seat`);
+    for (let seat = 0; seat < state.seats; seat++) {
+      const badge = pack.template.seatCounters(makeCtx(state), seat).find((c) => c.kind === "bid");
+      assert.strictEqual(lines[seat], `Bid ${badge.text}, took 0`,
+        `${packId} seat ${seat}: the sheet's words and the plate's disagree`);
+    }
+  }
+  assert.ok(checked >= 2, `only ${checked} bidding packs were examined — the sweep found nothing`);
 });
 
 test("an empty hidden pile draws no chip, and no empty strip either", () => {
@@ -225,7 +261,7 @@ test("an empty hidden pile draws no chip, and no empty strip either", () => {
 });
 
 test("the pip row is painted in both themes and never animates", () => {
-  const css = read("src/ui/table.css");
+  const css = tableCss();
   // Every tone, and the ring an unfilled pip is drawn as: fill is the signal,
   // colour is the reinforcement, so a row read without hue still says a number.
   for (const cls of ["taken", "bag", "broken"]) {
@@ -245,7 +281,7 @@ test("the pip row is painted in both themes and never animates", () => {
   }
   // Battery contract (cardstock#24): a pip fills once and then sits still.
   const block = /\.seat__pip \{([^}]*)\}/.exec(css);
-  assert.ok(block, "no .seat__pip block in src/ui/table.css");
+  assert.ok(block, "no .seat__pip block in src/ui/css/seats.css");
   assert.doesNotMatch(block[1], /animation/,
     "a pip must not animate — no infinite animations (cardstock#24)");
   assert.match(css, /\.seat__pips\[data-dense="true"\] \{[^}]*--pip-size:/,

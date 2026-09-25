@@ -1,0 +1,175 @@
+/* THE SHEET'S VOCABULARY — both themes, and the values every other file reads.
+ *
+ * THE TABLE'S STYLESHEET IS ELEVEN FILES, AND index.html's <link> ORDER IS
+ * THE CASCADE. There is no @layer and no @import here, so an equal-specificity
+ * rule in felt.css beats one in seats.css for no other reason than that
+ * seats.css is linked first. The sequence is
+ *
+ *   tokens · chrome · seats · felt · cards · moments · panels · lobby ·
+ *   party · review · responsive
+ *
+ * and tests/repo-gates.test.js pins it. Two ends of it carry weight: this
+ * file is first because everything below resolves custom properties declared
+ * here, and responsive.css is last because "Stepping the whole felt down"
+ * overrides five of the sheets above it at equal specificity.
+ *
+ * THEMING (design §17.7, GAME_INTEGRATION §5). The launcher stamps
+ * `data-theme="light|dark"` on <html>; every colour below is a custom property
+ * so both palettes are one block each rather than a second stylesheet.
+ *
+ * Two rules that look like oversights and are not:
+ *
+ *  1. The dark palette is ALSO the :root default. Standalone boots with no
+ *     data-theme at all, and continuity with the green-felt table people
+ *     already have beats guessing at the OS preference.
+ *  2. Card FACES are fixed across both themes. A playing card is a physical
+ *     object on the table, not chrome — it does not repaint when the room
+ *     lights change. Only its surroundings do.
+ *
+ * A pack's own theme.css must style both themes; that pack rule stays, and
+ * these properties are the vocabulary it overrides.
+ */
+
+:root,
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  --felt: #1b5e3a;
+  --felt-sheen: rgba(255, 255, 255, 0.08);
+  --felt-vignette: rgba(0, 0, 0, 0.35);
+  --felt-weave: rgba(255, 255, 255, 0.02);
+
+  --chrome-text: #ffffff;
+  --chrome-bar: rgba(0, 0, 0, 0.25);
+  --accent: #ffd166;
+  --hint: #7cc4ff;
+  /* YOUR PARTNER'S CHAIR (src/ui/seatRing.js). Its own colour rather than
+     `--accent`, which already means "it is this seat's turn" one plate over —
+     two meanings in one ink on the same row is how a player learns to read
+     neither. Lilac is far from the yellow, from the hint's blue, and from the
+     felt itself. */
+  --partner: #cbb0ff;
+  --glow: rgba(255, 255, 255, 0.3);
+  --glow-strong: rgba(255, 255, 255, 0.9);
+
+  --button-bg: #ffffff;
+  --button-text: #1a1a1a;
+
+  /* Every floating surface — the card inspector, all five modal panels, the
+     event banner — is these two properties and nothing else, which is why
+     re-theming them is a two-line change and not a sweep. They were device
+     white in BOTH themes: a browser default parked on a card table. This is
+     the lobby tile's own surface instead, so a popup reads as a piece of this
+     game rather than a piece of the browser. */
+  --panel-bg: #16281f;
+  --panel-text: #f0ede3;
+  --panel-border: rgba(255, 255, 255, 0.16);
+  --scrim: rgba(0, 0, 0, 0.55);
+  --panel-shadow: rgba(0, 0, 0, 0.55);
+
+  --card-shadow: rgba(0, 0, 0, 0.45);
+  --action-bg: #2f6fb0;
+  --action-bg-hover: #245a91;
+  --action-text: #ffffff;
+
+  /* The rail: the wooden edge that turns a green rectangle into a table. */
+  --rail: #5a3d24;
+  --rail-edge: rgba(255, 255, 255, 0.14);
+  --rail-shadow: rgba(0, 0, 0, 0.5);
+
+  --chip-bg: rgba(0, 0, 0, 0.28);
+  --chip-border: rgba(255, 255, 255, 0.14);
+  /* The red a heart or a diamond is inked in when it is drawn as CHROME rather
+     than on a card — the suit medallion under the discard. A card's own red is
+     a hex literal in classic.js because it sits on paper; this one sits on a
+     chip over felt and has to be a different red in each theme to survive it. */
+  --suit-red: #ff6f61;
+  --tile-bg: #16281f;
+  --tile-border: rgba(255, 255, 255, 0.16);
+  --tile-accent-strong: 62%;
+  --tile-accent-weak: 26%;
+  --ghost-text: var(--chrome-text);
+  --ghost-border: rgba(255, 255, 255, 0.35);
+  --ghost-hover: rgba(255, 255, 255, 0.12);
+  --danger-bg: #a33a3a;
+  --danger-bg-hover: #862d2d;
+  --ribbon-text: #1a1a1a;
+
+  /* The pip row (#148). An unfilled circle has to read as a RING against the
+     plate rather than as a smudge, and a bag has to be plainly filled and
+     plainly not the accent — a trick taken past the promise is still a trick
+     taken, it is just not the one that was promised. */
+  --pip-edge: rgba(255, 255, 255, 0.55);
+  --pip-bag: rgba(255, 255, 255, 0.82);
+
+  /* The board's rail (#138). BOTH THEMES ARE PAINTED, not one plus a tint —
+     the same rule .seat__track carries. The rail is a groove either way: its
+     marks are white ink over the dark felt's chip and near-black ink over the
+     light theme's paper, and a street mark is twice the weight of a five in
+     both. Declared here with the rest of the vocabulary rather than beside
+     .board, which is where a pack looks for the properties it may override. */
+  --board-tick-ink: rgba(255, 255, 255, 0.22);
+  --board-street-ink: rgba(255, 255, 255, 0.5);
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+
+  /* A pale baize rather than a white page — still a card table, just one in a
+     lit room. Chrome text is near-black on it (well past AA at these sizes),
+     which is what the dark palette gets for free from white-on-green. */
+  --felt: #c9ddd0;
+  --felt-sheen: rgba(255, 255, 255, 0.55);
+  --felt-vignette: rgba(31, 61, 45, 0.14);
+  --felt-weave: rgba(31, 61, 45, 0.035);
+
+  --chrome-text: #14261c;
+  --chrome-bar: rgba(255, 255, 255, 0.6);
+  --accent: #9a6400;
+  --hint: #7cc4ff;
+  --partner: #5b3fa8;
+  --glow: rgba(20, 38, 28, 0.25);
+  --glow-strong: rgba(20, 38, 28, 0.65);
+
+  --button-bg: #14261c;
+  --button-text: #ffffff;
+
+  /* Warm paper rather than device white — the lit-room counterpart to the
+     dark theme's deep green. Text is the same near-black the chrome uses. */
+  --panel-bg: #f7f4ec;
+  --panel-text: #14261c;
+  --panel-border: rgba(20, 38, 28, 0.14);
+  --scrim: rgba(20, 38, 28, 0.45);
+  --panel-shadow: rgba(31, 61, 45, 0.3);
+
+  --card-shadow: rgba(31, 61, 45, 0.28);
+  --action-bg: #245a91;
+  --action-bg-hover: #1b4670;
+  --action-text: #ffffff;
+
+  --rail: #9a7448;
+  --rail-edge: rgba(255, 255, 255, 0.45);
+  --rail-shadow: rgba(31, 61, 45, 0.3);
+
+  --chip-bg: rgba(255, 255, 255, 0.55);
+  --chip-border: rgba(20, 38, 28, 0.16);
+  --suit-red: #a81b12;
+  --tile-bg: #ffffff;
+  --tile-border: rgba(20, 38, 28, 0.14);
+  --tile-accent-strong: 34%;
+  --tile-accent-weak: 11%;
+  --ghost-text: var(--chrome-text);
+  --ghost-border: rgba(20, 38, 28, 0.3);
+  --ghost-hover: rgba(20, 38, 28, 0.08);
+  --danger-bg: #9a2f2f;
+  --danger-bg-hover: #7a2424;
+  --ribbon-text: #ffffff;
+
+  --pip-edge: rgba(20, 38, 28, 0.45);
+  --pip-bag: rgba(20, 38, 28, 0.68);
+
+  --board-tick-ink: rgba(20, 38, 28, 0.24);
+  --board-street-ink: rgba(20, 38, 28, 0.5);
+}
+
+* { box-sizing: border-box; }

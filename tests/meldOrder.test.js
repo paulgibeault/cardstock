@@ -19,6 +19,9 @@ import { createState } from "../src/engine/state.js";
 import { makeCtx } from "../src/engine/context.js";
 import { meldDisplayOrder, resolveHit } from "../src/templates/melds.js";
 import { loadPackFromDiskSync } from "../tools/lib/packs.mjs";
+// The renderer imports cleanly — it touches `document` only inside the builders
+// — and `meldCardOrder` is the one part of it that needs no element at all.
+import { createZoneRenderer } from "../src/ui/zoneRenderer.js";
 
 /** Milestones is the pack with melds AND wilds, which is the whole subject. */
 function ctxFor(packId = "milestones", seed = "meld-order") {
@@ -159,4 +162,61 @@ test("no group of real cards ever loses one, whatever kind it is asked for", () 
       assertPermutation(out, cards, `${cards.join(",")} as ${kind}`);
     }
   }
+});
+
+/* ------------------------------------------------------------------ *
+ * The seam the felt reads it through (#219)
+ * ------------------------------------------------------------------ */
+
+// src/ui/zoneRenderer.js's chip and src/ui/table.js's landing slot used to
+// `import { meldDisplayOrder } from '../templates/melds.js'` — a platform file
+// reaching into ONE template's internals for a rule only that template has. The
+// template declares it now (`meldCardOrder`), and the guarantee the import used
+// to carry with it — a permutation, always — became the platform's own check,
+// because a chip that renders three cards of a four-card meld is a worse bug
+// than an unsorted one and no caller can tell by looking.
+test("the felt asks the template for the order, and refuses an answer that lost a card", () => {
+  const ctx = ctxFor();
+  const group = {
+    item: "run(4)",
+    cards: ["red-6", "red-3", "wild", "red-5"],
+    wilds: { wild: { rank: "4" } },
+  };
+  const sorted = ["red-3", "wild", "red-5", "red-6"];
+  const state = ctx.state;
+  // No deps: `meldCardOrder` is pure over the state and the group, which is what
+  // lets this one part of the renderer be tested at all (the rest of the module
+  // needs a document).
+  const zones = createZoneRenderer({});
+
+  assert.equal(typeof state.pack.template.meldCardOrder, "function",
+    "contract-rummy no longer declares the order its melds read in");
+  assert.deepEqual(state.pack.template.meldCardOrder(ctx, group), sorted,
+    "the hook and meldDisplayOrder disagree");
+  assert.deepEqual(zones.meldCardOrder(state, group), sorted,
+    "the felt is not drawing the template's order");
+  // Stored state untouched through the seam as well.
+  assert.deepEqual(group.cards, ["red-6", "red-3", "wild", "red-5"]);
+
+  // THE CHECK. Each of these is an answer the old import could not have given,
+  // and each one has to come back as the order the engine stored.
+  const refused = {
+    "dropped a card": (c, g) => g.cards.slice(1),
+    "gained a card": (c, g) => [...g.cards, "red-9"],
+    "renamed a card": (c, g) => [...g.cards.slice(1), "red-9"],
+    "answered nothing": () => null,
+    "answered something else entirely": () => "red-3",
+    "threw": () => { throw new Error("no"); },
+  };
+  for (const [what, meldCardOrder] of Object.entries(refused)) {
+    const patched = { ...state, pack: { ...state.pack, template: { ...state.pack.template, meldCardOrder } } };
+    let out;
+    assert.doesNotThrow(() => { out = zones.meldCardOrder(patched, group); }, `${what}: threw`);
+    assert.deepEqual(out, group.cards, `${what}: was drawn instead of the stored order`);
+  }
+
+  // AND A TEMPLATE WITH NO OPINION KEEPS THE STORED ORDER, which is what every
+  // pack that does not meld has always drawn.
+  const silent = { ...state, pack: { ...state.pack, template: { ...state.pack.template, meldCardOrder: undefined } } };
+  assert.deepEqual(zones.meldCardOrder(silent, group), group.cards);
 });

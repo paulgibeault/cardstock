@@ -91,3 +91,51 @@ test("Pinochle's meld: a ranged commit that names its move, armed on nothing at 
   assert.strictEqual(model(state, 0, picked(0, handOf(state, 0).slice(0, 2))).action, null,
     "so there is no button, however many cards are selected");
 });
+
+// AND THE FOURTH SHAPE, WHICH COMMITS NO CARDS AT ALL (#219).
+//
+// A bid is one button and one dialog — the `bid` interaction mode, where no card
+// answers a tap. Its button said `'Bid'` and built `{type: 'bid'}` out of a
+// literal in src/ui/interaction.js, and the status bar in src/ui/table.js
+// branched on `turn.phase === 'bid'`, one template's word for its own phase,
+// seven lines under the comment saying that may not happen in that file. The
+// hook carries all four answers now; the count fields go unread.
+test("a bid is a commit with no cards in it: the words, the move and the bar", () => {
+  const state = dealt("team-spades", 4, "commit:spades");
+  assert.strictEqual(state.turn.phase, "bid", "hand one opens with an auction");
+  const seat = state.turn.seat;
+  const moves = enumerateLegalMoves(state, seat);
+
+  const prompt = commitPromptFor(state, seat, moves);
+  assert.strictEqual(prompt.action, "Bid", "the button's word is the template's");
+  assert.strictEqual(prompt.moveType, "bid", "and so is the move it makes");
+  assert.strictEqual(prompt.staging, "Your bid");
+  // NO ROSTER, NO NAME. `buildUiModel` asks without a voice, so a sentence that
+  // needs a name says nothing rather than inventing one and the platform's
+  // generic line stands in. Nothing shows it: the bar is the only reader of
+  // `waiting` and it always has the roster.
+  assert.strictEqual(prompt.waiting, "Waiting…");
+
+  // ...and with the voice the bar hands it, which is where the name comes from.
+  const spoken = commitPromptFor(state, seat, moves, {
+    seatLabel: (s) => (s === 0 ? "You" : `Seat ${s}`),
+    seatPossessive: (s) => (s === 0 ? "Your" : `Seat ${s}'s`),
+    seatVerb: (s, verb) => (s === 0 ? verb : `${verb}s`),
+    viewerSeat: 0,
+  });
+  assert.strictEqual(spoken.waiting, `${seat === 0 ? "You" : `Seat ${seat}`} is bidding…`);
+
+  // THE BUTTON IS THE WHOLE TURN. Nothing in the hand answers a tap, and the
+  // move carries no cards — the number is the platform's chooser's question.
+  const bidding = model(state, seat, null);
+  assert.strictEqual(bidding.mode, "bid");
+  assert.strictEqual(bidding.handSelectable.size, 0, "a card cannot be played during the auction");
+  assert.strictEqual(bidding.action?.label, "Bid");
+  assert.deepStrictEqual(bidding.action.makeMove(), { actor: seat, type: "bid" });
+
+  // A SEAT THE ENUMERATOR IS NOT OFFERING THE MOVE GETS NO BUTTON, the same
+  // gate every other commit is under.
+  const off = (seat + 1) % 4;
+  assert.strictEqual(commitPromptFor(state, off, enumerateLegalMoves(state, off)).moveType, null);
+  assert.strictEqual(model(state, off, null).action, null);
+});

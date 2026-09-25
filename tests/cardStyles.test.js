@@ -7,15 +7,13 @@
 // pack cannot end up with a card that renders as nothing.
 import { test } from "node:test";
 import assert from "node:assert";
-import fs from "node:fs";
-import path from "node:path";
 import {
   STYLE_IDS, buildTheme, makeCardRenderer, resolveStyleId,
 } from "../src/ui/cardStyles/index.js";
 import { dullPaper, dullInk } from "../src/ui/cardStyles/shared.js";
-import { ROOT } from "../tools/stage.mjs";
 import { face as vanillaFace } from "../src/ui/cardStyles/vanilla.js";
 import { listPackIds, loadPackFromDisk } from "../tools/pack-test.mjs";
+import { tableCss } from "./fixtures/tableCss.js";
 
 /* ------------------------------------------------------------------ *
  * Which style a pack gets
@@ -565,12 +563,12 @@ test("the vanilla stylesheet's muted palette is dullPaper/dullInk of its live on
   // mode of a copied colour is the day the function moves and the copy does
   // not — which had already happened: the muted neutral index was dullInk of a
   // #3f3f46 that the live rule had stopped using.
-  const css = fs.readFileSync(path.join(ROOT, "src/ui/table.css"), "utf8");
+  const css = tableCss();
   const hex6 = (v) => (v.length === 4 ? `#${v[1]}${v[1]}${v[2]}${v[2]}${v[3]}${v[3]}` : v.toLowerCase());
   const decl = (selector, prop) => {
     const re = new RegExp(`(?:^|\\n)${selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[^{]*\\{([^}]*)\\}`);
     const block = re.exec(css);
-    assert.ok(block, `no rule for ${selector} in src/ui/table.css`);
+    assert.ok(block, `no rule for ${selector} in src/ui/css/cards.css`);
     const value = new RegExp(`${prop}:\\s*(#[0-9a-fA-F]{3,6})`).exec(block[1]);
     assert.ok(value, `${selector} declares no ${prop}`);
     return hex6(value[1]);

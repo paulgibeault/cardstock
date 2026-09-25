@@ -1,7 +1,7 @@
 /**
  * Z-ORDER FOLLOWS LIFT HEIGHT, IN THE HAND.
  *
- * The fan overlaps by a negative margin (src/ui/table.css), so a later sibling
+ * The fan overlaps by a negative margin (src/ui/css/felt.css), so a later sibling
  * paints over an earlier one and every z-index tie is settled by DOM order.
  * `:hover` and `--selected` shared rung 2, which meant hovering the card
  * immediately to the RIGHT of your selection painted over the selected card's
@@ -16,11 +16,8 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import fs from "node:fs";
-import path from "node:path";
-import { ROOT } from "../tools/stage.mjs";
+import { tableCss } from "./fixtures/tableCss.js";
 
-const CSS_PATH = path.join(ROOT, "src/ui/table.css");
 
 // Selectors that name a card but are not a card in the hand — the staged card
 // a template shows mid-turn, an opponent's mini fan, the drag ghost. Their
@@ -114,7 +111,7 @@ function checkLadder(css) {
       `${show(over)} lifts higher than ${show(under)} but does not out-rank it. `
       + "Every lift state needs a rung of its own; a state with no z-index at "
       + "all sits on 0, which the shallowest lift already holds. Give it one in "
-      + "the hand's z-order ladder in src/ui/table.css.");
+      + "the hand's z-order ladder in src/ui/css/felt.css.");
   }
   return steps;
 }
@@ -158,20 +155,20 @@ function checkGaps(css) {
       `${step.state} lifts to z-index ${step.rung} but opens no gap behind it, so it `
       + "paints over the only strip of its right-hand neighbour that is visible. "
       + "Add it to the `~ .card-face-wrap { transform: translateX(var(--lift-gap)) }` "
-      + "rule in src/ui/table.css.");
+      + "rule in src/ui/css/felt.css.");
   }
   return { ranked: ranked.map((s) => s.state), gaps: [...gaps] };
 }
 
 test("the hand's z-order ladder climbs with its lifts", () => {
-  const steps = checkLadder(fs.readFileSync(CSS_PATH, "utf8"));
+  const steps = checkLadder(tableCss());
 
   // A parser that quietly stops matching passes an empty ladder. These are the
   // states the fan has today; finding fewer means the reading broke, not that
   // the stylesheet got simpler.
   assert.deepEqual(steps.map((s) => s.state).sort(),
     ["hinted", "hover", "peek", "playable", "selected"],
-    "the hand lift states could not be read out of src/ui/table.css");
+    "the hand lift states could not be read out of src/ui/css/felt.css");
 });
 
 // PROVE THE GATE BITES (docs/plans/TABLES_PLAN.md §11) — a green run on a stylesheet that
@@ -209,13 +206,13 @@ test("the ladder check refuses a shared rung and an unranked lift", () => {
 });
 
 test("every lift that comes to the front opens a gap behind it", () => {
-  const css = fs.readFileSync(CSS_PATH, "utf8");
+  const css = tableCss();
   const { ranked, gaps } = checkGaps(css);
   // A parser that quietly stops matching passes vacuously. These are the states
   // that actually have a rung today; finding fewer means the reading broke.
   assert.deepEqual([...ranked].sort(), ["hinted", "hover", "peek", "selected"],
-    "the ranked lift states could not be read out of src/ui/table.css");
-  assert.ok(gaps.length >= ranked.length, "no gap rules were read out of src/ui/table.css");
+    "the ranked lift states could not be read out of src/ui/css/felt.css");
+  assert.ok(gaps.length >= ranked.length, "no gap rules were read out of src/ui/css/felt.css");
 });
 
 // PROVE THE GATE BITES — the same rule as the ladder above.
