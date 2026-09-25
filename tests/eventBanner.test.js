@@ -27,7 +27,7 @@ import { installArcade } from "./fixtures/arcade.js";
 // `epoch` as parameters — so the three rules below about WHEN each half of the
 // trick's narration runs are driven rather than read out of the source.
 import { roundEndingHarness } from "./fixtures/roundEnding.js";
-import { doorsHarness } from "./fixtures/matchDoors.js";
+import { doorsHarness, hostTable } from "./fixtures/matchDoors.js";
 import { trickRevealPlan } from "../src/ui/roundBeat.js";
 
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), "utf8");
@@ -723,11 +723,11 @@ test("both moments a new hand becomes visible say what the deal said", async () 
   try {
     const doors = doorsHarness();
     await doors.doors.openTable("hearts");
-    assert.deepEqual(doors.celebrated, [doors.slots.session.state],
+    assert.deepEqual(doors.celebrated, [doors.slots.session.table.state],
       "a fresh deal arrives on screen unannounced");
-    const { state, seats, seating } = doors.slots.session;
+    const { state, seats, seating } = doors.slots.session.table;
     doors.reset();
-    await doors.doors.resumeHostedTable({ packId: "hearts", state, seats, seating });
+    await doors.doors.resumeHostedTable({ table: hostTable("hearts", { state, seats, seating }) });
     assert.deepEqual(doors.celebrated, [],
       "a resumed match narrates its deal — `state.events` there is the last REPLAYED move, so the "
       + "table would open on a sentence about something the player did yesterday");

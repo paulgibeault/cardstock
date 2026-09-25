@@ -399,7 +399,7 @@ export function createZoneRenderer({
       attachDrag(topNode, { kind: 'pile', from: address, cardId: draggableTop });
     }
 
-    attachInspector(stack, () => (session()?.state ? describeZone(session()?.state, inst) : null),
+    attachInspector(stack, () => (session()?.table.state ? describeZone(session()?.table.state, inst) : null),
       { isBusy });
 
     wrap.appendChild(stack);

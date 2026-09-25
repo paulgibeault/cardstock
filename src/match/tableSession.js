@@ -31,20 +31,41 @@
 // one place that knows how to take them all down, which is what stops the
 // teardown list drifting out of step with the setup list — the bug that lived
 // in src/ui/table.js's adoptMatch/closeTable pair for the whole of solo play.
+//
+// SOLO PLAY IS A TABLE TOO (#225). A match nobody else is at used to live on the
+// felt's own render session (src/ui/session.js), which therefore carried a second
+// copy of `pack/state/seats/seating` for every hosted table it showed, a second
+// set of bot-driver slots, and a second persist path with the same policy
+// written twice. Now every match the felt draws is one of these: role `'solo'`
+// for a table only this screen holds — no host, no client, no lobby frame, no
+// table id — and the felt's render session points at it rather than copying it.
+// The felt owns a solo table outright (it ends when the felt lets go of it); a
+// hosted or joined one belongs to the registry, and the felt only borrows it.
+//
+// WHAT IS NOT HERE: `bound`. Which table the felt is showing is the registry's
+// answer (src/match/sessionRegistry.js `isBound`), and nowhere else's — it was
+// stored here as well, derived a third time by the party model, and three
+// copies of one pointer are three chances to disagree.
 
 import { isSafeId } from './protocol.js';
+
+const ROLES = new Set(['host', 'joiner', 'solo']);
 
 /**
  * Open a session for one table.
  *
  * @param tableId  the minted SAFE_ID from protocol v2 — this table's name
- *                 across time, not just among the tables live right now.
+ *                 across time, not just among the tables live right now. A solo
+ *                 table has none: nothing on the wire ever names it.
  * @param packId   which game. The registry's two invariants are both per-pack.
- * @param role     'host' when we hold the state, 'joiner' when we hold a view.
+ * @param role     'host' when we hold the state and publish it, 'joiner' when we
+ *                 hold a view, 'solo' when we hold the state and nobody else is
+ *                 at the table.
  */
-export function createTableSession({ tableId, packId, role, packName = '', variants = [] }) {
-  if (!isSafeId(tableId)) throw new Error('createTableSession: tableId must be a SAFE_ID');
-  if (role !== 'host' && role !== 'joiner') throw new Error('createTableSession: role must be host or joiner');
+export function createTableSession({ tableId = null, packId, role, packName = '', variants = [] }) {
+  if (!ROLES.has(role)) throw new Error('createTableSession: role must be host, joiner or solo');
+  if (role !== 'solo' && !isSafeId(tableId)) throw new Error('createTableSession: tableId must be a SAFE_ID');
+  if (role === 'solo' && tableId !== null) throw new Error('createTableSession: a solo table has no tableId');
 
   const session = {
     tableId,
@@ -62,7 +83,25 @@ export function createTableSession({ tableId, packId, role, packName = '', varia
     // in the lobby and the same object is handed to the felt.
     seats: null,
     seating: null,
+    // THE LOADED PACK (manifest, rules, template, cards), or null until one has
+    // been fetched. Never a descriptor: `packId`, `packName` and `variants`
+    // above are what a table is called before its pack has arrived, and a
+    // host's table spends its whole lobby phase in exactly that state.
     pack: null,
+
+    // IS THIS TODAY'S DAILY RUN? `{ date, seed }`, or null for an ordinary game.
+    // Solo only. It decides which storage slot the match is written to
+    // (src/arcade/persist.js) and which record its ending goes into.
+    daily: null,
+    // How many hints this match has handed out. Not in the log — a hint is not
+    // a move — so it rides beside the saved match and is counted into the
+    // pack's record when the match concludes.
+    hintsTaken: 0,
+    // THE PLAYER ENDED IT (#166). A match walked out of from the round summary
+    // is over whatever its state says — `gameOver` is the engine's answer, and
+    // the engine was not asked — so this is the other half of "a finished
+    // match is not resumable", and persisting reads both.
+    concluded: false,
 
     host: null,
     client: null,
@@ -95,19 +134,15 @@ export function createTableSession({ tableId, packId, role, packName = '', varia
     // they choose; the caller falls back to the default.
     graceMs: null,
 
-    // IS THE FELT SHOWING THIS ONE. Not a question about whether the table is
-    // running — see the header. It is read by the timer rule (a host's own seat
-    // is exempt only at the table on screen) and by the bot driver (a bound
-    // table's bots go through the felt's animation pipeline, an unbound one's
-    // do not).
-    bound: false,
-
     // WHAT THE BOT DRIVER KEEPS ON A TABLE, in the shape `createBotDriver`
     // already expects (src/ui/botDriver.js) — the pending turn, the
-    // announcement beats, and the two persona rolls behind them. They live here
-    // rather than on the felt's render session because a hosted table that
-    // nobody is looking at still has bots whose turn it is; the felt's copy
-    // drives the table it is bound to, and this copy drives the rest.
+    // announcement beats, and the two persona rolls behind them. ONE SET PER
+    // TABLE, whichever driver is moving it (#225): the felt's driver while the
+    // felt is showing this table, the headless one (src/ui/party.js) while it
+    // is not. There used to be a second set on the felt's render session, so a
+    // hand-over was two drivers each holding half the answer; now whoever
+    // schedules first cancels what is in the slot, and a hand-over is the
+    // outgoing driver letting go (`cancelBots`) before the incoming one starts.
     //
     // The decision caches are per-vulnerability-window and must die with the
     // match — see the driver's own note on why re-rolling would make
@@ -122,6 +157,8 @@ export function createTableSession({ tableId, packId, role, packName = '', varia
     epoch: 0,
 
     hosting() { return role === 'host'; },
+    /** A table only this screen holds — solo play. It ends when the felt lets go. */
+    local() { return role === 'solo'; },
 
     /** The engine state, or null before the deal. Live reference, on purpose. */
     liveState() { return session.state; },
@@ -188,14 +225,15 @@ export function createTableSession({ tableId, packId, role, packName = '', varia
       session.lobbyFrame = null;
       session.decided.clear();
       session.unreachable.clear();
-      session.bound = false;
     },
 
     /**
      * Drop every scheduled bot turn and beat, and the rolls behind them.
      *
-     * Called by `stop`, and on its own whenever the felt takes this table over:
-     * two drivers scheduling against one state would move the same bot twice.
+     * Called by `stop`, and on its own at every hand-over between the two
+     * drivers: when the felt takes this table over (src/ui/party.js
+     * `bindFelt`) and when it lets go (src/ui/session.js `stopSession`). Two
+     * drivers scheduling against one state would move the same bot twice.
      */
     cancelBots() {
       if (session.botTimer) session.botTimer.cancel?.();

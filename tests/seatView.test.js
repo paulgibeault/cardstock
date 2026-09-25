@@ -15,6 +15,7 @@
 // carousel, measuring through the outgoing view's floor) are both visible in
 // one number.
 
+import { createTableSession } from "../src/match/tableSession.js";
 import { test } from "node:test";
 import assert from "node:assert";
 
@@ -99,9 +100,7 @@ test("there are two rungs, ordered least to most, and no middle one", () => {
 test("the default is the maximized row", () => {
   assert.equal(DEFAULT_SEAT_VIEW, "all");
   const session = createSession({
-    pack: { id: "crazy-eights" },
-    state: { seats: 4 },
-    seating: [{ seat: 0 }],
+    table: createTableSession({ packId: "crazy-eights", role: "solo" }),
     cardArt: {},
     handPrefs: { mode: "auto", order: [] },
   });

@@ -13,6 +13,20 @@
 // as the single place every timer is cancelled. A field that is not on this
 // object is not per-match state.
 //
+// WHAT IT DOES NOT OWN: THE MATCH (#225). The pack, the engine state, the seat
+// table, the seating, the daily flag, the hint count and the bot driver's slots
+// belong to the TABLE (src/match/tableSession.js), and this object points at one
+// — `session.table` — rather than holding a copy. A solo match is a table of its
+// own, born with this object and ended with it; a hosted or joined one is the
+// party's, borrowed while the felt is showing it. The copy is what this replaced:
+// a hosted table on screen had its state, seats and seating on BOTH objects, a
+// second set of bot timers here, and a persist path of its own that had to be
+// talked out of writing the solo slot.
+//
+// So everything below is about DRAWING a match — the selection, the beats, the
+// banners, the caches of what the felt last looked like. A field about the
+// game itself goes on the table.
+//
 // WHAT IS DELIBERATELY NOT HERE. `epoch` and `openToken` are lifecycle counters
 // that must SURVIVE a session ending — that is their whole job: a bot timer
 // already in flight checks its epoch against the module's, and a superseded
@@ -23,38 +37,20 @@
 import { makeCtx } from '../engine/context.js';
 
 /**
- * @param pack     the loaded pack
- * @param state    the live engine state
- * @param seats    who OWNS each seat (src/players/seats.js) — device or bot
- * @param seating  who is in each seat (src/players/roster.js)
+ * @param table    the match being drawn (src/match/tableSession.js): its pack,
+ *                 state, seats, seating, daily flag and bot-driver slots. A solo
+ *                 table is this session's to end; a shared one is borrowed.
  * @param cardArt  this pack's renderer (src/ui/cardStyles)
  * @param handPrefs the human's saved fan arrangement for this pack
  */
-export function createSession({
-  pack, state, seats, seating, cardArt, handPrefs, shared = false, hintsTaken = 0, daily = null,
-}) {
+export function createSession({ table, cardArt, handPrefs }) {
+  if (!table) throw new TypeError('createSession needs the table it draws (src/match/tableSession.js)');
   return {
-    pack,
-    state,
-    // IS THIS TODAY'S DAILY RUN? `{ date, seed }`, or null for an ordinary
-    // game. Per-match by construction — the ladder this table is playing was
-    // derived for that date and is not the ladder the pack ships, so a field
-    // that outlived the session would be a rule set outliving the match it
-    // belongs to. It decides which storage slot the match is written to
-    // (src/arcade/storage.js) and which record its ending goes into.
-    daily,
-    // IS THIS A TABLE OTHER PEOPLE ARE AT? A shared match belongs to its
-    // TableSession (src/match/tableSession.js) and is persisted there, under
-    // `mpMatch.<tableId>`. The felt must not ALSO write it to the solo slot:
-    // that produced two copies of one game which diverged from the first move,
-    // and put "Resume"/"Start over" on the lobby tile for a hand three people
-    // were sitting at.
-    shared,
-    // Ownership (which device plays which chair) and identity (what that seat
-    // is called) are two different facts, and a shared table can change the
-    // first without touching the second — so they are two fields, not one.
-    seats,
-    seating,
+    // THE MATCH, BY REFERENCE. `session.table.state` is the state — there is no
+    // second one here to fall out of step with it. Whether other people are at
+    // this table is the table's role (`table.hosting()`), and which slot it is
+    // saved to is src/arcade/persist.js's answer from that role.
+    table,
     cardArt,
     handPrefs,
 
@@ -73,12 +69,6 @@ export function createSession({
     // render where the human is no longer acting, so a suggestion can never
     // outlive the position it was made in.
     hint: null,
-    // How many hints this match has handed out so far. Not in the log — a
-    // hint is not a move and a replay must not know one was asked for — so
-    // it rides beside the saved match (src/arcade/storage.js saveMatch) and is
-    // counted into the pack's record when the match concludes, which is the
-    // one place the question "does anybody use this" can be answered from.
-    hintsTaken,
     // REVIEW MODE (REVIEW_PLAN.md phase 3): the felt standing at a past
     // position of this match, or null. `{ snapshot, timeline, index, state,
     // lens }` — the log as it was when review opened, its map
@@ -214,8 +204,9 @@ export function createSession({
     boardHandle: null,
 
     // Timers. Every one of these freezes with a suspended frame (§6c) and every
-    // one is cancelled by stopSession below.
-    botTimer: null,
+    // one is cancelled by stopSession below. The bot driver's two are the
+    // table's (`table.botTimer`, `table.announceTimers`), and stopSession lets
+    // go of them there.
     bannerTimer: null,
     // THE ONE BANNER WITH NO TIMER (#180). A trick held at a rung that waits for
     // a person keeps its pill up for the whole hold, so there is nothing armed
@@ -224,7 +215,6 @@ export function createSession({
     // clears the felt (`hideBanner`, `stopSession`) drops the claim so a later
     // release cannot cut short whatever the banner is saying by then.
     bannerHeld: false,
-    announceTimers: [],
     // THE ROUND ENDING'S OWN TIMERS (#150). `runRoundBeat` used to fire these
     // straight at `Arcade.session.setTimeout` and keep no handle: the only
     // thing that stopped a step from painting into a table that had already
@@ -249,27 +239,34 @@ export function createSession({
     // transition into the human's turn — and a boolean here is what tells that
     // transition apart from the renders that follow it.
     humanActing: false,
-
-    // ONE ROLL PER VULNERABILITY WINDOW, not one per re-render: without the
-    // cache a bot gets a fresh chance to remember every time anybody moves, and
-    // `callReliability: 0.5` silently becomes 1.
-    botCallDecision: new Map(),
-    botCatchDecision: new Map(),
   };
 }
 
-/** Cancel everything this session has in flight. Safe on null, safe twice. */
+/**
+ * Cancel everything this session has in flight, and let go of its table. Safe
+ * on null, safe twice.
+ *
+ * LETTING GO DEPENDS ON WHOSE TABLE IT IS. A solo table is this screen's alone,
+ * so it ends here (`table.stop()`): its bot turn, its beats and the persona rolls
+ * behind them go with it — the rolls are per vulnerability window, and one
+ * surviving into the next match is a bot whose forgetfulness was decided by a
+ * game that is over. A hosted or joined table outlives the felt, so only what
+ * the FELT's driver scheduled on it is dropped (`table.cancelBots()`); the
+ * headless driver (src/ui/party.js) picks the table up from there, which is why
+ * the felt must let go BEFORE the registry re-binds (see `bindFelt`).
+ */
 export function stopSession(session) {
   if (!session) return;
+  const table = session.table;
+  if (table) {
+    if (table.local()) table.stop();
+    else table.cancelBots();
+  }
   session.review = null;
   session.reopenSummary = null;
-  if (session.botTimer) session.botTimer.cancel();
-  session.botTimer = null;
   if (session.bannerTimer) session.bannerTimer.cancel();
   session.bannerTimer = null;
   session.bannerHeld = false;
-  for (const timer of session.announceTimers) timer.cancel();
-  session.announceTimers = [];
   for (const timer of session.beatTimers) timer.cancel();
   session.beatTimers = [];
   if (session.revealTimer) session.revealTimer.cancel();
@@ -285,8 +282,6 @@ export function stopSession(session) {
   if (session.nudgeTimer) session.nudgeTimer.cancel();
   session.nudgeTimer = null;
   session.humanActing = false;
-  session.botCallDecision.clear();
-  session.botCatchDecision.clear();
   session.peek = null;
   session.pendingRender = null;
   session.selection = null;

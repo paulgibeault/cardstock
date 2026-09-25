@@ -12,8 +12,34 @@
 // wrong order.
 
 import { createMatchDoors } from "../../src/ui/matchDoors.js";
+import { createTableSession } from "../../src/match/tableSession.js";
+import { persistTable } from "../../src/arcade/persist.js";
 import { loadPackFromDiskSync } from "../../tools/lib/packs.mjs";
 import { installArcade } from "./arcade.js";
+
+/**
+ * A HOSTED TABLE, the shape src/ui/party.js hands the two hosted doors (#225):
+ * the party's TableSession with its seats and seating already on it, and — for
+ * the way back — the state it has been holding.
+ */
+export function hostTable(packId, { tableId = "t1a1a1a1a1a1a1a1a1a", variants = [], state = null, seats, seating }) {
+  const table = createTableSession({ tableId, packId, role: "host", variants });
+  table.seats = seats;
+  table.seating = seating;
+  table.state = state;
+  return table;
+}
+
+/**
+ * A JOINER'S TABLE: the loaded pack and the client, as src/ui/party.js's
+ * `joinTable` builds one before its first view arrives.
+ */
+export function joinerTable(pack, { tableId = "t2b2b2b2b2b2b2b2b2b", client = null } = {}) {
+  const table = createTableSession({ tableId, packId: pack.id, role: "joiner" });
+  table.pack = pack;
+  if (client) table.attach({ client });
+  return table;
+}
 
 /**
  * A fetch the test decides when to land. `fetchPack` resolves on the next
@@ -37,8 +63,16 @@ function packServer() {
   };
 }
 
-export function doorsHarness() {
-  const arcade = installArcade({ state: true, session: true });
+/**
+ * @param persist  true to hand the doors table.js's REAL save — src/arcade/
+ *                 persist.js's `persistTable` of the table on the felt, which is
+ *                 all table.js's `persistMatch`/`flushTable` are since #225 —
+ *                 instead of a spy. Either way the call is logged by name.
+ */
+export function doorsHarness({ persist = false } = {}) {
+  // `stats` too: ending a match writes the record, and a test that walks a match
+  // out through the round summary (tests/persist.test.js) reaches it.
+  const arcade = installArcade({ state: true, session: true, stats: true });
   const titles = [];
   arcade.arcade.ui = { setTitle: (t) => titles.push(t) };
 
@@ -63,12 +97,16 @@ export function doorsHarness() {
     roundEnding: { forgetPreMove: spy("forgetPreMove") },
     fetchPack: server.fetchPack,
     render: (state, message) => { calls.push("render"); rendered.push({ state, message }); },
-    liveState: () => (slots.session ? slots.session.state : null),
-    feltState: () => (slots.session ? slots.session.state : null),
+    liveState: () => (slots.session ? slots.session.table.state : null),
+    feltState: () => (slots.session ? slots.session.table.state : null),
     humanName: () => "You",
     celebrateDeal: (state) => { calls.push("celebrateDeal"); celebrated.push(state); },
-    persistMatch: spy("persistMatch"),
-    flushTable: spy("flushTable"),
+    persistMatch: persist
+      ? () => { calls.push("persistMatch"); if (slots.session) persistTable(slots.session.table); }
+      : spy("persistMatch"),
+    flushTable: persist
+      ? () => { calls.push("flushTable"); if (slots.session) persistTable(slots.session.table); }
+      : spy("flushTable"),
     scheduleNextTurn: spy("scheduleNextTurn"),
     scheduleAnnouncementBeats: spy("scheduleAnnouncementBeats"),
     cancelBotTurn: spy("cancelBotTurn"),

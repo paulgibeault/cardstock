@@ -12,11 +12,11 @@ import path from 'node:path';
 import { ROOT } from '../tools/stage.mjs';
 import { installArcade } from './fixtures/arcade.js';
 import { createState } from '../src/engine/state.js';
-import { makeCtx, actingSeats, announcementsFor } from '../src/engine/context.js';
+import { makeCtx, actingSeats, announcementsFor as engineAnnouncementsFor } from '../src/engine/context.js';
 import { loadPackFromDisk } from '../tools/pack-test.mjs';
 import { soloSeatTable, createSeatTable } from '../src/players/seats.js';
 import { createBotDriver } from '../src/ui/botDriver.js';
-import { botDriverSeams } from '../src/ui/botSeams.js';
+import { botDriverSeams, announcementsFor } from '../src/ui/botSeams.js';
 
 const noop = () => {};
 const seamsOf = (extra = {}) => ({
@@ -61,15 +61,30 @@ test('the seat lens and the epoch are asked of whichever session is current', ()
   session = { seats: soloSeatTable(4), epoch: 8 };
   assert.equal(seams.currentEpoch(), 8);
 
-  // The felt's epoch is still a module slot (until #225), so it passes one.
+  // The felt passes its own screen counter, which has to outlive every table it
+  // shows (src/ui/table.js says why it cannot be the table's).
   const felt = botDriverSeams(() => session, seamsOf({ epoch: () => 99 }));
   assert.equal(felt.currentEpoch(), 99);
 });
 
-test('the engine answers who acts and what they may say, unless the caller knows better', () => {
+test('the engine answers who acts and what they may say, unless the caller knows better', async () => {
   const seams = botDriverSeams(() => null, seamsOf());
   assert.equal(seams.actingSeatsOf, actingSeats);
+  // VIEW-AWARE BY DEFAULT (#225). The felt used to pass its own wrapper and the
+  // headless driver took the engine's; now both take this one, which IS the
+  // engine's answer for every state that is not a view.
   assert.equal(seams.announcementsFor, announcementsFor);
+  installArcade({ state: true });
+  const pack = await loadPackFromDisk('crazy-eights');
+  const state = createState({ pack, seats: 3, seed: 4242 });
+  pack.template.setup(makeCtx(state));
+  for (let seat = 0; seat < 3; seat++) {
+    assert.deepEqual(announcementsFor(state, seat), engineAnnouncementsFor(state, seat),
+      'a real state is the engine\'s to answer');
+  }
+  const shipped = [{ type: 'announce', actor: 1 }];
+  assert.equal(announcementsFor({ isView: true, announcements: shipped }, 1), shipped,
+    'a CLIENT IS TOLD: a view answers with the list the host shipped, never an enumeration');
   const viewAware = () => [];
   assert.equal(botDriverSeams(() => null, seamsOf({ announcementsFor: viewAware })).announcementsFor, viewAware);
 });
@@ -115,11 +130,19 @@ test('both drivers are built through the one builder, once each', () => {
     const code = fs.readFileSync(path.join(ROOT, file), 'utf8')
       .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
     assert.equal((code.match(/createBotDriver\(/g) || []).length, 1, `${file}: one driver`);
-    assert.match(code, /createBotDriver\(botDriverSeams\(\(\) => session, \{/,
+    // The felt's driver is handed the TABLE it draws (#225); the headless one
+    // is built per table and closes over it.
+    assert.match(code, /createBotDriver\(botDriverSeams\(\(\) => session(\?\.table \?\? null)?, \{/,
       `${file}: the driver's shared seams must come from src/ui/botSeams.js, not a second spelling`);
     // The two live reads are the ones that drifted before (#91, #184).
     for (const shared of ['botDelayMs:', 'difficulty:']) {
       assert.ok(!code.includes(shared), `${file} spells \`${shared}\` again — it is botSeams.js's`);
     }
+    // AND THE VIEW-AWARE ANNOUNCEMENTS ARE THE BUILDER'S DEFAULT NOW (#225): a
+    // caller that hands its own in again is a second spelling of that question.
+    const call = code.slice(code.indexOf('createBotDriver(botDriverSeams('));
+    const options = call.slice(0, call.indexOf('}));'));
+    assert.ok(!/announcementsFor/.test(options),
+      `${file} hands the bot driver its own announcementsFor — the builder's default is the view-aware one`);
   }
 });

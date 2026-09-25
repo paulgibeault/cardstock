@@ -384,7 +384,10 @@ function viewOf({ tableId, frame, stub, session, lastSeenAt }, ctx) {
       WORSE.liveness, ctx.memo),
     lastSeenAt: lastSeenAt ?? stub?.lastSeenAt ?? null,
     relation: relationTo({ hosted, joined, seat }),
-    bound: !!session?.bound,
+    // THE REGISTRY'S ANSWER, asked by id: a view is bound when the felt is
+    // showing the live table it describes. A dormant entry has no session and
+    // so is never bound.
+    bound: !!session && ctx.boundKey !== null && session.tableId === ctx.boundKey,
     focused: tableId === ctx.focusedKey,
     started: frame ? !!frame.started : false,
     stage: frame?.started ? 'in progress' : 'waiting to deal',
@@ -455,6 +458,9 @@ function viewOf({ tableId, frame, stub, session, lastSeenAt }, ctx) {
  *                     picker has to pair the chairs while it only has a
  *                     manifest, and the model must not fetch one to find out.
  * @param focusedKey   the table the panel is about, or null
+ * @param boundKey     the table the felt is showing (`registry.bound()`), or
+ *                     null. The registry's pointer, passed in — sessions no
+ *                     longer carry a copy of it (#225).
  */
 export function partyModel({
   self = null,
@@ -468,6 +474,7 @@ export function partyModel({
   packNameOf = () => null,
   packTeamsOf = () => null,
   focusedKey = null,
+  boundKey = null,
   now = Date.now(),
   beliefs = emptyBeliefs(),
 } = {}) {
@@ -482,7 +489,7 @@ export function partyModel({
     pending(when) { memo.at = memo.at === null ? when : Math.min(memo.at, when); },
   };
   const ctx = {
-    self, myName, publishedName, peers, presence, packNameOf, packTeamsOf, focusedKey, memo,
+    self, myName, publishedName, peers, presence, packNameOf, packTeamsOf, focusedKey, boundKey, memo,
   };
   const sessionFor = (tableId) => sessions.find((s) => s.tableId === tableId) || null;
 

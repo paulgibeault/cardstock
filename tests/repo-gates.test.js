@@ -326,7 +326,7 @@ test("the felt's bot driver picks its clock from the match, not from the tab", (
     "src/ui/table.js builds more than one bot driver — every one of them has to pick its clock per match");
   // The seams' list is long; only its FIRST option matters here, and it is the
   // line straight after the call opens.
-  const opener = src.match(/createBotDriver\(botDriverSeams\(\(\) => session, \{\s*\n\s*clock:\s*([^\n]*)/);
+  const opener = src.match(/createBotDriver\(botDriverSeams\(\(\) => session\?\.table \?\? null, \{\s*\n\s*clock:\s*([^\n]*)/);
   assert.ok(opener, "src/ui/table.js no longer opens its bot driver's seams with a `clock:` option");
   assert.match(opener[1], /feltClock\(/,
     "the felt's driver must take feltClock — a fixed clock is the solo answer for the life of the tab");

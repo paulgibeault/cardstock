@@ -75,7 +75,7 @@
 // instead — see the header of src/ui/seatRow.js. `initTable` is where they are
 // constructed and handed what they read.
 
-import { makeCtx, actingSeats, announcementsFor as enumerateAnnouncementsFor } from '../engine/context.js';
+import { makeCtx, actingSeats } from '../engine/context.js';
 import { validateMove, applyMove, legalMovesFor } from '../engine/movePipeline.js';
 import { baseId } from '../engine/selectors.js';
 import { handValue } from '../engine/scoring.js';
@@ -112,7 +112,7 @@ import { createMoveFlight } from './moveFlight.js';
 // option list this file's bot driver and party.js's headless one share.
 import { createStatusBar, currentFlightMs } from './statusBar.js';
 import { createHelpSheet } from './helpSheet.js';
-import { botDriverSeams } from './botSeams.js';
+import { botDriverSeams, announcementsFor } from './botSeams.js';
 import { makeCardRenderer } from './cardStyles/index.js';
 import { fetchPack } from './packSource.js';
 import {
@@ -157,9 +157,7 @@ import {
 import { packRules } from './rules.js';
 import { trickRevealPlan, finalShowPlan } from './roundBeat.js';
 import { lastHandSentence } from './scoreDirection.js';
-import {
-  saveMatch,
-} from '../arcade/storage.js';
+import { persistTable } from '../arcade/persist.js';
 import {
   playCardPlayed, playDraw, playShuffle, playInvalid, playWin, playAnnouncement,
 } from '../arcade/audio.js';
@@ -173,7 +171,7 @@ import {
 // is not knowable before the match exists. The lens is read at call time and
 // falls back to seat 0 while there is no session, so the empty felt behind the
 // lobby draws exactly as it always did.
-const me = createSeatLens(() => session?.seats ?? null);
+const me = createSeatLens(() => session?.table.seats ?? null);
 const mySeat = () => me.seat();
 const isMySeat = (seat) => me.holds(seat);
 
@@ -224,11 +222,13 @@ const el = {
   showCard: document.getElementById('show-card'),
 };
 
-// ONE OPEN MATCH, ONE OBJECT (src/ui/session.js). Everything a match owns —
-// its state, its seating, its card art, the selection, the timers, the bot
-// decision caches — lives on `session`, created by adoptMatch and nulled by
-// closeTable. It replaced twenty-five module-level mutables that two different
-// functions hand-reset in overlapping subsets.
+// ONE OPEN MATCH, ONE OBJECT (src/ui/session.js). Everything the felt keeps
+// about the match it is drawing — its card art, the selection, the beats, the
+// banners — lives on `session`, created by adoptMatch and nulled by closeTable.
+// It replaced twenty-five module-level mutables that two different functions
+// hand-reset in overlapping subsets. The MATCH itself — state, seats, seating,
+// the bot driver's slots — is `session.table` (src/match/tableSession.js, #225):
+// a solo table the felt owns, or a hosted or joined one it borrows.
 //
 // `epoch` stays a module counter because its whole job is to OUTLIVE a session:
 // scheduleNextTurn's callback checks its own epoch is still current before
@@ -290,7 +290,7 @@ function humanName() {
 }
 
 function identityOf(seat) {
-  return session?.seating[seat] || { seat, name: `Seat ${seat}`, icon: '', color: '#6b7280', isBot: !isMySeat(seat) };
+  return session?.table.seating[seat] || { seat, name: `Seat ${seat}`, icon: '', color: '#6b7280', isBot: !isMySeat(seat) };
 }
 
 /** The name to put in a sentence about a seat. */
@@ -371,14 +371,9 @@ function committedSelectionOf(state, seat) {
   return state.pack.template.committedSelection?.(makeCtx(state), seat) ?? null;
 }
 
-/** What a seat may SAY right now, out of turn (§E2). Never enumerated as a play. */
-function announcementsFor(state, seat) {
-  // A CLIENT IS TOLD, IT DOES NOT WORK IT OUT. The host ships the acting
-  // seat's options with the view (design decision D3); enumerating here would
-  // mean running the template over a state with other people's hands missing.
-  if (state.isView) return state.announcements;
-  return enumerateAnnouncementsFor(state, seat);
-}
+// What a seat may SAY right now, out of turn (§E2) — `announcementsFor`, from
+// src/ui/botSeams.js since #225: the felt's bar and both bot drivers ask the
+// same view-aware question, so it is written once, where the drivers get it.
 
 /**
  * The legal moves for a seat — enumerated locally when we hold the whole
@@ -408,11 +403,11 @@ function art() {
  * has been nulled has to answer it honestly from every one of them.
  */
 function liveState() {
-  return session ? session.state : null;
+  return session ? session.table.state : null;
 }
 
 function livePack() {
-  return session ? session.pack : null;
+  return session ? session.table.pack : null;
 }
 
 /**
@@ -1520,26 +1515,16 @@ function celebrateDeal(state) {
  */
 let saveFailureReported = false;
 
+/**
+ * ONE PERSIST PATH, NOT TWO (#225). Which slot — solo, daily, a hosted table's
+ * `mpMatch.<tableId>`, or none at all for a joiner's view — and the rule that a
+ * finished match is cleared rather than written are src/arcade/persist.js's,
+ * decided from the table's role; src/ui/party.js hands its tables to the same
+ * function. What stays here is the felt's half: saying so when a write fails.
+ */
 function persistMatch() {
-  const state = liveState();
-  if (!state) return;
-  // A JOINER STORES NOTHING. It holds a view rather than a match, the log is
-  // the host's, and a rejoin re-asks for a snapshot rather than resuming from
-  // whatever it happened to be holding (src/match/client.js).
-  if (state.isView) return;
-  // NEITHER DOES A HOST, HERE. Its match is persisted by src/ui/party.js under
-  // `mpMatch.<tableId>`, which is the copy the party comes back to. Writing the
-  // solo slot as well made a second, diverging copy of the same game — and gave
-  // the lobby tile a "Start over" that dealt a private hand beside a table
-  // other people were still sitting at.
-  if (session?.shared) return;
-  // A DAILY RUN GOES IN ITS OWN SLOT. Writing it to `match.<packId>` would
-  // silently overwrite whatever casual game was waiting on the lobby tile —
-  // the same mistake one shared slot per device made about two hosted tables.
-  const ok = saveMatch(state, {
-    hints: session.hintsTaken,
-    slot: session.daily ? 'daily' : 'match',
-  });
+  if (!session) return;
+  const ok = persistTable(session.table);
   if (ok !== false || saveFailureReported) return;
   saveFailureReported = true;
   reportTableError('This game could not be saved — it may not be here when you come back.');
@@ -1638,7 +1623,7 @@ function offerFinalLook(state, move, ending, { ended = null, now = false } = {})
 
 function openScoreboard() {
   if (!liveState()) return;
-  showScoreboard(liveState(), session.seating, record.safeStats(liveState()));
+  showScoreboard(liveState(), session.table.seating, record.safeStats(liveState()));
 }
 
 /* ------------------------------------------------------------------ *
@@ -1716,7 +1701,7 @@ function afterMove(state, move, from, message, { publish = true } = {}) {
     // rung says (SHARED_TRICK_HOLD_MS). `posed` already covers the remote path;
     // this covers a LOCAL move made at a shared table, which poses like any
     // other and is the only way an indefinite gate could ever be reached here.
-    shared: !!session?.shared,
+    shared: !!session?.table.hosting(),
   }) : null;
 
   // WHAT THE TABLE SAYS ABOUT THE TRICK, AND WHEN (#180).
@@ -1747,7 +1732,7 @@ function afterMove(state, move, from, message, { publish = true } = {}) {
     // `stats` is the surface whose formatting the game owns). The PANEL itself
     // waits: the last card is the thing worth watching, and it is still in the
     // air on this frame.
-    const ending = record.concludeMatch(state, { hints: session.hintsTaken });
+    const ending = record.concludeMatch(state, { hints: session.table.hintsTaken });
     // Kept so the results can be put back after a review of the finished
     // game (leaveReview, src/ui/reviewController.js).
     session.ending = ending;
@@ -1775,7 +1760,7 @@ function afterMove(state, move, from, message, { publish = true } = {}) {
       flightMs: currentFlightMs(),
       narrate: !!finalState,
       pace: currentPace().id,
-      shared: !!session?.shared,
+      shared: !!session?.table.hosting(),
     });
     const look = (now) => {
       playWin();
@@ -2165,12 +2150,18 @@ function performAnnouncement(state, move, myEpoch = epoch) {
 let bots = null;
 let paused = false;
 
-function cancelBotTurn() { if (bots) bots.cancelTurn(session); }
-function cancelAnnouncementBeats() { if (bots) bots.cancelBeats(session); }
+// THE DRIVER'S SLOTS ARE THE TABLE'S (#225): `session.table.botTimer` and the
+// rest, the same four fields the headless driver in src/ui/party.js uses for a
+// table nobody is looking at. One set per table means a hand-over between the
+// two drivers is a matter of who schedules next, never of two timers racing.
+function cancelBotTurn() { if (bots) bots.cancelTurn(session?.table ?? null); }
+function cancelAnnouncementBeats() { if (bots) bots.cancelBeats(session?.table ?? null); }
 function scheduleNextTurn() {
   // Bots run HOST-SIDE, and only there: a joiner scheduling one would be a
-  // second device trying to move the same seat.
-  if (liveState()?.isView) return;
+  // second device trying to move the same seat. And a table that has been
+  // stopped out from under the felt (the host's "Stop hosting") has no state
+  // left to schedule against.
+  if (!liveState() || liveState().isView) return;
   // PAUSED IS A REAL STATE, and it is the host player's answer to a seat that
   // dropped for good: hold the hand exactly as it stands rather than let the
   // bots play on around an empty chair. Nothing is torn down, so resuming is
@@ -2180,7 +2171,7 @@ function scheduleNextTurn() {
   // position and a bot moving the live one underneath would be a move nobody
   // saw. `leaveReview` (src/ui/reviewController.js) re-arms the turn.
   if (session?.review) return;
-  if (bots) bots.scheduleNextTurn(session, epoch);
+  if (bots) bots.scheduleNextTurn(session.table, epoch);
 }
 
 /** Hold or release the table's own clock. The host's "wait for them" answer. */
@@ -2188,7 +2179,9 @@ export function setTablePaused(on) {
   paused = !!on;
   if (!paused) scheduleNextTurn();
 }
-function scheduleAnnouncementBeats() { if (bots) bots.scheduleAnnouncementBeats(session, epoch); }
+function scheduleAnnouncementBeats() {
+  if (bots && liveState()) bots.scheduleAnnouncementBeats(session.table, epoch);
+}
 
 /* ------------------------------------------------------------------ *
  * Match lifecycle — the doors are src/ui/matchDoors.js (#223, seam 4)
@@ -2228,16 +2221,19 @@ export function setLocalMoveListener(fn) {
 }
 
 /**
- * What is on this felt right now — the host's half of the handshake.
+ * What is on this felt right now: the table's own `context()`.
  *
- * Returns live references on purpose. `createTableHost` takes `liveState` as a
- * function and reads the seat table every time it publishes, because a table
- * that handed over a snapshot would be publishing the game as it was when
- * hosting started.
+ * ONE CONTEXT, NOT TWO (#225). This used to build the same
+ * `{ state, seats, pack, seating }` shape out of the felt's copies, beside the
+ * TableSession's `context()` built out of the originals — and a bound hosted
+ * table had both alive at once. The felt holds no copy now, so it asks the
+ * table it is drawing.
+ *
+ * Live references on purpose: a context that handed over a snapshot would
+ * describe the game as it was when somebody asked, not as it is.
  */
 export function tableContext() {
-  if (!session) return null;
-  return { state: session.state, seats: session.seats, pack: session.pack, seating: session.seating };
+  return session ? session.table.context() : null;
 }
 
 /**
@@ -2268,7 +2264,7 @@ export function afterRemoteMove(move) {
  */
 export function setSeating(seating) {
   if (!session || !Array.isArray(seating)) return;
-  session.seating = seating;
+  session.table.seating = seating;
   if (liveState()) render(feltState());
 }
 
@@ -2658,14 +2654,14 @@ export function initTable({ onExit }) {
 
   record = createMatchRecord({
     me,
-    seating: () => session.seating,
+    seating: () => session.table.seating,
     art,
     // The record is written on the way out of a match, so the timers stop
     // first — a bot turn landing after the books are closed would reopen it.
     onConclude: () => { cancelBotTurn(); cancelAnnouncementBeats(); },
     // Which books this match's ending goes into. Asked at conclusion time,
     // like `seating` above, because this object outlives any one match.
-    daily: () => session?.daily || null,
+    daily: () => session?.table.daily || null,
   });
 
   ladder = createContractLadder({
@@ -2709,16 +2705,22 @@ export function initTable({ onExit }) {
   // the host pocketed their phone.
   //
   // WHAT BOTH DRIVERS SHARE — the two live reads of the settings, the seat
-  // lens, the acting-seats question — is spelled once in src/ui/botSeams.js,
-  // which party.js's headless driver is built with too. What is left here is
-  // what the felt answers differently.
-  bots = createBotDriver(botDriverSeams(() => session, {
-    clock: feltClock({ shared: () => !!session?.shared }),
-    // Still a module slot here, so passed; #225 moves it onto the session.
+  // lens, the acting-seats question, the view-aware announcements — is spelled
+  // once in src/ui/botSeams.js, which party.js's headless driver is built with
+  // too. What is left here is what the felt answers differently.
+  //
+  // THE DRIVER DRIVES THE TABLE, NOT THE FELT (#225): its slots and its seat
+  // lens are the table's, the same ones the headless driver uses when the felt
+  // is showing something else.
+  bots = createBotDriver(botDriverSeams(() => session?.table ?? null, {
+    clock: feltClock({ shared: () => !!session?.table.hosting() }),
+    // THE FELT'S EPOCH, NOT THE TABLE'S — and this one stays. It is the
+    // screen's counter: it has to outlive every table the felt shows (a solo
+    // table ends with the felt, so its own counter would start again from zero
+    // at "Play again"), and `performAnnouncement` below compares the epoch a
+    // bot's beat was scheduled under against this same counter.
     epoch: () => epoch,
     identityOf,
-    // The view-aware wrapper: a joiner's view carries the host's list.
-    announcementsFor,
     playMove: (state, move, seat) => {
       const from = move.type === 'draw'
         ? (moveFlight.zoneRect(move.from ?? 'draw') || moveFlight.seatRect(seat))

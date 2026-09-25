@@ -130,7 +130,7 @@ export function watchHandGestures({ hand, session, me, cardById, onSelect, onGat
       if (!peek()) return;
       peek().hold = null;
       const cardId = wrapper.dataset.cardId;
-      const next = smartSelection(session().state, me.seat(), cardId, session().selection);
+      const next = smartSelection(session().table.state, me.seat(), cardId, session().selection);
       if (!next) {
         // Nothing in hand goes with it. Say so on the card rather than in words:
         // a group that does not exist is not an error, just an answer.
@@ -142,7 +142,7 @@ export function watchHandGestures({ hand, session, me, cardById, onSelect, onGat
       session().selection = next;
       clearPeek();
       // A full render: the gathered cards leave the fan for the tray.
-      onGathered(session().state, gathered);
+      onGathered(session().table.state, gathered);
     }, SMART_SELECT_MS);
   }
 
@@ -227,15 +227,15 @@ export function watchHandGestures({ hand, session, me, cardById, onSelect, onGat
       const landed = peek().node;
       const scrubbed = peek().scrubbed;
       clearPeek();
-      if (!scrubbed || !landed || !session()?.state || !session()?.ui) return;
+      if (!scrubbed || !landed || !session()?.table.state || !session()?.ui) return;
       const cardId = landed.dataset.cardId;
       // Only what a tap could already have done — the same model, the same
       // guard. A scrub is a nicer way to reach a card, never a second rules path.
       if (!session()?.ui.handSelectable.has(cardId)) return;
-      const card = cardById(session().state, cardId);
+      const card = cardById(session().table.state, cardId);
       if (!card) return;
       swallowNextClick();
-      onSelect(session().state, cardId, card, landed, session().ui);
+      onSelect(session().table.state, cardId, card, landed, session().ui);
     };
     el.hand.addEventListener('pointerup', finish);
     el.hand.addEventListener('pointercancel', () => clearPeek());

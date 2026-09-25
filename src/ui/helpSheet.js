@@ -63,7 +63,7 @@ export function createHelpSheet({
     const hint = suggestMove(state, mySeat(), { difficulty: loadSettings().botDifficulty });
     if (!hint) return;
     session().hint = hint;
-    session().hintsTaken += 1;
+    session().table.hintsTaken += 1;
     // THE SENTENCE OUTLIVED THE BAR THAT SHOWED IT. What a sighted player gets
     // is the ring on the felt — the cards, the pile, the meld the suggestion
     // touches — and a ring says nothing to a screen reader. #log is the live

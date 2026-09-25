@@ -19,14 +19,18 @@
 // the renderer would never be given.
 
 import { installArcade } from './arcade.js';
+import { createTableSession } from '../../src/match/tableSession.js';
 import { createRoundEnding } from '../../src/ui/roundEnding.js';
 
-/** A session with the beat fields src/ui/session.js gives a real one. */
+/**
+ * A session with the beat fields src/ui/session.js gives a real one, pointing
+ * at a solo table (src/match/tableSession.js) the way every felt session does
+ * since #225 — the seating, the daily flag and "are other people here" are the
+ * table's, not the session's.
+ */
 export function stubSession(extra = {}) {
   return {
-    seating: null,
-    daily: null,
-    shared: false,
+    table: createTableSession({ packId: 'test-pack', role: 'solo' }),
     dealAnimation: false,
     roundSummaryOpen: false,
     reopenSummary: null,

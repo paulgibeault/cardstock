@@ -76,8 +76,9 @@ import { paceLevel, nextSummaryPace } from './pace.js';
 // module's, and this module only says when.
 import { playDeal } from '../arcade/audio.js';
 import {
-  loadSettings, saveSettings, clearMatch, recordForfeit, recordDailyResult,
+  loadSettings, saveSettings, recordForfeit, recordDailyResult,
 } from '../arcade/storage.js';
+import { concludeTable } from '../arcade/persist.js';
 
 /**
  * HOW A TEMPLATE WANTS ONE COUNT OF ITS SHOW STAGED, or null (#219).
@@ -448,7 +449,7 @@ export function createRoundEnding({
       // covers a REMOTE move, which walks no steps at all; this covers a LOCAL
       // move at a shared table, which counts its show like any other and is the
       // only way a count with no clock on it could ever gate this device's queue.
-      shared: !!session()?.shared,
+      shared: !!session()?.table.hosting(),
     }) : null;
     // What the felt paints. The LIVE state everywhere else: it is what is saved,
     // what the summary reads, and what the next deal is already in.
@@ -820,7 +821,7 @@ export function createRoundEnding({
       // exactly as it was (leaveReview) — countdown restarted, not resumed.
       session().reopenSummary = () => {
         showRoundSummary(
-          state, plan.roundOver, session().seating, roundContractLines(finalState),
+          state, plan.roundOver, session().table.seating, roundContractLines(finalState),
           paceView(paceLevel(plan.pace)),
         );
         armAutoAdvance(plan.autoAdvanceMs);
@@ -1038,13 +1039,20 @@ export function createRoundEnding({
     // abandoning it is losing it, and the streak has to end. The pack's casual
     // record is left alone for the reason src/arcade/storage.js gives — the
     // daily's ladder is not the ladder that record is about.
-    clearMatch(state.pack.id, { slot: session().daily ? 'daily' : 'match' });
-    if (session().daily) {
-      recordDailyResult(state.pack.id, session().daily.date, {
+    //
+    // CONCLUDED, NOT MERELY CLEARED (#166). Clearing the slot here was undone a
+    // moment later: `exitToLobby` closes the table, closing flushes, and the
+    // flush wrote the match straight back — so the lobby offered to resume a
+    // game whose forfeit had already been recorded. Marking the table is what
+    // the flush reads (src/arcade/persist.js).
+    const table = session().table;
+    concludeTable(table);
+    if (table.daily) {
+      recordDailyResult(state.pack.id, table.daily.date, {
         won: false, hands: state.roundNumber,
       });
     } else {
-      recordForfeit(state.pack.id, session().seating);
+      recordForfeit(state.pack.id, table.seating);
     }
     closeRoundSummary();
     releaseRoundEnding();
