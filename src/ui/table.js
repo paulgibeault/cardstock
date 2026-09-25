@@ -2205,7 +2205,7 @@ function renderStageTray(state, ui) {
   // down, and that is not the case #13 was about: the bug there was a strip
   // flickering twice a turn for a whole match. Holding the slot after a
   // lay-down bought nothing — the row is `opacity: 0; visibility: hidden` and
-  // inert (src/ui/table.css) — while a card's height of dead felt sat between
+  // inert (src/ui/css/felt.css) — while a card's height of dead felt sat between
   // the meld chips and the hand for the rest of the round, which is what a
   // playtester saw. The board has just changed underneath the player anyway:
   // their melds have arrived in #player-piles, and this is the space they take.
@@ -2641,7 +2641,7 @@ function humanAnnouncements(state) {
  * A PROPERTY OF THE PACK, not of the moment — the same question
  * `announcementsFor` asks, asked once so the bar's slot can be reserved for
  * the whole match rather than appearing with the button in it (see the bar's
- * note in src/ui/table.css).
+ * note in src/ui/css/moments.css).
  *
  * The TEMPLATE's hook, deliberately, rather than the rules block a particular
  * template reads: Crazy Eights is a shedding pack with no last-card rule, so

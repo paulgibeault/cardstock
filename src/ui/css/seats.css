@@ -1,0 +1,1096 @@
+/* THE SEAT ROW — the carousel, the collapse a crowded table forces, the
+ * counters, tracks and pips a seat wears, the plate a put-away seat opens,
+ * the faces-only rung, and the mini-hand.
+ *
+ * File 3 of 11 — read after chrome.css, before felt.css. The
+ * order is the cascade; tokens.css says why and repo-gates.test.js pins it. */
+
+/* ------------------------------------------------------------------ *
+ * Crowded tables
+ * ------------------------------------------------------------------ *
+ *
+ * Applied by renderSeats once the row holds more seats than it can show at
+ * full size. The ACTIVE seat always keeps everything: whose turn it is, and
+ * what they are holding, is the one thing a player is reading the row for.
+ * Everyone else keeps their face, name and count — which is the information —
+ * and gives up the fan of card backs, which is decoration that happens to be
+ * the widest thing on the plate.
+ */
+.opponent-row--compact .seat {
+  padding: 0.3rem 0.4rem 0.35rem;
+}
+
+/* The fan of backs only. NOT .seat__zones — a seat's melds are live hit
+   targets in Milestones and its piles are real destinations in Stockpile, and
+   a crowded table is not a reason to make a legal move unreachable.
+
+   EVERY seat, including the one acting. It used to spare `.seat--active`, and
+   that exemption was a movement bug wearing a feature's clothes: the acting
+   seat stayed a fan wider than the rest, so each turn shoved every seat to its
+   right along by the width of a fan. Whose turn it is has never needed to be
+   said in geometry — the token and the ring say it, and they cost no width. */
+.opponent-row--compact .seat .mini-hand {
+  display: none;
+}
+
+.opponent-row--compact .seat__name {
+  max-width: 5.5rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Past a certain crowd even the names have to go; the avatar and the card
+   count are the last things standing, and they are still a player and how
+   close they are to going out. */
+/* Same rule, same reason as the fan above: every seat, acting or not, so the
+   row's shape does not track whose turn it is. */
+.opponent-row--tight .seat .seat__name { display: none; }
+.opponent-row--tight .seat .mini-hand { --mini-max: 60px; }
+
+/* ------------------------------------------------------------------ *
+ * The carousel
+ * ------------------------------------------------------------------ *
+ *
+ * The other answer to a crowd, and the player's own choice: instead of putting
+ * the waiting seats away, keep every plate open and let the ROW scroll.
+ *
+ * This is the one place the no-wrap rule above is relaxed in the player's
+ * favour, and it is safe because it relaxes it the right way — sideways, in a
+ * container of its own, so the felt's height is still untouched and the piles
+ * below still cannot be pushed under the hand. Comparing four players' melds
+ * before choosing a discard is a real thing to want, and a row that had put
+ * three of them behind a tap could not answer it.
+ *
+ * `justify-content` has to go: a centred flex container with overflowing
+ * content clips the START of it — the first seat becomes unreachable, because
+ * scrollLeft cannot go negative. `flex-start` keeps the whole row scrollable. */
+.opponent-row--carousel {
+  /* TWO DECLARATIONS, AND THE SECOND IS THE ONE THAT MATTERS.
+     `flex-start` was free while the carousel was something the player had to
+     ask for: a row they had deliberately made too long is a row that starts at
+     the left. It is the DEFAULT view now, so this rule also governs every two-
+     and three-handed table — rows that fit with room to spare, and which went
+     from centred under the felt to shoved against its left edge the moment the
+     default changed. `safe center` is the keyword pair written for exactly this
+     conflict: centre while it fits, fall back to start alignment the instant
+     centring would put a seat somewhere scrollLeft cannot reach. The plain
+     `flex-start` above it is what a browser too old to parse `safe` keeps —
+     today's behaviour, never the clipping one. */
+  justify-content: flex-start;
+  justify-content: safe center;
+  overflow-x: auto;
+  /* THE TOGGLE'S CORNER, KEPT CLEAR IN THE BLOCK AXIS — the inline reservation
+     above cannot do it here, and this row is now the default view (#96, #97).
+     `.opponent-row` reserves 2.9rem of inline padding on both sides so no seat
+     is laid under the toggle. That works for a row that sits still. This one
+     SCROLLS: inline padding only holds the corner open at the two scroll
+     extremes, and every seat passes under the toggle on its way past in
+     between — so restoring the padding would fix the picture at scrollLeft 0
+     and nowhere else. (It would also lengthen the scroll, which is presumably
+     why it was zeroed to begin with.)
+     Reserving in the BLOCK axis is the honest tool. The toggle's box ends 11px
+     below this row's top edge — measured at 375px, where it was overlapping
+     the seats by 22x7px — so the seats start below it and stay below it at
+     every scroll position. Block padding on a horizontal scroller adds nothing
+     to its scrollable length, which is the whole reason to prefer it.
+     The 6px at the bottom is the older job this padding already had: `overflow-x`
+     alone still makes the block axis a scrollport, which would clip
+     .seat--active's 2px lift and its glow. */
+  padding: var(--toggle-clearance) 0 6px;
+  scroll-snap-type: x proximity;
+  /* In carousel mode the bar is always shown, not shown on hover like the
+     safety-net one above: here scrolling is the POINT — the player asked for a
+     row longer than the felt — so the affordance has to be visible without
+     going looking for it. Both spellings, since Firefox reads the standard
+     properties and WebKit needs the pseudo-elements. */
+  scrollbar-color: var(--chip-border) transparent;
+}
+.opponent-row--carousel::-webkit-scrollbar-thumb { background: var(--chip-border); }
+.opponent-row--carousel::-webkit-scrollbar-thumb:hover { background: var(--accent); }
+
+/* THE EDGE THAT STILL HAS SEATS BEHIND IT (#133, round-5 item 53).
+ *
+ * Not a clipping bug — #125 proved every seat is reachable — but a row whose
+ * content is cut dead at the felt's edge looks like a row that ENDS there. A
+ * soft edge is the oldest answer in the book and it costs no layout: the seats
+ * are where they were, the row is as long as it was, and the last 24px of the
+ * side you can still scroll towards is faded into the felt.
+ *
+ * ONE GRADIENT, TWO SWITCHED ENDS. Both stops are opaque by default, so the
+ * mask is a no-op until table.js says otherwise (paintSeatRowEdges) — which is
+ * why the mask is only declared on the rows wearing one of those classes and a
+ * two-handed table never gets a mask layer at all.
+ *
+ * `mask-image` and not two overlay pseudo-elements: ::before/::after inside a
+ * scrollport scroll WITH the content, so they would slide off the edge they
+ * were drawn for. A mask is applied to the element's painted result against its
+ * own border box, which stays put while the content moves under it.
+ *
+ * Nothing here clips the things that overflow this row on purpose. The mask is
+ * uniform in the block axis, so .seat--active's 2px lift and its glow — which
+ * live inside the block padding, inside the border box — are untouched; the
+ * open plate is not in this row at all (#seat-plate-layer); and the view toggle
+ * is positioned against #table, not against the row. No animation, nothing that
+ * repaints at rest: the fade changes only when the row is actually scrolled. */
+.opponent-row--more-left,
+.opponent-row--more-right {
+  --seat-fade: 24px;
+  --seat-fade-start: #000;
+  --seat-fade-end: #000;
+  -webkit-mask-image: linear-gradient(to right,
+    var(--seat-fade-start) 0,
+    #000 var(--seat-fade),
+    #000 calc(100% - var(--seat-fade)),
+    var(--seat-fade-end) 100%);
+  mask-image: linear-gradient(to right,
+    var(--seat-fade-start) 0,
+    #000 var(--seat-fade),
+    #000 calc(100% - var(--seat-fade)),
+    var(--seat-fade-end) 100%);
+}
+.opponent-row--more-left { --seat-fade-start: transparent; }
+.opponent-row--more-right { --seat-fade-end: transparent; }
+
+.opponent-row--carousel .seat {
+  scroll-snap-align: center;
+  /* A seat may not shrink to fit a row it is now allowed to overflow — that is
+     the whole point of scrolling it. */
+  flex: none;
+}
+
+/* TUCKED INTO THE FELT'S TOP CORNER, and nothing but dots.
+   It is a way of LOOKING at the table rather than a move in it, so it wants
+   the least ink on the felt that still leaves it findable — no pill, no fill,
+   no border, just the count. Out of the row's flow entirely (see the note
+   where it is built) so it can sit clear of the seats instead of leaning on
+   them, and far enough into the corner that it never covers a player. */
+.opponent-row__toggle {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.6rem;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  /* One dot and two dots occupy the same box, so cycling it does not make the
+     control change shape. Right-aligned inside that box, so the dots grow INTO
+     the corner rather than away from it. Narrower than it was, because the box
+     used to hold three. */
+  box-sizing: border-box;
+  width: 1.4rem;
+  height: 1.1rem;
+  justify-content: flex-end;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+}
+
+/* The dots themselves — the count is the whole message, so they are plain,
+   equal, and drawn rather than typed. Faint at rest; the hit area is the
+   button's box, which is comfortably bigger than the ink. */
+.opponent-row__dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--chrome-text);
+  opacity: 0.4;
+  flex: none;
+  transition: opacity 0.15s ease;
+}
+
+.opponent-row__toggle:hover .opponent-row__dot { opacity: 0.9; }
+/* Inked only where the player has moved OFF the default. The rule used to mark
+   both ends of a three-rung scale and leave the middle plain, for exactly this
+   reason — the middle WAS the default. With `all` the default there is one rung
+   left to mark, and marking both would be a control that always looks switched
+   on, which is the same as never looking switched on. */
+.opponent-row__toggle[data-view="minimized"] .opponent-row__dot {
+  background: var(--accent);
+  opacity: 0.85;
+}
+.opponent-row__toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 4px; }
+
+/* A seat is a player, so it gets a face and a name plate rather than a line of
+   text. The count is a badge on the plate — the number you actually watch.
+   `position: relative` is for .seat__catch, which is worn over the plate
+   rather than added to it — see its own note. */
+.seat {
+  position: relative;
+  padding: 0.4rem 0.55rem 0.5rem;
+  border-radius: 12px;
+  background: var(--chip-bg);
+  border: 1px solid var(--chip-border);
+  transition: box-shadow 0.25s ease, transform 0.25s ease;
+  /* A SEAT DOES NOT SQUISH — it fits, or the ladder minimizes it.
+     As an ordinary flex item this could shrink, and its zones (below) could
+     wrap, so a crowded Stockpile row would cram every plate's discard piles
+     into two or three ragged rows and still report "I fit" — and the fit
+     ladder, which only asks whether the ROW overflows, never saw a reason to
+     act. Rigid, the row's scrollWidth tells the truth, the ladder steps down,
+     and a plate is only ever drawn at the width it was designed at. */
+  flex: none;
+}
+
+.seat--active {
+  box-shadow: 0 0 0 2px var(--accent), 0 4px 14px var(--panel-shadow);
+  transform: translateY(-2px);
+}
+
+/* YOUR PARTNER'S CHAIR, in a partnership game (src/ui/seatRing.js). A quiet,
+   permanent mark rather than anything that moves: it is a standing fact about
+   the table for the whole match, so it must not compete with .seat--active,
+   which is the one thing on this row that changes and needs to be noticed. A
+   rule on the bottom edge survives every SEAT_TIERS rung — including `faces`,
+   where the name, the word and the score chip are all gone and this is the
+   only thing left to say whose side that chair is on. No animation. */
+.seat--partner {
+  border-bottom: 2px solid var(--partner);
+}
+
+/* And the word itself, while there is room for it. A colour alone is not a
+   label — it has to be learned, and a player meeting their first partnership
+   game has nothing to learn it from. It goes at the same rung the NAME goes,
+   because past that point the row has no room for prose and the rule above is
+   carrying the meaning on its own. */
+.seat__partner {
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 0.05rem 0.32rem;
+  border-radius: 999px;
+  color: var(--partner);
+  border: 1px solid var(--partner);
+  opacity: 0.85;
+  white-space: nowrap;
+}
+
+.opponent-row--tight .seat .seat__partner { display: none; }
+
+.seat__head {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.35rem;
+}
+
+/* An emoji face rather than initials: it ships no asset, and it is the same
+   mark the score sheet and the stats panel use for that player. */
+.seat__avatar {
+  width: 1.55rem;
+  height: 1.55rem;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: #fff;
+  flex: none;
+  box-shadow: inset 0 -2px 4px rgba(0, 0, 0, 0.25);
+}
+
+.seat__name { font-size: 0.8rem; }
+
+/* ------------------------------------------------------------------ *
+ * EVERY RING ON THIS TABLE, IN ONE BLOCK
+ * ------------------------------------------------------------------ *
+ *
+ * Seven places pulse — the acting seat's name, a targeted seat, the catch
+ * button, a ready pile, the announce button, the turn token, a ready meld
+ * chip — and each of them was its own copy of the same eight declarations
+ * with only the duration changed. They are one rule now, and a site says only
+ * what makes it different: its --ring-duration, and the shape of the ring
+ * itself (inset, radius, the static shadow that is being faded in and out).
+ *
+ * WHY THAT MATTERS BEYOND THE LINE COUNT: the last declaration here is the
+ * battery rule (#24 — nothing on this table pulses forever), and seven copies
+ * of a rule is seven chances for the eighth ring to be added without it. One
+ * block is one place to keep it honest. The long note over @keyframes
+ * ring-pulse below is why the animation has this shape at all; the
+ * prefers-reduced-motion block at the foot of the file hides all seven, and
+ * its list must stay in step with the one here.
+ *
+ * IT IS FIRST ON PURPOSE. Every site below overrides something in it — the
+ * acting seat's name re-declares `content` and drops the ring to the top-left
+ * corner — so this rule has to lose the ties, which at equal specificity
+ * means coming first. */
+.seat--active .seat__name::after,
+.seat--target::before,
+.seat__catch::after,
+.pile-stack--ready .pile-stack__top::after,
+.announce-button::after,
+.turn-token::before,
+.meld-chip--ready::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  pointer-events: none;
+  animation: ring-pulse var(--ring-duration, 1.6s) ease-in-out;
+  animation-iteration-count: var(--arcade-pulse-count, 3);
+}
+
+/* THE ACTIVE SEAT'S NAME — the last animation on this table that still
+ * repainted. `pulse-glow` animated `text-shadow` blur from 4px to 10px, and a
+ * blurred glyph is re-rasterised on the main thread every frame: the exact
+ * cost the "Pulsing without repainting" note below removed from the
+ * box-shadow cases, and missed here (#24 item 1). It ran for the whole match,
+ * once per acting seat.
+ *
+ * Same conversion the rings got: the strong glow moves to a pseudo-element
+ * that is painted ONCE, and only its opacity animates.
+ *
+ * RESTING TREATMENT: the 4px glow the keyframes used to start and end on is
+ * now simply always on while the seat is active, so when the pulse count runs
+ * out the name still says "this seat is up" — alongside the accent ring
+ * .seat--active already wears. */
+.seat--active .seat__name {
+  position: relative;
+  font-weight: 700;
+  text-shadow: 0 0 4px var(--glow);
+}
+.seat--active .seat__name::after {
+  /* The name again in transparent ink, so only the HALO is drawn and the real
+     glyphs are never overdrawn. `attr()` inserts a string and never markup, so
+     a peer-supplied name is as safe here as it is in textContent (§7b);
+     buildSeatRow (src/ui/table.js) sets data-name beside it. */
+  content: attr(data-name);
+  /* The only ring that is not inset in its host: this one is the name itself,
+     so it hangs off the top-left corner and takes the name's own width. */
+  inset: 0 auto auto 0;
+  white-space: nowrap;
+  color: transparent;
+  text-shadow: 0 0 10px var(--glow-strong);
+  --ring-duration: 1.6s;
+}
+
+/* The opponent's running score, beside their name. Pushed left of the card
+   count so the two numbers never swap places between games. */
+.seat__score {
+  margin-left: auto;
+  font-size: 0.7rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  padding: 0.08rem 0.4rem;
+  border-radius: 999px;
+  background: var(--chip-bg);
+  border: 1px solid var(--chip-border);
+}
+.seat__score + .seat__count { margin-left: 0.3rem; }
+
+/* CARDS LEFT IS SHAPED LIKE A CARD. It and the score pill next to it were two
+   grey lozenges differing only in their digits, so a seat read "Nell 12 1" and
+   left you to work out which number was which (#122, round-5 item 24). A count
+   of cards is drawn as a small card — square corners, a thin edge — and a score
+   stays the round pill every chip on this table uses for a number. Shape rather
+   than a glyph or a word: it survives the collapsed row, the 375px width and
+   both themes, and costs the plate no room. */
+.seat__count {
+  margin-left: auto;
+  font-size: 0.7rem;
+  font-weight: 700;
+  min-width: 1.35rem;
+  padding: 0.08rem 0.35rem;
+  text-align: center;
+  border-radius: 3px;
+  border: 1px solid var(--chip-border);
+  background: var(--chip-border);
+  font-variant-numeric: tabular-nums;
+}
+
+/* DOWN TO THEIR LAST CARD (#148). The same badge, the same slot, the same
+   quantity — escalated, not duplicated. At an eight-handed Wildfire table every
+   face is an avatar with one small digit on its corner, and "who is about to go
+   out" is the only question the row is being scanned for; a second badge saying
+   so would cost width the seat-tier ladder is measured on, and this costs none.
+   A halo as well as the fill, so the mark is not carried by hue alone, and the
+   badge's own spoken name says it in words either way (shedding's
+   `seatCounters`). */
+.seat__count[data-counter="lastcard"] {
+  background: var(--danger-bg);
+  color: #ffffff;
+  box-shadow: 0 0 0 1.5px var(--danger-bg);
+}
+
+/* ------------------------------------------------------------------ *
+ * ...AND THE WORD UNDER IT (#133, round-5 item 49)
+ * ------------------------------------------------------------------ *
+ *
+ * The shape above says a COUNT of cards apart from a SCORE, and that is as far
+ * as shape goes: a plate carrying a score, a hand, a bid, a trick count, bags
+ * and a meld is six lozenges, and "Bruno 0 12 150 —" was learned from position
+ * or not at all. The dash is the case that settles it — Pinochle draws one for
+ * "passed" and another for "has not declared a meld yet", and a dash with no
+ * word next to it is not a number that is missing, it is a plate with nothing
+ * on it.
+ *
+ * MEASURED BOTH WAYS BEFORE PICKING (see counterCaption in src/ui/table.js):
+ * under the number costs 29% of a seat's width and 1px of its height at 375px;
+ * beside it costs 50%, which at four seats is 200px more carousel to scroll
+ * through. Under, then.
+ *
+ * The badge becomes a column and keeps everything else it was — .seat__count's
+ * card shape, .seat__score's pill, .seat__count--aux's accent ink. The caption
+ * sits INSIDE that box rather than under it, so nothing is added to the head's
+ * flex row and the numbers stay in line with each other. */
+.seat__score,
+.seat__count,
+.seat__count--aux {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  /* Tight, because the pair has to read as one chip: at the plate's 0.7rem the
+     default 1.5 leading put a visible gap between a number and its own word. */
+  line-height: 1.15;
+}
+
+.seat__count-label {
+  font-size: 0.48rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  /* The same recessive treatment .my-seat__name wears, for the same reason:
+     the number is the thing being read and the word is what stops it being
+     ambiguous — it is not competing for the glance. */
+  opacity: 0.7;
+  white-space: nowrap;
+}
+
+/* NOT ON A FACE. A minimized seat has already given up its name and its fan;
+   the whole rung exists because there is no room, and a caption on a 35px
+   avatar's corner badge would be the first thing to make it not fit. The word
+   is one tap away — the head button's accessible name still says every number
+   in a sentence, and the plate opens the seat in full. */
+.seat--collapsed .seat__count-label { display: none; }
+
+/* ------------------------------------------------------------------ *
+ * A counter that is a POSITION, not a quantity
+ * ------------------------------------------------------------------ *
+ *
+ * A cribbage board: 121 holes and two pegs a side. The template says
+ * `kind: 'peg'` on its counter and src/ui/counterTrack.js draws this; nothing
+ * about the component knows which game asked for it, and a template that names
+ * a kind this build does not know gets the ordinary pill above.
+ *
+ * BATTERY (GAME_INTEGRATION §6d): there is deliberately NO @keyframes here.
+ * The pegs move with a one-shot transition on `left` and then sit still, which
+ * is what a peg does. Nothing on this component runs forever, so there is
+ * nothing for `--arcade-pulse-count` to cap.
+ *
+ * BOTH THEMES ARE PAINTED, not one plus a tint. The rail is a groove — darker
+ * than its surround in the dark theme, darker than paper in the light one —
+ * and the two pegs are the accent and a muted companion, which keeps the
+ * front/back distinction legible without relying on hue alone.
+ */
+.seat__track {
+  margin-left: auto;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 5.5rem;
+}
+
+.seat__track-rail {
+  position: relative;
+  flex: 1 1 auto;
+  height: 0.45rem;
+  min-width: 3.5rem;
+  border-radius: 999px;
+  background: var(--chip-bg);
+  border: 1px solid var(--chip-border);
+  /* The holes. A repeating gradient rather than 121 elements — the track is
+     sixty pixels wide on a phone, so the marks are TEXTURE and not geometry:
+     a peg at hole 60 sits halfway along because of its `left`, not because it
+     is over the thirtieth mark. The repeat is deliberately fine (3px, one
+     pixel of ink) — at 6px it read as a seven-segment progress bar, which is a
+     picture of a different quantity. */
+  background-image: repeating-linear-gradient(
+    to right,
+    var(--chip-border) 0 1px,
+    transparent 1px 3px
+  );
+}
+
+.seat__track-peg {
+  position: absolute;
+  top: 50%;
+  width: 0.42rem;
+  height: 0.42rem;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  /* The move itself. `left` and not a transform because the peg's position IS
+     a left offset in percent of the rail, and one shorthand that reads the way
+     the value does is worth more here than the compositor. */
+  transition: left 320ms ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .seat__track-peg { transition: none; }
+}
+
+.seat__track-peg--front {
+  background: var(--accent);
+  box-shadow: 0 0 0 1px var(--chip-border);
+  z-index: 1;
+}
+
+.seat__track-peg--back {
+  background: var(--chrome-text);
+  opacity: 0.45;
+}
+
+/* Both pegs on the same hole is where every seat starts. Nudged apart so the
+   back one is visible behind the front rather than exactly underneath it. */
+.seat__track[data-together="true"] .seat__track-peg--back {
+  transform: translate(-90%, -50%);
+}
+
+.seat__track-value {
+  font-size: 0.7rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  min-width: 1.6rem;
+  text-align: right;
+}
+
+/* ------------------------------------------------------------------ *
+ * A counter that is a PROMISE — the pip row (#148)
+ * ------------------------------------------------------------------ *
+ *
+ * The second shape in the platform's drawn-counter vocabulary
+ * (src/ui/counterTrack.js). A Spades bid and the tricks taken against it are
+ * two numbers whose entire meaning is the comparison between them, and as two
+ * 0.7rem badges among Cards and Bags that comparison was arithmetic the player
+ * had to do — on their PARTNER'S plate, four times a hand. One unfilled circle
+ * per trick promised, filled left to right as they come in: short is visible
+ * from across the table, made is visible, and over is a different colour.
+ *
+ * FOUR TONES, AND NOT ONE OF THEM IS HUE ALONE. Taken is a filled accent
+ * circle against an EMPTY ring — fill is the signal, colour is the
+ * reinforcement — and the two that are not ordinary tricks (a bag, a broken
+ * nil) are filled too, so what separates them from a plain taken trick is read
+ * against a row where the shape has already said the number.
+ *
+ * DENSE PAST SEVEN. A bid of nine or ten is rare and legal, and thirteen
+ * circles at the ordinary size measures 130px of seat — wider than the name.
+ * Past seven the row halves its circles and its gaps rather than wrapping (the
+ * seat row's width is measured, and a second line would lie to the fit ladder)
+ * and thirteen fit in 86px, inside the 88px a track already takes.
+ *
+ * BATTERY (GAME_INTEGRATION §6d, cardstock#24): a pip fills with a one-shot
+ * transition and then sits still. There is deliberately no @keyframes here, so
+ * there is nothing for `--arcade-pulse-count` to cap.
+ */
+.seat__pips {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 0.18rem;
+  --pip-size: 0.46rem;
+}
+
+.seat__pips[data-dense="true"] {
+  gap: 0.1rem;
+  --pip-size: 0.32rem;
+}
+
+/* The readings that are NOT circles: a seat that has not bid, and a nil, which
+   promises no circles at all. The template's own badge text (`—`, `nil`,
+   `BN`), because the felt already says a bid that way everywhere else. */
+.seat__pips-word {
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  margin-right: 0.08rem;
+}
+
+.seat__pip {
+  flex: 0 0 auto;
+  width: var(--pip-size);
+  height: var(--pip-size);
+  border-radius: 50%;
+  border: 1px solid var(--pip-edge);
+  background: transparent;
+  /* One shot, on the fill. A trick lands and the circle takes; it does not
+     then keep doing anything. */
+  transition: background-color 240ms ease-out, border-color 240ms ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .seat__pip { transition: none; }
+}
+
+/* Promised and in. */
+.seat__pip--taken {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+/* Past the promise: taken, but it is a BAG, and ten of them cost a hundred
+   points. Filled like a trick because it IS one, in the ink of the thing it
+   has turned into rather than the accent that means "as promised". */
+.seat__pip--bag {
+  background: var(--pip-bag);
+  border-color: var(--pip-bag);
+}
+
+/* A trick taken on a nil: the promise broken, in the one tone this table
+   already uses for that (the Catch! button, a refused commit). */
+.seat__pip--broken {
+  background: var(--danger-bg);
+  border-color: var(--danger-bg);
+}
+
+/* Faces-only rung: the seat IS the avatar, and the pips sit beside it rather
+   than being pushed to the far end of a head that no longer has one.
+
+   LEGIBLE RATHER THAN GUARANTEED TO FIT, and the first cut had it the other way
+   round — 0.26rem circles, which fitted three seats into 127px and were 4.2px
+   dots nobody could count. That trades the only thing this rung has left to say
+   a bid with (the name, the score and the trick digits are all gone by here)
+   for a fit the row does not actually need: a bid of three is a 65px seat
+   against a bare 35px, so the three opponents of a four-handed Spades table
+   bidding a whole 13 tricks between them come to 235px of a 332px row. The
+   arithmetic only runs out where all three overbid hugely — three seats each
+   bidding thirteen is 406px — and then the row SCROLLS, which is exactly what
+   this rung's own note above says happens when the tiers run out. A scrollable
+   row of countable circles beats a fitted row of dots.
+
+   The knock-on, and it is wanted: `.seat__count` hangs off the SEAT's corner,
+   and the seat is no longer just the avatar — so the card count rides the
+   bottom-right of the avatar-plus-pips plate instead of the avatar's own edge.
+   That is the honest reading of a face that is now two things, and it stops the
+   count sitting on top of the last circle. */
+.opponent-row--faces .seat--collapsed .seat__pips {
+  margin-left: 0.15rem;
+}
+
+/* ------------------------------------------------------------------ *
+ * A seat put away, and the plate it opens
+ * ------------------------------------------------------------------ *
+ *
+ * Past three opponents a seat that cannot act keeps its face, its name, its
+ * score and its counts — which is the INFORMATION — and puts its fan and its
+ * piles behind a tap. The row stops growing with the table: eight players fit
+ * where four used to run off the felt.
+ *
+ * The rule this replaces said a crowded table is not a reason to make a legal
+ * move unreachable, and that rule still holds — it is why .seat--target below
+ * exists and why the plate carries the REAL chips rather than a picture of
+ * them. Nothing here hides a move; it moves it one tap away and lights the way.
+ */
+.seat--collapsed {
+  padding: 0.3rem 0.35rem;
+}
+
+/* The head is a <button> when collapsed. Stripped back to the plate it already
+   was, so putting a seat away does not restyle it into a control. */
+.seat--collapsed .seat__head {
+  margin-bottom: 0;
+  width: 100%;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+.seat--collapsed .seat__head:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
+/* The counts carry the seat on their own at this size, so the name may shrink
+   as far as the row needs — but never to nothing. Reading WHO is out of cards
+   is the whole reason the count is worth showing. */
+.seat--collapsed .seat__name {
+  max-width: 5rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The SECOND number a minimized seat wears, when its pack declares one — melds
+   laid down in rummy, points taken in Hearts (see `seatCounters` in
+   src/templates/CONTRACT.md). Reads as a companion to the primary count rather
+   than a rival to it: same size and pill, different ink, and the glyph the
+   template puts in front does the naming. */
+.seat__count--aux {
+  margin-left: 0.3rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 0.08rem 0.35rem;
+  border-radius: 999px;
+  color: var(--accent);
+  background: var(--chip-bg);
+  border: 1px solid var(--chip-border);
+  font-variant-numeric: tabular-nums;
+}
+
+/* OUT OF THIS TRICK (#148, Thirteen). A word, not a number, and the one aux
+   badge that must not wear the accent: the accent on this row means "it is
+   this seat's turn", and a seat that has passed is precisely the one it is not.
+   Recessive, which is also what it is — a seat sitting the rest of the trick
+   out. */
+.seat__count--aux[data-counter="passed"] {
+  color: var(--chrome-text);
+  opacity: 0.62;
+  font-size: 0.58rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* ------------------------------------------------------------------ *
+ * Faces only
+ * ------------------------------------------------------------------ *
+ *
+ * The last step down, for the tables that need it: five collapsed plates with
+ * their names and score chips still ran a couple of hundred pixels past a
+ * phone's felt, so past four of them the plate becomes the FACE — and the card
+ * count, which is the one number worth watching, is worn on the corner of it
+ * rather than beside it.
+ *
+ * Nothing is lost that is not one tap away: the head button's accessible name
+ * still reads the player, the count and the melds in a sentence, and the
+ * inspector still says it on hover. */
+.opponent-row--faces .seat--collapsed {
+  padding: 0.25rem;
+}
+
+.opponent-row--faces .seat--collapsed .seat__name,
+.opponent-row--faces .seat--collapsed .seat__score {
+  display: none;
+}
+
+.opponent-row--faces .seat--collapsed .seat__head { gap: 0; }
+
+/* Worn on the avatar, not beside it. `.seat` is the positioned ancestor (it
+   already is, for .seat__catch), so both badges hang off the plate's corners
+   and the seat's width is the avatar's and nothing else. */
+.opponent-row--faces .seat--collapsed .seat__count {
+  position: absolute;
+  right: -0.15rem;
+  bottom: -0.15rem;
+  margin: 0;
+  min-width: 0;
+  padding: 0.02rem 0.28rem;
+  font-size: 0.62rem;
+  background: var(--chip-border);
+  /* Over the felt now rather than inside a plate, so it needs its own edge to
+     stay legible against whatever colour the avatar under it happens to be. */
+  border: 1px solid var(--panel-bg);
+  border-radius: 999px;
+}
+
+.opponent-row--faces .seat--collapsed .seat__count--aux {
+  position: absolute;
+  left: -0.15rem;
+  top: -0.2rem;
+  margin: 0;
+  padding: 0.02rem 0.22rem;
+  font-size: 0.55rem;
+  border-color: var(--panel-bg);
+}
+
+/* THE GLOW THAT WAS ON THE MELD CHIP, MOVED TO THE FACE.
+ *
+ * With the chips put away, this is the only thing on screen saying "the card
+ * you are holding can be played here" — so it wears the same accent ring the
+ * ready chips and piles wear, and the player learns one signal, not two.
+ *
+ * A fading ring on a pseudo-element, never a growing shadow: see the note over
+ * @keyframes ring-pulse. The seat is already `position: relative` for
+ * .seat__catch, so the ring has something to be inset in. */
+.seat--target {
+  border-color: var(--accent);
+}
+.seat--target::before {
+  inset: -2px;
+  border-radius: 14px;
+  box-shadow: 0 0 0 2px var(--accent);
+  --ring-duration: 1.4s;
+}
+
+/* The plate itself: everything the seat would have shown inline, in a card
+ * that hangs off the face that opened it.
+ *
+ * FIXED, AND IN ITS OWN LAYER. Out of flow for the same reason .seat__catch
+ * is — the opponent row is the top of the felt's flex column, so a plate that
+ * opened IN the row would push every pile below it down the screen, mid-turn,
+ * under the hand the player is reaching for.
+ *
+ * But absolute-inside-the-seat was not enough once the row itself became a
+ * scrollport: a scroller clips its own absolute children, so the plate would
+ * be cut off by the container it was opened from. Fixed, positioned from the
+ * seat's rect by positionPlate() and re-anchored when the row scrolls, it is
+ * clamped to the VIEWPORT instead — which is the edge that was overflowing. */
+.seat__plate {
+  position: fixed;
+  /* Ordering INSIDE #seat-plate-layer only — what lifts this above the felt is
+     the layer's own z-index, for the reason spelled out there. */
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.5rem 0.6rem;
+  border-radius: 12px;
+  /* A floating surface, so it is the one every other floating surface on this
+     screen is — the note over --panel-bg is the reason there is no second
+     answer here. The accent border is what makes it read as the OPEN one. */
+  background: var(--panel-bg);
+  color: var(--panel-text);
+  border: 1px solid var(--accent);
+  box-shadow: 0 10px 26px var(--panel-shadow);
+  /* Wide enough for a laid-down contract, and allowed to be wider than the
+     face it hangs off — a meld strip is the reason the plate exists. */
+  max-width: min(19rem, 80vw);
+}
+
+/* A pure anchor point with NO BOX OF ITS OWN. It sits inside #table-screen so
+   renderSelection's repaint pass still walks into it, and #table-screen is a
+   viewport-capped flex column with its own scrollport — so a layer with any
+   size would either take a row in that column or extend what it can scroll to.
+   Zero-sized and fixed, it does neither; the plate inside is `position: fixed`
+   and positions itself against the viewport, not against this. */
+#seat-plate-layer {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 0;
+  height: 0;
+  /* THE Z-INDEX BELONGS ON THE LAYER, NOT ON THE PLATE INSIDE IT.
+     `position: fixed` makes this its own stacking context, so the plate's own
+     z-index only ever ordered it against its siblings IN HERE — against the
+     felt it counted for nothing, and the layer sat at `auto` (level 0 of the
+     positioned layer). Every pile card is `position: absolute; z-index: 1`
+     (see .pile-stack > *), which paints in the positive-z step, i.e. AFTER it:
+     the board drew straight over an open plate and ate the information it was
+     opened to show.
+     6 puts the whole layer above the felt and deliberately below the things
+     that must still cover it — the event banner (8), the panels and modals
+     (9/10), a card in flight or under the finger (12), and the inspector (14),
+     which may be describing a chip inside this very plate. */
+  z-index: 6;
+}
+
+/* The melds are the reason the plate was opened, so they get room to be read
+   rather than the squeezed strip the seat wore.
+
+   The gap is also what a finger needs. When a card is being carried the plate
+   is a DROP surface (see .is-dragging .seat__plate below), and room around the
+   chips is what stops a finger with a card under it from landing between two.
+   Kept unconditional rather than scoped to the drag: a strip that re-spaced
+   itself the moment a card was picked up would move the target it is being
+   aimed at. */
+.seat__plate .meld-strip {
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.5rem;
+}
+
+/* A plate is a considered look, not a glance — the fan may be full width. */
+.seat__plate .mini-hand { --mini-max: calc(var(--seat-fan-max, 118px) * 1.02); }
+
+/* PLATE SCALE: bigger than the row wears them, small enough to stay one line.
+   The row's piles are 34px because a row of seats has to hold five of them and
+   still be a row; in here there is one seat and the width is the plate's, so
+   they can be half again as big — readable, and a finger-sized drop target —
+   without wrapping into the ragged grid that full-size parts produced. */
+.seat__plate .pile--mini { --pile-w: calc(var(--seat-pile-w, 34px) * 1.53); }
+.seat__plate .meld-strip--mini { --meld-card-w: calc(var(--seat-meld-w, 26px) * 1.3); }
+.seat__plate .meld-strip--mini .meld-chip__label { font-size: 0.6rem; }
+
+/* Carrying a card to a seat that is put away: the plate is a DROP surface now,
+   not just something to read, so it says so. The ring is the same one every
+   other drop target on the felt wears (.drop-target); the room around the
+   chips is the plate's own (see .seat__plate .meld-strip above). */
+.is-dragging .seat__plate {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent), 0 12px 30px var(--panel-shadow);
+}
+
+/* "Catch!" — the accusation, worn by the seat it accuses. Deliberately loud:
+   the window is short and the whole mechanic is about noticing in time.
+
+   WORN OVER THE PLATE, NOT ADDED TO IT. In the seat's own flow this button made
+   the seat 29px taller for the two seconds it existed, and the opponent row is
+   the top of the felt's flex column — so every pile below it slid down 15px
+   and back at the exact moment the table was asking the player to react to
+   something (#13, the same rule the rail is laid out to). Out of flow it costs
+   nothing
+   and moves nothing, and lying across the accused seat's own fan is where it
+   belongs anyway: the eye goes to the seat being accused. */
+.seat__catch {
+  position: absolute;
+  left: 0.4rem;
+  right: 0.4rem;
+  bottom: 0.4rem;
+  padding: 0.28rem 0.5rem;
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 700;
+  border: none;
+  border-radius: 999px;
+  cursor: pointer;
+  background: var(--danger-bg);
+  color: #fff;
+}
+.seat__catch:hover { background: var(--danger-bg-hover); }
+
+.seat__catch::after {
+  border-radius: 999px;
+  box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.22);
+  --ring-duration: 1s;
+}
+
+/* ------------------------------------------------------------------ *
+ * Pulsing without repainting
+ * ------------------------------------------------------------------ */
+
+/* NO PULSE ON THIS TABLE IS INFINITE, AND EVERY RING FADES RATHER THAN GROWS.
+ *
+ * Two rules, landed in that order, for the same reason: a phone's battery.
+ *
+ * 1. RINGS FADE (issue #6 §2). `box-shadow` is not a compositable property:
+ *    animating it repaints the element's shadow region on the main thread,
+ *    every frame. The turn token alone is on screen for essentially the whole
+ *    match, so four such animations meant a re-rasterisation budget spent on
+ *    nothing at all. The shape that costs nothing: put the ring on a
+ *    pseudo-element with a STATIC box-shadow, and animate only its `opacity`.
+ *    Opacity is compositor-only, so the ring is painted once and then faded by
+ *    the GPU. The pseudo needs `pointer-events: none` — it covers its host,
+ *    and a ring that ate the click would make the loudest button on the table
+ *    the one that does nothing. `transform` is the other compositable
+ *    property, which is why the announce button keeps its scale() in the
+ *    element's own keyframes below, and why the acting seat's name glow is a
+ *    transparent-ink duplicate that fades rather than a `text-shadow` tween.
+ *
+ * 2. NOTHING PULSES FOREVER (issue #24, GAME_INTEGRATION §6d "Let the screen
+ *    rest"). A cheap animation is still an animation: while one runs the
+ *    compositor keeps producing frames, so a game that is VISIBLE AND IDLE —
+ *    which is most of a turn-based game's life — never lets the display
+ *    pipeline reach 0 fps. An infinite CSS pulse is a rAF loop that never
+ *    stops, expressed declaratively. So every emphasis animation here declares
+ *
+ *        animation-iteration-count: var(--arcade-pulse-count, 3);
+ *
+ *    — the seven rings in ONE rule (see "Every ring on this table" above), and
+ *    each element-level pulse beside its own keyframes.
+ *
+ *    The launcher's SDK owns that token (§5, SDK 3.13.0+): 3 normally, 1 when
+ *    the player has turned power saver on, 0 under reduced motion — where the
+ *    SDK's kill-switch `animation-iteration-count: 1 !important` wins anyway
+ *    and the single iteration lasts .001ms. The `, 3` fallback is what makes
+ *    the rules above correct with no SDK at all (a standalone visit) and on an
+ *    SDK too old to define the token.
+ *
+ *    THE COROLLARY IS THE HARD PART: motion earns its cost at the moment state
+ *    changes, so once it settles a STATIC treatment has to keep saying the same
+ *    thing. Every rule that consumes the token above pairs with one — the
+ *    accent border on a targeted seat and a ready meld chip, the accent ring on
+ *    a ready pile, the red on the catch button, the gold of the turn token
+ *    itself, the static 4px glow on the acting seat's name. A ring that fades
+ *    to nothing over an element with no resting state is not a saving, it is a
+ *    signal the player can no longer see. The prefers-reduced-motion block at
+ *    the foot of this file is the authoritative list of what those resting
+ *    treatments are, because it is the case where the ring never shows at all.
+ *
+ * Replay is the other half, and it lives in src/ui/table.js: a finite pulse
+ * only fires when its animation is (re)created, so a node that is rebuilt per
+ * render replays for free, a class toggled in place replays on the genuine
+ * transition, and a node that is neither — the action bar's turn token, which
+ * is static markup in index.html — is replayed explicitly. See replayPulse(). */
+@keyframes ring-pulse {
+  0%, 100% { opacity: 0; }
+  50% { opacity: 1; }
+}
+
+/* An opponent's hand, face down.
+ *
+ * THE SEAT'S WIDTH DOES NOT DEPEND ON HOW MANY CARDS IT HOLDS. `.opponent-row`
+ * centres its seats and wraps them, so a seat that grew by a card-width every
+ * draw shoved every other seat sideways — and past the row width, dropped one
+ * onto a second line and moved the whole table down. A hand you are not
+ * holding is a COUNT, drawn as a fan; it has no business setting the geometry
+ * of the felt. So the fan closes to fit `--mini-max` instead of spreading.
+ *
+ * That is the same shape as the player's own fan (fanStep, handOrder.js) with
+ * constants suited to a 28px card: half a card of spacing when there is room,
+ * closing as far as a fifth of a card when there is not. It stays in CSS
+ * rather than being measured in JS because `--mini-w` is set by the viewport
+ * breakpoints — a JS copy would have to re-read it, and would drift from it.
+ * renderSeats writes only `--mini-count`, which it already knows.
+ *
+ * The margin goes on the WRAPPER, not the card. Every back is its own <span>
+ * (svgNode), so `.card-face:first-child` matched all of them and the overlap
+ * silently never applied — the same trap the player's fan documents below.
+ * That is why a ten-card seat used to be 280px wide instead of 154px. */
+.mini-hand {
+  --mini-w: var(--seat-fan-w, 28px);
+  --mini-max: var(--seat-fan-max, 118px);
+  --mini-step: clamp(
+    calc(var(--mini-w) * 0.2),
+    calc((var(--mini-max) - var(--mini-w)) / max(1, var(--mini-count, 1) - 1)),
+    calc(var(--mini-w) / 2)
+  );
+  display: flex;
+  justify-content: center;
+}
+
+.mini-hand > * { flex: none; }
+.mini-hand > *:not(:first-child) { margin-left: calc(var(--mini-step) - var(--mini-w)); }
+.mini-hand .card-face,
+.mini-hand .mini-hand__edge { width: var(--mini-w); display: block; }
+
+/* THE SLIVER OF A CARD BACK THAT AN OVERLAPPED MINI-HAND ACTUALLY SHOWS.
+ *
+ * `--mini-step` closes this fan to as little as a fifth of a card, so all but
+ * the rightmost back is covered to within a few pixels of its left edge — and
+ * what is left is the white paper margin and the printed panel. No pattern, no
+ * emblem, none of the fifty-to-ninety vector lines a real back is made of. A
+ * seventeen-card hand times two opponents was drawing all of that, per card,
+ * per render, to fill a sliver. So src/ui/table.js draws the covered ones as
+ * these (one box each, panel colour handed down from the pack's own theme) and
+ * keeps the real SVG for the one card you can genuinely see. */
+.mini-hand__edge {
+  height: calc(var(--mini-w) * 1.4);
+  border-radius: 8% / 5.71%;
+  background: var(--back-panel, #3a3a3a);
+  border: 1px solid #fdfdfa;
+  box-shadow: 0 3px 4px var(--card-shadow);
+}
+
+/* The middle of the table takes whatever is left between the seats and the
+   hand, and holds however many shared piles the pack declares — one for
+   Hearts' trick, six for Stockpile's deck + four builds + recycled-hidden.
+   Wrapping beats shrinking: a second row of piles is still a table. */
+/* THE LADDER STANDS BESIDE THE PILES, NOT ABOVE THEM.
+   It used to be its own row across the felt, which spent a whole band of
+   HEIGHT — the scarce axis, the one the cards want — to say ten short things
+   that stack perfectly well in a column. Down the left it costs width, which
+   on this table is the axis with room to spare, and the piles get the height
+   back. `flex: 1` so the middle absorbs the felt's spare space rather than
+   leaving a void between the piles and the hand. */
+#felt-middle {
+  flex: 1;
+  min-height: 0;
+  /* The anchor for #show-card, which is inset to this box so it can never
+     reach the fan (see THE SHOW CARD below). Changes nothing about the row. */
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(0.5rem, 2vw, 1.5rem);
+}
+
+/* BESIDE the ladder, not across the rest of the felt. #center-piles grows to
+   fill its row by default, which in here shoved the ladder out to the far
+   edge and left it floating half a table away from the deck it annotates.
+   Sized to its content, the two centre as one group and the ladder reads as
+   belonging to the piles. */
+#felt-middle > #center-piles {
+  flex: 0 1 auto;
+}

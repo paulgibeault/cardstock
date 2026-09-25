@@ -1,0 +1,880 @@
+/* TABLE MOMENTS — everything that happens and then stops happening:
+ * announcements, the turn token, the banner and a trick's aftermath, the show
+ * card, the countdown to the next hand, the wild's question, the last card,
+ * and game over.
+ *
+ * File 6 of 11 — read after cards.css, before panels.css. The
+ * order is the cascade; tokens.css says why and repo-gates.test.js pins it. */
+
+/* ------------------------------------------------------------------ *
+ * Announcements (§E2)
+ * ------------------------------------------------------------------ */
+
+/* THE BAR'S SLOT IS RESERVED, AND THAT IS THE POINT — same discipline as
+   #status-bar and .hand-rail, for the same reason: this row is in the felt's
+   flex column, so a bar that appears pushes everything below it.
+   The moment it appears is the WORST possible moment to move the table: a
+   seat has one card left, the window to say so is measured in seconds, and
+   the player is already reaching for a button. Reserving the height means the
+   button arrives where the eye already is.
+   `hidden` still means something here, and something different: no slot at
+   all, for a pack whose template has no announcements to make. That is a
+   property of the pack, decided once when it opens, so it can never move the
+   table mid-hand. `--empty` is the per-moment state. */
+#announce-bar {
+  display: flex;
+  justify-content: center;
+  gap: 0.5rem;
+  /* One announce button: its 0.95rem label at line-height 1.2, plus the
+     0.4rem it is padded with top and bottom. Borderless, so that is all. */
+  min-height: calc(1.2 * 0.95rem + 0.8rem);
+  transition: opacity 0.3s ease, visibility 0.3s;
+}
+#announce-bar[hidden] { display: none; }
+#announce-bar.announce-bar--empty { opacity: 0; visibility: hidden; }
+
+/* Loud, and pulsing, because the window is measured in seconds and missing it
+   costs you two cards. The pulse is finite now (see "Pulsing without
+   repainting"); the LOUD is the resting treatment, and it is not subtle — a
+   full-accent pill in a bar that is empty the rest of the time. renderAnnounceBar
+   rebuilds these buttons per render, so the pulse replays as the window
+   reopens. */
+.announce-button {
+  position: relative;
+  font: inherit;
+  font-size: 0.95rem;
+  /* Pinned, like #action-button's: the bar's reserved height is measured off
+     this line, and `normal` is whatever the font feels like. */
+  line-height: 1.2;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  padding: 0.4rem 1.4rem;
+  border: none;
+  border-radius: 999px;
+  cursor: pointer;
+  background: var(--accent);
+  color: #1a1a1a;
+  animation: announce-pulse 1.1s ease-in-out;
+  animation-iteration-count: var(--arcade-pulse-count, 3);
+}
+.announce-button:hover { filter: brightness(1.08); }
+.announce-button:focus-visible { outline: 2px solid var(--chrome-text); outline-offset: 3px; }
+
+/* The scale stays on the element — transform composites. Only the 18px glow
+   moves to the ring (see "Pulsing without repainting"), because a blurred
+   shadow is the most expensive thing on this page to repaint per frame. */
+@keyframes announce-pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.05); }
+}
+.announce-button::after {
+  border-radius: 999px;
+  box-shadow: 0 0 18px 2px var(--accent);
+  --ring-duration: 1.1s;
+}
+
+/* ------------------------------------------------------------------ *
+ * The turn token
+ * ------------------------------------------------------------------ */
+
+/* THE turn marker, identical in every game: a small gold chip worn by
+   whichever seat may act — on a bot's name plate, on the action bar when the
+   turn is yours. One shape, one colour, wherever it appears, so "whose turn
+   is it" is answered by finding the chip, not by learning each game's tells. */
+.turn-token {
+  position: relative;
+  width: 0.95rem;
+  height: 0.95rem;
+  border-radius: 50%;
+  flex: none;
+  display: inline-block;
+  background: radial-gradient(circle at 35% 30%, #ffe9a8, var(--accent) 72%);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.3), 0 0 3px var(--accent);
+}
+/* ::after is the glyph, so the glow rides ::before. This is the pulse that
+   mattered most: some seat is always acting, so the token is on screen for the
+   whole match and its animation never stopped. Now it says its piece when the
+   turn moves and then goes quiet — the token's own gold, its 1px rim and its
+   3px static glow above are the resting treatment, and they are what "whose
+   turn is it" is actually read from. */
+.turn-token::before {
+  border-radius: 50%;
+  box-shadow: 0 0 12px var(--accent);
+  --ring-duration: 1.6s;
+}
+.turn-token::after {
+  content: "\25B6"; /* ▶ */
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.42rem;
+  color: #4a3200;
+}
+
+/* Worn on the corner of a minimized seat rather than taking a slot in its
+   head, so the seat that is acting is exactly the size of the ones that are
+   not — the whole point of the uniform row.
+   AFTER `.turn-token`, not before it: both are one class, so they carry the
+   same specificity and source order is the only tie-break. Declared first,
+   `position: absolute` lost to the base rule's `relative`, the token stayed in
+   flow, and the acting seat quietly grew 19px taller than its neighbours —
+   which is the exact movement it was added to remove. */
+.turn-token--worn {
+  position: absolute;
+  left: -0.2rem;
+  top: -0.25rem;
+  z-index: 2;
+  pointer-events: none;
+}
+
+/* STILL CHOOSING, WHICH IS NOT THE SAME AS ON TURN.
+   In a simultaneous-commit phase — Hearts' pass, Pinochle's meld — every seat
+   that has not committed yet may act, so three opponents were wearing the gold
+   ▶ at once and the platform's one turn marker was saying something that cannot
+   be true (#125 item 48). Same chip, same slot, same geometry — so a seat does
+   not change size when the phase does — in the felt's neutral chrome instead of
+   the accent, with ⋯ for the arrow.
+   AND NO PULSE. The turn token pulses because the turn MOVED and that is news.
+   Four seats thinking at once is a state, not an event, and three chips
+   flashing in unison is the loudest thing on the felt saying the least. */
+.turn-token--waiting {
+  /* The panel surface, not the accent and not a translucent chip: this sits on
+     a seat plate in both themes and a wash of white-on-white was invisible in
+     the light one. */
+  background: var(--panel-bg);
+  box-shadow: 0 0 0 1px var(--panel-border);
+}
+.turn-token--waiting::before { animation: none; }
+.turn-token--waiting::after {
+  content: "\2026"; /* … */
+  color: var(--panel-text);
+  font-size: 0.6rem;
+  /* The ellipsis sits on its own baseline; nudged up so it reads as centred in
+     a 0.95rem circle rather than as three dots resting on the rim. */
+  align-items: flex-start;
+  line-height: 0.7;
+}
+
+/* The ring the acting seat wears, quietened for the same reason. A gold halo
+   round three chairs at once is the turn cue three times over; a plain lift and
+   a neutral rule says "these seats are still choosing" without claiming any of
+   them is on turn. */
+.seat--committing {
+  box-shadow: 0 0 0 1px var(--chip-border), 0 4px 14px var(--panel-shadow);
+}
+.seat--committing .seat__name { font-weight: 600; text-shadow: none; }
+.seat--committing .seat__name::after { content: none; }
+
+
+/* ------------------------------------------------------------------ *
+ * Table moments: the banner and the trick's aftermath
+ * ------------------------------------------------------------------ */
+
+/* Decorative by construction (#log is the live region saying the same thing),
+   so it can sit above the table and be theatrical. */
+#event-banner {
+  position: fixed;
+  left: 50%;
+  /* A RESERVED BAND, MEASURED — not a percentage of the window. `top: 34%` is
+     a number about the phone rather than about the table: on Thirteen at
+     375x812 it put the pill at 276px and the combination pile begins at 277px,
+     so the sentence covered the cards it was describing (#149). showBanner
+     measures the opponent row, the centre piles and the felt's middle and sets
+     `--banner-top` to the one strip that holds no rank corner; the percentage
+     survives only as the value before the first measurement. */
+  top: var(--banner-top, 34%);
+  transform: translate(-50%, -50%);
+  /* ABOVE THE CARDS IN FLIGHT (#fly-layer, one below), and it used to be under
+     them. The gather that follows a trick flies four copies scaled up through
+     the middle of the felt, which is exactly where this pill sits — so a
+     message was cut in half mid-word by a card on its way to somebody's pile
+     (#125 item 52). The banner is the sentence; the gather is the decoration
+     that illustrates it, and a decoration does not get to redact its own
+     caption. Still below the modals at 10: a scoreboard opened over the felt
+     covers everything on it, banner included. */
+  z-index: 9;
+  padding: 0.55rem 1.3rem;
+  border-radius: 999px;
+  font-weight: 700;
+  font-size: 1rem;
+  /* IT WRAPS NOW. `white-space: nowrap` meant a long sentence ("… played four
+     consecutive pairs") grew sideways across the whole felt to stay on one
+     line, which is the other half of the same bug. ~28ch of text plus the
+     pill's own padding, never wider than the window.
+
+     `width: max-content` is not decoration. An absolutely positioned box with
+     `left: 50%` and no `right` shrink-to-fits into the room between 50% and the
+     right edge — HALF the window — so as soon as the text was allowed to wrap
+     it wrapped at 187px on a phone and "Nell played a pair" became three lines.
+     max-content asks for the sentence's own width and lets max-width be the
+     only thing that shortens it. */
+  width: max-content;
+  max-width: min(28ch + 2.6rem, calc(100vw - 2rem));
+  line-height: 1.25;
+  text-align: center;
+  overflow-wrap: break-word;
+  pointer-events: none;
+  background: var(--panel-bg);
+  color: var(--panel-text);
+  border: 1px solid var(--panel-border);
+  box-shadow: 0 8px 24px var(--panel-shadow);
+}
+#event-banner[hidden] { display: none; }
+
+/* NO BAND WIDE ENOUGH FOR THE SENTENCE AS IT WRAPPED — Hearts at 375x812
+   leaves 37px between the opponent row and the trick. One line, a step
+   smaller, ellipsised: a truncated sentence is recoverable (#log carries it
+   whole, and it is the live region), and a covered rank is not. Applied by
+   showBanner, which then re-measures; see bannerBand in celebrations.js. */
+#event-banner.event-banner--tight {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 0.82rem;
+  padding: 0.3rem 0.95rem;
+  max-width: min(34ch, calc(100vw - 1.5rem));
+}
+
+/* The id selector above sets the neutral coat; the tones must out-rank it. */
+#event-banner.event-banner--good {
+  background: #2c6e49;
+  color: #fff;
+  box-shadow: 0 0 0 2px var(--accent), 0 8px 24px var(--panel-shadow);
+}
+#event-banner.event-banner--bad { background: #8c2740; color: #fff; }
+#event-banner.event-banner--neutral { opacity: 0.92; }
+
+/* ONE SOURCE FOR THE HOLD. `--banner-hold` is set by showBanner from
+   BANNER_HOLD_MS (src/ui/celebrations.js) — the entrance and the timer that
+   hides the pill are the same number, and the fallback below is pinned to that
+   constant by tests/eventBanner.test.js so the pair cannot drift. */
+.event-banner--in { animation: banner-in var(--banner-hold, 2200ms) cubic-bezier(0.2, 0.9, 0.3, 1) both; }
+.event-banner--bad.event-banner--in {
+  animation: banner-in var(--banner-hold, 2200ms) cubic-bezier(0.2, 0.9, 0.3, 1) both,
+             banner-shake 0.5s ease-in-out 0.15s;
+}
+
+/* THE ENTRANCE MUST STAY INSIDE THE BAND THE PLACEMENT RESERVED (#149). The
+   first frame used to be `translate(-50%, -30%)`: a rise off the table, which
+   put the pill 0.125 of its own height BELOW where it comes to rest — 6px for
+   a two-line sentence and 8.5px for cribbage's longest, straight back over the
+   rank corner the measurement had just cleared. (The felt probe caught it on
+   three cribbage samples, grazing by 1.4-3.4px, after the placement itself was
+   clean on all five packs.) It grows in place instead: every frame of the
+   entrance is inside the resting rect, and the only travel left is the exit's
+   drift upward, into the gap under the seat row, which is chrome rather than a
+   card. `bannerBand`'s clearance covers the 1.05 overshoot and that drift. */
+@keyframes banner-in {
+  0% { opacity: 0; transform: translate(-50%, -50%) scale(0.85); }
+  12% { opacity: 1; transform: translate(-50%, -50%) scale(1.05); }
+  18% { transform: translate(-50%, -50%) scale(1); }
+  82% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, -64%) scale(0.95); }
+}
+
+/* A PILL WHOSE MIDDLE IS A PERSON (#180). At the Manual rung a trick hold ends
+   on a tap rather than a clock, and the sentence naming the winner has to stand
+   for as long as the four cards do — `banner-in` would have faded it out two
+   seconds into an open-ended pause and left the player looking at an unexplained
+   trick, which is the bug this fixed wearing the other trouser leg.
+
+   IT IS NOT A LONGER ANIMATION AND IT IS NOT A LOOP (cardstock#24). The pill
+   ARRIVES on `banner-enter` — `banner-in`'s own first 18%, renormalised, so the
+   entrance is the same movement at the same speed — and then NOTHING runs: a
+   static box holding the resting transform through `both`. `releaseBanner`
+   (src/ui/celebrations.js) swaps in `banner-leave` when the hold ends, which is
+   the other 18%, and hides the pill when that has played. `--banner-fade` is
+   BANNER_FADE_MS, and the fallback below is pinned to it by
+   tests/eventBanner.test.js exactly as the hold's is. */
+.event-banner--held { animation: banner-enter var(--banner-fade, 396ms) cubic-bezier(0.2, 0.9, 0.3, 1) both; }
+.event-banner--bad.event-banner--held {
+  animation: banner-enter var(--banner-fade, 396ms) cubic-bezier(0.2, 0.9, 0.3, 1) both,
+             banner-shake 0.5s ease-in-out 0.15s;
+}
+.event-banner--out { animation: banner-leave var(--banner-fade, 396ms) cubic-bezier(0.2, 0.9, 0.3, 1) both; }
+
+/* The two ends of banner-in, on their own. Every frame obeys the same rule the
+   entrance does — inside the rect bannerBand reserved, with only the exit's
+   drift upward into the chrome under the seat row — and eventBanner.test.js
+   holds all three keyframe sets to it. */
+@keyframes banner-enter {
+  0% { opacity: 0; transform: translate(-50%, -50%) scale(0.85); }
+  67% { opacity: 1; transform: translate(-50%, -50%) scale(1.05); }
+  100% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+
+@keyframes banner-leave {
+  0% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, -64%) scale(0.95); }
+}
+
+@keyframes banner-shake {
+  0%, 100% { margin-left: 0; }
+  25% { margin-left: -8px; }
+  55% { margin-left: 6px; }
+  80% { margin-left: -3px; }
+}
+
+/* ------------------------------------------------------------------ *
+ * THE SHOW CARD (#152) — src/ui/showCard.js
+ * ------------------------------------------------------------------ *
+ *
+ * What the banner used to say in one sentence, drawn: the name, the five cards
+ * and one row per combination with its points.
+ *
+ * IN #felt-middle RATHER THAN FIXED TO THE VIEWPORT, which is the one thing
+ * worth reading this block for. #event-banner is `position: fixed; top: 34%`
+ * and fine as a pill, but this is a panel — at 375x812 a fixed one sized to its
+ * contents lands wherever the contents put it, and what is directly below 34%
+ * on a phone is the fan. Parented to the felt's middle and inset to it, the
+ * card is bounded by the row it sits in: it cannot reach the hand at any
+ * viewport, because the hand is not in this box.
+ *
+ * The middle is 191px of slack at 375x812 during the play (measured for the
+ * board, see #136 above) and the piles under it are what the card covers — the
+ * played cards it is COUNTING, which the player has just watched go down. The
+ * `max-height: 100%` plus the scroll on the combination list is what holds the
+ * promise that it fits without the page scrolling: on the narrowest felt the
+ * rows give up the room, never the cards or the total.
+ *
+ * BATTERY RULE (cardstock#24): one 220ms fade-and-rise on arrival, and then it
+ * is still. The highlight is a transition on a class, not a keyframe.
+ */
+#show-card {
+  position: absolute;
+  inset: 0;
+  z-index: 8;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* The felt underneath stays readable around the card, and the card itself is
+     what takes the pointer — the rows are pokeable (`wireHighlight`). */
+  pointer-events: none;
+}
+#show-card[hidden] { display: none; }
+
+.show-card {
+  pointer-events: auto;
+  box-sizing: border-box;
+  max-width: min(20rem, 100%);
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.6rem 0.75rem;
+  border-radius: 0.8rem;
+  background: var(--panel-bg);
+  color: var(--panel-text);
+  border: 1px solid var(--panel-border);
+  box-shadow: 0 10px 30px var(--panel-shadow);
+  animation: show-card-in 220ms ease-out both;
+}
+
+@keyframes show-card-in {
+  from { opacity: 0; transform: translateY(0.5rem) scale(0.97); }
+  to { opacity: 1; transform: none; }
+}
+
+.show-card__title {
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  opacity: 0.8;
+}
+
+.show-card__faces {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.2rem;
+  flex: none;
+  /* A reveal (src/engine/scoring.js) can be a whole Thirteen hand; cribbage's
+     five never wrapped and still do not. */
+  flex-wrap: wrap;
+  max-width: min(88vw, 30rem);
+}
+
+.show-card__face {
+  /* Sized off the felt's own card variable so the card steps down with
+     everything else on a narrow screen (see #table). Small enough that five of
+     them and the starter's gap fit inside 20rem at any of those sizes. */
+  width: calc(var(--hand-card-w) * 0.62);
+  flex: none;
+  border-radius: 3px;
+  transition: transform 140ms ease-out, filter 140ms ease-out;
+}
+.show-card__face svg { display: block; width: 100%; height: auto; }
+
+/* The cut belongs to nobody, so it stands off the four that are somebody's. */
+.show-card__face--starter { margin-left: 0.45rem; }
+
+/* THE COMBINATION UNDER THE FINGER, and only its cards. Lifted and ringed
+   rather than dimming the others: dimming four cards to emphasise two is a
+   bigger change to the picture than the question deserves, and the ring is the
+   accent the felt already uses for "this is the one".
+
+   THE RING IS AN OUTLINE, not a drop-shadow. It was written
+   `drop-shadow(0 0 0 2px var(--accent))` — and `drop-shadow()` takes at most
+   three lengths (x, y, blur), so the fourth made the whole `filter` invalid
+   and the cascade dropped BOTH shadows in silence: the computed filter on a
+   lit face was `none` and the highlight was a 3px lift and nothing else. An
+   outline cannot fail that way, it follows the face's own corner radius, and
+   it costs no filter pass on five card faces. */
+.show-card__face--lit {
+  transform: translateY(-0.2rem);
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  filter: drop-shadow(0 3px 6px var(--card-shadow));
+}
+
+.show-card__parts {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  /* The half that gives way on a short felt — the cards and the total never
+     do. `min-height: 0` is what lets it actually shrink inside the column. */
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.show-card__part {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.1rem 0.25rem;
+  border-radius: 0.3rem;
+  font-size: 0.82rem;
+  cursor: default;
+  transition: background-color 140ms ease-out;
+}
+.show-card__part:hover { background: var(--chip-bg); }
+.show-card__part-name::first-letter { text-transform: uppercase; }
+.show-card__part-points { font-weight: 700; font-variant-numeric: tabular-nums; }
+
+.show-card__total {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.25rem 0.25rem 0;
+  border-top: 1px solid var(--panel-border);
+  font-size: 0.9rem;
+}
+.show-card__total-label {
+  text-transform: uppercase;
+  font-size: 0.62rem;
+  letter-spacing: 0.06em;
+  opacity: 0.75;
+}
+.show-card__total-points {
+  font-weight: 800;
+  font-size: 1.15rem;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+/* NINETEEN: the traditional name for a hand worth nothing, and the reason a
+   zero is not printed here. It is the one number five cards cannot make, so a
+   player who sees the word knows exactly what happened. */
+.show-card__nineteen {
+  align-self: center;
+  padding: 0.15rem 0.5rem;
+  font-size: 1rem;
+  font-weight: 700;
+  font-style: italic;
+  opacity: 0.75;
+}
+
+/* The winner's cards glow when a trick lands well; your own hand flinches
+   when the trick you just took was full of points. */
+.zone-celebrate { animation: zone-celebrate 0.9s ease-out; }
+.zone-lament { animation: zone-lament 0.55s ease-in-out; }
+
+@keyframes zone-celebrate {
+  0%, 100% { filter: none; }
+  35% { filter: drop-shadow(0 0 14px var(--accent)); }
+}
+
+@keyframes zone-lament {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-7px); }
+  55% { transform: translateX(5px); }
+  80% { transform: translateX(-3px); }
+}
+
+/* The suit — or colour — the table is playing to.
+ *
+ * This is the one badge on the felt that is NOT a label. Every other pile badge
+ * counts something you could also see by looking at the pile; this one carries
+ * a rule that exists nowhere else on the table. After an eight the discard shows
+ * the suit the card WAS, and the suit everyone must now follow lives only here.
+ * At 0.72rem in a grey pill it read as a footnote to the card it sat under, and
+ * across a room or on a phone held at arm's length it did not read at all.
+ *
+ * So it stops being type and becomes a MEDALLION: the glyph at chip size, in
+ * the suit's own ink, on a round chip that borrows the felt's chrome colours so
+ * it works in both themes. It is the size of a real suit marker on a table.
+ *
+ * Only a four-suit glyph gets the medallion — `[data-suit]` is set by table.js
+ * and only for a suit describe.js recognised. A pack whose active value is a
+ * WORD ("Red", in Wildfire) keeps the pill, because a word blown up to 1.6rem
+ * would be wider than the pile it belongs to; the swatch below is what carries
+ * a colour instead. */
+.pile-count--match { font-size: 0.78rem; }
+
+.pile-count--match[data-suit] {
+  display: grid;
+  place-items: center;
+  width: 2.3rem;
+  height: 2.3rem;
+  /* Overrides the base cap, which exists so a badge cannot decide the pile's
+     column width. A fixed 2.3rem cannot either — it is narrower than --pile-w
+     at every breakpoint, phones included. */
+  max-width: none;
+  margin-top: 0.35rem;
+  padding: 0;
+  border-radius: 50%;
+  font-size: 1.55rem;
+  /* The glyph is the whole box: no leading, or the chip grows a chin. */
+  line-height: 1;
+  color: var(--chrome-text);
+  box-shadow: 0 2px 6px var(--card-shadow);
+}
+
+.pile-count--match[data-suit="hearts"],
+.pile-count--match[data-suit="diamonds"] { color: var(--suit-red); }
+
+/* The colour a wild left behind.
+ *
+ * The discard's badge already writes the word (zoneBadge); this is the
+ * swatch that makes it readable without reading. It appears ONLY when the top
+ * card cannot show the colour itself — see activeMatchTint() — so a dot on the
+ * badge means "a wild chose this", not merely "this is a discard pile". */
+.pile-count--active-match {
+  /* `flex`, never `inline-flex`: the pile stack above is an inline-block
+     button, so an inline-level badge flows ALONGSIDE it instead of sitting
+     under it — the same trap the base .pile-count rule documents. Block-level
+     flex keeps the auto margins that centre it. */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.32rem;
+  border: 1px solid color-mix(in srgb, var(--active-tint, var(--accent)) 65%, transparent);
+}
+
+/* Sized like the suit medallion above, for the same reason: this dot IS the
+   rule in a pack that matches on colour, so it is the thing to see first and
+   the word beside it is the caption. */
+.pile-count--active-match::before {
+  content: "";
+  width: 0.95rem;
+  height: 0.95rem;
+  flex: none;
+  border-radius: 50%;
+  background: var(--active-tint, var(--accent));
+  box-shadow: 0 0 8px color-mix(in srgb, var(--active-tint, var(--accent)) 60%, transparent);
+}
+
+/* Play has turned round. Absent until it does — see directionBadge().
+ *
+ * A REVERSE IS THE BIGGEST THING A SINGLE CARD DOES IN WILDFIRE — it changes
+ * whose problem the next card is — and this used to report it at 1.05rem and
+ * 75% opacity in a corner, quieter than the seat names it sits above. It is now
+ * an emblem: the same medallion as the suit badge, in the accent, big enough to
+ * catch the eye when it appears and to answer "which way is it going?" without
+ * being hunted for afterwards.
+ *
+ * Still corner-parked and still pointer-transparent — it is a sign on the wall,
+ * not a control, and the seats own the middle of that row. */
+.direction-badge {
+  position: absolute;
+  top: -0.1rem;
+  right: 0.15rem;
+  display: grid;
+  place-items: center;
+  width: 2.4rem;
+  height: 2.4rem;
+  border-radius: 50%;
+  font-size: 1.7rem;
+  line-height: 1;
+  color: var(--accent);
+  background: var(--chip-bg);
+  border: 1px solid var(--chip-border);
+  box-shadow: 0 2px 6px var(--card-shadow);
+  pointer-events: none;
+}
+
+/* An action card washing across the felt.
+ *
+ * The pack-level "background effect": a skip, a reverse or a Draw 4 changes
+ * the game more than any ordinary card and used to look exactly like one. It
+ * is a pseudo-element rather than a background transition on #table itself,
+ * because the felt's background is three stacked gradients a pack may replace
+ * and this must not be one of the layers they have to preserve.
+ *
+ * --flash-tint is set per event (a wild washes in the colour that was chosen)
+ * and falls back to the theme accent. A pack that wants a different flourish
+ * restyles .table-flash; one that wants none sets its animation to none.
+ *
+ * #table is already `position: relative` (see the rail block above), which is
+ * what this is inset in. */
+#table::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  opacity: 0;
+  background: radial-gradient(
+    ellipse at 50% 45%,
+    color-mix(in srgb, var(--flash-tint, var(--accent)) 55%, transparent),
+    transparent 70%
+  );
+}
+
+.table--flash::after { animation: table-flash 0.62s ease-out; }
+
+@keyframes table-flash {
+  0% { opacity: 0; }
+  22% { opacity: 0.55; }
+  100% { opacity: 0; }
+}
+
+/* ------------------------------------------------------------------ *
+ * The countdown to the next hand (#150)
+ * ------------------------------------------------------------------ *
+ *
+ * An outline filling in around the Deal button, and no digits anywhere. What a
+ * player needs off this is "something is about to happen, and roughly how
+ * soon"; a number turns a glance into arithmetic, and a number that counts down
+ * from 2 is a number nobody finishes reading.
+ *
+ * ONE SHOT, ALWAYS. The animation runs once, `forwards`, and the class is taken
+ * off the moment the sheet closes (src/ui/panels.js hideRoundSummary) — there
+ * is no state in which this is still ticking with nothing to count down to.
+ * Under reduced motion or the power saver it is not animated at all: the
+ * outline is simply drawn, whole and still, and the timer fires exactly when it
+ * would have (cardstock#24).
+ *
+ * The geometry is set from JS because it is a measurement, not a constant: the
+ * button is as wide as "Deal round 11" happens to be, and a dash array has to
+ * be the real perimeter of the real pill or the fill runs short or spills.
+ */
+.deal-ring-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+/* SIZED EXPLICITLY, not by `inset`. An `<svg>` is a REPLACED element with a
+   default intrinsic size of 300x150, and an absolutely-positioned replaced box
+   with `width: auto` takes that intrinsic size rather than the one its insets
+   describe — `inset: 1px` measured 288x144 over a 138x39 button, so the ring
+   was drawn a long way off the thing it was meant to be around. */
+/* INSET FAR ENOUGH TO BE WHOLLY ON THE BUTTON. A stroke centred on the
+   button's own edge spends half its width on the panel behind it, and the
+   panel is cream in the light theme — so half the ring was white on cream and
+   the whole indicator read as a smudge there while looking fine in the dark.
+   Two pixels in, and the ring is a groove in the action colour in both. */
+.deal-ring {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: calc(100% - 4px);
+  height: calc(100% - 4px);
+  overflow: visible;
+  /* The ring is decoration ON the button: every pointer that lands here is
+     meant for the button underneath it. */
+  pointer-events: none;
+}
+.deal-ring[hidden] { display: none; }
+
+.deal-ring__track,
+.deal-ring__fill {
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+/* The unfilled part. `--action-text` is what sits ON the action colour, so this
+   reads as a groove in the button in either theme rather than a second colour
+   introduced beside it. */
+.deal-ring__track {
+  stroke: var(--action-text);
+  opacity: 0.35;
+}
+
+.deal-ring__fill {
+  stroke: var(--action-text);
+  opacity: 0.85;
+  stroke-dasharray: var(--deal-ring-len);
+  /* At rest the fill is not drawn at all — 0%, the track alone. */
+  stroke-dashoffset: var(--deal-ring-len);
+}
+
+.deal-ring--running .deal-ring__fill {
+  animation: deal-ring-fill var(--deal-ring-ms, 2500ms) linear forwards;
+  animation-iteration-count: 1;
+}
+
+/* Reduced motion and power saving: the mark without the movement. The ring is
+   drawn whole, saying "this deals itself", and the timer still fires. */
+.deal-ring--static .deal-ring__fill {
+  stroke-dashoffset: 0;
+  opacity: 0.5;
+}
+
+@keyframes deal-ring-fill {
+  from { stroke-dashoffset: var(--deal-ring-len); }
+  to { stroke-dashoffset: 0; }
+}
+
+/* The rung, changeable at the moment you feel it. Deliberately the quietest
+   thing on the panel: it is an adjustment, not a decision, and the two buttons
+   above it are the decisions. */
+.round-pace {
+  display: block;
+  margin: 0.9rem auto 0;
+  padding: 0.3rem 0.5rem;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--panel-text);
+  font: inherit;
+  font-size: 0.8rem;
+  opacity: 0.6;
+  cursor: pointer;
+}
+.round-pace:hover { opacity: 1; }
+.round-pace[hidden] { display: none; }
+
+/* ------------------------------------------------------------------ *
+ * The last card, before the results
+ * ------------------------------------------------------------------ *
+ *
+ * Everything about this element is about NOT covering the table. It is fixed
+ * and full-bleed only so the bar can be pinned to the bottom edge without the
+ * felt's own layout deciding where that is; it has no scrim, and it is
+ * pointer-transparent everywhere except the bar itself — so a player can still
+ * hold the winning card to inspect it while the results wait.
+ *
+ * Below the modals (z-index 10) and above the felt, because a scoreboard opened
+ * from the status bar is still a thing that should land on top of this. */
+#final-look {
+  position: fixed;
+  inset: 0;
+  z-index: 9;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 0 1rem 1.1rem;
+  pointer-events: none;
+}
+#final-look[hidden] { display: none; }
+
+.final-look__bar {
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.2rem;
+  padding: 0.7rem 1.2rem 0.85rem;
+  border-radius: 14px;
+  text-align: center;
+  background: var(--panel-bg);
+  color: var(--panel-text);
+  border: 1px solid var(--panel-border);
+  box-shadow: 0 10px 34px var(--panel-shadow);
+  animation: final-look-in 0.4s cubic-bezier(0.2, 0.9, 0.3, 1) both;
+}
+
+.final-look__result {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 700;
+}
+
+/* The caption the whole pause exists for: what the last card was, and whose it
+   was. Quieter than the result because you are meant to read it while looking
+   at the card itself, which is still sitting on the discard behind this. */
+.final-look__play {
+  margin: 0 0 0.45rem;
+  font-size: 0.85rem;
+  opacity: 0.75;
+}
+.final-look__play[hidden] { display: none; }
+
+#final-look-continue {
+  font: inherit;
+  padding: 0.5rem 1.2rem;
+  border-radius: 8px;
+  border: none;
+  cursor: pointer;
+  background: var(--action-bg);
+  color: var(--action-text);
+  font-weight: 600;
+}
+#final-look-continue:hover { background: var(--action-bg-hover); }
+#final-look-continue:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+@keyframes final-look-in {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ------------------------------------------------------------------ *
+ * Game over
+ * ------------------------------------------------------------------ */
+
+.game-over-fan {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 1rem;
+  height: 84px;
+}
+.game-over-fan__card {
+  width: 60px;
+  display: block;
+}
+.game-over-fan__card:nth-child(1) { transform: rotate(-14deg) translate(14px, 4px); }
+.game-over-fan__card:nth-child(2) { transform: translateY(-4px); z-index: 1; }
+.game-over-fan__card:nth-child(3) { transform: rotate(14deg) translate(-14px, 4px); }
+.game-over-fan__card .card-face { width: 60px; }
+
+#game-over-message {
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin-bottom: 0.35rem;
+}
+#game-over-record {
+  font-size: 0.85rem;
+  opacity: 0.7;
+  margin-bottom: 1.25rem;
+  min-height: 1.1em;
+}
+#play-again-button {
+  font: inherit;
+  padding: 0.7rem 1.5rem;
+  border-radius: 8px;
+  border: none;
+  cursor: pointer;
+  background: var(--action-bg);
+  color: var(--action-text);
+  font-weight: 600;
+}
+#play-again-button:hover { background: var(--action-bg-hover); }
+
+/* Only a win gets the flourish. A loss showing the same celebration is worse
+   than showing nothing. */
+.game-over--won .game-over-fan__card {
+  animation: cascade-in 0.45s cubic-bezier(0.2, 0.9, 0.3, 1) both;
+}
+.game-over--won .game-over-fan__card:nth-child(2) { animation-delay: 0.07s; }
+.game-over--won .game-over-fan__card:nth-child(3) { animation-delay: 0.14s; }
+
+@keyframes cascade-in {
+  from { opacity: 0; transform: translateY(-70px) rotate(0deg) scale(0.8); }
+}

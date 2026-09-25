@@ -31,6 +31,7 @@ import { flightDurationMs, FLIGHT_MS, FLIGHT_MIN_MS, FLIGHT_MAX_MS } from "../sr
 import { SKILL_LEVELS } from "../src/ui/difficulty.js";
 import { PACE_LEVELS } from "../src/ui/pace.js";
 import { SETTINGS_DEFAULTS } from "../src/arcade/storage.js";
+import { tableCss } from "./fixtures/tableCss.js";
 
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), "utf8");
 
@@ -218,7 +219,7 @@ test("index.html carries the chip, in the bar, with its own label element", () =
     "the rung's word needs its own node, or painting it would wipe the glyph beside it");
   // The bar may never wrap (its own comment), and #status-text is the item that
   // gives. A fourth flexible item would let the bar choose which one ellipsises.
-  const css = read("src/ui/table.css");
+  const css = tableCss();
   const rule = css.match(/\n\.speed-chip \{[\s\S]*?\n\}/);
   assert.ok(rule, ".speed-chip must style itself — there is no #status-bar button rule to inherit");
   assert.match(rule[0], /flex: 0 0 auto/,

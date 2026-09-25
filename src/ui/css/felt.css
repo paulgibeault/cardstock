@@ -1,0 +1,1385 @@
+/* THE FELT — the middle of the table: the board, the play row, the contract
+ * strip and the contract ladder, the piles, the staging tray, the hand, the
+ * compact piles and melds on a seat, and dragging.
+ *
+ * File 4 of 11 — read after seats.css, before cards.css. The
+ * order is the cascade; tokens.css says why and repo-gates.test.js pins it. */
+
+/* ------------------------------------------------------------------ *
+ * THE BOARD (#136)
+ * ------------------------------------------------------------------ *
+ *
+ * One road, every seat on it, in the middle of the felt where the play is —
+ * replacing the two 88px tracks that used to draw the same road twice, small,
+ * on the opponent's plate and inside the status bar's own chip. The component
+ * is src/ui/sharedBoard.js and it knows nothing about cribbage; this is the
+ * slot it lands in.
+ *
+ * WHERE IT SITS IS DECIDED BY THE FLEXBOX, NOT BY A BREAKPOINT, and that is
+ * the one interesting thing about this block. Measured on the felt at
+ * v0.1.62: during the play at 1280x860 the whole column has 33px of spare
+ * height — #felt-middle is 221px around 172px of piles and the row gap costs
+ * 16 of the 49px difference — so a board UNDER the piles at a desktop size
+ * pushes #table-screen past the window and breaks the one thing this issue
+ * had to leave alone. At 375x812 the same measurement is 191px of slack and
+ * 332px of width, which is 98px less than the piles and the count already
+ * take: there is no room BESIDE them on a phone and plenty under.
+ *
+ * So the board declares a minimum width and lets the middle wrap: it sits
+ * beside the piles wherever the row can hold it (which is every desktop, and
+ * is also what Paul asked for — "next to the played card slots") and drops
+ * onto its own full-width line directly under them where it cannot. One
+ * layout, one rule, and the awkward middle widths resolve themselves.
+ *
+ * `flex-wrap` is switched on by a class the renderer adds only when a board is
+ * actually drawn, so every other pack's middle is the single unwrapped row it
+ * has always been — a wrapping middle would let Milestones' contract ladder
+ * fall under the piles on a narrow window, which is a layout nobody asked for.
+ */
+#felt-middle.felt-middle--boarded,
+#felt-middle.felt-middle--tabled {
+  flex-wrap: wrap;
+  /* `stretch` is the default and it spreads the two lines to fill the middle,
+     which put 74px of empty felt between the piles and the board they belong
+     to and read as two unrelated things. Centred, the board sits DIRECTLY
+     under the piles and the pair centres in the middle's slack together. */
+  align-content: center;
+}
+
+#table-board {
+  /* Grows into whatever the row has left, up to a road worth reading; below
+     the basis the middle wraps it under the piles instead of squeezing it. */
+  flex: 1 1 17rem;
+  max-width: 38rem;
+  display: flex;
+  min-width: 0;
+}
+#table-board[hidden] { display: none; }
+
+/* THE COLUMNS ARE FIXED, AND THAT IS WHAT MAKES THE SCALE HONEST. The street
+   numbers are printed once under both lanes, positioned as a percentage of the
+   road — so the box they are a percentage OF has to be the same box the rails
+   are, which it can only be if the mark, the name and the value take the same
+   width on every lane. A name column sized to its content would put the "30"
+   half a street away from hole 30 on the lane with the longer name, which is
+   worse than not numbering the road at all. Named here so the phone block
+   below can spend the width differently without re-deriving the arithmetic. */
+.board {
+  --board-mark: 1.05rem;
+  --board-name: 4.2rem;
+  --board-value: 1.9rem;
+  --board-gap: 0.3rem;
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.35rem 0.5rem 0.3rem;
+  border-radius: 10px;
+  background: var(--chip-bg);
+  border: 1px solid var(--chip-border);
+}
+
+/* One lane: whose it is, the road, and the number at the end of it. The lanes
+   are in ring order with your own nearest the hand, which is the order the
+   renderer hands them over in — nothing here reorders anything. */
+.board__lane {
+  display: flex;
+  align-items: center;
+  gap: var(--board-gap);
+  min-width: 0;
+}
+
+/* THE ROSTER'S MARK, the same circle the seat plate and the trick's owner tags
+   wear (.trick-owner) — "this is a player" is one vocabulary wherever it turns
+   up. The rim is the partnership rule those tags already use: your own lane
+   takes the accent, a partner's takes the partner colour, everyone else takes
+   the surface they sit on. */
+.board__mark {
+  flex: 0 0 var(--board-mark);
+  height: var(--board-mark);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 2px solid var(--chip-border);
+  font-size: 0.58rem;
+  line-height: 1;
+  overflow: hidden;
+}
+.board__lane--mine .board__mark { border-color: var(--accent); }
+.board__lane--partner .board__mark { border-color: var(--partner); }
+
+.board__name {
+  flex: 0 0 var(--board-name);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 0.66rem;
+  font-weight: 600;
+  opacity: 0.85;
+}
+
+/* The road. The ticks are a repeating gradient rather than 24 elements, and
+   the percentages are computed by sharedBoard.js from the road's own length —
+   so a mark is a HOLE, five holes apart at every width, and not a pixel rhythm
+   that happens to look like a scale. The street gradient is the same trick at
+   thirty holes, painted stronger and full height so the eye has four landmarks
+   on a road that is only a couple of hundred pixels long.
+
+   The edge is an inset shadow and not a border ON PURPOSE: `left: n%` on a peg
+   is a percentage of the rail's PADDING box, and a 1px border makes that box
+   1px narrower at each end than the scale line underneath, which is the same
+   class of mistake as #124's — a percentage measured against a box that is not
+   the one the reader sees. */
+.board__rail {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 4rem;
+  height: 0.5rem;
+  border-radius: 999px;
+  background: var(--chip-bg);
+  box-shadow: inset 0 0 0 1px var(--chip-border);
+  background-image:
+    repeating-linear-gradient(to right,
+      var(--board-street-ink) 0 1px, transparent 1px var(--board-street, 100%)),
+    repeating-linear-gradient(to right,
+      var(--board-tick-ink) 0 1px, transparent 1px var(--board-tick, 100%));
+  background-size: 100% 100%, 100% 52%;
+  background-position: 0 0, 0 50%;
+  background-repeat: no-repeat, no-repeat;
+}
+
+/* Both pegs are the seat's own colour — the roster's, never a manifest's
+   (§7b) — so which lane is whose survives being read at a glance. The back peg
+   is the same ink at a third of the weight, which is how a real board says
+   "this is where you were before the last hand" without a second hue. */
+.board__peg {
+  position: absolute;
+  top: 50%;
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  box-shadow: 0 0 0 1.5px var(--panel-bg);
+  /* The move itself, and the only motion on this component. `left` rather than
+     a transform because the peg's position IS a left offset in percent of the
+     rail. No @keyframes anywhere here: a peg moves once and then sits still, so
+     there is nothing for --arcade-pulse-count to cap (§6d). */
+  transition: left 320ms ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .board__peg { transition: none; }
+}
+.board__peg--front { z-index: 1; }
+.board__peg--back { opacity: 0.42; }
+
+/* Both pegs in the same hole is where every seat starts and where it sits
+   until its first score. Nudged apart rather than stacked invisibly, the same
+   way .seat__track does it. */
+.board__lane[data-together="true"] .board__peg--back {
+  transform: translate(-90%, -50%);
+}
+
+.board__value {
+  flex: 0 0 var(--board-value);
+  text-align: right;
+  font-size: 0.78rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The streets, numbered once under both lanes rather than on each of them —
+   which is how a real board is printed, and which costs one row of 11px
+   instead of two. The margins are the lane's own columns, so this line spans
+   exactly the rails above it. The road's own length closes it on the right,
+   because "45" is not a position until you know what it is out of, and the
+   lanes print only the first half of that. */
+.board__scale {
+  position: relative;
+  height: 0.72rem;
+  margin-left: calc(var(--board-mark) + var(--board-name) + var(--board-gap) * 2);
+  margin-right: calc(var(--board-value) + var(--board-gap));
+  font-size: 0.55rem;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.62;
+}
+.board__scale-num {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+}
+.board__target {
+  position: absolute;
+  top: 0;
+  right: 0;
+  transform: translateX(calc(var(--board-gap) + var(--board-value)));
+  font-weight: 700;
+  opacity: 0.9;
+}
+
+/* The rail's two inks are theme vocabulary and live with the rest of it, in
+   the theme blocks at the head of this file — both themes painted, neither a
+   tint of the other. */
+
+/* A NARROW BOARD, NOT A NARROW WINDOW, and the difference is the whole reason
+   this is a container query. Because the board sits beside the piles wherever
+   the row can hold it, its width is not a function of the viewport's: at
+   1280x860 it is 608px, at 820x860 it is 334px BESIDE the piles, and at
+   768x1024 it is 608px again UNDERNEATH them. A viewport breakpoint would
+   dress the 608px board at 768 as though it were the 334px one.
+
+   What gives way is the name. A lane is read by its coloured mark first — the
+   same mark the seat plate and the trick's owner tags wear — so what a cramped
+   board spends on four more letters it is taking directly off the thing the
+   component exists to draw, and the name is on the lane's accessible name
+   either way. Measured: at 375x812 this takes the road from 188px to 223px,
+   and at 820x860 from 187px to 220px. */
+#table-board { container-type: inline-size; container-name: board; }
+
+@container board (max-width: 430px) {
+  .board {
+    --board-name: 2.6rem;
+    --board-value: 1.6rem;
+    --board-gap: 0.25rem;
+    padding: 0.3rem 0.35rem 0.25rem;
+  }
+  .board__name { font-size: 0.62rem; }
+  .board__value { font-size: 0.72rem; }
+}
+
+/* ------------------------------------------------------------------ *
+ * THE PLAY ROW (#138)
+ * ------------------------------------------------------------------ *
+ *
+ * Every seat's copy of a `table` zone, side by side and full size, with the
+ * count that belongs to them at the end of the line. One sequence, one place.
+ *
+ * WHY IT IS A WRAPPER AND NOT TWO FLEX ITEMS. The middle wraps (see the board
+ * above), and two items with their own flex bases are separated by the first
+ * line break that lands between them — which at 375px, where the middle is
+ * 332px and the spreads want 230 of it, is every time. Wrapped together they
+ * are one item and cannot be split.
+ *
+ * A WHOLE LINE, and only when there are spreads on it. `--zoned` is what makes
+ * the wrapper full width; a pack with a table counter and no `table` zone
+ * keeps the content-sized slot beside the piles that #table-counters has
+ * always been, and a pack with neither has the wrapper `hidden`.
+ *
+ * At 1280x860 the middle's first line is already 1078px of its 1221 (piles
+ * 361, board 608, the gaps) so a 430px play row could only join it by
+ * squeezing the board's road from 608px to under 300 — the whole point of
+ * #136 — and the second line costs nothing the row above the hand was not
+ * already spending. At 375x812 nothing beside the piles fits at all. */
+.table-play {
+  flex: 0 0 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(0.4rem, 2vw, 1.5rem);
+}
+.table-play[hidden] { display: none; }
+.table-play--zoned { flex: 1 1 100%; }
+
+/* Side by side rather than stacked, and measured: two spreads one above the
+   other are 218px of a 375px felt's middle, which during the play has 168 to
+   give once the piles and the board have theirs. Side by side they are 230px
+   WIDE in a 332px middle and cost one row's height between them. `wrap` for
+   the table that has more than two seats' worth to show, though no pack
+   declares one today. Bottom-aligned so the spreads sit on one line whatever
+   their captions do. */
+#table-zones {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  flex-wrap: wrap;
+  row-gap: 0.3rem;
+  /* THE GAP IS A FRACTION OF A CARD, and it has to be: `.pile-stack--spread`
+     reserves 2.11 card widths and four cards at the 0.51 overlap are 2.53 of
+     them, so a full spread hangs 0.21 of a card over each end of its own box.
+     Two of them side by side with an ordinary 8px gutter therefore OVERLAP by
+     14px at 375px — the first card of your sequence drawn under the last card
+     of theirs, which is the one confusion this whole row exists to remove.
+     0.6 clears both overhangs (0.42) and leaves a real gutter between them at
+     every card size: 31px at 375px, 57px at 1280. */
+  column-gap: calc(var(--pile-w, 90px) * 0.6);
+  min-width: 0;
+}
+
+.table-zone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+/* WHOSE SPREAD THIS IS. The roster's mark and the seat's name, in the same
+   vocabulary the plate, the board's lane and the trick's owner tag already
+   wear — a mark is how a player is identified everywhere on this felt, so it
+   is how they are identified here. A HEAD rather than a tag per card: every
+   card in one seat's pile has the same owner, and four copies of one answer is
+   noise the trick's fan needs and this row does not.
+   Capped at the spread's own width so a long name cannot widen the column and
+   push its neighbour off the line. */
+.table-zone__head {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  max-width: calc(var(--pile-w, 90px) * 2.11);
+  min-width: 0;
+}
+
+.table-zone__mark {
+  flex: 0 0 auto;
+  width: 1.05rem;
+  height: 1.05rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 2px solid var(--chip-border);
+  font-size: 0.55rem;
+  line-height: 1;
+  overflow: hidden;
+}
+/* Your own and your partner's, in the rim colours the seat plate's bottom rule
+   and the trick tag already use. */
+.table-zone--mine .table-zone__mark { border-color: var(--accent); }
+.table-zone--partner .table-zone__mark { border-color: var(--partner); }
+
+.table-zone__name {
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  opacity: 0.85;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* WHAT THE TABLE IS COUNTING, beside the piles it is counted off.
+   A column, like the ladder on the other side, and sized to its content so it
+   cannot push the piles off centre. Hidden with no reserved slot for every
+   pack that declares no `tableCounters`, which is all of them but one.
+
+   With the play spreads on the felt (#138) it rides at the end of THEIR line
+   rather than beside the starter — the count is the sum of the cards in those
+   two piles and of nothing else on the table.
+
+   Big, because it is arithmetic the player would otherwise be doing in their
+   head off two spread piles — at a count of 30 with three cards greyed out,
+   this number is the whole explanation. No animation of any kind: it changes
+   with every card and a pulse on every card is a strobe (§6d). */
+.table-counters {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.table-counters[hidden] { display: none; }
+
+.table-counter {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.05rem;
+  padding: 0.3rem 0.6rem;
+  border-radius: 10px;
+  background: var(--chip-bg);
+  border: 1px solid var(--chip-border);
+}
+.table-counter__label {
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.7;
+}
+.table-counter__value {
+  font-size: 1.5rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.05;
+}
+
+@media (max-width: 560px) {
+  .table-counter { padding: 0.2rem 0.45rem; }
+  .table-counter__value { font-size: 1.15rem; }
+}
+
+#center-piles {
+  flex: 1;
+  /* Without this a flex child refuses to shrink below its content, so adding
+     any fixed-height row above (the contract ladder) pushes the hand off the
+     bottom of a short window instead of tightening the middle. */
+  min-height: 0;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  align-content: center;
+  flex-wrap: wrap;
+  gap: 0.5rem clamp(0.9rem, 3vw, 2.5rem);
+}
+
+/* The human's own piles (stock, discards, melds, won) sit just above the
+   hand — yours, within thumb's reach, mirroring the compact copies each
+   opponent seat wears. Absent entirely for hand-only packs. */
+#player-piles {
+  display: flex;
+  justify-content: center;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 0.4rem clamp(0.7rem, 2.5vw, 1.6rem);
+}
+#player-piles:empty { display: none; }
+
+/* THE PILES AND THE TRAY SHARE A ROW ON A SHORT WINDOW (#137).
+ *
+ * The felt is a stack of bands and it was taller than the window for the whole
+ * of a staging phase: at 1280x860 Cribbage's crib discard measured 931px of
+ * #table-screen against 860 of viewport and Pinochle's meld declaration 921,
+ * so the hand sat below the fold and the first pick SCROLLED the felt under
+ * the finger that made it. Two of those bands are the same thing said twice —
+ * #player-piles is "yours, above the hand" and so is #stage-row — and on a
+ * window with width to spare they fit side by side. Sharing the row gives back
+ * the shorter band plus the gap above it: 931 -> 860 and 921 -> 860, both
+ * inside the window with 61px going back to #felt-middle.
+ *
+ * MEASURED AGAINST THE OTHER TWO CANDIDATES, not chosen. Shrinking the empty
+ * slot fits the felt (860) but the first staged card then grows the row and
+ * shoves the fan 71px down the table — the exact thing #stage-row's own note
+ * forbids, reproduced. Stepping the felt's gaps and padding down is not enough
+ * on its own: 0.625rem/0.75rem/0.5rem still leaves Cribbage 20px over, and the
+ * depth that does fit (0.375rem gaps, a 4px margin) is TIGHTER THAN THE 660px
+ * BLOCK at the bottom of this sheet, which would invert the ladder's
+ * "each block below is a tighter constraint" rule for every pack at every
+ * short window, to buy one phase 71px.
+ *
+ * THE PILES KEEP THE FELT'S CENTRE LINE. A pile is a place on the table and a
+ * place does not move because something landed on it (see .pile-stack--overlap
+ * above) — so the piles sit in a centre column with equal 1fr gutters either
+ * side, and the tray lives in the right-hand one. Centring the two as one
+ * group instead was measured and rejected: the empty tray's 8rem minimum is
+ * wider than the one card that replaces it, so the first pick slid the piles
+ * 21px sideways. The tray takes the handed side, the same side as the button
+ * that commits it.
+ *
+ * `display: contents` is the resting state, so the wrapper has no box and the
+ * felt's flex column is byte-identical to what it was at every other size —
+ * 375x812 included, which is the size this pass must not touch.
+ *
+ * THE ONE CONDITION IS THE PILES, AND IT ASKS WHETHER THEY DRAW ANYTHING. A
+ * pack with nothing above the hand has no centre column to sit beside, and a
+ * lone tray sent to a gutter reads as a tray shoved into a corner — measured
+ * on Milestones, whose tray moved 318px off the felt's centre line before this
+ * condition was tightened. `#player-piles:empty` is not the question: it is
+ * `:empty` only for the hand-only packs (Thirteen, Wildfire, Crazy Eights),
+ * while Milestones keeps a `.meld-strip` in it from the deal that is 0x0 until
+ * something is laid down. So `:has` asks for a child that is itself not empty,
+ * which is true of a pile, a my-seat strip and a meld strip with chips in it,
+ * and false of the placeholder. A hidden TRAY needs no condition of its own:
+ * the piles are in the centre column either way, so the felt looks the same
+ * whether the phase gathers or not.
+ *
+ * The height gate is where the overflow is, measured pack by pack: the felt
+ * fits unaided at 800px and below (the `max-height: 800px` block already
+ * spends the gaps and the card size on it) and again from about 1056px up,
+ * where the window is finally taller than the bands; in between, Cribbage is
+ * over by 87px at 820 falling to 3px at 1050. Above the gate the row would
+ * cost a band of height nothing needs and hand it to the middle as empty
+ * green, so it stays a stack there. */
+#player-row { display: contents; }
+
+@media (min-width: 721px) and (max-height: 1060px) {
+  #player-row:has(> #player-piles > :not(:empty)) {
+    display: grid;
+    /* Equal gutters, so the centre column is centred on the felt however wide
+       the tray in the one beside it grows. */
+    grid-template-columns: 1fr auto 1fr;
+    align-items: end;
+    /* The felt's own gap, for the announce and emote bars when they show. */
+    row-gap: 1rem;
+    column-gap: clamp(0.7rem, 2.5vw, 1.6rem);
+  }
+  /* These three are written unguarded on purpose: `grid-column` does nothing
+     at all to a flex item, so they are inert in the resting `display: contents`
+     state and there is no second copy of the selector above to keep in step
+     with it. `order` is NOT one of them — flex honours it — so the left-handed
+     rule below carries the guard. */
+  /* A line of their own, above the piles, exactly where they were in the
+     stack. Auto-placement then puts the piles on the next line and the tray
+     beside them, so a bar appearing does not change what shares a row. */
+  #player-row > #announce-bar,
+  #player-row > #emote-bar { grid-column: 1 / -1; }
+  #player-row > #player-piles { grid-column: 2; }
+  /* Stretched across its gutter rather than sized to its contents, which is
+     what lets the tray inside it shrink instead of wrap (below) — and it means
+     the tray grows out from the gutter's centre, a point that does not move,
+     rather than from an edge. */
+  #player-row > #stage-row { grid-column: 3; }
+  /* Handedness: the tray belongs on the side the thumb and the commit button
+     are already on. Column 1 rather than 3 — and `order` puts it before the
+     piles so grid's placement cursor, which only ever moves forward, still
+     lands the pair on one line. */
+  [data-handedness="left"] #player-row:has(> #player-piles > :not(:empty)) > #stage-row {
+    grid-column: 1;
+    order: -1;
+  }
+
+  /* THE TRAY KEEPS ONE LINE, AND BUYS IT FROM THE CARDS.
+     A gutter is narrower than the whole felt, and the tray takes whatever a
+     pack lets a player gather — Pinochle's Declare accepts anything from one
+     card to a whole twelve-card hand, measured. Left to wrap, the tray grew a
+     third line at the ninth card, the row grew past what #felt-middle could
+     give back, and the felt jumped 100px with the hand on it: the same sin in
+     the same place, moved from the first pick to the ninth.
+     So in the shared row the tray does not wrap — it narrows its cards, which
+     is the trade the `max-height: 660px` block at the foot of this sheet
+     already makes for this exact element ("smaller cards here, not a
+     collapsing row"). It is a continuous one: six staged cards are still a
+     full 74px at 1280, and five are 67px at 1041; nothing on the felt moves at
+     any count, at any width the gate lets in. */
+  #player-row:has(> #player-piles > :not(:empty)) > #stage-row #stage-tray {
+    flex-wrap: nowrap;
+  }
+  /* This is the whole mechanism: a flex item's automatic minimum is its
+     min-content, and a card's min-content is the card. Zeroed here (and only
+     here) the row of them can be shrunk to the gutter. The tray keeps its own
+     `min-width` rules, so an EMPTY tray is still the 8rem dashed outline that
+     says "cards go here". */
+  #player-row:has(> #player-piles > :not(:empty)) > #stage-row .stage-card {
+    min-width: 0;
+  }
+  /* The wrapper is what shrinks; the card follows it and keeps its aspect from
+     its own viewBox. */
+  #player-row:has(> #player-piles > :not(:empty)) > #stage-row .stage-card .card-face {
+    max-width: 100%;
+  }
+}
+
+.pile { text-align: center; }
+
+/* YOUR OWN SEAT'S NUMBERS (#123).
+ *
+ * Every seat but yours wears a plate; yours is the hand, the rail and the
+ * piles, so what you promised had nowhere to be shown and was not shown. This
+ * is that plate's one honest row, sitting with your own piles rather than
+ * across the felt — and labelled, because unlike a plate's badges it is read
+ * once a hand rather than glanced at every turn.
+ *
+ * Aligned to the bottom of the pile row (align-items: flex-end above), so the
+ * chips sit level with the pile badges beside them. */
+.my-seat {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem;
+  margin-bottom: 0.5rem;
+}
+
+.my-seat__chip {
+  display: flex;
+  align-items: baseline;
+  gap: 0.3rem;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  background: var(--chip-bg);
+  border: 1px solid var(--chip-border);
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.my-seat__name {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.72;
+}
+
+.my-seat__value { font-weight: 700; }
+
+/* The promise itself is the loud one: it is the number the whole hand is played
+   against, and the bags beside it are what it has already cost. */
+.my-seat__chip[data-counter="bid"] {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--chip-border));
+}
+
+/* What is left on the felt once the words moved to the inspector and the
+   accessible name: the count. A pile that spells out "Discard (7)" under
+   itself is louder than a real one, and the label never told you anything the
+   pile's own picture did not (src/ui/describe.js). */
+/* `width: fit-content` + auto margins, NOT display:inline-block — the pile
+   stack is itself an inline-block <button>, so an inline-block badge flows
+   alongside it on the same line instead of sitting under it. That put every
+   count to the RIGHT of its own pile, which reads as belonging to the pile
+   next door. A block box that shrinks to its text keeps the pill shape and
+   stays where it belongs. */
+.pile-count {
+  display: block;
+  width: fit-content;
+  /* Capped to the pile it labels, so the BADGE can never be what decides how
+     much room the pile's column takes. An empty pile wears its name ("Discard
+     2") and a filled one wears a number, and letting the wider of those two
+     set the column meant a row of piles re-laid-out the moment a card landed
+     on one. `--pile-w` is a real length inherited from #table, so this is a
+     definite cap and a long name wraps onto a second line instead. */
+  max-width: var(--pile-w, 90px);
+  margin: 0.5rem auto 0;
+  padding: 0.05rem 0.45rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  background: var(--chip-bg);
+  border: 1px solid var(--chip-border);
+}
+
+/* THE PILE'S OWN WORD, BACK ON THE FELT. It was dropped the instant a card
+   landed, which left a Thirteen table showing two spread stacks wearing `2` and
+   `28` with nothing to say which was the trick and which was the graveyard
+   (#122 item 18). The word is the part that identifies the pile and the number
+   is the part that moves, so the word leads and is drawn quieter — this is one
+   badge, not two, and it stays inside the same `--pile-w` cap. */
+.pile-count__name {
+  display: block;
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  opacity: 0.72;
+}
+.pile-count__value { display: block; }
+
+/* A pile whose badge is the STANDING COMBINATION rather than a count
+   (`zoneFocus`). It is a rule in force, like the active suit is, so it is inked
+   in the accent — but it is prose and not a glyph, so it keeps the pill. */
+.pile-count--focus {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--chip-border));
+  color: var(--accent);
+}
+.pile-count--focus .pile-count__value { font-weight: 800; }
+
+/* Piles stack in place: every card sits at the same spot, so the discard can
+   keep a few cards of history under the top one and the draw pile can look as
+   deep as it actually is. The 1:1.4 ratio is the card's own 100:140 aspect. */
+.pile-stack {
+  position: relative;
+  width: var(--pile-w, 90px);
+  height: calc(var(--pile-w, 90px) * 1.4);
+  margin: 0 auto;
+}
+
+/* The draw pile is a button (index.html): reaching for the stock is how you
+   draw at a real table. It is disabled whenever drawing is not a legal move,
+   so the pile lighting up is the "you're stuck" cue. */
+button.pile-stack {
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  color: inherit;
+  cursor: default;
+  border-radius: 8px;
+  transition: transform 0.18s ease;
+}
+
+button.pile-stack:not(:disabled) { cursor: pointer; }
+button.pile-stack:not(:disabled):hover { transform: translateY(-4px); }
+button.pile-stack:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+
+/* The beckon: a fading ring, per "Pulsing without repainting" above. The host
+   is `.pile-stack > *`, already `position: absolute; inset: 0`, so the ring
+   lands on the card's own box.
+
+   THE ACCENT RING UNDER IT IS THE RESTING TREATMENT, and it is the one this
+   table was missing: a ready pile used to be told apart from an idle one by
+   the pulse and nothing else, so the moment the pulse stopped — under reduced
+   motion then, and after --arcade-pulse-count iterations now — "you may play
+   here" became invisible. Accent rather than --glow, and wider than the 2px
+   --source ring below, because a pile that wants your card must out-rank a
+   pile you may merely draw from. */
+.pile-stack--ready .pile-stack__top {
+  border-radius: 8px;
+  box-shadow: 0 0 0 3px var(--accent);
+}
+.pile-stack--ready .pile-stack__top::after {
+  border-radius: 8px;
+  box-shadow: 0 0 0 5px var(--glow);
+  --ring-duration: 1.8s;
+}
+
+/* A pile whose top card can be picked up as a SOURCE (Stockpile's stock and
+   discards). Quieter than --ready: it answers "where can I play from?"
+   without competing with the beckon that answers "where can this card go?". */
+.pile-stack--source .pile-stack__top {
+  border-radius: 8px;
+  box-shadow: 0 0 0 2px var(--glow);
+}
+
+/* The picked-up source: the card visibly leaves the pile and waits. */
+.pile-stack--picked {
+  transform: translateY(-6px);
+}
+.pile-stack--picked .pile-stack__top {
+  border-radius: 8px;
+  box-shadow: 0 0 0 3px var(--accent);
+}
+
+/* z-index, not just source order: ::after below is a sibling that paints AFTER
+   every real child, so without this the depth cue draws a dark slab over the
+   top card of the pile. */
+.pile-stack > * {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+}
+
+.pile-stack .card-face { width: 100%; }
+
+/* The edges of the cards underneath. Two is enough to read as "a lot left" —
+   this is a depth cue, not a count. */
+.pile-stack--deep::before,
+.pile-stack--deep::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 8px;
+  background: #d8d8d2;
+  border: 1px solid var(--card-shadow);
+  z-index: 0;
+}
+.pile-stack--deep::before { transform: translate(3px, 3px); }
+.pile-stack--deep::after { transform: translate(1.5px, 1.5px); }
+
+.card-face--empty {
+  width: 100%;
+  height: 100%;
+  border-radius: 8px;
+  border: 2px dashed var(--chip-border);
+}
+
+.pile-stack__card {
+  transform: rotate(var(--stack-tilt, 0deg));
+}
+.pile-stack__card svg { transition: opacity 0.15s ease; }
+
+/* A trick is not a pile. Every card in it is live information about who played
+   what, so it spreads out and stays readable instead of burying itself. The
+   slot widens to hold the spread rather than letting cards fall off it. */
+.pile-stack--spread {
+  width: calc(var(--pile-w, 90px) * 2.11);
+}
+.pile-stack--spread .pile-stack__card {
+  left: 50%;
+  right: auto;
+  width: var(--pile-w, 90px);
+  margin-left: calc(var(--pile-w, 90px) / -2);
+  transform: translateX(calc(var(--stack-index, 0) * var(--pile-w, 90px) * 0.51)) rotate(var(--stack-tilt, 0deg));
+}
+/* AND NO DEPTH CUE UNDER IT. `--deep` draws two grey slabs across the pile's
+   whole box to say "there are more cards under this one", which is the right
+   thing for a discard and meaningless for a trick — every card in a trick is
+   already showing. Worse, it was VISIBLE: the spread box is 2.11 card widths
+   and three cards cover about 2.02 of them, so the third trick of every hand
+   drew a grey card-shaped slab in the gap at the right-hand end, which reads as
+   a face-down fourth card that nobody played. */
+.pile-stack--spread.pile-stack--deep::before,
+.pile-stack--spread.pile-stack--deep::after { content: none; }
+
+/* WHOSE CARD THAT IS. A tag on the bottom-left corner of each card in the
+   trick, carrying the same mark and the same name that seat wears on its plate
+   — one vocabulary for "this is a player", wherever it turns up.
+   ON THE LEFT, because the fan overlaps by half and the strip of each card that
+   is not covered by the next one is its left half. Capped at that half's width
+   for the same reason: a wider pill would reach under its neighbour's tag.
+   NO TILT. The cards each carry a small random rotation (--stack-tilt) and a
+   caption inheriting it would be four labels at four angles; the tag takes the
+   translation and leaves the rotation on the card.
+   Decorative — aria-hidden, and the pile's own accessible name says the same
+   thing in play order (src/ui/zoneRenderer.js). */
+.trick-owner {
+  left: 50%;
+  right: auto;
+  top: auto;
+  /* On the card's bottom-left corner, so it sits on the paper rather than in
+     the felt's gaps — the card is the thing it is labelling. */
+  bottom: 0.25rem;
+  width: 1.1rem;
+  height: 1.1rem;
+  margin-left: calc(var(--pile-w, 90px) / -2 + 0.22rem);
+  transform: translateX(calc(var(--stack-index, 0) * var(--pile-w, 90px) * 0.51));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 2px solid var(--panel-bg);
+  box-shadow: 0 1px 3px var(--card-shadow);
+  font-size: 0.6rem;
+  line-height: 1;
+  pointer-events: none;
+  /* Above the cards, which all sit at z-index 1 (see .pile-stack > *). */
+  z-index: 2;
+}
+/* YOUR SIDE, in the colour the seat plate's bottom rule already uses. "Is my
+   side winning this trick?" is the question a partnership player is actually
+   asking of the middle of the felt, and a mark that only said WHICH PLAYER left
+   them one lookup short of it. */
+.trick-owner--partner { border-color: var(--partner); }
+.trick-owner--mine { border-color: var(--accent); }
+
+/* ------------------------------------------------------------------ *
+ * The contract strip (src/ui/contractStrip.js)
+ * ------------------------------------------------------------------ */
+
+/* One row, above the middle of the felt, for a pack whose template answers
+   `contractChips` — the high bid and its holder during an auction, then the
+   trump suit, the contract and your own meld. Hidden for every other pack, so
+   nobody else's felt loses the height. */
+.contract-strip {
+  display: flex;
+  justify-content: center;
+  align-items: stretch;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  /* Negative block margins claw back most of #table's 1rem row gap: this strip
+     is chrome about the hand, and it must not cost the felt a card's worth of
+     height on a phone. */
+  margin: -0.35rem 0 -0.4rem;
+}
+.contract-strip[hidden] { display: none; }
+
+.contract-chip {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.16rem 0.5rem;
+  border-radius: 999px;
+  background: var(--chip-bg);
+  border: 1px solid var(--chip-border);
+  color: var(--chrome-text);
+}
+/* THE SUIT IN FORCE IS THE LOUD ONE. Trump governs every card played for the
+   rest of the hand; the contract and the meld are numbers you check. */
+.contract-chip[data-chip="trump"] {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+/* THE SUIT IS FREE NOW, and it stays said (#151). The break used to be silent
+   in every sense: no sentence, no mark, and a player found out by discovering
+   that leading a spade was suddenly allowed. The banner says it once; this says
+   it for the rest of the hand, and it is drawn in the accent for the same
+   reason trump is — it governs every lead from here on.
+
+   The word is the value rather than the label so it takes the bold slot: the
+   chip reads "SPADES **Broken**" and the half worth reading at a glance is the
+   half in ink. Filled rather than ringed, because there is no second state to
+   tell it apart from — the chip either exists or it does not.
+
+   One shot on arrival, and the resting state is the whole chip: the mark
+   APPEARING is what the eye is meant to catch, and it never pulses again
+   (cardstock#24). */
+.contract-chip[data-chip="broken"] {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 18%, var(--chip-bg));
+  animation: contract-chip-in 260ms ease-out both;
+}
+@keyframes contract-chip-in {
+  from { opacity: 0; transform: translateY(-0.25rem); }
+  to { opacity: 1; transform: none; }
+}
+/* The pack's own card, at strip size (src/ui/cardStyles/chooser.js). */
+.contract-chip__art {
+  width: 1.05rem;
+  height: 1.47rem;
+  flex: none;
+  border-radius: 2px;
+  box-shadow: 0 1px 2px var(--card-shadow);
+}
+.contract-chip__body { display: flex; align-items: baseline; gap: 0.3rem; }
+.contract-chip__label {
+  font-size: 0.6rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.75;
+}
+.contract-chip__value { font-size: 0.85rem; font-weight: 700; }
+.contract-chip__who {
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
+  font-size: 0.7rem;
+  padding-left: 0.35rem;
+  border-left: 1px solid var(--chip-border);
+}
+.contract-chip__mark {
+  width: 0.85rem;
+  height: 0.85rem;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.55rem;
+}
+
+/* WHICH OF THESE CARDS AM I ACTUALLY ANSWERING? On a pile that holds a whole
+   trick in sequence, that is the one question, and the pile used to answer it
+   with a count of every card in it (#122 item 18). Where the template names a
+   focus (`zoneFocus`), the standing combination is ringed in the accent — the
+   same ring the hint drew, which was the only place on the felt that ever said
+   this — and everything the trick has already answered falls back to being
+   history behind it.
+
+   A ring and a fade, not a filter: both are cheap, both survive `prefers-
+   reduced-motion`, and neither costs a composited layer per card. */
+.pile-stack__card--live {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-radius: 8px;
+  z-index: 2;
+}
+.pile-stack__card--spent { opacity: 0.42; }
+
+/* ------------------------------------------------------------------ *
+ * Overlapping piles
+ * ------------------------------------------------------------------ */
+
+/* A pile can fan instead of stacking, so every card in it shows its own value
+   rather than only the top one. Which piles do is a PACK decision
+   (`ui.zoneOverlap`), not a template one — Stockpile's personal discards want
+   to be read at a glance, a Crazy Eights discard is genuinely just a pile.
+   The box RESERVES the room a full fan needs rather than growing into it.
+   Sizing it to the cards actually present made every discard re-centre the
+   row it sits in — `#center-piles` and `#player-piles` both centre and wrap —
+   so playing a card visibly shoved its neighbours sideways. A pile is a place
+   on the table, and a place does not move because something landed on it. The
+   slot count is fixed (DISCARD_DEPTH − 1, written by buildPileNode); only
+   --overlap-index, which positions the cards inside it, still varies. */
+.pile-stack--overlap-v {
+  height: calc(var(--pile-w, 90px) * 1.4 + var(--overlap-slots, 0) * var(--pile-w, 90px) * 0.34);
+}
+.pile-stack--overlap-v .pile-stack__card {
+  top: calc(var(--overlap-index, 0) * var(--pile-w, 90px) * 0.34);
+  bottom: auto;
+  height: calc(var(--pile-w, 90px) * 1.4);
+  transform: none;
+}
+
+.pile-stack--overlap-h {
+  width: calc(var(--pile-w, 90px) + var(--overlap-slots, 0) * var(--pile-w, 90px) * 0.42);
+}
+.pile-stack--overlap-h .pile-stack__card {
+  left: calc(var(--overlap-index, 0) * var(--pile-w, 90px) * 0.42);
+  right: auto;
+  width: var(--pile-w, 90px);
+  transform: none;
+}
+
+/* The depth slabs are a stacking cue and read as debris behind a fan. */
+.pile-stack--overlap-v.pile-stack--deep::before,
+.pile-stack--overlap-v.pile-stack--deep::after,
+.pile-stack--overlap-h.pile-stack--deep::before,
+.pile-stack--overlap-h.pile-stack--deep::after { display: none; }
+
+/* ------------------------------------------------------------------ *
+ * The hand
+ * ------------------------------------------------------------------ */
+
+/* ------------------------------------------------------------------ *
+ * The staging tray
+ * ------------------------------------------------------------------ */
+
+/* Where cards wait between being chosen and being committed — a meld you are
+ * assembling, the three you are passing.
+ *
+ * The row keeps a FIXED HEIGHT whether or not it holds anything. It sits above
+ * the hand, so a tray that appeared when the first card was picked would shove
+ * the fan down mid-gesture, which is precisely the kind of thing this pass
+ * exists to stop. It costs a strip of felt and buys a board that does not move
+ * while you are using it.
+ *
+ * Cards here are full size and side by side, not fanned: the point of the tray
+ * is that what you have gathered is READABLE, which is the one thing a closed
+ * fan cannot offer.
+ *
+ * The fixed height was only ever half the promise, though: the row itself
+ * still left the flex column whenever the human could not stage, and in a
+ * contract-rummy game that is TWICE PER TURN — every seat draws (no staging)
+ * and then melds (staging), for the bots as much as for you, so this strip of
+ * felt was flickering in and out under the hand for the whole match (#13). So
+ * the slot now belongs to the PHASE, not to whose turn it is: reserved for as
+ * long as anybody could be gathering cards, and `--empty` — invisible, but
+ * still holding its ground — when the human is not one of them. */
+#stage-row {
+  display: flex;
+  justify-content: center;
+  /* A card (1.4 × its own width), the tray's 0.35rem of padding top and
+     bottom, and the 1px the dashed outline costs on each edge — that last
+     term is easy to forget and worth exactly the 2px jump the first gathered
+     card used to make. */
+  min-height: calc(var(--hand-card-w, 70px) * 1.4 + 0.7rem + 2px);
+  transition: opacity 0.3s ease, visibility 0.3s;
+}
+#stage-row[hidden] { display: none; }
+#stage-row.stage-row--empty { opacity: 0; visibility: hidden; }
+
+#stage-tray {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  padding: 0.35rem 0.5rem;
+  border-radius: 12px;
+  border: 1px dashed var(--chip-border);
+}
+/* Empty, the tray is a dotted outline saying "cards go here" rather than an
+   invisible gap that appears to do nothing. */
+#stage-tray:empty { border-style: dashed; opacity: 0.45; min-width: 8rem; }
+
+/* THE TRAY SAYING NO. A gathered selection the engine will not take used to
+   look exactly like one it would — same dashed outline, same cards — while the
+   commit button quietly went away (#122 item 19). A solid warning edge is the
+   glanceable half of the answer; the sentence is in the button's name, the
+   tray's name and #log. No animation: this state can last as long as the
+   player leaves the cards there, and a tray that keeps shaking is a tray that
+   is shouting. */
+#stage-tray.stage-tray--refused {
+  border-style: solid;
+  border-color: var(--danger-bg);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--danger-bg) 45%, transparent);
+}
+
+.stage-card {
+  display: block;
+  cursor: pointer;
+  transition: transform 0.15s ease;
+}
+.stage-card:hover { transform: translateY(-3px); }
+.stage-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 6px; }
+.stage-card .card-face {
+  display: block;
+  width: var(--hand-card-w, 70px);
+  filter: drop-shadow(0 0 5px var(--glow)) drop-shadow(0 3px 4px var(--card-shadow));
+}
+
+/* ------------------------------------------------------------------ *
+ * Dragging (src/ui/dragController.js)
+ * ------------------------------------------------------------------ */
+
+/* touch-action on the CARDS only, never on the felt: a drag must not be
+   hijacked by the page's own scroll, and a pan across the table still has to
+   scroll on a small screen. */
+.draggable { touch-action: none; }
+
+/* Selection during a drag used to be suppressed here, for the drag that
+   crossed a score sheet and highlighted it on the way past. It is suppressed
+   for the whole app now (see :root, near the top), which covers this case and
+   the ones a drag was never involved in. */
+body.is-dragging .card-face { cursor: grabbing; }
+
+.drag-ghost {
+  /* Lifted off the felt: a shade bigger, a shade tilted, and a real shadow —
+     the card is in your hand, not on the table.
+   *
+   * `will-change` is worth its cost on exactly this element and nowhere else:
+   * it is the ONE node whose transform changes every frame for as long as a
+   * finger is down, so promoting it to its own compositor layer up front means
+   * a drag never repaints the table underneath it. Putting it on cards in
+   * general would do the opposite — forty promoted layers is forty times the
+   * texture memory on a phone, for cards that are not moving. */
+  transform-origin: center;
+  z-index: 12;
+  will-change: transform;
+}
+.drag-ghost .card-face {
+  /* A big soft drop-shadow filter under a card being redrawn at pointer rate
+     was the most expensive thing in a drag frame. Same shape, as a shadow the
+     compositor can draw. */
+  box-shadow: 0 14px 22px var(--card-shadow);
+  transform: scale(1.06) rotate(-2deg);
+}
+
+/* Somewhere this card may legally land. The ring is the same vocabulary a
+   ready pile already wears, one step louder. */
+.drop-target { position: relative; }
+.drop-target::after {
+  content: "";
+  position: absolute;
+  inset: -5px;
+  border-radius: 12px;
+  border: 2px dashed var(--accent);
+  opacity: 0.55;
+  pointer-events: none;
+  z-index: 3;
+}
+.drop-target--over::after {
+  opacity: 1;
+  border-style: solid;
+  box-shadow: 0 0 14px var(--accent);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+/* ------------------------------------------------------------------ *
+ * Compact piles on the seats, and melds
+ * ------------------------------------------------------------------ */
+
+/* A seat's own piles in miniature: enough to read an opponent's stock and
+   discards at a glance, never to interact with. */
+.seat__zones {
+  display: flex;
+  justify-content: center;
+  align-items: flex-end;
+  /* NOWRAP ON THE ROW, and it is load-bearing: wrapping is how a squeezed
+     seat used to dodge the fit ladder — the piles folded into extra rows, the
+     width stopped growing, and the row swore it fit while every plate on it
+     was visibly crushed. One line here means the seat's width is honest, the
+     ladder sees the overflow, and the seats minimize instead of squishing.
+     The open PLATE re-enables wrap below: stacking is fine in a popup that
+     owns its own height. */
+  flex-wrap: nowrap;
+  gap: 0.3rem;
+  margin-top: 0.4rem;
+}
+
+.seat__plate .seat__zones {
+  flex-wrap: wrap;
+  /* flex-END is right on the row, where piles of different heights should sit
+     on a common floor like real piles on a table. In the plate they WRAP, and
+     bottom-aligning wrapped rows staggers every pile against its neighbours
+     and floats the count badges to different heights. Top-aligned, a wrapped
+     row reads as a grid. */
+  align-items: flex-start;
+  row-gap: 0.6rem;
+}
+
+.pile--mini { --pile-w: var(--seat-pile-w, 34px); }
+.pile--mini .pile-stack { border-radius: 4px; }
+.pile--mini .card-face--empty { border-width: 1px; border-radius: 4px; }
+
+/* A hidden per-player pile (Hearts' won tricks) as a text chip: count and,
+   when the pack scores it, what it is costing so far. */
+.seat__pilechip {
+  font-size: 0.62rem;
+  padding: 0.12rem 0.4rem;
+  border-radius: 999px;
+  background: var(--chip-border);
+  white-space: nowrap;
+}
+
+/* A laid-down meld.
+ *
+ * These are the most INFORMATION-DENSE objects on the table and they used to
+ * be the least legible: 20px faces overlapped by 60% on an opponent's seat
+ * plate, which is a row of coloured slivers. A laid-down contract is public,
+ * permanent and the thing you plan your own turn around, so it now gets real
+ * card width, an overlap tuned so each card's own corner index stays visible,
+ * and a caption saying WHAT it is — "set of 3" — because the cards alone do
+ * not tell you which requirement they satisfied.
+ */
+.meld-strip {
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+/* On a seat plate in the ROW the strip may not wrap, for the same reason
+   .seat__zones may not (see its note): folding melds into a second line is a
+   seat lying to the fit ladder about its width. The player's own strip below
+   the felt keeps the wrap — it owns its row — and the popup plate re-enables
+   it, where stacking is the point. */
+.seat__zones .meld-strip { flex-wrap: nowrap; }
+.seat__plate .seat__zones .meld-strip { flex-wrap: wrap; }
+.meld-chip {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.15rem;
+  padding: 0.3rem 0.4rem;
+  border-radius: 8px;
+  border: 1px solid var(--chip-border);
+  background: var(--chip-bg);
+  cursor: default;
+  font: inherit;
+  color: inherit;
+}
+.meld-chip__cards { display: flex; align-items: center; }
+/* Overlap by ~45% rather than ~55%: the corner index lives in the left
+   quarter of a card face, so this is the point where every card in a meld
+   still announces its own rank. */
+/* THE OVERLAP IS DERIVED, NOT TUNED. Each card shows a sliver of the one under
+   it, and that sliver is a fraction of the card — so when the card grows the
+   margin has to grow with it or a scaled-up meld turns into a fan. 0.44 is the
+   ratio the hand-picked pairs were already at (32/-14, 26/-12). */
+.meld-chip__card { display: block; width: var(--meld-card-w, 32px); }
+.meld-chip__card:not(:first-child) { margin-left: calc(var(--meld-card-w, 32px) * -0.44); }
+.meld-chip__card .card-face { width: var(--meld-card-w, 32px); animation: none; }
+.meld-chip__label {
+  font-size: 0.58rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  opacity: 0.75;
+  white-space: nowrap;
+}
+.meld-chip--ready {
+  cursor: pointer;
+  border-color: var(--accent);
+}
+/* The same fading ring the ready piles wear — see "Pulsing without
+   repainting". Several chips can be ready at once, which made this the
+   highest-multiplicity of the four box-shadow animations. The accent
+   border-color above is the resting treatment once the ring has run out. */
+.meld-chip--ready::after {
+  border-radius: 8px;
+  box-shadow: 0 0 0 5px var(--glow);
+  --ring-duration: 1.8s;
+}
+.meld-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* The seat-plate copy is smaller, but only a little — it is still meant to be
+   READ from across the table, which is the whole point of the change. */
+/* One variable, and the width and the overlap both follow from it. */
+.meld-strip--mini { gap: 0.25rem; --meld-card-w: var(--seat-meld-w, 26px); }
+.meld-strip--mini .meld-chip { padding: 0.2rem 0.25rem; }
+.meld-strip--mini .meld-chip__label { font-size: 0.52rem; }
+
+/* An empty strip must not leave a mystery gap on the seat plate. */
+.meld-strip:empty { display: none; }
+
+/* ------------------------------------------------------------------ *
+ * The contract ladder (contract-rummy)
+ * ------------------------------------------------------------------ */
+
+/* WHERE EVERYONE IS IN THE RACE, at a glance and without a tap.
+ *
+ * Milestones is ten contracts long and every player is on their own rung —
+ * that per-player progression IS the game (design doc §13.3), and before this
+ * it was a two-character chip on a name plate. The ladder makes the whole
+ * course visible and puts each player's face on the rung they are actually
+ * standing on. Rendered only for packs that declare `rules.contracts`. */
+/* ONE LINE, ALWAYS. Ten rungs do not fit across a phone, and letting them wrap
+   cost the felt a whole row of height — the row the hand needs. The ladder is
+   truncated instead (ladderRungs in src/ui/interaction.js decides what may be
+   dropped), so `nowrap` here is the constraint that truncation exists to
+   satisfy rather than a hope that it fits. */
+#contract-ladder {
+  flex: none;
+  display: flex;
+  /* A COLUMN, and the truncation note above still applies — only the axis it
+     applies to has changed. Ten rungs never fitted across a phone; stacked,
+     they fit down almost anything, so ladderBudget now asks about height. */
+  flex-direction: column;
+  justify-content: center;
+  align-items: stretch;
+  flex-wrap: nowrap;
+  gap: 0.2rem;
+  max-height: 100%;
+}
+#contract-ladder[hidden] { display: none; }
+
+/* A run of collapsed rungs. Still a target: holding it names every contract it
+   stands for, and anyone standing in it rides along as a tucked pip — see
+   renderContractLadder for why that is what makes collapsing safe. */
+.ladder__gap {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 0.2rem;
+  padding: 0.1rem;
+}
+.ladder__gap-mark {
+  font-size: 0.75rem;
+  font-weight: 700;
+  opacity: 0.45;
+  letter-spacing: -0.05em;
+}
+/* Smaller than a rung's pip: these players are somewhere in here, not on a
+   named contract, and the size difference is what says so. */
+.ladder__pip--tucked {
+  width: 0.8rem;
+  height: 0.8rem;
+  font-size: 0.5rem;
+}
+
+/* A ROW now that the ladder is a column: number, requirement, then whoever is
+   standing there. Stacked rungs that each stacked their own contents again
+   made a tall narrow tower of very little; read across, a rung is one short
+   line and the ladder is a list you scan down. */
+.ladder__rung {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.3rem;
+  min-width: 0;
+  padding: 0.15rem 0.4rem;
+  border-radius: 8px;
+  background: var(--chip-bg);
+  border: 1px solid var(--chip-border);
+  font-size: 0.68rem;
+}
+/* The requirement is the wide part and the only elastic one, so it takes the
+   slack and the rungs all come out the same width. */
+.ladder__rung .ladder__req { margin-right: auto; }
+
+/* The rung the player is on, in the same gold everything "yours" wears. */
+.ladder__rung--mine {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+/* Rungs already behind you read as done rather than as pending — but the
+   DIMMING IS ON THE TEXT ONLY. Fading a whole rung would fade the players
+   still standing on it, and "who is behind me" is the single most useful
+   thing the ladder tells you. */
+.ladder__rung--past .ladder__no,
+.ladder__rung--past .ladder__req { opacity: 0.4; }
+.ladder__rung--past { background: transparent; }
+
+.ladder__no { font-weight: 700; font-variant-numeric: tabular-nums; opacity: 0.7; }
+.ladder__req { font-weight: 700; letter-spacing: 0.02em; white-space: nowrap; }
+
+.ladder__who {
+  display: flex;
+  gap: 0.1rem;
+  min-height: 1.1rem;
+  align-items: center;
+}
+
+/* The same face the seat plate wears, small enough to sit on a rung. */
+.ladder__pip {
+  width: 1.05rem;
+  height: 1.05rem;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.62rem;
+  font-weight: 700;
+  color: #fff;
+  box-shadow: inset 0 -1px 3px rgba(0, 0, 0, 0.3);
+}
+
+.ladder__key {
+  align-self: center;
+  font-size: 0.6rem;
+  opacity: 0.6;
+  white-space: nowrap;
+  padding: 0 0.2rem;
+}
+
+@media (max-width: 720px) {
+  .ladder__rung { min-width: 2.5rem; font-size: 0.62rem; padding: 0.2rem 0.25rem; }
+  .ladder__pip { width: 0.9rem; height: 0.9rem; font-size: 0.55rem; }
+  .ladder__key { display: none; }
+}
+
+/* Phones: the ladder cannot wrap, so what it gives up here is padding rather
+   than a row. maxRungs in ladderRungs is measured against these numbers. */
+@media (max-width: 420px) {
+  .ladder__rung { min-width: 2.2rem; padding: 0.18rem 0.2rem; }
+  .ladder__pip--tucked { width: 0.72rem; height: 0.72rem; }
+}

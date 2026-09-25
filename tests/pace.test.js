@@ -22,6 +22,7 @@ import {
   roundBeatPlan, SHOW_STEP_MS, MIN_HOLD_MS, trickRevealPlan, READ_AFTER_LANDING_MS,
 } from "../src/ui/roundBeat.js";
 import { SETTINGS_DEFAULTS } from "../src/arcade/storage.js";
+import { tableCss } from "./fixtures/tableCss.js";
 
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), "utf8");
 
@@ -710,7 +711,7 @@ test("the panel offers the cycling control and refuses to swallow End match", ()
 // No infinite animations, ever (cardstock#24). The ring is a countdown to a
 // thing that happens once, so it runs once.
 test("the countdown ring is one-shot and stops with the sheet", () => {
-  const css = read("src/ui/table.css");
+  const css = tableCss();
   // The SELECTOR appears twice — the animation, and the reduced-motion block's
   // override of it — so this pins the one that actually runs. The first draft
   // matched whichever came first in the file and passed on `animation: none`,

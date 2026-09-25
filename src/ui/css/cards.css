@@ -1,0 +1,120 @@
+/* THE CARD ITSELF — the vanilla face, its muted palette, the text rule every
+ * renderer draws numerals with, and a card in flight. Card faces are fixed
+ * across both themes on purpose: a card is an object on the table, not
+ * chrome, and it does not repaint when the room lights change.
+ *
+ * File 5 of 11 — read after felt.css, before moments.css. The
+ * order is the cascade; tokens.css says why and repo-gates.test.js pins it. */
+
+/* Card faces: fixed across themes on purpose — see the header. */
+/* An opaque edge, not black-at-13%: see the no-alpha rule at the top of
+   src/ui/cardStyles/shared.js. A painted vanilla card overrides the fill
+   below and keeps this edge, which reads as a printed border on all four. */
+.card-face__bg { fill: #fdfdfa; stroke: #dededa; }
+
+/* THE MUTED VANILLA CARD — one you cannot play.
+ *
+ * The other four styles bake their grey stock into the markup (dullPaper and
+ * dullInk in src/ui/cardStyles/shared.js). Vanilla does it here instead, and
+ * that is not an inconsistency: this style's colours have always lived in the
+ * stylesheet rather than in its markup, its output is pinned by tests, and it
+ * is deliberately the renderer that shipped before the style registry existed.
+ * So it gets the same two colours by the route it already themes itself with.
+ * Every value below is dullPaper()/dullInk() of the live one, computed once —
+ * and pinned to those functions by tests/cardStyles.test.js, because the one
+ * failure mode of copying a computed colour into a stylesheet is the day the
+ * function moves and the copy does not. (It had: the neutral index was still
+ * dullInk of a #3f3f46 that the live rule stopped using.) */
+.card-face--muted .card-face__bg { fill: #bec2bd; stroke: #b0b4af; }
+.card-face--muted.card-face--red .card-face__corner,
+.card-face--muted.card-face--red .card-face__pip { fill: #7a1212; }
+.card-face--muted.card-face--black .card-face__corner,
+.card-face--muted.card-face--black .card-face__pip { fill: #0b0b0b; }
+.card-face--muted.card-face--neutral .card-face__corner,
+.card-face--muted.card-face--neutral .card-face__pip { fill: #2d2d2d; }
+.card-face--muted.card-face--painted.card-face--red .card-face__bg { fill: #7f261c; }
+.card-face--muted.card-face--painted.card-face--yellow .card-face__bg { fill: #94751d; }
+.card-face--muted.card-face--painted.card-face--green .card-face__bg { fill: #1a733f; }
+.card-face--muted.card-face--painted.card-face--blue .card-face__bg { fill: #1f4974; }
+.card-face--red .card-face__corner,
+.card-face--red .card-face__pip { fill: #b91c1c; }
+.card-face--black .card-face__corner,
+.card-face--black .card-face__pip { fill: #111; }
+.card-face--red { --face: #b91c1c; }
+.card-face--black { --face: #111; }
+.card-face--neutral .card-face__corner,
+.card-face--neutral .card-face__pip,
+.card-face--neutral .card-face__badge { fill: #444; }
+
+.card-face--red .card-face__badge,
+.card-face--black .card-face__badge { fill: inherit; }
+
+/* px inside an SVG viewBox, deliberately (§5, design §17.7). These are user
+   units in a 100×140 coordinate space, so they scale with the CARD — which
+   scales with the layout — not with the launcher's font scale. A card whose
+   rank grew while the card did not would overflow its own corner. Chrome text
+   is rem throughout and does scale. */
+.card-face__corner { font-size: 16px; font-weight: 700; }
+.card-face__corner--sm { font-size: 12px; }
+.card-face__corner--xs { font-size: 9.5px; }
+.card-face__corner--br { text-anchor: end; }
+.card-face__pip { font-size: 34px; text-anchor: middle; opacity: 0.9; }
+.card-face__badge { font-size: 20px; font-weight: 700; text-anchor: middle; fill: #333; }
+
+/* Colored cards with NO SUIT (Wildfire, Milestones) get their face painted by
+   colour. The `--painted` qualifier is load-bearing: a diamond in a standard
+   deck also carries color:"red" (src/engine/cards.js), so without it every
+   heart and diamond on the table rendered as a solid red slab instead of a
+   white card with red pips. */
+.card-face--painted.card-face--red .card-face__bg { fill: #c0392b; }
+.card-face--painted.card-face--yellow .card-face__bg { fill: #e1b12c; }
+.card-face--painted.card-face--green .card-face__bg { fill: #27ae60; }
+.card-face--painted.card-face--blue .card-face__bg { fill: #2f6fb0; }
+.card-face--painted .card-face__corner,
+.card-face--painted .card-face__badge { fill: #fff; }
+
+/* The richer styles (src/ui/cardStyles/{classic,shedding,sequencing,rankrun}.js)
+   need almost nothing from here, and that is on purpose. Their sizes and fills
+   are geometry that varies per rank and per pack palette, so they ride as
+   presentation ATTRIBUTES on each element — a stylesheet would need one class
+   per size, and a pack colour reaching a CSS declaration is the sink §7b is
+   about. What is left is the one thing an attribute cannot say:
+
+   `paint-order: stroke` puts a numeral's outline BEHIND its fill. Without it
+   the stroke is painted over the letterform, eating half the stroke width off
+   every edge and turning a 46px digit on a saturated card into a smudge. It is
+   what lets a white number sit legibly straight on top of Wildfire's red. */
+.cs-text { paint-order: stroke; stroke-linejoin: round; }
+
+#log {
+  max-width: 30rem;
+  margin: 0 auto;
+  font-size: 0.8rem;
+  opacity: 0.8;
+  text-align: center;
+  min-height: 1.2em;
+}
+
+/* ------------------------------------------------------------------ *
+ * Cards in flight (src/ui/flight.js)
+ * ------------------------------------------------------------------ */
+
+#fly-layer {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  /* One below #event-banner — see the note there. Everything on the felt is at
+     6 or less, so a card in flight still passes over the whole table; what it
+     no longer passes over is the one element whose entire job is to be read. */
+  z-index: 8;
+}
+
+.fly-card {
+  position: absolute;
+  will-change: transform;
+}
+.fly-card .card-face {
+  width: 100%;
+  animation: none;
+  filter: drop-shadow(0 10px 16px var(--card-shadow));
+}
