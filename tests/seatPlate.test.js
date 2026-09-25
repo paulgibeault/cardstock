@@ -7,11 +7,18 @@
 // cut dead at the edge.
 //
 // `src/ui/table.js` resolves its element table on its first line and cannot be
-// loaded by `node --test`, which is the standing reason this file is half
+// loaded by `node --test`, which WAS the standing reason this file was half
 // RUNTIME (the templates' own answers, which are pure) and half SOURCE GATES
-// (the call sites that draw them). The felt itself was verified in a browser at
-// 375x812 and 1280x860 — see docs/notes/IMPLEMENTATION_NOTES.md; these are what stop it
-// regressing into a row of anonymous numbers again.
+// (the call sites that draw them). #223 moved the row to src/ui/seatRow.js,
+// which takes its elements as parameters — so the badge builder, the score pill
+// and the two edge classes are now BUILT here, through a document stub small
+// enough to read (the same one tests/counterTrack.test.js uses, and for the same
+// reason). What is left as a source gate is only what lives inside
+// `buildSeatRow` itself, which wants a whole row of real elements to run.
+//
+// The felt itself was verified in a browser at 375x812 and 1280x860 — see
+// docs/notes/IMPLEMENTATION_NOTES.md; these are what stop it regressing into a
+// row of anonymous numbers again.
 import { test } from "node:test";
 import assert from "node:assert";
 import fs from "node:fs";
@@ -21,11 +28,80 @@ import { makeCtx } from "../src/engine/context.js";
 import { loadPackFromDisk, listPackIds } from "../tools/pack-test.mjs";
 import { ROOT } from "../tools/stage.mjs";
 import { defaultScoreChip } from "../src/ui/seatRing.js";
+import {
+  createSeatRow, fillCounterBadge, seatCountersFor, seatScoreChip, directionBadge,
+} from "../src/ui/seatRow.js";
 import { tableCss } from "./fixtures/tableCss.js";
 
 const read = (f) => fs.readFileSync(path.join(ROOT, f), "utf8");
 /** Comment lines stripped, so a gate cannot be satisfied by prose about it. */
 const code = (src) => src.split("\n").filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join("\n");
+
+/**
+ * The smallest document the seat's own builders can draw into: a span with a
+ * class, some text, a few attributes and children. src/ui/dom.js's `line` reads
+ * the global at CALL time, which is what makes this enough — the module itself
+ * never touches `document` at import, and that is the whole point of the carve.
+ */
+function stubDocument() {
+  const make = (tag) => ({
+    tag,
+    className: "",
+    textContent: "",
+    dataset: {},
+    style: {},
+    attrs: {},
+    children: [],
+    appendChild(child) { this.children.push(child); return child; },
+    replaceChildren(...kids) { this.children = kids; },
+    setAttribute(name, value) { this.attrs[name] = String(value); },
+  });
+  return { createElement: make };
+}
+
+/** Install the stub for the body of `fn`, and put the global back afterwards. */
+function withStubDocument(fn) {
+  const had = Object.prototype.hasOwnProperty.call(globalThis, "document");
+  const before = globalThis.document;
+  globalThis.document = stubDocument();
+  try {
+    return fn(globalThis.document);
+  } finally {
+    if (had) globalThis.document = before;
+    else delete globalThis.document;
+  }
+}
+
+/** A child of `node` by class name, or undefined. */
+const childByClass = (node, cls) => node.children.find((c) => c.className === cls);
+
+/**
+ * A row that answers the two questions paintSeatRowEdges asks it — how long it
+ * is, how far along it is — and records the classes it is given.
+ */
+function stubEdgeRow({ scrollWidth, clientWidth, scrollLeft, carousel = true }) {
+  const classes = new Set(carousel ? ["opponent-row", "opponent-row--carousel"] : ["opponent-row"]);
+  const listeners = [];
+  return {
+    scrollWidth,
+    clientWidth,
+    scrollLeft,
+    listeners,
+    has: (cls) => classes.has(cls),
+    classList: {
+      contains: (cls) => classes.has(cls),
+      toggle: (cls, on) => { if (on) classes.add(cls); else classes.delete(cls); },
+    },
+    addEventListener(type, handler, opts) { listeners.push({ type, handler, opts }); },
+  };
+}
+
+/**
+ * The seam holding that row and nothing else: the two edge classes are a
+ * question about one element's length and scroll position, so handing it a
+ * session, a state or the card art would only hide which of them it reads.
+ */
+const rowSeam = (row) => createSeatRow({ el: { opponentsTop: row } });
 
 /* ------------------------------------------------------------------ *
  * The word under the number
@@ -68,13 +144,17 @@ test("the platform's own fallbacks are labelled too", async () => {
   assert.strictEqual(chip.label, "Score",
     "defaultScoreChip draws the plate's caption — without one the pill is a bare number");
 
-  // The hand-count fallback lives inside the file no test can import, so this
-  // half is a source gate on the literal itself.
-  const table = code(read("src/ui/table.js"));
-  assert.match(table,
-    /\[\{ text: String\(count\), aria: cardsPhrase\(count\), label: 'Cards' \}\]/,
-    "seatCountersFor's default counter has lost its label — the packs that declare "
-    + "no counters are exactly the ones whose digit has least else to explain it");
+  // ...and the hand-count fallback, which used to be a source gate on the
+  // literal because the function it is in could not be loaded (#223). Asked of
+  // `seatCountersFor` itself now: a pack that declares no counters at all, which
+  // is exactly the pack whose bare digit has least else to explain it.
+  const plain = { pack: { template: {} }, zones: { count: () => 1 } };
+  assert.deepStrictEqual(seatCountersFor(plain, 0, { minimized: false }),
+    [{ text: "1", aria: "1 card", label: "Cards" }],
+    "the default counter has lost its label, its number or its sentence");
+  // "1 card", not "1 cards" — a seat holding one is the moment everybody watches.
+  const many = { pack: { template: {} }, zones: { count: () => 13 } };
+  assert.equal(seatCountersFor(many, 0, { minimized: true })[0].aria, "13 cards");
 });
 
 test("a template that races something other than points names it", async () => {
@@ -93,27 +173,91 @@ test("a template that races something other than points names it", async () => {
  * SOURCE GATES — a label nobody draws is a label nobody reads
  * ------------------------------------------------------------------ */
 
-test("the seat row actually draws the caption it asks templates for", () => {
-  const table = code(read("src/ui/table.js"));
-  // The builder: value first, then the word, and ONE accessible name over the
-  // pair — role="img" is what stops a reader saying "12, cards, 12 cards".
-  assert.match(table, /line\('seat__count-value', text\)/,
-    "the badge no longer draws its number through fillCounterBadge");
-  assert.match(table, /line\('seat__count-label', label\)/,
-    "the caption element is gone — the plate is back to bare numbers (#133)");
-  // The CALL, not just the builder: deleting this one line left the first cut
-  // of this gate green over a plate that had gone back to bare numbers.
-  assert.match(table, /\n\s*if \(label\) badge\.appendChild\(counterCaption\(label\)\);/,
-    "the caption is built and never appended — the plate is back to bare numbers");
-  assert.match(table, /badge\.setAttribute\('role', 'img'\)/,
-    "without a role the badge's aria-label is dropped by most screen readers");
+test("a badge is a number, the word for it, and ONE accessible name", () => {
+  withStubDocument((doc) => {
+    const badge = doc.createElement("span");
+    fillCounterBadge(badge, "12", "Cards", "12 cards");
 
-  // The two call sites, whole statements: matching `fillCounterBadge(` alone
-  // also matches the declaration, so deleting every CALL would leave this green.
-  assert.match(table, /\n\s*fillCounterBadge\(badge, counter\.text, counter\.label, `\$\{counter\.aria\}\$\{says\}`\);/,
+    // Value FIRST, then the word — the caption sits underneath, which is the
+    // +29% the measurement bought over captions beside the digits.
+    assert.deepEqual(badge.children.map((c) => c.className),
+      ["seat__count-value", "seat__count-label"],
+      "the plate is back to bare numbers (#133)");
+    assert.equal(childByClass(badge, "seat__count-value").textContent, "12");
+    assert.equal(childByClass(badge, "seat__count-label").textContent, "Cards");
+    // role="img" is what stops a reader saying "12, cards, 12 cards": one name
+    // over the pair, and the caption hidden behind it.
+    assert.equal(badge.attrs.role, "img",
+      "without a role the badge's aria-label is dropped by most screen readers");
+    assert.equal(badge.attrs["aria-label"], "12 cards");
+    assert.equal(childByClass(badge, "seat__count-label").attrs["aria-hidden"], "true");
+
+    // A counter with no word gets no empty caption element to space it out.
+    const bare = doc.createElement("span");
+    fillCounterBadge(bare, "4", "", "4 tricks");
+    assert.deepEqual(bare.children.map((c) => c.className), ["seat__count-value"]);
+    // ...and rebuilding a badge replaces what was in it rather than appending.
+    fillCounterBadge(bare, "5", "Tricks", "5 tricks");
+    assert.deepEqual(bare.children.map((c) => c.className),
+      ["seat__count-value", "seat__count-label"]);
+  });
+});
+
+test("the score pill is captioned, and honours the chip's own word", async () => {
+  // Milestones races a CONTRACT, not points, and captioning "Ph 1" with SCORE
+  // says the wrong thing — so the pill's word is the chip's when it has one.
+  const milestones = await loadPackFromDisk("milestones");
+  const declared = createState({ pack: milestones, seats: 4, seed: "chip:milestones" });
+  milestones.template.setup(makeCtx(declared));
+
+  // Hearts declares no scoreChip, so the platform's default word is what shows.
+  const hearts = await loadPackFromDisk("hearts");
+  const plain = createState({ pack: hearts, seats: 4, seed: "chip:hearts" });
+  hearts.template.setup(makeCtx(plain));
+
+  withStubDocument(() => {
+    const chip = seatScoreChip(declared, 1);
+    assert.equal(chip.className, "seat__score");
+    assert.equal(childByClass(chip, "seat__count-label").textContent, "Contract",
+      "the score pill has stopped honouring the chip's own word");
+    assert.match(childByClass(chip, "seat__count-value").textContent, /^Ph /);
+    assert.equal(chip.attrs.role, "img");
+
+    const fallback = seatScoreChip(plain, 1);
+    assert.equal(childByClass(fallback, "seat__count-label").textContent, "Score",
+      "a pack that declares no chip has lost the platform's own caption");
+  });
+});
+
+test("the direction badge appears only once play has LEFT the pack's own way round", () => {
+  withStubDocument(() => {
+    // A pack that deals clockwise, going clockwise: nothing to say.
+    const forward = { pack: { manifest: { rules: {} } }, direction: 1 };
+    assert.equal(directionBadge(forward), null,
+      "a table that has never reversed is wearing a badge saying it has (#122)");
+    // Thirteen deals counter-clockwise from the first card and can never
+    // reverse — the bug was a permanent badge on it.
+    const thirteen = { pack: { manifest: { rules: { direction: "counterclockwise" } } }, direction: -1 };
+    assert.equal(directionBadge(thirteen), null,
+      "the badge is comparing against a sign again rather than against the pack");
+
+    const reversed = directionBadge({ pack: { manifest: { rules: {} } }, direction: -1 });
+    assert.ok(reversed, "a reverse landed and the badge did not appear");
+    assert.equal(reversed.className, "direction-badge");
+    assert.equal(reversed.attrs.role, "img",
+      "an aria-label on a bare div has no role to attach to and is dropped");
+    assert.match(reversed.attrs["aria-label"], /^Play has reversed/);
+  });
+});
+
+// THE ONE HALF A SOURCE GATE IS STILL THE HONEST ANSWER TO: the counter loop
+// lives inside `buildSeatRow`, which wants a whole row of laid-out elements. The
+// builder it calls is driven above; this is that it is still CALLED, as a whole
+// statement — matching `fillCounterBadge(` alone also matches the declaration.
+test("the counter loop passes the template's label through", () => {
+  const row = code(read("src/ui/seatRow.js"));
+  assert.match(row, /\n\s*fillCounterBadge\(badge, counter\.text, counter\.label, `\$\{counter\.aria\}\$\{says\}`\);/,
     "the counter loop is not passing the template's label through");
-  assert.match(table, /\n\s*fillCounterBadge\(chip, short, label \|\| 'Score', aria\);/,
-    "the score pill is not captioned, or has stopped honouring the chip's own word");
 });
 
 test("a minimized face keeps the bare number", () => {
@@ -130,25 +274,87 @@ test("a minimized face keeps the bare number", () => {
  * ------------------------------------------------------------------ */
 
 test("the carousel says which way it still scrolls", () => {
-  const table = code(read("src/ui/table.js"));
-  // Both directions, and both gated on the row actually being a scroller —
-  // a fade on a two-handed row would promise a player who is not there.
-  assert.match(table, /row\.classList\.toggle\('opponent-row--more-left', scrolls && row\.scrollLeft > 1\)/,
-    "the left edge no longer tracks the scroll position");
-  assert.match(table, /row\.classList\.toggle\('opponent-row--more-right', scrolls && row\.scrollLeft < max - 1\)/,
+  // Cut at the right edge, hard at the left: the row is at the start of a
+  // 683px length in a 332px port, which is a 375px phone.
+  const start = stubEdgeRow({ scrollWidth: 683, clientWidth: 332, scrollLeft: 0 });
+  rowSeam(start).paintSeatRowEdges();
+  assert.equal(start.has("opponent-row--more-left"), false,
+    "the left edge is faded at scrollLeft 0 — there is nothing behind it");
+  assert.equal(start.has("opponent-row--more-right"), true,
     "the right edge no longer tracks the scroll position");
-  assert.match(table, /const scrolls = row\.classList\.contains\('opponent-row--carousel'\) && max > 1;/,
-    "the fade is no longer conditional on the row having somewhere to scroll to");
 
-  // Three drivers, and each is a real hole without the others: the listener
-  // follows the finger, the render catches a row that grew without being
-  // scrolled, and the observer catches a resize that changed the length.
-  assert.match(table, /addEventListener\('scroll', paintSeatRowEdges, \{ passive: true \}\)/,
-    "nothing repaints the fade while the player scrolls");
-  assert.match(table, /scrollActingSeatIntoView\(state, acting\);\n\s*paintSeatRowEdges\(\);/,
+  // Half way along: seats behind AND ahead.
+  const middle = stubEdgeRow({ scrollWidth: 683, clientWidth: 332, scrollLeft: 175 });
+  rowSeam(middle).paintSeatRowEdges();
+  assert.equal(middle.has("opponent-row--more-left"), true);
+  assert.equal(middle.has("opponent-row--more-right"), true);
+
+  // At the far end: hard right again.
+  const end = stubEdgeRow({ scrollWidth: 683, clientWidth: 332, scrollLeft: 351 });
+  rowSeam(end).paintSeatRowEdges();
+  assert.equal(end.has("opponent-row--more-left"), true);
+  assert.equal(end.has("opponent-row--more-right"), false);
+
+  // NOTHING ON A ROW THAT DOES NOT SCROLL — a fade on a two-handed row would
+  // promise a player who is not there. Both halves: a carousel with nowhere to
+  // go, and a fitted row that is not a carousel at all.
+  const short = stubEdgeRow({ scrollWidth: 332, clientWidth: 332, scrollLeft: 0 });
+  rowSeam(short).paintSeatRowEdges();
+  assert.equal(short.has("opponent-row--more-right"), false,
+    "a carousel with nothing to scroll to is wearing a soft edge");
+  const fitted = stubEdgeRow({ scrollWidth: 683, clientWidth: 332, scrollLeft: 0, carousel: false });
+  rowSeam(fitted).paintSeatRowEdges();
+  assert.equal(fitted.has("opponent-row--more-right"), false,
+    "the fade is no longer conditional on the row being a carousel");
+
+  // ...and the 1px rounding slack seatRowOverflows keeps, or a row with nowhere
+  // to go wears a permanent fade off fractional layout.
+  const rounded = stubEdgeRow({ scrollWidth: 333, clientWidth: 332, scrollLeft: 0 });
+  rowSeam(rounded).paintSeatRowEdges();
+  assert.equal(rounded.has("opponent-row--more-right"), false,
+    "a one-pixel overflow is being treated as a scroller");
+
+  // The same slack on the POSITION, which is where fractional layout actually
+  // shows up: a row parked within a pixel of either end is AT that end.
+  const nearEnd = stubEdgeRow({ scrollWidth: 683, clientWidth: 332, scrollLeft: 350.6 });
+  rowSeam(nearEnd).paintSeatRowEdges();
+  assert.equal(nearEnd.has("opponent-row--more-right"), false,
+    "a row parked 0.4px from the end still promises seats ahead of it");
+  const nearStart = stubEdgeRow({ scrollWidth: 683, clientWidth: 332, scrollLeft: 0.6 });
+  rowSeam(nearStart).paintSeatRowEdges();
+  assert.equal(nearStart.has("opponent-row--more-left"), false,
+    "a row parked 0.6px along still promises seats behind it");
+});
+
+test("the fade follows the finger, and is painted before anybody has scrolled", () => {
+  const row = stubEdgeRow({ scrollWidth: 683, clientWidth: 332, scrollLeft: 0 });
+  rowSeam(row).watchSeatRowEdges();
+
+  assert.equal(row.listeners.length, 1, "nothing repaints the fade while the player scrolls");
+  assert.equal(row.listeners[0].type, "scroll");
+  // Passive: this only writes two class names, and a non-passive listener on a
+  // scroller is a scroll the compositor has to wait for.
+  assert.deepEqual(row.listeners[0].opts, { passive: true });
+  // Painted on the way past, or the first frame of a match has no edges.
+  assert.equal(row.has("opponent-row--more-right"), true);
+
+  // The listener IS the painter: move the row and fire what was registered.
+  row.scrollLeft = 351;
+  row.listeners[0].handler();
+  assert.equal(row.has("opponent-row--more-right"), false);
+  assert.equal(row.has("opponent-row--more-left"), true);
+});
+
+test("the row's other two repaint drivers are still wired", () => {
+  // The render catches a row that grew without being scrolled (a bot laying a
+  // meld fires no scroll event); initTable installs the listener. Both are
+  // statements inside functions that want a whole laid-out row, so both stay
+  // source gates — see this file's header.
+  const row = code(read("src/ui/seatRow.js"));
+  assert.match(row, /scrollActingSeatIntoView\(state, acting\);\n\s*paintSeatRowEdges\(\);/,
     "renderSeats no longer repaints the fade — a bot laying a meld lengthens the "
     + "row without firing a scroll event");
-  assert.match(table, /\n\s*watchSeatRowEdges\(\);/,
+  assert.match(code(read("src/ui/table.js")), /\n\s*seatRow\.watchSeatRowEdges\(\);/,
     "the scroll listener is never installed");
 });
 
@@ -183,24 +389,39 @@ test("the fade is a mask on the two edge classes and nothing else", () => {
  */
 
 test("the seat row actually draws the pip row it asks templates for", () => {
-  const table = code(read("src/ui/table.js"));
+  const row = code(read("src/ui/seatRow.js"));
   // Named in the import, or the branch below is a ReferenceError at boot.
-  assert.match(table, /import \{[^}]*renderCounterPips[^}]*\} from '\.\/counterTrack\.js';/,
+  assert.match(row, /import \{[^}]*renderCounterPips[^}]*\} from '\.\/counterTrack\.js';/,
     "the pip renderer is not imported — the counter loop cannot be drawing one");
   // The BRANCH, as a whole statement: matching `counterPips(` alone also
   // matches the import, so deleting the call would leave this green.
-  assert.match(table, /\n\s*if \(counterPips\(counter\)\) \{\n\s*head\.appendChild\(renderCounterPips\(counter\)\);/,
+  assert.match(row, /\n\s*if \(counterPips\(counter\)\) \{\n\s*head\.appendChild\(renderCounterPips\(counter\)\);/,
     "the counter loop no longer draws a pip counter as pips — Spades' faces are "
     + "back to a bid digit and a trick digit (#148)");
 });
 
 test("the row honours openOnly, and the round summary asks past it", () => {
   const table = code(read("src/ui/table.js"));
-  // The filter itself. Without it a minimized Spades face wears the bid digit,
-  // the trick digit AND the pip row that says both of them.
-  assert.match(table, /\n\s*\? list\.filter\(\(counter\) => !counter\.openOnly\)/,
+  // The filter itself, asked of `seatCountersFor` (#223 — it used to be a source
+  // gate on the two lines). Without it a minimized Spades face wears the bid
+  // digit, the trick digit AND the pip row that says both of them.
+  const declaring = {
+    pack: {
+      template: {
+        seatCounters: () => [
+          { text: "4", aria: "bid 4 tricks", label: "Bid", kind: "bid", openOnly: true },
+          { text: "2", aria: "2 melds", label: "Meld", kind: "meld", minimizedOnly: true },
+          { text: "7", aria: "7 cards", label: "Cards", kind: "hand" },
+        ],
+      },
+    },
+    zones: { count: () => 7 },
+  };
+  assert.deepEqual(seatCountersFor(declaring, 1, { minimized: true }).map((c) => c.kind),
+    ["meld", "hand"],
     "seatCountersFor no longer drops openOnly counters from a minimized face");
-  assert.match(table, /\n\s*: list\.filter\(\(counter\) => !counter\.minimizedOnly\);/,
+  assert.deepEqual(seatCountersFor(declaring, 1, { minimized: false }).map((c) => c.kind),
+    ["bid", "hand"],
     "seatCountersFor no longer drops minimizedOnly counters from an open seat");
   // ...and the sheet's own line no longer reads this list at all (#219). It used
   // to find the counters whose `kind` is 'bid' and 'tricks' and compose "Bid 4,
@@ -249,7 +470,7 @@ test("a bidding pack writes one round-sheet line per seat, and Hearts writes non
 });
 
 test("an empty hidden pile draws no chip, and no empty strip either", () => {
-  const table = code(read("src/ui/table.js"));
+  const table = code(read("src/ui/seatRow.js"));
   assert.match(table, /\n\s*const chip = hiddenPileChip\(state, inst, pts\);\n\s*if \(!chip\) continue;/,
     "buildSeatBody is back to printing a pile's bare name on the plate — a Spades "
     + "seat that has taken nothing reads as having Won something (#148)");
