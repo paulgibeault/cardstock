@@ -232,6 +232,33 @@ test("a card dropped on a two-row fan lands by ROW first, then by place in it (#
   assert.deepStrictEqual(session.handPrefs.order, ["b", "c", "d", "e", "f", "a"]);
 });
 
+/**
+ * #256: while a card is dragged its own node stays in the fan (hidden, holding
+ * its slot), but `reorder` takes an index in the hand WITHOUT that card. So a
+ * rightward drop must not count the card being carried — the leftward drops
+ * above never pass it, which is why they could not see the bug.
+ */
+test("a card dragged RIGHT lands just before the card it is released on (#256)", () => {
+  installArcade({ state: true });
+  const hand = ["a", "b", "c", "d", "e", "f"];
+  const session = { displayedHand: hand, handPrefs: { mode: "suit", order: [] } };
+  const { fan } = fanWith({ el: twoRowFan(), session, state: { id: "live" } });
+
+  // Same row: `a` released on the left half of `c` (c spans 60–130, middle 95).
+  fan.reorderHandAt("a", 70, 50);
+  assert.deepStrictEqual(session.handPrefs.order, ["b", "a", "c", "d", "e", "f"],
+    "released on c's left half, a sits immediately before c — not after it");
+
+  // Across rows: `b` carried down onto the left half of `e` (e spans 30–100).
+  fan.reorderHandAt("b", 40, 150);
+  assert.deepStrictEqual(session.handPrefs.order, ["a", "c", "d", "b", "e", "f"],
+    "the rows above must not count the carried card either");
+
+  // Past the last card's middle of the bottom row is still the end of the hand.
+  fan.reorderHandAt("c", 500, 150);
+  assert.deepStrictEqual(session.handPrefs.order, ["a", "b", "d", "e", "f", "c"]);
+});
+
 test("a drop with no live table rearranges nothing", () => {
   installArcade({ state: true });
   const session = { displayedHand: ["a", "b"], handPrefs: { mode: "auto", order: [] } };
