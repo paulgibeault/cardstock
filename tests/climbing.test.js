@@ -303,11 +303,23 @@ test("the template never reaches for the rank-only order", () => {
   // 9♣9♠ — a pair comparison built on it has ties, and a tie in this genre is a
   // position with no legal answer and no legal refusal. Comments are stripped
   // because this file's header talks about it at length.
-  const source = fs.readFileSync(path.join(ROOT, "src/templates/climbing.js"), "utf8")
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/^\s*\/\/.*$/gm, "");
-  assert.doesNotMatch(source, /\brankOrder\b/,
-    "climbing must compare with cardOrder, which is total; rankOrder is not");
+  //
+  // EVERY FILE OF THE TEMPLATE, not just the rules one (#220). `classify` — the
+  // comparison this gate was written for — now lives in climbing-shapes.js, and
+  // a gate that went on reading only climbing.js would have kept passing over
+  // the very line it watches. So the whole family is read, which is also what
+  // keeps the bot and the offer deal inside it as they grow.
+  const files = fs.readdirSync(path.join(ROOT, "src/templates"))
+    .filter((f) => /^climbing[-.].*\.js$|^climbing\.js$/.test(f));
+  assert.ok(files.length >= 4,
+    `the climbing template has stopped being four files: ${files.join(", ")}`);
+  for (const file of files) {
+    const source = fs.readFileSync(path.join(ROOT, "src/templates", file), "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^\s*\/\/.*$/gm, "");
+    assert.doesNotMatch(source, /\brankOrder\b/,
+      `${file}: climbing must compare with cardOrder, which is total; rankOrder is not`);
+  }
 });
 
 /* ------------------------------------------------------------------ *
