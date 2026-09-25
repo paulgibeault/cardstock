@@ -187,7 +187,7 @@ export const TRICK_BANNER_PRIORITY = 1;
  *                    from the point of view of the seat it names
  * @param seatLabel   (seat) => the name to put in a sentence
  * @param seatPossessive (seat) => that name in the possessive ("Your", "Ada's")
- * @param currentEpoch () => the table's epoch; a delayed flight checks it
+ * @param currentEpoch () => the felt's SHOWING epoch (#264, src/ui/botSeams.js); a delayed flight checks it
  * @param elements    { table, eventBanner, log, hand, opponentsTop }
  * @param art         () => the open match's card renderer
  * @param zoneRect    (address) => rect
