@@ -1905,8 +1905,21 @@ async function rehydrateOne(tableId) {
   // Restored before the first lobby frame goes out, so the grace the party
   // reconvenes on is the one they were playing with.
   if (Number.isInteger(snapshot.graceMs)) session.graceMs = snapshot.graceMs;
-  session.seating = seatingFromRoster(ourLobbyFrame(session));
-  session.lobbyFrame = ourLobbyFrame(session);
+  // THIS TABLE'S FRAME AND THIS TABLE'S BOT FACES (#281). The panel's
+  // `seatingFromRoster` wrapper takes its bot faces from `ourTable()` — with a
+  // second table being restored at boot, that is the FIRST one, and its bots
+  // sat down on this table's chairs. `session.seating` is still null here (the
+  // snapshot keeps seats, not faces), so the faces are derived from this
+  // table's own roster, exactly as they were when it was first hosted.
+  //
+  // No `setSeating`: a session opened a moment ago is not the one the felt is
+  // bound to, and the old code never re-seated the felt either. When the table
+  // is brought on screen the felt takes `session.seating` with it.
+  reseatHostedTable(session, {
+    frameOf: ourLobbyFrame,
+    isBound: sessions.isBound,
+    ctx: { self: selfId(), myName: myName(), publishedName: publishedName(), peers: port?.peers() || [] },
+  });
   publishOwnTable(session);
   // THE PARTY RECONVENES ON A LOBBY FRAME. Nothing else is needed: a joiner
   // that hears it re-claims its seat and the host answers with a snapshot,
