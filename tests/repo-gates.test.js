@@ -331,6 +331,30 @@ test("refreshSeats seats the table it was called for, not the one on the felt", 
 });
 
 /**
+ * A RESTORED HOSTED TABLE SEATS ITSELF (#281).
+ *
+ * `rehydrateOne` seated each table restored at boot through party.js's
+ * `seatingFromRoster(frame)` wrapper, whose bot faces come from `ourTable()` —
+ * the panel's table. With two stored tables that is the first one restored, so
+ * the second took its bots. The rule is `reseatHostedTable` again, driven in
+ * tests/partyModel.test.js; this pins `rehydrateOne` to it. The wrapper is
+ * banned by name because its `ourTable()` read is inside it, where a scan for
+ * `ourTable()` in this body would never see it.
+ */
+test("rehydrateOne seats the table it restored, not the panel's", () => {
+  const file = "src/ui/party.js";
+  const src = fs.readFileSync(path.join(ROOT, file), "utf8");
+  const start = src.indexOf("\nasync function rehydrateOne(tableId) {");
+  assert.ok(start >= 0, `${file} has no rehydrateOne(tableId) — update this gate`);
+  const body = src.slice(start, src.indexOf("\n}\n", start))
+    .split("\n").filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line)).join("\n");
+  assert.match(body, /\breseatHostedTable\(session,/,
+    `${file} rehydrateOne no longer seats the restored table through reseatHostedTable(session, …)`);
+  assert.doesNotMatch(body, /\b(seatingFromRoster|lobbyFrame|attached|ourTable|theirTable)\(/,
+    `${file} rehydrateOne reads the panel's or the felt's table — a restored table's bot faces must come from its own session`);
+});
+
+/**
  * ONE DEFAULT GRACE, IN ONE PLACE (#218).
  *
  * How long a seat gets when its host never chose was written twice: as

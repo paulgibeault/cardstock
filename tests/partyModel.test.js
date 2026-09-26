@@ -451,6 +451,55 @@ test('a roster change at the table in the background re-seats THAT table and lea
   assert.strictEqual(reseatHostedTable(null, deps), null);
 });
 
+test('two hosted tables restored at boot each derive their OWN bot faces (#281)', () => {
+  // THE BOOT PATH, not a roster change. `rehydrateOne` opens a fresh session
+  // per stored table — `seating` null, because the snapshot keeps seats and
+  // not faces — and seats it. The second table must not take the first one's
+  // bots: party.js's panel wrapper handed in `ourTable()?.seating`, which at
+  // boot is whichever table was restored first.
+  const HEARTS = 't1a1a1a1a1a1a1a1a1a';
+  const EIGHTS = 't2b2b2b2b2b2b2b2b2b';
+  const registry = createSessionRegistry();
+  const deps = { frameOf: frameOfHosted, isBound: registry.isBound, ctx: base };
+
+  // Hearts: bots at seats 1 and 2. Restored first.
+  const hearts = hostSession(HEARTS, 'hearts');
+  hearts.seats.seatBot(2);
+  registry.add(hearts);
+  assert.strictEqual(hearts.seating, null, 'a restored session has no faces yet');
+  assert.strictEqual(reseatHostedTable(hearts, deps), null,
+    'nothing is on the felt at boot, so a restored table leaves it alone');
+
+  // Crazy Eights: Bo at seat 1, a bot at seat 2 only. Restored second.
+  const eights = hostSession(EIGHTS, 'crazy-eights');
+  eights.seats.claim(1, { deviceId: BO });
+  eights.seats.seatBot(2);
+  registry.add(eights);
+  const heartsBefore = hearts.seating;
+  assert.strictEqual(reseatHostedTable(eights, deps), null,
+    'the second restored table leaves the felt alone too');
+
+  // Each table's faces are the ones ITS roster derives — what a fresh session
+  // with the same seats gets on its own.
+  const alone = hostSession(EIGHTS, 'crazy-eights');
+  alone.seats.claim(1, { deviceId: BO });
+  alone.seats.seatBot(2);
+  reseatHostedTable(alone, { ...deps, isBound: () => false });
+  assert.strictEqual(eights.seating[2].botId, alone.seating[2].botId,
+    "the second table's bot is its own derivation");
+  assert.notStrictEqual(eights.seating[2].botId, hearts.seating[2].botId,
+    "and not the first restored table's seat-2 bot — that is the face #281 borrowed");
+  assert.strictEqual(eights.seating[1].name, 'Bo');
+  assert.strictEqual(hearts.seating, heartsBefore, "restoring the second table leaves the first one's seating alone");
+  assert.deepStrictEqual(hearts.seating.map((s) => s.isBot), [false, true, true]);
+
+  // Brought on screen later, a table hands the felt its own seating.
+  registry.bind(EIGHTS);
+  const onFelt = reseatHostedTable(eights, deps);
+  assert.strictEqual(onFelt, eights.seating);
+  assert.strictEqual(onFelt[2].botId, alone.seating[2].botId, 'and keeps its own bot face');
+});
+
 test('unreachable is per table, so a failed send at one says nothing about the other', () => {
   const mine = lobbyFrame({ tableId: 't1a1a1a1a1a1a1a1a1a', hostDeviceId: ME, packId: 'hearts' });
   const other = lobbyFrame({ tableId: 't2b2b2b2b2b2b2b2b2b', hostDeviceId: ME, packId: 'crazy-eights' });
