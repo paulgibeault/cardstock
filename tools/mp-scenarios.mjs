@@ -161,9 +161,11 @@ async function seatEverybody({ check, waitFor, frames }, packId = PACK) {
     check(`joiner ${label}: an invitation makes it a client, with no second tap`, ready);
   }
 
-  // From here it is the real UI: the header button, then the seat's own claim.
+  // From here it is the real UI: the table's tile in the lobby, then the
+  // seat's own claim (#286 — the tile is the door; the header button is gone).
   for (const label of ['A', 'B']) {
-    await frames[label].evaluate(() => document.getElementById('party-button').click());
+    await waitFor(() => frames[label].evaluate(() => !!document.querySelector('#tables-grid .table-tile')), 20000);
+    await frames[label].evaluate(() => document.querySelector('#tables-grid .table-tile').click());
     const seat = seatOf[label];
     const offered = await waitFor(() => frames[label].evaluate(
       (s) => !!document.querySelector(`.party-seat[data-seat="${s}"] .party-seat__actions button`), seat), 20000);
@@ -527,9 +529,11 @@ const capsStripped = {
       JSON.stringify(verdicts.none));
 
     // And the notice itself: the door says what is wrong rather than vanishing.
+    // THE DOOR IS THE GAME TILE'S "Play together" (#286) — the header button
+    // is only ever the "update required" notice now.
     const label = await frames.A.evaluate(async () => {
-      const button = document.getElementById('party-button');
-      return { text: button.textContent, hidden: button.hidden };
+      const door = document.querySelector('.tile__together');
+      return { text: door?.textContent, hidden: !door || door.hidden };
     });
     check('the multiplayer door is open on a launcher that qualifies',
       label.hidden === false, JSON.stringify(label));
@@ -1111,6 +1115,23 @@ const sharedBeats = {
       return (await hostState(frames.H)).moves > after.moves;
     }, 20000);
     check('and play goes on in the new hand', moving);
+
+    // PLAY NOW (#286): lobby → the Current Table tile → the table screen → the
+    // game, for the host and for a guest.
+    for (const label of ['H', 'A']) {
+      await frames[label].evaluate(() => document.getElementById('lobby-button').click());
+      const inLobby = await waitFor(() => frames[label].evaluate(
+        () => document.getElementById('table-screen').hidden), 10000);
+      await frames[label].evaluate(() => document.querySelector('#tables-grid .table-tile').click());
+      const sheet = await waitFor(() => frames[label].evaluate(() => !document.getElementById('party-overlay').hidden
+        && [...document.querySelectorAll('#party-actions button')].some((b) => b.textContent === 'Play now')), 10000);
+      check(`${label}: the Current Table tile opens the table screen, offering Play now`, inLobby && sheet);
+      await frames[label].evaluate(() => [...document.querySelectorAll('#party-actions button')]
+        .find((b) => b.textContent === 'Play now').click());
+      const back = await waitFor(() => frames[label].evaluate(() => !document.getElementById('table-screen').hidden
+        && document.getElementById('party-overlay').hidden), 10000);
+      check(`${label}: Play now goes back into the game`, back);
+    }
   },
 };
 

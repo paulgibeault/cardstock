@@ -1059,17 +1059,17 @@ function renderEntry(views) {
     el.entry.disabled = true;
     return;
   }
-  // THE HEADER BUTTON IS THE JOINER'S DOOR AND ONLY THE JOINER'S. Hosting is
-  // offered on the game tiles, because a host picks a game first; there is
-  // nothing for this button to mean until somebody else has picked one.
+  // THE TABLE TILE IS THE DOOR (#286). The header button used to be a second
+  // way onto the same table — "Your table", "Join a table" — beside the tile
+  // that says the same thing with more in it. It stays only for the notice
+  // above, which has no tile to live on.
+  //
   // The tiles' own doors, toggled in place: a party can form while the player
   // is sitting on the lobby, and the tiles were built before it did.
   for (const node of document.querySelectorAll('.tile__together')) node.hidden = false;
   if (!el.entry) return;
-  const invited = views.some((view) => view.liveness === 'live') || !!client() || !!host();
-  el.entry.hidden = !invited;
+  el.entry.hidden = true;
   el.entry.disabled = false;
-  el.entry.textContent = host() || seatedHere() ? 'Your table' : 'Join a table';
 }
 
 /**
@@ -1441,24 +1441,39 @@ function renderActions() {
     if (!session?.state) {
       el.actions.append(button('Deal', () => { dealParty().catch(reportFailure); },
         { className: 'party-primary' }));
-    } else if (!sessions.isBound(session)) {
-      // OUR OWN GAME, RUNNING, AND NOT ON SCREEN. Without this the panel's only
-      // offer was "Close table" — which ends the very thing the player came
-      // here to get back to.
-      el.actions.append(button('Back to the table',
-        () => { returnToOurTable().catch(reportFailure); }, { className: 'party-primary' }));
+    } else {
+      // OUR OWN GAME, RUNNING. Play now goes to it — back onto the felt it is
+      // already bound to, or brought back to the felt from the background.
+      el.actions.append(button('Play now', () => { playNow(session).catch(reportFailure); },
+        { className: 'party-primary' }));
     }
     el.actions.append(button('Close table', () => { closeOwnTable(session).catch(reportFailure); },
       { className: 'party-exit' }));
   } else if (client() && shownFrame()?.hostDeviceId === client().hostDeviceId()) {
     const session = theirTable();
-    if (session?.state && session.client?.seat?.() != null && !sessions.isBound(session)) {
-      el.actions.append(button('Back to the table',
-        () => { switchToSeat(session.tableId); }, { className: 'party-primary' }));
+    if (session?.state && session.client?.seat?.() != null) {
+      el.actions.append(button('Play now', () => { playNow(session).catch(reportFailure); },
+        { className: 'party-primary' }));
     }
     el.actions.append(button('Leave table', () => { leaveAsked(session).catch(reportFailure); },
       { className: 'party-exit' }));
   }
+}
+
+/**
+ * PLAY NOW (#286): from the table screen to the game. The felt may already be
+ * showing this table (then it is only uncovered), or another one (then this
+ * table is put back on it — a rebind for a guest, a resume for the host).
+ */
+async function playNow(session) {
+  if (!session?.state) return;
+  if (sessions.isBound(session)) {
+    goToTable();
+    hidePartyScreen();
+    return;
+  }
+  if (session.hosting()) await returnToOurTable();
+  else switchToSeat(session.tableId);
 }
 
 /**
@@ -1648,20 +1663,12 @@ function liveTile(view) {
   }
   tile.append(foot);
 
-  // A SEAT WE ALREADY HOLD IS A GAME, NOT A LOBBY. Tapping it takes us to the
-  // felt rather than to the panel — the panel is for deciding where to sit,
-  // and that decision was made. Any other tile still opens the seats.
-  const held = seat !== null && view.seatedHere;
-  // OUR OWN RUNNING TABLE IS ALSO A GAME TO GO BACK TO, not a lobby to open.
-  // A host's session has no client, so the `held` test above cannot see it.
-  const oursAndRunning = view.ours && view.hasState && !view.bound;
+  // EVERY TILE OPENS THE TABLE (#286): who is in which seat, and — when there
+  // is a game under way — Play now. Going straight to the felt skipped the one
+  // screen that says what is happening at the table.
   tile.setAttribute('aria-label',
     `${who.textContent}, ${game.textContent}. ${tableState(view)}.${seat !== null ? ' You hold a seat.' : ''}`);
-  tile.addEventListener('click', () => {
-    if (held && switchToSeat(view.tableId)) return;
-    if (oursAndRunning) { returnToOurTable().catch(reportFailure); return; }
-    showPartyScreen(view.tableId);
-  });
+  tile.addEventListener('click', () => showPartyScreen(view.tableId));
   return tile;
 }
 

@@ -118,6 +118,21 @@ const screens = {
     await party(frames.B, 'refreshEntry');
     await shoot(pages.B, '10-guest-lobby-offline-tile');
 
+    // A GAME UNDER WAY: the lobby's Current Table tile, and the table screen it
+    // opens, with Play now (#286).
+    await party(frames.H, 'showPartyScreen', table.key);
+    await frames.H.evaluate(async () => (await window.__mod('src/ui/party.js')).dealParty());
+    await new Promise((r) => setTimeout(r, 1500));
+    for (const [label, frame] of [['H', frames.H], ['A', frames.A]]) {
+      // The felt's own Lobby button — the way a player leaves the game.
+      await frame.evaluate(() => document.getElementById('lobby-button')?.click());
+      await new Promise((r) => setTimeout(r, 800));
+      await shoot(pages[label], `09d-${label === 'H' ? 'host' : 'guest'}-lobby-game-running`);
+      await frame.evaluate(() => document.querySelector('#tables-grid .table-tile')?.click());
+      await shoot(pages[label], `09e-${label === 'H' ? 'host' : 'guest'}-sheet-play-now`);
+      await party(frame, 'hidePartyScreen');
+    }
+
     // AND THE SHEET IN THE DARK THEME.
     await frames.H.evaluate(() => document.documentElement.setAttribute('data-theme', 'dark'));
     await party(frames.H, 'showPartyScreen', table.key);
