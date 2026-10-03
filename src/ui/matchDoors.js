@@ -363,7 +363,7 @@ export function createMatchDoors({
    * @param table  the joiner's TableSession: its loaded `pack`, and its `client`
    *               (src/match/client.js) for proposing moves
    */
-  function adoptSharedView({ table, view, seating, message = '' }) {
+  function adoptSharedView({ table, view, seating, message = '', dealing = false }) {
     const pack = table.pack;
     setSharedTable(table.client || sharedTable());
     const model = modelFromView(view, pack);
@@ -398,6 +398,9 @@ export function createMatchDoors({
       hideAllPanels();
       hideBanner();
     }
+    // A NEW HAND IS DEALT WITH THE STAGGER (#283), exactly as the host's felt
+    // deals one when its own score sheet closes.
+    if (dealing) session().dealAnimation = true;
     // AN ORDINARY VIEW IS A REPLACEMENT, NOT A NEW MATCH (design decision D2).
     // Swapping the model in place is what lets a card animate from where it
     // was to where it is, instead of the table blinking on every move.

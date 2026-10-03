@@ -63,8 +63,13 @@ export function lobbyFrame({
  * is the only difference. Two builders here would be the beginning of the
  * second code path that D2 exists to refuse.
  */
-export function viewFrame({ seq, view, events = [], kind = FRAME.VIEW }) {
-  return { k: kind, seq, view, events };
+export function viewFrame({ seq, view, events = [], kind = FRAME.VIEW, poses, beat }) {
+  const frame = { k: kind, seq, view, events };
+  // Only when there is something to say: a frame with neither is byte-for-byte
+  // the frame every older build already reads.
+  if (poses) frame.poses = poses;
+  if (beat) frame.beat = beat;
+  return frame;
 }
 
 /**
@@ -108,6 +113,11 @@ export function proposeFrame(pid, move) {
 }
 
 /** "I think I missed one." `since` is what we already have, never a demand. */
+/** Ready for the next hand (#283). The host reads the seat off the sender. */
+export function readyFrame() {
+  return { k: FRAME.READY };
+}
+
 export function snapshotReqFrame(since = 0) {
   return { k: FRAME.SNAPSHOT_REQ, since };
 }

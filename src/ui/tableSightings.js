@@ -31,7 +31,7 @@
 import { FRAME, validateFrame, isAuthentic } from '../match/protocol.js';
 import { createTableDirectory, tableKeyOf } from '../match/tableDirectory.js';
 import {
-  saveSeatStub, clearSeatStub, touchSeatStub, seatStubs,
+  saveSeatStub, clearSeatStub, touchSeatStub, seatStubs, keepOnlySeatStub,
 } from '../arcade/storage.js';
 
 /**
@@ -135,9 +135,11 @@ export function createTableSightings({
     // provably dead, so it is dropped here rather than left advertising open
     // seats.
     const stale = [];
+    // ANY PACK, since #285: a device hosts one table at a time, so a host
+    // advertising a new table — of whatever game — has closed every other one,
+    // whether or not we heard it say so.
     for (const entry of tables.all()) {
       if (entry.hostDeviceId !== frame.hostDeviceId) continue;
-      if (entry.packId !== frame.packId) continue;
       if (entry.key === frame.tableId) continue;
       tables.forget(entry.key);
       stale.push(entry.key);
@@ -145,7 +147,6 @@ export function createTableSightings({
     if (stale.length) onChange({ kind: 'superseded', keys: stale });
 
     const superseded = seatStubs().find((stub) => stub.hostDeviceId === frame.hostDeviceId
-      && stub.packId === frame.packId
       && stub.tableId !== frame.tableId);
     if (!superseded) return;
     clearSeatStub(superseded.tableId);
@@ -181,6 +182,9 @@ export function createTableSightings({
         // the tile needs to say whose table it was.
         hostName: peerName(frame.hostDeviceId),
       });
+      // ONE SEAT PER DEVICE (#285). Sitting here is leaving everywhere else,
+      // so no older promise stays on the row.
+      keepOnlySeatStub(frame.tableId);
       return;
     }
     // NOT IN THE ROSTER ANY MORE. The host gave the seat to a bot, or somebody

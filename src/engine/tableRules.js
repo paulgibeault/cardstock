@@ -17,11 +17,19 @@
 //   cardExists(state, id)          does this wire id name a real card in this pack?
 //   viewVersion                    the shape version of viewFor's payload; a
 //                                  client refuses a view of any other version
+//   snapshot(state)                a throwaway copy taken before a move (#283)
+//   poses(pre, move, events)       { trick, final }: the completed trick and the
+//                                  hand as it ended, posed off that copy, so a
+//                                  guest is shown the beats the host's felt holds
+//   beatOf(state, events)          'round' when this move ended a hand the match
+//                                  survives: the pause the host's sheet holds
 
 import { validateMove, applyMove, enumerateLegalMoves } from './movePipeline.js';
 import { actingSeats, announcementsFor } from './context.js';
 import { viewFor, eventsFor, VIEW_VERSION } from './view.js';
 import { baseId } from './selectors.js';
+import { forkState } from './fork.js';
+import { posesFor } from './poses.js';
 
 export const tableRules = Object.freeze({
   validate: validateMove,
@@ -36,4 +44,8 @@ export const tableRules = Object.freeze({
   // engine, where `moveCards` would throw on it from inside a message handler.
   cardExists: (state, id) => state.pack.cardsById.has(baseId(id)),
   viewVersion: VIEW_VERSION,
+  snapshot: forkState,
+  poses: posesFor,
+  beatOf: (state, events) => (!state.gameOver && events.some((e) => e.type === 'roundOver' && !e.over)
+    ? 'round' : null),
 });

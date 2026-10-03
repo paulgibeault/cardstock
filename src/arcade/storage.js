@@ -506,6 +506,19 @@ export function clearSeatStub(tableId) {
 }
 
 /**
+ * ONE SEAT PER DEVICE (#285): keep the stub for `tableId` and drop every other
+ * one. Pass null to drop them all — hosting is leaving every other table.
+ * Returns how many went, so a caller can repaint only when something did.
+ */
+export function keepOnlySeatStub(tableId) {
+  const stubs = seatStubs();
+  const kept = stubs.filter((s) => s.tableId === tableId);
+  if (kept.length === stubs.length) return 0;
+  Arcade.state.set(KEYS.mpSeats, kept);
+  return stubs.length - kept.length;
+}
+
+/**
  * Drop everything nobody has touched for a week (plan §1, §6).
  *
  * SILENT BY DESIGN. A table a week old is not news; announcing it would mean

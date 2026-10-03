@@ -52,6 +52,7 @@
 
 import { makeCtx, actingSeats as actingSeatsOf } from '../engine/context.js';
 import { forkState } from '../engine/fork.js';
+import { poseTrick, poseRoundEnd } from '../engine/poses.js';
 import { sidesOf, sideScores, sideScoreOf } from '../engine/sides.js';
 import { schedule } from './clock.js';
 import { motionAllowed } from './flight.js';
@@ -184,6 +185,9 @@ export function createRoundEnding({
   currentFlightMs, powerSaving, scheduleNextTurn, cancelBotTurn,
   cancelAnnouncementBeats, exitToLobby,
   showRoundSummary, hideRoundSummary, paintRoundPace, confirmAction,
+  // The sheet closed and the next hand is on the felt — the moment a shared
+  // table's guests are let out of theirs (#283).
+  onSummaryClosed = () => {},
 }) {
   /**
    * The position as it was before the move now being applied.
@@ -219,16 +223,7 @@ export function createRoundEnding({
   function takeRoundFinal(move) {
     const fork = preMoveFork;
     preMoveFork = null;
-    if (!fork || !move) return null;
-    try {
-      fork.events.length = 0;
-      fork.pack.template.applyMove(makeCtx(fork), move);
-      return fork;
-    } catch {
-      // A template that cannot re-apply its own move is a bug worth surviving:
-      // the round is over either way and the felt falls back to the live state.
-      return null;
-    }
+    return poseRoundEnd(fork, move);
   }
 
   /**
@@ -244,16 +239,7 @@ export function createRoundEnding({
    * with it: it is a move that has been half made.
    */
   function takeTrickPose(move) {
-    if (!preMoveFork || !move) return null;
-    try {
-      const posed = forkState(preMoveFork);
-      posed.events.length = 0;
-      return posed.pack.template.poseMove?.(makeCtx(posed), move) ? posed : null;
-    } catch {
-      // A template that cannot pose its own move is a bug worth surviving: the
-      // felt falls straight through to the position the move actually reached.
-      return null;
-    }
+    return poseTrick(preMoveFork, move);
   }
 
   /**
@@ -1080,6 +1066,7 @@ export function createRoundEnding({
     // that any other code path hiding the overlay would silently erase.
     if (!session() || !session().roundSummaryOpen || !liveState()) return;
     closeRoundSummary();
+    onSummaryClosed();
     // A TAP BEATS THE CLOCK, and the clock must not fire behind it. This is also
     // what makes the door idempotent under the panel's two listeners: the second
     // call finds `roundSummaryOpen` false and returns above.

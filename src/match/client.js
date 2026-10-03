@@ -33,7 +33,7 @@ import {
   FRAME, PROTOCOL_VERSION, validateFrame, isAuthentic, isSafeId, EMOTES,
 } from './protocol.js';
 import {
-  claimSeatFrame, proposeFrame, snapshotReqFrame, emoteFrame, byeFrame, seatOfSelf,
+  claimSeatFrame, proposeFrame, snapshotReqFrame, emoteFrame, byeFrame, readyFrame, seatOfSelf,
 } from './frames.js';
 
 // THE CLIENT RUNS NO RULES — it holds a view — but it has to know which view
@@ -160,7 +160,14 @@ export function createTableClient({ rules, peer, expects, host = null, tableId, 
     lastSeq = frame.seq;
     view = frame.view;
     seatedAt = frame.view.seat;
-    hooks.onView?.(view, frame.events || [], { seq: frame.seq, snapshot: isSnapshot });
+    hooks.onView?.(view, frame.events || [], {
+      seq: frame.seq,
+      snapshot: isSnapshot,
+      // The positions the move passed through and the pause the host is in
+      // (#283) — what the felt needs to show this guest what the host is seeing.
+      poses: frame.poses || null,
+      beat: frame.beat || null,
+    });
   }
 
   function acceptLobby(frame) {
@@ -288,6 +295,11 @@ export function createTableClient({ rules, peer, expects, host = null, tableId, 
     return send(byeFrame(why));
   }
 
+  /** Read the score, waiting on the next hand (#283). A tick, not a vote. */
+  function ready() {
+    return send(readyFrame());
+  }
+
   /* ---------------------------------------------------------------- *
    * Lifecycle
    * ---------------------------------------------------------------- */
@@ -335,6 +347,7 @@ export function createTableClient({ rules, peer, expects, host = null, tableId, 
     requestSnapshot,
     emote,
     sendBye,
+    ready,
     hostDeviceId: () => hostDeviceId,
     lobby: () => lobby,
     view: () => view,

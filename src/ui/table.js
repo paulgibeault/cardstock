@@ -152,10 +152,11 @@ import {
   initPanels, showRoundSummary, hideRoundSummary, paintRoundPace,
   showScoreboard, showGameOver, hideAllPanels, showRules, awaitFinalLook,
   showReviewMap, hideReviewMap, isReviewMapOpen, isReviewDrawerOpen, reviewMapNode,
-  hideGameOver, hideScoreboard,
+  hideGameOver, hideScoreboard, hideFinalLook, paintGuestReady, setHostReadyLine,
 } from './panels.js';
+import { modelFromView } from './tableModel.js';
 import { packRules } from './rules.js';
-import { trickRevealPlan, finalShowPlan } from './roundBeat.js';
+import { trickRevealPlan, finalShowPlan, SHARED_TRICK_HOLD_MS } from './roundBeat.js';
 import { lastHandSentence } from './scoreDirection.js';
 import { persistTable } from '../arcade/persist.js';
 import {
@@ -267,6 +268,12 @@ let sharedTable = null;
 // safe is to leave its pipeline exactly as it was, with hosting as something
 // that watches rather than something that intercepts.
 let onLocalMove = null;
+
+// THE HOST'S EAR ON THIS FELT'S PAUSES (#283), set beside `onLocalMove` by
+// src/ui/party.js: `summaryClosed` when the score sheet deals on (the guests'
+// sheets close with it), `rematch` when "Play again" is tapped at a table this
+// device hosts (the new match has to reach the guests, not only this felt).
+let onHostBeat = null;
 
 // The screen's own furniture, not the match's.
 //
@@ -1683,23 +1690,27 @@ function soundReactions(state) {
 function afterMove(state, move, from, message, { publish = true } = {}) {
   const events = state.events;
 
-  // FIRST, and before anything that can throw or animate. A remote seat
-  // waiting on this move should not be waiting on this device's render.
-  // `publish: false` is the remote path, where the move was already published
-  // by the host module that applied it — publishing again would burn a `seq`
-  // and make every client ask for a snapshot it does not need.
-  if (publish) onLocalMove?.(state, move, events.slice());
   const trick = events.find((e) => e.type === 'trickWon');
   const passed = events.find((e) => e.type === 'cardsPassed');
 
   // FOUR CARDS ON THE TABLE, claimed FIRST: `takeRoundFinal` consumes the
   // pre-move snapshot, and the last trick of a hand wants both poses off it.
+  // Neither can throw — a template that cannot pose falls back to null.
   const trickPose = trick ? roundEnding.takeTrickPose(move) : null;
   // WHERE THE ROUND ENDED, and the whole schedule for it — the one builder
   // `performAnnouncement` shares (#202). It consumes the pre-move snapshot
   // whether or not it is wanted, so a fork is never left behind to be re-used
   // by the next move.
   const { ended, finalState, plan, shown } = roundEnding.beginRoundEnding(state, move);
+
+  // BEFORE ANYTHING ANIMATES. A remote seat waiting on this move should not be
+  // waiting on this device's render. It goes out WITH the two positions just
+  // worked out (#283), so every guest can be shown the trick and the ending
+  // this felt is about to hold. `publish: false` is the remote path, where the
+  // host module applied the move, posed it and published it itself —
+  // publishing again would burn a `seq` and make every client ask for a
+  // snapshot it does not need.
+  if (publish) onLocalMove?.(state, move, events.slice(), { trick: trickPose, final: finalState });
   const reveal = trick ? trickRevealPlan(events, {
     flightMs: currentFlightMs(),
     posed: !!trickPose,
@@ -2216,6 +2227,94 @@ export function adoptSharedView(frame) { doors.adoptSharedView(frame); }
 /** Stop being a joiner. The felt is torn down by the caller's ordinary exit. */
 export function leaveSharedTable() {
   sharedTable = null;
+  guestSheet = null;
+}
+
+/* ------------------------------------------------------------------ *
+ * A guest's pauses (#283) — src/ui/guestBeats.js decides WHEN; these are
+ * what each pause looks like on this felt.
+ * ------------------------------------------------------------------ */
+
+// The guest's round sheet while it is up: whether they have said they are
+// ready, and the line that says who deals. Null when no guest sheet is open,
+// which is also how the sheet's button knows which door it is.
+let guestSheet = null;
+
+/** How long a guest holds a completed trick: the host's shared ceiling. */
+export function guestTrickHoldMs(events) {
+  const plan = trickRevealPlan(events, {
+    flightMs: currentFlightMs(), posed: true, pace: currentPace().id, shared: true,
+  });
+  return plan?.holdMs ?? SHARED_TRICK_HOLD_MS;
+}
+
+/** What the log says while a guest looks at the completed trick. */
+export function guestTrickMessage(ev) {
+  if (ev?.seat == null) return '';
+  return `${seatLabel(ev.seat)} took the trick.`;
+}
+
+/**
+ * The score sheet, on a guest's felt, for as long as the host has its own open.
+ *
+ * `event` is the hand's `roundOver`; a guest who reconnected mid-sheet has
+ * none, and is shown the totals with no deltas rather than nothing at all.
+ */
+export function showGuestRoundSummary({ view, event, ready = [], waiting = '' }) {
+  const table = session?.table;
+  if (!table?.pack) return;
+  const model = modelFromView(view, table.pack);
+  const ev = event || { round: Math.max(1, model.roundNumber - 1), scores: {}, totals: model.scores };
+  guestSheet = { ready: ready.includes(view.seat), waiting, seat: view.seat };
+  showRoundSummary(model, ev, table.seating, null, null, { guest: guestSheet });
+}
+
+/** The host's ticks arrived: repaint the guest's button and line. */
+export function paintGuestRoundReady(ready = [], waiting = null) {
+  if (!guestSheet) return;
+  guestSheet.ready = guestSheet.ready || ready.includes(guestSheet.seat);
+  if (waiting != null) guestSheet.waiting = waiting;
+  paintGuestReady(guestSheet);
+}
+
+/** The guest's tap: a tick to the host, once. */
+function guestReady() {
+  if (!guestSheet || guestSheet.ready) return;
+  guestSheet.ready = true;
+  paintGuestReady(guestSheet);
+  sharedTable?.ready?.();
+}
+
+export function closeGuestRoundSummary() {
+  if (!guestSheet) return;
+  guestSheet = null;
+  hideRoundSummary();
+}
+
+/**
+ * The end of the match on a guest's felt: the same "who won" bar the host
+ * sees over the final position, then the results — without the doors that
+ * need the host's log or the host's authority.
+ */
+export async function showGuestResults(view, { waiting = '' } = {}) {
+  const table = session?.table;
+  if (!table?.pack) return;
+  const model = modelFromView(view, table.pack);
+  const myEpoch = epoch;
+  pulseSeat(model.winner, 'good');
+  const acknowledged = await awaitFinalLook(winnerSentence(model), '', '');
+  if (!acknowledged || myEpoch !== epoch || session?.table !== table) return;
+  showGameOver(model, { seating: table.seating, stats: null, recordText: waiting, guest: true });
+}
+
+export function hideGuestResults() {
+  hideFinalLook();
+  hideGameOver();
+}
+
+/** Who has said they are ready, on the host's own sheet. */
+export function setRoundReadyLine(text) {
+  setHostReadyLine(text);
 }
 
 /* ------------------------------------------------------------------ *
@@ -2226,12 +2325,18 @@ export function leaveSharedTable() {
 /**
  * Be told about every move this device applies. Pass null to stop.
  *
- * The listener is called with `(state, move, events)` AFTER the engine has
- * applied it and BEFORE the render, which is the order a remote seat wants:
- * the frame leaves while the animation is still starting here.
+ * The listener is called with `(state, move, events, poses)` AFTER the engine
+ * has applied it and BEFORE the render, which is the order a remote seat wants:
+ * the frame leaves while the animation is still starting here. `poses` is
+ * `{ trick, final }` — the positions this felt is about to hold (#283).
  */
 export function setLocalMoveListener(fn) {
   onLocalMove = typeof fn === 'function' ? fn : null;
+}
+
+/** Be told when this felt leaves a pause the guests are mirroring (#283). */
+export function setHostBeatListener(seams) {
+  onHostBeat = seams || null;
 }
 
 /**
@@ -2257,9 +2362,13 @@ export function tableContext() {
  * does about it. `publish: false` because the host published it as it applied
  * it, and a second publish would burn a `seq` for a move nobody made.
  */
-export function afterRemoteMove(move) {
+export function afterRemoteMove(move, { pre = null } = {}) {
   const state = liveState();
   if (!state || state.isView) return;
+  // THE HOST MODULE KEPT THE POSITION BEFORE (#283). Without it this felt had
+  // no pre-move copy for a guest's move, so the trick a guest finished and the
+  // hand a guest ended went by on the host's own screen without a pause.
+  if (pre) roundEnding.notePreMove(pre);
   // `far` is unconditional: by definition this move was made on another device.
   if (move.type === 'draw') playDraw();
   else if (move.type !== 'pass') playCardPlayed({ far: true });
@@ -2396,6 +2505,7 @@ export function initTable({ onExit }) {
     exitToLobby: () => exitToLobby(),
     showRoundSummary,
     hideRoundSummary,
+    onSummaryClosed: () => onHostBeat?.summaryClosed?.(),
     paintRoundPace,
     confirmAction,
   });
@@ -2755,8 +2865,16 @@ export function initTable({ onExit }) {
     onReviewMapClosed: () => reviewer.refitFelt(),
     onGameOverMap: () => reviewer.gameOverMapNode(),
     onRoundMap: () => reviewer.roundMapNode(),
-    onContinueRound: () => roundEnding.dismissRoundSummary(),
-    onPlayAgain: () => livePack() && doors.startGame(livePack(), liveState()?.seats),
+    // A guest's sheet is a tick to the host; the host's deals (#283).
+    onContinueRound: () => (guestSheet ? guestReady() : roundEnding.dismissRoundSummary()),
+    // A HOSTED TABLE DEALS AGAIN FOR EVERYBODY (#283). Through `startGame` it
+    // started a solo match on this device and left every guest on the old
+    // results; party.js re-deals the hosted table and publishes it instead.
+    onPlayAgain: () => {
+      if (!livePack()) return;
+      if (session?.table.hosting() && onHostBeat?.rematch) onHostBeat.rematch(session.table);
+      else doors.startGame(livePack(), liveState()?.seats);
+    },
     onLobby: () => exitToLobby(),
     onEndMatch: () => roundEnding.endMatchFromSummary(),
     onRules: () => livePack() && showRules(packRules(livePack())),

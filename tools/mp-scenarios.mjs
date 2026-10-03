@@ -1,10 +1,11 @@
 // The Definition-of-Done checklist for multiplayer (docs/plans/MULTIPLAYER_PLAN.md §11),
 // one exported scenario per numbered item — plus the ones the checklist grew.
-// 7 and 8 came from the hardening and rejoin work; 9 is the two-table case
-// docs/plans/TABLES_PLAN.md §10 asked for, and is the only automated evidence that a
-// device can host two packs at once. 10 is the 2026-08-16 field test that
+// 7 and 8 came from the hardening and rejoin work; 9 was the two-table case
+// docs/plans/TABLES_PLAN.md §10 asked for and is now its opposite — one table per
+// device (#285), the seat stepper (#284) and stale tiles clearing. 10 is the 2026-08-16 field test that
 // produced the framework's open-game redesign, replayed from a cold start: the
-// shape the party model got wrong, and the proof it no longer is.
+// shape the party model got wrong, and the proof it no longer is. 11 is the
+// 2026-10-03 playtest (#283): a guest sees the trick and the score sheet.
 //
 // Separated from tools/mp-acceptance.mjs on purpose: that file is the harness —
 // three devices, three launchers, the game mounted and the caps gate satisfied
@@ -86,18 +87,62 @@ function viewCards(frame) {
 
 const skip = (name, why) => console.log(`  ⊘ ${name} — SKIPPED: ${why}`);
 
+/**
+ * Host a game, ANSWERING the one-table question if it is asked (#285).
+ *
+ * `hostGame` awaits a confirm dialog when this device is already at a table,
+ * and a scenario that only awaited it would hang on that dialog forever. So the
+ * call, the wait for the dialog and the tap all happen in the page, and what
+ * comes back says whether anything was asked and what.
+ */
+function hostGameAnswering(frame, packId, answer = true) {
+  return frame.evaluate(async ({ packId: id, answer: yes }) => {
+    const mod = await window.__mod('src/ui/party.js');
+    const modal = document.getElementById('confirm-modal');
+    let asked = null;
+    const pending = mod.hostGame(id);
+    let settled = false;
+    pending.then(() => { settled = true; }, () => { settled = true; });
+    for (let i = 0; i < 100 && !settled; i++) {
+      if (!modal.hidden) {
+        asked = `${document.getElementById('confirm-message').textContent} ${document.getElementById('confirm-detail').textContent}`;
+        document.getElementById(yes ? 'confirm-ok' : 'confirm-cancel').click();
+        break;
+      }
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    return { result: await pending, asked };
+  }, { packId, answer });
+}
+
+/** Tap OK (or Cancel) on the confirm dialog if one comes up within a moment. */
+function answerIfAsked(frame, answer = true, withinMs = 1500) {
+  return frame.evaluate(async ({ yes, ms }) => {
+    const modal = document.getElementById('confirm-modal');
+    for (let waited = 0; waited < ms; waited += 100) {
+      if (!modal.hidden) {
+        const asked = `${document.getElementById('confirm-message').textContent} ${document.getElementById('confirm-detail').textContent}`;
+        document.getElementById(yes ? 'confirm-ok' : 'confirm-cancel').click();
+        return asked;
+      }
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    return null;
+  }, { yes: answer, ms: withinMs });
+}
+
 /* ------------------------------------------------------------------ *
  * 1. A scripted hand, end to end
  * ------------------------------------------------------------------ */
 
-async function seatEverybody({ check, waitFor, frames }) {
+async function seatEverybody({ check, waitFor, frames }, packId = PACK) {
   // THE TABLE IS BUILT BEFORE IT IS DEALT. The host picks a game from a lobby
   // tile, everybody takes a chair, and the cards come out once — which is why
   // there is no bot holding a hand for a joiner to take it off.
   const hosted = await frames.H.evaluate(async (packId) => {
     const p = await window.__mod('src/ui/party.js');
     return p.hostGame(packId);
-  }, PACK);
+  }, packId);
   check('host: a lobby tile opens a party for that game', hosted === true);
   check('host: role is host before a single card is dealt',
     (await party(frames.H, 'partyRole')) === 'host');
@@ -116,9 +161,11 @@ async function seatEverybody({ check, waitFor, frames }) {
     check(`joiner ${label}: an invitation makes it a client, with no second tap`, ready);
   }
 
-  // From here it is the real UI: the header button, then the seat's own claim.
+  // From here it is the real UI: the table's tile in the lobby, then the
+  // seat's own claim (#286 — the tile is the door; the header button is gone).
   for (const label of ['A', 'B']) {
-    await frames[label].evaluate(() => document.getElementById('party-button').click());
+    await waitFor(() => frames[label].evaluate(() => !!document.querySelector('#tables-grid .table-tile')), 20000);
+    await frames[label].evaluate(() => document.querySelector('#tables-grid .table-tile').click());
     const seat = seatOf[label];
     const offered = await waitFor(() => frames[label].evaluate(
       (s) => !!document.querySelector(`.party-seat[data-seat="${s}"] .party-seat__actions button`), seat), 20000);
@@ -227,6 +274,15 @@ const scriptedHand = {
     check('the hand played out to the end of a round',
       !!after && (after.round > before.round || after.over),
       `${after?.moves} moves, round ${before.round} → ${after?.round}; left on ${JSON.stringify(restingOn)}`);
+
+    // THE HOST DEALS ON FIRST (#283). A round that just ended is held on every
+    // guest's felt under the score sheet until the host's own sheet closes, so
+    // until then a guest is RIGHTLY showing the hand as it ended rather than
+    // the next one — and "whose turn is it" has two honest answers.
+    // The sheet opens a beat after the last card lands, so it is waited for.
+    const sheet = await waitFor(() => overlayUp(frames.H, 'round-overlay'), 15000);
+    check("host: the round's score sheet opens", sheet);
+    await frames.H.evaluate(() => document.getElementById('round-continue').click());
 
     // A joiner that fell behind would be holding a stale view, and the only
     // honest check of that is against the host's own numbers.
@@ -473,9 +529,11 @@ const capsStripped = {
       JSON.stringify(verdicts.none));
 
     // And the notice itself: the door says what is wrong rather than vanishing.
+    // THE DOOR IS THE GAME TILE'S "Play together" (#286) — the header button
+    // is only ever the "update required" notice now.
     const label = await frames.A.evaluate(async () => {
-      const button = document.getElementById('party-button');
-      return { text: button.textContent, hidden: button.hidden };
+      const door = document.querySelector('.tile__together');
+      return { text: door?.textContent, hidden: !door || door.hidden };
     });
     check('the multiplayer door is open on a launcher that qualifies',
       label.hidden === false, JSON.stringify(label));
@@ -588,10 +646,13 @@ const rejoining = {
       `role ${await party(frames.A, 'partyRole')}`);
 
     await frames.A.evaluate(async () => (await window.__mod('src/ui/party.js')).showPartyScreen());
-    const offered = await waitFor(() => frames.A.evaluate(
-      () => [...document.querySelectorAll('.party-seat__actions button')].map((b) => b.textContent)), 15000)
-      && await frames.A.evaluate(() => document.querySelectorAll('.party-seat__actions button').length > 0);
-    check('joiner A: is offered a seat to come back to', offered,
+    // BACK IN ITS CHAIR, OR OFFERED ONE. The host keeps a departed player's
+    // chair bound to them (src/match/host.js `seatStatus`), so the roster can
+    // already have A sitting in it again — and a guest who is sitting is
+    // offered no second chair (one each, #285).
+    const offered = await waitFor(async () => (await party(frames.A, 'partySnapshot')).seat !== null
+      || await frames.A.evaluate(() => document.querySelectorAll('.party-seat__actions button').length > 0), 15000);
+    check('joiner A: is back in its seat, or offered one to come back to', offered,
       await frames.A.evaluate(() => document.querySelector('#party-seats')?.textContent?.trim()?.slice(0, 120)));
     check('joiner A: and is not still being told the table closed',
       !(await party(frames.A, 'partySnapshot')).notice,
@@ -641,134 +702,116 @@ const rejoining = {
 };
 
 /* ------------------------------------------------------------------ *
- * 9. Two packs at once
+ * 9. One table per device (#284, #285)
  * ------------------------------------------------------------------ */
 
-const twoPacks = {
-  title: 'one device hosts two packs at once; a joiner sits at both, and no frame crosses',
+const oneTable = {
+  title: 'a device is at one table at a time; the host sizes the table; a closed table leaves no tile behind',
   async run({ check, waitFor, frames, devices }) {
     const SECOND = 'hearts';
+    const oursNow = async () => (await party(frames.H, 'partySnapshot')).tables
+      .filter((t) => t.hostDeviceId === devices.H);
 
-    // WHAT #43 ASKED FOR AND NOTHING DROVE. Everything above this is one table;
-    // the model has held several since T3 and the only evidence was a browser
-    // probe. This is the real transport, three launchers, two tables.
-    const first = (await party(frames.H, 'partySnapshot')).tables.find((t) => t.active)
-      || (await party(frames.H, 'partySnapshot')).tables[0];
+    const before = await oursNow();
+    check('host: starts out at exactly one table of its own', before.length === 1,
+      JSON.stringify(before.map((t) => t.packId)));
+    const first = before[0];
 
-    const opened = await party(frames.H, 'hostGame', SECOND);
-    check('host: a second pack opens a second table', opened === true, `hostGame → ${opened}`);
+    // 1. ASKED, AND "NO" MEANS NO. The 2026-10-03 playtest hosted two tables
+    //    without a word; now the second asks about the first.
+    const kept = await hostGameAnswering(frames.H, SECOND, false);
+    check('host: hosting a second game asks to close the first',
+      /Close your .+ table\? .*hosting Hearts closes this one/.test(kept.asked || ''), kept.asked);
+    check('host: and keeping it keeps it — still one table, the same one',
+      kept.result === false && (await oursNow()).map((t) => t.key).join() === first.key);
 
-    const tables = (await party(frames.H, 'partySnapshot')).tables;
-    const ours = tables.filter((t) => t.hostDeviceId === devices.H);
-    const packs = new Set(ours.map((t) => t.packId));
-    check('host: two tables of two different packs, under two ids',
-      ours.length >= 2 && packs.has(PACK) && packs.has(SECOND)
-        && new Set(ours.map((t) => t.key)).size === ours.length,
-      JSON.stringify(ours.map((t) => ({ pack: t.packId, key: t.key.slice(0, 6) }))));
+    // 2. "YES" CLOSES IT, FOR EVERYBODY, AND OPENS THE NEW ONE.
+    const moved = await hostGameAnswering(frames.H, SECOND, true);
+    const after = await oursNow();
+    check('host: closing the first opens the second — one table, now Hearts',
+      moved.result === true && after.length === 1 && after[0].packId === SECOND,
+      JSON.stringify(after.map((t) => t.packId)));
+    const second = after[0];
+    for (const label of ['A', 'B']) {
+      const gone = await waitFor(async () => {
+        await party(frames[label], 'refreshEntry');
+        const snap = await party(frames[label], 'partySnapshot');
+        return snap.tables.every((t) => t.key !== first.key);
+      }, 20000);
+      check(`guest ${label}: the closed table's tile is gone, not left behind`, gone);
+    }
 
-    const second = ours.find((t) => t.packId === SECOND);
-    check('host: the new table is a table nobody has dealt yet', second && !second.started,
-      JSON.stringify(second));
-
-    // A IS ALREADY SITTING AT THE FIRST ONE. Sighting the second is not joining
-    // it — with a seat already held, the sniffer stops following new tables, so
-    // this is the tap that #49 part 4 made possible.
-    const SEAT = 3;
-    const sawIt = await waitFor(async () => {
+    // 3. A GUEST SITS, THEN THE HOST SIZES THE TABLE (#284).
+    const sighted = await waitFor(async () => {
       await party(frames.A, 'refreshEntry');
       return (await party(frames.A, 'partySnapshot')).tables.some((t) => t.key === second.key);
     }, 20000);
-    check('joiner A: hears the second table without being dragged off the first', sawIt);
-
+    check('guest A: sees the new table', sighted);
     await party(frames.A, 'showPartyScreen', second.key);
     const offered = await waitFor(() => frames.A.evaluate(
-      (s) => !!document.querySelector(`.party-seat[data-seat="${s}"] .party-seat__actions button`), SEAT), 20000);
-    check(`joiner A: the second table offers seat ${SEAT}`, offered);
-    await frames.A.evaluate(
-      (s) => document.querySelector(`.party-seat[data-seat="${s}"] .party-seat__actions button`).click(), SEAT);
+      () => !!document.querySelector('.party-seat[data-seat="1"] .party-seat__actions button')), 20000);
+    check('guest A: is offered seat 1', offered);
+    await frames.A.evaluate(() => document.querySelector('.party-seat[data-seat="1"] .party-seat__actions button').click());
+    await answerIfAsked(frames.A, true);
+    const seatedA = await waitFor(async () => (await party(frames.A, 'partySnapshot')).seat === 1, 20000);
+    check('guest A: sits down', seatedA);
 
-    // TWO SEATS, AND THE PANEL ANSWERS ABOUT WHICHEVER TABLE IT IS SHOWING.
-    const seatAt = async (key) => {
-      await party(frames.A, 'showPartyScreen', key);
-      return (await party(frames.A, 'partySnapshot')).seat;
-    };
-    const bothHeld = await waitFor(async () => await seatAt(second.key) === SEAT, 20000);
-    check(`joiner A: holds seat ${SEAT} at the second table`, bothHeld,
-      `seat ${await seatAt(second.key)}`);
-    const firstSeat = await seatAt(first.key);
-    check('joiner A: and still holds its seat at the first', firstSeat !== null && firstSeat !== undefined,
-      `seat ${firstSeat}`);
-
-    // BOTH TABLES GET DEALT, because the interesting assertion needs both to
-    // have a view to compare. Dealing acts on the table the panel is showing,
-    // which is itself the thing being tested: `ourTable()` resolves by focus.
-    const seqOf = async (key) => {
-      await party(frames.A, 'showPartyScreen', key);
-      return (await party(frames.A, 'partySnapshot')).seq;
-    };
-    const dealAt = async (key) => {
-      await party(frames.H, 'showPartyScreen', key);
-      await frames.H.evaluate(async () => {
-        const p = await window.__mod('src/ui/party.js');
-        await p.dealParty();
-      });
-    };
-
-    await dealAt(first.key);
-    const firstDealt = await waitFor(async () => await seqOf(first.key) >= 1, 20000);
-    check('joiner A: the FIRST table deals into its own view', firstDealt,
-      `seq ${await seqOf(first.key)}`);
-    const firstSeqBefore = await seqOf(first.key);
-
-    await dealAt(second.key);
-    const secondDealt = await waitFor(async () => await seqOf(second.key) >= 1, 20000);
-    check('joiner A: the second table deals into its own view too', secondDealt,
-      `seq ${await seqOf(second.key)}`);
-
-    // THE ASSERTION THIS SCENARIO EXISTS FOR. Both tables now have a view, so
-    // "unchanged" means something: a deal that leaked would have advanced the
-    // other table's sequence as well.
-    check('no frame crossed: dealing one table left the other exactly where it was',
-      (await seqOf(first.key)) === firstSeqBefore,
-      `first ${firstSeqBefore} → ${await seqOf(first.key)}`);
-
-    // And once more with a MOVE rather than a deal, which is the path every
-    // frame after the first takes.
-    const beforeMove = { first: await seqOf(first.key), second: await seqOf(second.key) };
     await party(frames.H, 'showPartyScreen', second.key);
-    await party(frames.H, 'takeTurn');
-    const moved = await waitFor(async () => await seqOf(second.key) > beforeMove.second, 20000);
-    check('a move at one table reaches that table', moved,
-      `second ${beforeMove.second} → ${await seqOf(second.key)}`);
-    check('and reaches only that table',
-      (await seqOf(first.key)) === beforeMove.first,
-      `first ${beforeMove.first} → ${await seqOf(first.key)}`);
+    const seatsOn = async (label) => {
+      await party(frames[label], 'showPartyScreen', second.key);
+      return (await party(frames[label], 'partySnapshot')).seats.length;
+    };
+    check('host: Hearts starts at four chairs', (await seatsOn('H')) === 4);
+    await frames.H.evaluate(() => document.querySelector('[data-seats="less"]').click());
+    const three = await waitFor(async () => (await seatsOn('A')) === 3, 15000);
+    check('host: one fewer chair — and the guest sees three', three && (await seatsOn('H')) === 3);
+    check('guest A: keeps its own chair through it', (await party(frames.A, 'partySnapshot')).seat === 1);
+    await frames.H.evaluate(() => document.querySelector('[data-seats="more"]').click());
+    const four = await waitFor(async () => (await seatsOn('A')) === 4, 15000);
+    check('host: and one more brings it back to four', four);
+    const ceiling = await frames.H.evaluate(() => {
+      const more = document.querySelector('[data-seats="more"]');
+      return !!more && (Number(document.querySelector('.stepper__value').textContent) < 6 || more.disabled);
+    });
+    check("host: the stepper stops at the game's own limits", ceiling);
 
-    check('host: is still the host of both', ours.length >= 2
-      && (await party(frames.H, 'partySnapshot')).role === 'host',
-      `${ours.length} table(s) of ours`);
+    // 4. A GUEST TRYING TO HOST IS ASKED TO LEAVE FIRST — and can stay.
+    const stayed = await hostGameAnswering(frames.A, 'crazy-eights', false);
+    check('guest A: hosting while seated asks to leave the table first',
+      /Leave .+ table\? .*hosting Crazy Eights gives up your seat/.test(stayed.asked || ''), stayed.asked);
+    check('guest A: and staying keeps the seat', (await party(frames.A, 'partySnapshot')).seat === 1);
 
-    // THE ROW, IN THE DOM, on the device that is only a guest at both tables.
-    // Everything above reads `partySnapshot()`, which reports the directory —
-    // so it would go on passing if the tiles drawn FROM that directory had
-    // stopped being drawn. Added with #73, which moved the sniffing and the
-    // directory into src/ui/tableSightings.js: the tile row is the visible end
-    // of that pipe, and it has never had an assertion on it.
-    await frames.A.evaluate(() => document.getElementById('party-button').click());
-    const drawnTiles = () => frames.A.evaluate(() =>
-      [...document.querySelectorAll('#tables-grid .table-tile')].map((tile) => ({
-        key: tile.dataset.tableKey,
-        game: tile.querySelector('.table-tile__game')?.textContent || '',
-        seat: !!tile.querySelector('.table-tile__seat'),
-      })));
-    await waitFor(async () => (await drawnTiles()).length >= 2, 20000);
-    const tiles = await drawnTiles();
-    check('joiner A: a tile for each table, one per game, each promising its own seat',
-      tiles.length === 2
-        && new Set(tiles.map((t) => t.key)).size === 2
-        && new Set(tiles.map((t) => t.game)).size === 2
-        && tiles.every((t) => t.seat),
-      JSON.stringify(tiles));
+    // 5. A TILE FOR A TABLE THAT CLOSED WHILE WE WERE AWAY. A seat note naming
+    //    the host — who is right here, advertising a different table — clears
+    //    itself; one naming a host who never comes back can be forgotten.
+    const stale = 'tstaleclosedtable01';
+    const lost = 'tstalelosthost00001';
+    await frames.B.evaluate(([host, closed, gone]) => {
+      const now = Date.now();
+      const stub = (tableId, hostDeviceId) => ({
+        tableId, hostDeviceId, packId: 'crazy-eights', seat: 1, hostName: 'Old host', savedAt: now, lastSeenAt: now,
+      });
+      window.Arcade.state.set('mpSeats', [stub(closed, host), stub(gone, 'dev-never-coming-back')]);
+    }, [devices.H, stale, lost]);
+    await party(frames.B, 'hidePartyScreen');
+    await party(frames.B, 'refreshEntry');
+    const tiles = () => frames.B.evaluate(() =>
+      [...document.querySelectorAll('#tables-grid .table-tile')].map((t) => t.dataset.tableKey));
+    const both = await waitFor(async () => {
+      const keys = await tiles();
+      return keys.includes(stale) && keys.includes(lost);
+    }, 10000);
+    check('guest B: two offline tiles, each with a way to let go of it', both
+      && await frames.B.evaluate(() => document.querySelectorAll('.table-tile--dormant .table-tile__forget').length >= 2));
+    const swept = await waitFor(async () => {
+      await party(frames.B, 'refreshEntry');
+      return !(await tiles()).includes(stale);
+    }, 30000);
+    check("guest B: the tile for a table its host closed clears itself once the host is back", swept);
+    await frames.B.evaluate((key) => document
+      .querySelector(`.table-tile[data-table-key="${key}"] .table-tile__forget`).click(), lost);
+    const forgotten = await waitFor(async () => !(await tiles()).includes(lost), 5000);
+    check('guest B: Forget clears the other', forgotten);
   },
 };
 
@@ -845,7 +888,9 @@ const theFieldTestShape = {
     for (const label of ['A', 'B']) {
       await pages[label].evaluate(() => { if (window.__invites) window.__invites.length = 0; });
     }
-    const hosted = await party(frames.H, 'hostGame', THIRD);
+    // The host is at a table from scenario 9 — one table per device (#285), so
+    // it is asked to close that one first, and says yes.
+    const { result: hosted } = await hostGameAnswering(frames.H, THIRD, true);
     check('host: "Play together" opens a table on a pack nobody was playing', hosted === true,
       `hostGame → ${hosted}`);
 
@@ -897,6 +942,9 @@ const theFieldTestShape = {
       await frames[label].evaluate(
         (s) => document.querySelector(`.party-seat[data-seat="${s}"] .party-seat__actions button`).click(),
         SEAT[label]);
+      // Sitting here is leaving the last table, if the host's close missed us.
+      const asked = await answerIfAsked(frames[label], true);
+      if (asked) console.log(`    (${label} was asked: ${asked})`);
     }
 
     const bothSeated = await waitFor(async () => {
@@ -905,7 +953,12 @@ const theFieldTestShape = {
       return [SEAT.A, SEAT.B].every((s) => seats.find((r) => r.seat === s)?.status === 'connected');
     }, 20000);
     check('host: both strangers are seated at one table', bothSeated,
-      JSON.stringify((await party(frames.H, 'partySnapshot')).seats));
+      JSON.stringify((await party(frames.H, 'partySnapshot')).seats)
+      + ` — B: ${JSON.stringify(await frames.B.evaluate(async () => {
+        const p = await window.__mod('src/ui/party.js');
+        const snap = p.partySnapshot();
+        return { role: snap.role, seat: snap.seat, notice: snap.notice, tables: snap.tables.map((t) => [t.packId, t.key.slice(0, 5)]) };
+      }))}`);
 
     // 6. AND THE CARDS COME OUT ONCE, TO EVERYBODY.
     await party(frames.H, 'showPartyScreen', table.key);
@@ -943,7 +996,146 @@ const theFieldTestShape = {
   },
 };
 
+/* ------------------------------------------------------------------ *
+ * 11. The guests keep the host's time (#283)
+ * ------------------------------------------------------------------ */
+
+/** Is this overlay on screen in this frame? */
+function overlayUp(frame, id) {
+  return frame.evaluate((i) => !document.getElementById(i).hidden, id);
+}
+
+const sharedBeats = {
+  title: "a guest sees the completed trick, and the score sheet for as long as the host's is up",
+  async run(ctx) {
+    const { check, waitFor, frames } = ctx;
+    // A TRICK GAME, because a trick is the beat the 2026-10-03 playtest lost —
+    // and one no earlier scenario has touched, seated the way scenario 10 seats
+    // strangers: by the table's own key, since this device already hosts others.
+    const PACK11 = 'team-spades';
+    const { result: hosted } = await hostGameAnswering(frames.H, PACK11, true);
+    check(`host: opens a ${PACK11} table`, hosted === true, `hostGame → ${hosted}`);
+    const table = (await party(frames.H, 'partySnapshot')).tables.find((t) => t.packId === PACK11);
+    check('host: the table is in its own directory', !!table, JSON.stringify(table));
+    if (!table) return;
+    const SEAT = { A: 1, B: 2 };
+    for (const label of ['A', 'B']) {
+      const sighted = await waitFor(async () => {
+        await party(frames[label], 'refreshEntry');
+        return (await party(frames[label], 'partySnapshot')).tables.some((t) => t.key === table.key);
+      }, 20000);
+      check(`guest ${label}: sights the table`, sighted);
+      await party(frames[label], 'showPartyScreen', table.key);
+      const offered = await waitFor(() => frames[label].evaluate(
+        (seat) => !!document.querySelector(`.party-seat[data-seat="${seat}"] .party-seat__actions button`),
+        SEAT[label]), 20000);
+      check(`guest ${label}: the seat grid offers seat ${SEAT[label]}`, offered);
+      if (!offered) return;
+      await frames[label].evaluate(
+        (seat) => document.querySelector(`.party-seat[data-seat="${seat}"] .party-seat__actions button`).click(),
+        SEAT[label]);
+      await answerIfAsked(frames[label], true);
+    }
+    const seated = await waitFor(async () => {
+      await party(frames.H, 'showPartyScreen', table.key);
+      const seats = (await party(frames.H, 'partySnapshot')).seats;
+      return [1, 2].every((seat) => seats.find((r) => r.seat === seat)?.status === 'connected');
+    }, 20000);
+    check('host: both guests are seated', seated);
+    await party(frames.H, 'showPartyScreen', table.key);
+    await frames.H.evaluate(async () => {
+      const p = await window.__mod('src/ui/party.js');
+      await p.dealParty();
+    });
+
+    // WHAT A'S FELT DREW, sampled in A's own page: the most cards its trick
+    // zone ever held. Before #283 a guest's felt went from three cards straight
+    // to an empty trick, so four was never once on its screen.
+    await frames.A.evaluate(() => {
+      window.__mostOnTrick = 0;
+      window.__sampler = setInterval(async () => {
+        const table = await window.__mod('src/ui/table.js');
+        const n = table.tableContext()?.state?.view?.zones?.trick?.cards?.length ?? 0;
+        window.__mostOnTrick = Math.max(window.__mostOnTrick, n);
+      }, 40);
+    });
+
+    const before = await hostState(frames.H);
+    let last = before.moves;
+    let idle = 0;
+    for (let i = 0; i < 900 && idle < 40; i++) {
+      for (const label of ['H', 'A', 'B']) {
+        try { await party(frames[label], 'takeTurn'); } catch { /* a frame mid-render */ }
+      }
+      const now = await hostState(frames.H);
+      if (!now) break;
+      if (now.moves === last) idle++; else { idle = 0; last = now.moves; }
+      if (now.round > before.round || now.over) break;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    const after = await hostState(frames.H);
+    check('the hand played out to the end of a round', !!after && after.round > before.round,
+      `${after?.moves} moves, round ${before.round} → ${after?.round}`);
+
+    const most = await frames.A.evaluate(() => { clearInterval(window.__sampler); return window.__mostOnTrick; });
+    check('guest A was shown a completed trick — all four cards on the felt', most === 4, `most seen: ${most}`);
+
+    // THE SHEET, ON BOTH SIDES OF THE TABLE.
+    const hostSheet = await waitFor(() => overlayUp(frames.H, 'round-overlay'), 20000);
+    check('host: the score sheet is up', hostSheet);
+    for (const label of ['A', 'B']) {
+      const up = await waitFor(() => overlayUp(frames[label], 'round-overlay'), 20000);
+      check(`guest ${label}: the score sheet is up too`, up);
+    }
+    const says = await frames.A.evaluate(() => document.getElementById('round-ready').textContent);
+    check('guest A: the sheet says who deals', /deals the next hand/.test(says), says);
+    await new Promise((r) => setTimeout(r, 1500));
+    check('guest A: and it stays up while the host is still reading',
+      await overlayUp(frames.A, 'round-overlay') && await overlayUp(frames.H, 'round-overlay'));
+
+    // A's tick reaches the host's sheet.
+    await frames.A.evaluate(() => document.getElementById('round-continue').click());
+    const ticked = await waitFor(() => frames.H.evaluate(
+      () => /ready/.test(document.getElementById('round-ready').textContent)), 10000);
+    check("host: the sheet shows a guest's ready tick", ticked,
+      await frames.H.evaluate(() => document.getElementById('round-ready').textContent));
+    check('guest A: its button says it is ready',
+      await frames.A.evaluate(() => document.getElementById('round-continue').disabled));
+
+    // The host deals on, and the guests' sheets close with it.
+    await frames.H.evaluate(() => document.getElementById('round-continue').click());
+    for (const label of ['A', 'B']) {
+      const down = await waitFor(async () => !(await overlayUp(frames[label], 'round-overlay')), 10000);
+      check(`guest ${label}: the sheet closes when the host deals`, down);
+    }
+    const moving = await waitFor(async () => {
+      for (const label of ['H', 'A', 'B']) {
+        try { await party(frames[label], 'takeTurn'); } catch { /* not our turn */ }
+      }
+      return (await hostState(frames.H)).moves > after.moves;
+    }, 20000);
+    check('and play goes on in the new hand', moving);
+
+    // PLAY NOW (#286): lobby → the Current Table tile → the table screen → the
+    // game, for the host and for a guest.
+    for (const label of ['H', 'A']) {
+      await frames[label].evaluate(() => document.getElementById('lobby-button').click());
+      const inLobby = await waitFor(() => frames[label].evaluate(
+        () => document.getElementById('table-screen').hidden), 10000);
+      await frames[label].evaluate(() => document.querySelector('#tables-grid .table-tile').click());
+      const sheet = await waitFor(() => frames[label].evaluate(() => !document.getElementById('party-overlay').hidden
+        && [...document.querySelectorAll('#party-actions button')].some((b) => b.textContent === 'Play now')), 10000);
+      check(`${label}: the Current Table tile opens the table screen, offering Play now`, inLobby && sheet);
+      await frames[label].evaluate(() => [...document.querySelectorAll('#party-actions button')]
+        .find((b) => b.textContent === 'Play now').click());
+      const back = await waitFor(() => frames[label].evaluate(() => !document.getElementById('table-screen').hidden
+        && document.getElementById('party-overlay').hidden), 10000);
+      check(`${label}: Play now goes back into the game`, back);
+    }
+  },
+};
+
 export const SCENARIOS = [
   scriptedHand, privacy, unknownTarget, interruption, overflow, capsStripped, namesAndChips,
-  rejoining, twoPacks, theFieldTestShape,
+  rejoining, oneTable, theFieldTestShape, sharedBeats,
 ];

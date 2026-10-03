@@ -8,7 +8,10 @@
 
 const el = {
   modal: document.getElementById('confirm-modal'),
+  panel: document.getElementById('confirm-panel'),
+  eyebrow: document.getElementById('confirm-eyebrow'),
   message: document.getElementById('confirm-message'),
+  detail: document.getElementById('confirm-detail'),
   ok: document.getElementById('confirm-ok'),
   cancel: document.getElementById('confirm-cancel'),
 };
@@ -20,10 +23,28 @@ const el = {
  * a generic "OK / Cancel" makes the destructive option the one that reads as
  * neutral. The default pair is the lobby's original.
  */
-export function confirmAction(message, { okLabel = 'Start over', cancelLabel = 'Keep playing' } = {}) {
+export function confirmAction(message, {
+  okLabel = 'Start over', cancelLabel = 'Keep playing', sheet = null,
+} = {}) {
   el.message.textContent = message;
   el.ok.textContent = okLabel;
   el.cancel.textContent = cancelLabel;
+  // THE TABLE'S DRESS (#286), opted into by passing `sheet`:
+  //   { eyebrow, detail, accent }  — whose table, one sentence of consequence,
+  //   and the game's colour (already through safeAccent). Every field is reset
+  //   on every call, so a plain question after a table one is plain again.
+  const dressed = !!sheet;
+  el.panel?.classList.toggle('sheet-dialog', dressed);
+  if (el.eyebrow) {
+    el.eyebrow.textContent = sheet?.eyebrow || '';
+    el.eyebrow.hidden = !sheet?.eyebrow;
+  }
+  if (el.detail) {
+    el.detail.textContent = sheet?.detail || '';
+    el.detail.hidden = !sheet?.detail;
+  }
+  if (sheet?.accent) el.panel?.style.setProperty('--sheet-accent', sheet.accent);
+  else el.panel?.style.removeProperty('--sheet-accent');
   el.modal.hidden = false;
   return new Promise((resolve) => {
     const close = (answer) => {

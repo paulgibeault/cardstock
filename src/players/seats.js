@@ -65,7 +65,7 @@ function soloSides(count) {
 export function createSeatTable({
   seats, localDeviceId = LOCAL_DEVICE, owners = null, sides = null,
 } = {}) {
-  const count = Number(seats);
+  let count = Number(seats);
   if (!Number.isInteger(count) || count < 1) {
     throw new Error(`createSeatTable: seats must be a positive integer, got ${seats}`);
   }
@@ -74,10 +74,10 @@ export function createSeatTable({
   // whose side a chair is on is worse than one that says everyone is alone.
   const declared = Array.isArray(sides) ? sides.map((side) => [...side]) : null;
   const seen = new Set(declared ? declared.flat() : []);
-  const pairing = declared && seen.size === count && declared.every((side) => side.length > 0)
+  let pairing = declared && seen.size === count && declared.every((side) => side.length > 0)
     ? declared
     : soloSides(count);
-  const sideBySeat = new Array(count).fill(0);
+  let sideBySeat = new Array(count).fill(0);
   pairing.forEach((side, index) => { for (const seat of side) sideBySeat[seat] = index; });
   const slots = Array.from({ length: count }, (_, seat) => {
     const given = owners?.[seat];
@@ -86,12 +86,20 @@ export function createSeatTable({
     return deviceOwner(given.deviceId, given.localIndex ?? 0);
   });
 
+  function resetSides() {
+    pairing = soloSides(count);
+    sideBySeat = pairing.map((_, index) => index);
+  }
+
   function inRange(seat) {
     return Number.isInteger(seat) && seat >= 0 && seat < count;
   }
 
   const table = {
-    count,
+    // A GETTER, because a table being set can change size (#284): the host
+    // adds or takes away a chair before the deal, and everything holding this
+    // object — the host module, the panel — has to see the new count.
+    get count() { return count; },
     localDeviceId,
 
     /** The owner record for a seat. Always an object; never null. */
@@ -240,6 +248,31 @@ export function createSeatTable({
       if (!inRange(seat)) return false;
       slots[seat] = EMPTY;
       return true;
+    },
+
+    /**
+     * ONE MORE CHAIR, at the end, before the deal (#284). A new chair holds a
+     * bot, the same default every chair but the host's starts with. Sides go
+     * back to one per seat: only packs without partnerships can change size.
+     */
+    addSeat({ bot = true } = {}) {
+      slots.push(bot ? botOwner(null) : EMPTY);
+      count = slots.length;
+      resetSides();
+      return count - 1;
+    },
+
+    /**
+     * Take a chair away, and close the gap (#284). Seats after it move down one,
+     * which is only safe BEFORE the deal — a hand is dealt to a seat index.
+     * Returns the owner that was in it, so the caller can tell a person.
+     */
+    dropSeat(seat) {
+      if (!inRange(seat) || count <= 1) return null;
+      const [owner] = slots.splice(seat, 1);
+      count = slots.length;
+      resetSides();
+      return owner;
     },
 
     /**

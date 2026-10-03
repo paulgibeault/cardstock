@@ -60,7 +60,16 @@ export const FRAME = Object.freeze({
   SNAPSHOT: 'snapshot',
   EMOTE: 'emote',
   BYE: 'bye',
+  // A guest has read the score and is waiting on the next hand (#283).
+  READY: 'ready',
 });
+
+/**
+ * The pauses a host can hold its guests in (#283). One today: `round`, the
+ * score sheet between hands, which a guest is shown for as long as the host
+ * has it open.
+ */
+export const BEAT = Object.freeze({ ROUND: 'round' });
 
 /**
  * Frames a client believes only from its host. Anything else claiming one is
@@ -80,7 +89,7 @@ export const HOST_FRAMES = Object.freeze([
 ]);
 
 /** Frames only a client sends. */
-export const CLIENT_FRAMES = Object.freeze([FRAME.CLAIM_SEAT, FRAME.PROPOSE, FRAME.SNAPSHOT_REQ]);
+export const CLIENT_FRAMES = Object.freeze([FRAME.CLAIM_SEAT, FRAME.PROPOSE, FRAME.SNAPSHOT_REQ, FRAME.READY]);
 
 /**
  * A FIXED SET, INDEXED BY POSITION — there is no free-text channel at this
@@ -364,6 +373,33 @@ function cleanSeatRoster(raw) {
 }
 
 /**
+ * The positions a move passed through, as views (#283): `{ trick?, final? }`.
+ * Optional — absent is `null`; present and malformed is `false`, a refusal.
+ * Each is held to the same test as the view it rides beside.
+ */
+function cleanPoses(raw) {
+  if (raw === undefined || raw === null) return null;
+  if (typeof raw !== 'object' || Array.isArray(raw)) return false;
+  const out = {};
+  for (const key of ['trick', 'final']) {
+    const pose = raw[key];
+    if (pose === undefined) continue;
+    if (!pose || typeof pose !== 'object' || !Number.isInteger(pose.v)) return false;
+    out[key] = pose;
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+/** The pause the host is in, and which seats have said they are ready. */
+function cleanBeat(raw) {
+  if (raw === undefined || raw === null) return null;
+  if (typeof raw !== 'object' || !Object.values(BEAT).includes(raw.kind)) return false;
+  const ready = raw.ready === undefined ? [] : raw.ready;
+  if (!Array.isArray(ready) || ready.length > LIMITS.seats || !ready.every((s) => isSeatIndex(s))) return false;
+  return { kind: raw.kind, ready: ready.slice() };
+}
+
+/**
  * The one door. Returns `{ok: true, frame}` with a CLEANED COPY — never the
  * object that came off the wire, so nothing downstream can be handed a field
  * this function did not look at.
@@ -474,7 +510,18 @@ function validateBody(raw, kind) {
       if (!view || typeof view !== 'object') return fail(`${kind}: no view`);
       if (!Number.isInteger(view.v)) return fail(`${kind}: view has no version`);
       if (!Number.isInteger(raw.seq) || raw.seq < 0) return fail(`${kind}: bad seq`);
-      return ok({ k: kind, seq: raw.seq, view, events: Array.isArray(raw.events) ? raw.events : [] });
+      const poses = cleanPoses(raw.poses);
+      if (poses === false) return fail(`${kind}: bad poses`);
+      const beat = cleanBeat(raw.beat);
+      if (beat === false) return fail(`${kind}: bad beat`);
+      return ok({
+        k: kind,
+        seq: raw.seq,
+        view,
+        events: Array.isArray(raw.events) ? raw.events : [],
+        ...(poses ? { poses } : {}),
+        ...(beat ? { beat } : {}),
+      });
     }
 
     case FRAME.REJECT: {
@@ -506,6 +553,9 @@ function validateBody(raw, kind) {
       if (raw.seat !== undefined && !isSeatIndex(raw.seat)) return fail('emote: bad seat');
       return ok({ k: kind, i: raw.i, seat: raw.seat });
     }
+
+    case FRAME.READY:
+      return ok({ k: kind });
 
     case FRAME.BYE: {
       const why = raw.why;

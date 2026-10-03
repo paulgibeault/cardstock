@@ -12,81 +12,317 @@
  * into the first rather than deleting it.
  * ------------------------------------------------------------------ */
 
-/* The panel is centred and chromed by the overlay family above; everything
-   here is only what goes INSIDE it. Left-aligned against that panel's centred
-   default, because a seat grid is a list of people and a centred list of names
-   is unreadable. */
-#party-overlay .panel { text-align: left; }
-#party-overlay .panel__title { text-align: center; }
+/* ------------------------------------------------------------------ *
+ * THE TABLE SHEET (#286)
+ *
+ * One sheet for both readers. Its head wears the game's own accent
+ * (`--sheet-accent`, set from the manifest in src/ui/party.js) the way the
+ * lobby tile does, so a host setting up Hearts and a guest about to sit at
+ * Hearts are looking at the same coloured thing they tapped. Below it: the
+ * chairs as cards, the host's settings, one primary button, and the way out.
+ * ------------------------------------------------------------------ */
 
-.party__summary { opacity: 0.85; margin: 0 0 0.75rem; text-align: center; }
-.party__note {
-  margin: 0 0 0.75rem;
-  padding: 0.6rem 0.75rem;
-  border-radius: 10px;
+.party-sheet {
+  --sheet-accent: var(--accent);
+  position: relative;
+  text-align: left;
+  padding: 0;
+  overflow: hidden;
+  width: min(30rem, 100%);
+  display: flex;
+  flex-direction: column;
+  max-height: min(92vh, 46rem);
+}
+
+.party-sheet__head {
+  padding: 1.25rem 3rem 1rem 1.25rem;
+  background:
+    linear-gradient(135deg,
+      color-mix(in srgb, var(--sheet-accent) 34%, transparent),
+      color-mix(in srgb, var(--sheet-accent) 10%, transparent));
+  border-bottom: 1px solid color-mix(in srgb, var(--sheet-accent) 40%, var(--panel-border));
+}
+
+.party-sheet__eyebrow {
+  margin: 0 0 0.15rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  opacity: 0.75;
+}
+
+.party-sheet__title {
+  margin: 0;
+  font-size: 1.6rem;
+  font-weight: 700;
+  line-height: 1.15;
+}
+
+.party-sheet__status {
+  margin: 0.35rem 0 0;
+  font-size: 0.88rem;
+  opacity: 0.85;
+}
+
+.party-sheet__meta {
+  display: block;
+  margin-top: 0.15rem;
+  font-size: 0.76rem;
+  opacity: 0.7;
+}
+.party-sheet__meta:empty { display: none; }
+
+.party-sheet__close {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  width: 2rem;
+  height: 2rem;
+  display: grid;
+  place-items: center;
+  font: inherit;
+  font-size: 1.35rem;
+  line-height: 1;
+  color: inherit;
   background: var(--chip-bg);
   border: 1px solid var(--panel-border);
+  border-radius: 50%;
+  cursor: pointer;
+  z-index: 1;
+}
+.party-sheet__close:hover { background: var(--ghost-hover); }
+
+.party__note {
+  margin: 0.9rem 1.25rem 0;
+  padding: 0.6rem 0.75rem;
+  border-radius: 10px;
+  font-size: 0.88rem;
+  background: color-mix(in srgb, var(--sheet-accent) 14%, var(--chip-bg));
+  border: 1px solid color-mix(in srgb, var(--sheet-accent) 45%, var(--panel-border));
 }
 .party__note[hidden] { display: none; }
 
+/* THE CHAIRS. Two columns where there is room, one on a narrow phone; the grid
+   scrolls rather than the page, because a table can seat eight. */
 .party__seats {
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-  /* A table can seat eight. The panel must not grow past the viewport on a
-     phone, so the grid is what scrolls — never the page behind it. */
-  max-height: min(50vh, 22rem);
-  overflow-y: auto;
-}
-.party__actions {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(12.5rem, 1fr));
   gap: 0.5rem;
-  flex-wrap: wrap;
-  justify-content: center;
-  margin-top: 0.75rem;
+  padding: 1rem 1.25rem 0.25rem;
+  overflow-y: auto;
+  min-height: 0;
 }
 
 .party-seat {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  grid-template-areas:
+    "face text dot"
+    "face text actions";
   align-items: center;
-  gap: 0.6rem;
-  padding: 0.5rem 0.7rem;
-  border-radius: 10px;
+  column-gap: 0.65rem;
+  padding: 0.6rem 0.7rem;
+  border-radius: 12px;
   background: var(--chip-bg);
   border: 1px solid var(--panel-border);
+  min-height: 3.6rem;
 }
+.party-seat--mine {
+  border-color: var(--sheet-accent);
+  background: color-mix(in srgb, var(--sheet-accent) 12%, var(--chip-bg));
+}
+/* AN OPEN CHAIR IS AN INVITATION, and looks like one: a dashed outline round
+   nothing, rather than a grey row that reads as broken. */
+.party-seat--empty { border-style: dashed; background: transparent; }
+
 .party-seat__face {
-  width: 1.75rem;
-  height: 1.75rem;
+  grid-area: face;
+  width: 2.3rem;
+  height: 2.3rem;
   display: grid;
   place-items: center;
+  font-size: 1.15rem;
   border-radius: 50%;
   background: var(--seat-color, #5b8def);
   color: #fff;
-  flex: 0 0 auto;
+}
+.party-seat--empty .party-seat__face {
+  background: transparent;
+  border: 2px dashed var(--panel-border);
+}
+.party-seat--bot .party-seat__face { filter: saturate(0.6); }
+
+.party-seat__text {
+  grid-area: text;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
 }
 .party-seat__name {
-  flex: 1 1 auto;
+  font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* WHO THIS CHAIR PLAYS WITH, at a partnership table. Quiet — it is a standing
-   fact, not news — and it must not take room from the name, which is the thing
-   the row is actually for. */
+.party-seat__role,
 .party-seat__partner {
-  font-size: 0.78rem;
-  opacity: 0.75;
-  flex: 0 0 auto;
+  font-size: 0.76rem;
+  opacity: 0.72;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
+.party-seat__partner { color: var(--partner); opacity: 0.95; }
 
-.party-seat__actions { display: flex; gap: 0.35rem; flex: 0 0 auto; }
+.party-seat > .presence-chip { grid-area: dot; justify-self: end; }
+.party-seat__actions { grid-area: actions; justify-self: end; display: flex; gap: 0.35rem; }
+.party-seat__actions:empty { display: none; }
+/* With no dot and no action the card is two columns, and the text gets them. */
+.party-seat:not(:has(.presence-chip)) .party-seat__actions { grid-row: 1 / span 2; }
+
+.seat-button {
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 0.3rem 0.65rem;
+  border-radius: 999px;
+  color: inherit;
+  background: transparent;
+  border: 1px solid var(--panel-border);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.seat-button:hover { background: var(--ghost-hover); }
+.seat-button--quiet { opacity: 0.8; }
+/* SIT HERE is the one thing a guest came to do, so it is the one filled button
+   on their sheet. */
+.seat-button--go {
+  background: var(--sheet-accent);
+  border-color: transparent;
+  color: var(--ribbon-text);
+}
+.seat-button--go:hover { filter: brightness(1.08); background: var(--sheet-accent); }
+
+/* THE HOST'S SETTINGS, before the deal: a labelled row each. */
+.party-sheet__settings {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  margin: 0.75rem 1.25rem 0;
+  padding: 0.75rem 0.85rem;
+  border-radius: 12px;
+  background: var(--chip-bg);
+  border: 1px solid var(--panel-border);
+}
+.party-sheet__settings[hidden] { display: none; }
+
+.party-setting {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+.party-setting__label { font-size: 0.88rem; font-weight: 600; }
+.party-setting__label small {
+  margin-left: 0.4rem;
+  font-weight: 400;
+  opacity: 0.65;
+}
+
+.stepper {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--panel-border);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.stepper__button {
+  font: inherit;
+  font-size: 1.1rem;
+  width: 2.3rem;
+  height: 2rem;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+.stepper__button:hover:not(:disabled) { background: var(--ghost-hover); }
+.stepper__button:disabled { opacity: 0.3; cursor: default; }
+.stepper__value {
+  min-width: 2rem;
+  text-align: center;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.segmented {
+  display: inline-flex;
+  border: 1px solid var(--panel-border);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.segmented__option {
+  font: inherit;
+  font-size: 0.8rem;
+  padding: 0.35rem 0.7rem;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+.segmented__option + .segmented__option { border-left: 1px solid var(--panel-border); }
+.segmented__option:hover { background: var(--ghost-hover); }
+.segmented__option--on {
+  background: var(--sheet-accent);
+  color: var(--ribbon-text);
+  font-weight: 700;
+}
+.segmented__option--on:hover { background: var(--sheet-accent); }
+
+/* ONE PRIMARY BUTTON, THEN THE WAY OUT. */
+.party__actions {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.35rem;
+  padding: 1rem 1.25rem 1.25rem;
+}
+.party__actions:empty { display: none; }
+
+.party-primary {
+  font: inherit;
+  font-size: 1.05rem;
+  font-weight: 700;
+  padding: 0.75rem 1rem;
+  border-radius: 12px;
+  color: var(--ribbon-text);
+  background: var(--sheet-accent);
+  border: 0;
+  cursor: pointer;
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--sheet-accent) 35%, transparent);
+}
+.party-primary:hover { filter: brightness(1.06); }
+
+.party-exit {
+  font: inherit;
+  font-size: 0.86rem;
+  padding: 0.45rem;
+  color: inherit;
+  opacity: 0.75;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+.party-exit:hover { opacity: 1; }
 
 /* A chip that says nothing is a dot: "connected" is the state a player should
    never have to read. Everything else gets a word. */
 .presence-chip {
-  font-size: 0.8rem;
+  font-size: 0.72rem;
   padding: 0.1rem 0.45rem;
   border-radius: 999px;
   border: 1px solid var(--panel-border);
@@ -106,6 +342,11 @@
 .presence-chip--unreachable { background: rgba(196, 78, 78, 0.24); }
 .presence-chip--bot,
 .presence-chip--empty { opacity: 0.6; }
+
+@media (max-width: 30rem) {
+  .party__seats { grid-template-columns: 1fr; }
+  .party-sheet__title { font-size: 1.4rem; }
+}
 
 .party-strip {
   display: flex;
@@ -169,3 +410,94 @@
   15% { opacity: 1; }
   100% { opacity: 0; }
 }
+
+/* ------------------------------------------------------------------ *
+ * A QUESTION ABOUT A TABLE, DRESSED LIKE THE TABLE (#286)
+ *
+ * The confirm dialog (when src/ui/confirm.js is handed `sheet`) and the
+ * host's "Somebody left": the sheet's coloured head, a sentence of
+ * consequence, then one big button over a quiet way out — the same order and
+ * the same buttons as the table sheet, so leaving a table looks like part of
+ * the table rather than a browser alert.
+ * ------------------------------------------------------------------ */
+
+.sheet-dialog {
+  --sheet-accent: var(--accent);
+  padding: 0;
+  overflow: hidden;
+  text-align: left;
+  width: min(24rem, 100%);
+}
+.sheet-dialog .confirm__head {
+  padding: 1.15rem 1.25rem 0.9rem;
+  background:
+    linear-gradient(135deg,
+      color-mix(in srgb, var(--sheet-accent) 34%, transparent),
+      color-mix(in srgb, var(--sheet-accent) 10%, transparent));
+  border-bottom: 1px solid color-mix(in srgb, var(--sheet-accent) 40%, var(--panel-border));
+}
+.sheet-dialog .panel__title {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 700;
+  line-height: 1.25;
+}
+.confirm__detail {
+  margin: 0;
+  padding: 0.9rem 1.25rem 0;
+  font-size: 0.92rem;
+  line-height: 1.45;
+  opacity: 0.9;
+}
+.confirm__detail[hidden] { display: none; }
+
+/* ONE BIG BUTTON, THEN THE WAY OUT. The confirm dialog's own two buttons are
+   restyled in place and re-ordered — the action first, as on the sheet. */
+.sheet-dialog .panel__actions,
+.sheet-dialog__actions {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.4rem;
+  margin: 0;
+  padding: 1rem 1.25rem 1.15rem;
+}
+.sheet-dialog .panel__actions { flex-direction: column-reverse; }
+.sheet-dialog #confirm-ok {
+  font: inherit;
+  font-size: 1rem;
+  font-weight: 700;
+  padding: 0.7rem 1rem;
+  border-radius: 12px;
+  border: 0;
+  color: #fff;
+  background: var(--danger-bg);
+  cursor: pointer;
+}
+.sheet-dialog #confirm-ok:hover { background: var(--danger-bg-hover); }
+.sheet-dialog #confirm-cancel {
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
+  padding: 0.6rem 1rem;
+  border-radius: 12px;
+  color: inherit;
+  background: transparent;
+  border: 1px solid var(--panel-border);
+  cursor: pointer;
+}
+.sheet-dialog #confirm-cancel:hover { background: var(--ghost-hover); }
+
+.sheet-dialog__second {
+  font: inherit;
+  font-size: 0.95rem;
+  font-weight: 600;
+  padding: 0.65rem 1rem;
+  border-radius: 12px;
+  color: inherit;
+  background: transparent;
+  border: 1px solid var(--panel-border);
+  cursor: pointer;
+}
+.sheet-dialog__second:hover { background: var(--ghost-hover); }
+.sheet-dialog__actions .party-exit { align-self: center; }

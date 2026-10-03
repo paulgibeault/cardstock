@@ -332,8 +332,9 @@ test("the speed is read from storage, not from a snapshot the lobby cannot refre
   // timing. The neighbour gate below strips comments for exactly this reason.
   // AND ACROSS EVERY FILE CARVED OUT OF table.js (#223): the round beat's flight
   // is asked in src/ui/roundEnding.js, a move's own in src/ui/moveFlight.js, and
-  // the definition lives in src/ui/statusBar.js (seam 7).
-  assert.strictEqual((code.match(/currentFlightMs\(\)/g) || []).length, 6,
+  // the definition lives in src/ui/statusBar.js (seam 7). Seven since #283: a
+  // guest's trick hold is planned off the same live flight as the host's.
+  assert.strictEqual((code.match(/currentFlightMs\(\)/g) || []).length, 7,
     "every flight-duration call site must ask currentFlightMs, plus its own definition — "
     + "a site left on the snapshot is a card that still flies at the stale rung");
   // The bot driver asks at fire time, the way `difficulty` beside it does (#91) —

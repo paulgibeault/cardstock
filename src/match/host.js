@@ -30,6 +30,7 @@ import { FRAME, validateFrame, isSafeId, EMOTES } from './protocol.js';
 import {
   lobbyFrame, viewFrame, rejectFrame, emoteFrame, byeFrame,
 } from './frames.js';
+import { BEAT } from './protocol.js';
 
 /** How many proposals one seat may make per window before we stop reading them. */
 const PROPOSE_BUDGET = 40;
@@ -92,7 +93,15 @@ const HOST_RULES = [
  *                  the budget starts refusing legal moves. A simulation that
  *                  had to work around its own rate limiter would be measuring
  *                  the limiter.
- * @param hooks     { onSeatsChanged, onApplied, onEmote, onError, onBye }
+ * @param holdsBeats () => may this host hold a beat open right now? True only
+ *                  while somebody on this device is looking at the table — a
+ *                  headless table has no summary on screen to wait on, and a
+ *                  beat nobody can close would stall every guest (#283).
+ * @param hooks     { onSeatsChanged, onApplied, onBeat, onEmote, onError, onBye }
+ *
+ * The rules object may also carry `snapshot`, `poses` and `beatOf` (#283).
+ * Without them the host behaves exactly as before: no poses travel, and no
+ * beat is ever held.
  */
 export function createTableHost({
   rules,
@@ -108,6 +117,7 @@ export function createTableHost({
   // is a number compiled into the joiner's own build and right by coincidence.
   graceMs = () => undefined,
   now = Date.now,
+  holdsBeats = () => false,
   hooks = {},
 }) {
   if (!isSafeId(tableId)) throw new Error('createTableHost: a table needs an id');
@@ -117,6 +127,10 @@ export function createTableHost({
   const budgets = new Map(); // deviceId -> {count, until}
   let started = false;
   let seq = 0;
+  // THE PAUSE THE HOST'S FELT IS IN, if any (#283): `{ kind, ready: Set<seat> }`
+  // or null. While it is set, guests are shown the same pause and no guest may
+  // move — the engine has already dealt the next hand underneath it.
+  let beat = null;
 
   const selfDeviceId = () => peer.self()?.deviceId || null;
 
@@ -264,14 +278,28 @@ export function createTableHost({
     return announced;
   }
 
-  /** One seat's view, addressed to the device holding it. */
-  function sendViewTo(seat, deviceId, { kind = FRAME.VIEW, events = [] } = {}) {
+  /**
+   * One seat's view, addressed to the device holding it.
+   *
+   * WITH THE POSES THE MOVE PASSED THROUGH (#283). The live state has already
+   * gathered the trick and dealt the next hand, so a guest drawing only `view`
+   * never saw the fourth card land or the hand end. `poses` carries the same
+   * seat's view of each of those moments — redacted by the same `viewFor`, with
+   * no moves in it, because nothing on a pose is actable.
+   */
+  function sendViewTo(seat, deviceId, { kind = FRAME.VIEW, events = [], poses = null } = {}) {
     const state = liveState();
     if (!state) return false;
-    const acting = rules.actingSeats(state).includes(seat);
+    const acting = !beat && rules.actingSeats(state).includes(seat);
+    const posed = {};
+    for (const key of ['trick', 'final']) {
+      if (poses?.[key]) posed[key] = rules.viewFor(poses[key], seat, { moves: [], announcements: [], deadlines: [], seq });
+    }
     return sendTo(deviceId, viewFrame({
       kind,
       seq,
+      poses: Object.keys(posed).length ? posed : undefined,
+      beat: beat ? { kind: beat.kind, ready: [...beat.ready].sort((a, b) => a - b) } : undefined,
       view: rules.viewFor(state, seat, {
         moves: acting ? rules.enumerateMoves(state, seat) : [],
         announcements: acting ? rules.announcementsFor(state, seat) : [],
@@ -279,10 +307,12 @@ export function createTableHost({
         // host-clock instants, so a client can show the time left without ever
         // being in a position to decide that it ran out — which would be a
         // client that can time its opponents out by running its clock fast.
-        deadlines: deadlines(),
+        // Nobody is on the clock between hands (#283) — the host's turn timer is
+        // stood down for the beat, and a countdown here would be a stale one.
+        deadlines: beat ? [] : deadlines(),
         seq,
       }),
-      events: rules.eventsFor(state, seat, events),
+      events: rules.eventsFor(state, seat, events, { also: [poses?.trick] }),
     }));
   }
 
@@ -293,7 +323,7 @@ export function createTableHost({
    * a client whose animation missed a beat is still exactly correct, because
    * the last view it received is what it believes.
    */
-  function fanOut(events = []) {
+  function fanOut(events = [], poses = null) {
     const state = liveState();
     if (!state) return;
     const sent = new Set();
@@ -303,7 +333,7 @@ export function createTableHost({
       if (owner.deviceId === selfDeviceId()) continue; // the host reads its own state
       if (sent.has(`${owner.deviceId}:${seat}`)) continue;
       sent.add(`${owner.deviceId}:${seat}`);
-      sendViewTo(seat, owner.deviceId, { events });
+      sendViewTo(seat, owner.deviceId, { events, poses });
     }
   }
 
@@ -374,6 +404,14 @@ export function createTableHost({
       return void sendTo(fromDeviceId,
         rejectFrame(frame.pid, 'unknown-card', 'That card is not in this deck.'));
     }
+    // BETWEEN HANDS NOBODY PLAYS (#283). The engine dealt the next hand inside
+    // the move that ended this one, so the move is very likely LEGAL — and a
+    // guest who led into a hand the host has not finished reading the score of
+    // would be playing a different game from the one on the host's screen.
+    if (beat) {
+      return void sendTo(fromDeviceId,
+        rejectFrame(frame.pid, 'between-hands', 'Wait for the next hand to be dealt.'));
+    }
 
     // THE FULL VALIDATOR, AND VALIDATE-THEN-APPLY RATHER THAN TRY/CATCH.
     // `rules.apply` throws on an illegal move, and a throw from inside a message
@@ -420,6 +458,7 @@ export function createTableHost({
       case FRAME.SNAPSHOT_REQ: return handleSnapshotReq(fromDeviceId);
       case FRAME.EMOTE: return handleEmote(fromDeviceId, frame);
       case FRAME.BYE: return handleBye(fromDeviceId, frame);
+      case FRAME.READY: return handleReady(fromDeviceId);
       default:
         // A host-only frame arriving from a peer is a client that thinks it is
         // the host, or somebody probing. Neither is worth acting on.
@@ -466,6 +505,56 @@ export function createTableHost({
     broadcastLobby();
   }
 
+  /**
+   * A guest has read the score and is ready for the next hand (#283).
+   *
+   * A TICK, NOT A VOTE. The host still deals; this only tells the host's sheet
+   * (and the other guests') who is waiting on whom. The seat is the sender's
+   * AUTHENTICATED one, like every other seat this module reads.
+   */
+  function handleReady(fromDeviceId) {
+    if (!beat) return;
+    const held = seats.seatsOfDevice(fromDeviceId);
+    if (!held.length) return;
+    for (const seat of held) beat.ready.add(seat);
+    hooks.onBeat?.(beatInfo());
+    publish([]);
+  }
+
+  /* ---------------------------------------------------------------- *
+   * Beats (#283)
+   * ---------------------------------------------------------------- */
+
+  function beatInfo() {
+    return beat ? { kind: beat.kind, ready: [...beat.ready].sort((a, b) => a - b) } : null;
+  }
+
+  /**
+   * Open a beat if this move earned one and somebody here can close it.
+   * Called before the fan-out, so the very view that ends the hand already
+   * says the table is between hands.
+   */
+  function noteBeat(state, events) {
+    const kind = rules.beatOf?.(state, events) || null;
+    if (kind && holdsBeats()) {
+      beat = { kind, ready: new Set() };
+      hooks.onBeat?.(beatInfo());
+    }
+  }
+
+  /**
+   * The host's felt left the pause — its sheet was dismissed, or it stopped
+   * looking at this table. Every guest is told in the same breath, under a new
+   * sequence number so nobody discards it as a replay.
+   */
+  function endBeat() {
+    if (!beat) return false;
+    beat = null;
+    hooks.onBeat?.(null);
+    publish([]);
+    return true;
+  }
+
   /* ---------------------------------------------------------------- *
    * The host's own moves
    * ---------------------------------------------------------------- */
@@ -482,10 +571,16 @@ export function createTableHost({
     if (!state) return null;
     const check = rules.validate(state, move);
     if (!check.legal) return check;
+    // THE POSITION BEFORE, kept for the poses (#283) — and handed to the felt
+    // with the move, because this is the one path where the felt never saw the
+    // state before the engine changed it, and without it the host's own screen
+    // skipped the trick a guest had just finished.
+    const pre = rules.snapshot?.(state) ?? null;
     rules.apply(state, move);
     const events = state.events.slice();
-    publish(events);
-    hooks.onApplied?.(state, move, events);
+    const poses = pre && rules.poses ? rules.poses(pre, move, events) : null;
+    publish(events, { poses });
+    hooks.onApplied?.(state, move, events, { pre });
     return { legal: true };
   }
 
@@ -506,9 +601,11 @@ export function createTableHost({
    * tell it whether it missed one; publishing a new view under an old sequence
    * number is how a client silently keeps a stale table.
    */
-  function publish(events = []) {
+  function publish(events = [], { poses = null } = {}) {
     seq += 1;
-    fanOut(events);
+    const state = liveState();
+    if (state && events.length) noteBeat(state, events);
+    fanOut(events, poses);
   }
 
   /* ---------------------------------------------------------------- *
@@ -548,6 +645,8 @@ export function createTableHost({
     fanOut,
     seatStatusFor: (seat) => statusForSeat(seats.ownerOf(seat)),
     seq: () => seq,
+    beat: beatInfo,
+    endBeat,
     /** For the table: publish a fresh view without a move (a rename, a re-seat). */
     republish: () => fanOut([]),
   };
