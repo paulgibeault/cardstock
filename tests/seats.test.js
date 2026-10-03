@@ -144,3 +144,31 @@ test('LOCAL_DEVICE is what solo binds to, so solo and shared ask one question', 
   assert.equal(seats.ownerOf(0).deviceId, LOCAL_DEVICE);
   assert.equal(seats.ownerOf(0).localIndex, 0);
 });
+
+/* ------------------------------------------------------------------ *
+ * A table being set can change size (#284)
+ * ------------------------------------------------------------------ */
+
+test('a chair added before the deal holds a bot, and the count follows', () => {
+  const table = createSeatTable({ seats: 2, localDeviceId: 'me' });
+  table.claim(0, { deviceId: 'me' });
+  table.seatBot(1);
+  assert.equal(table.addSeat(), 2);
+  assert.equal(table.count, 3);
+  assert.equal(table.ownerOf(2).kind, 'bot');
+  assert.equal(table.serialize().owners.length, 3);
+  assert.equal(table.sideOf(2), 2, 'a solo table: every chair its own side');
+});
+
+test('a chair taken away closes the gap, and says who was in it', () => {
+  const table = createSeatTable({ seats: 4, localDeviceId: 'me' });
+  table.claim(0, { deviceId: 'me' });
+  table.seatBot(1);
+  table.claim(3, { deviceId: 'ada' });
+  const gone = table.dropSeat(1);
+  assert.equal(gone.kind, 'bot');
+  assert.equal(table.count, 3);
+  assert.equal(table.seatOf('ada'), 2, 'the chairs after it move down one');
+  assert.equal(table.ownerOf(3).kind, 'empty', 'and nothing is past the end');
+  assert.equal(table.dropSeat(7), null, 'a chair that is not there cannot be taken');
+});

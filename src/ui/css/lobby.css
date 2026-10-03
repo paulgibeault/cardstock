@@ -81,42 +81,100 @@
   gap: 0.6rem;
 }
 
+/* A TABLE TILE (#286): a small card in the game's own colour, with whose
+   table it is, what stage it is at, and a dot per chair — filled for a
+   person, hollow for a chair you could take. The accent arrives through
+   safeAccent() exactly as it does on a game tile. */
 .table-tile {
+  --tile-accent: var(--accent);
+  position: relative;
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  gap: 0.15rem;
-  padding: 0.7rem 0.85rem;
+  align-items: stretch;
+  gap: 0.3rem;
+  padding: 0.75rem 0.9rem 0.75rem 1.1rem;
   font: inherit;
   color: inherit;
   text-align: left;
-  background: var(--chip-bg);
-  border: 1px solid var(--tile-border);
-  border-radius: 10px;
+  background:
+    linear-gradient(135deg,
+      color-mix(in srgb, var(--tile-accent) 22%, var(--tile-bg)),
+      var(--tile-bg) 70%);
+  border: 1px solid color-mix(in srgb, var(--tile-accent) 45%, var(--tile-border));
+  border-radius: 12px;
   cursor: pointer;
+  overflow: hidden;
   transition: transform 0.18s ease, border-color 0.18s ease;
 }
+.table-tile::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  background: var(--tile-accent);
+}
 
-.table-tile:hover { transform: translateY(-2px); border-color: var(--accent); }
+.table-tile:hover { transform: translateY(-2px); border-color: var(--tile-accent); }
 
-/* OURS READS DIFFERENTLY FROM THEIRS, because "your party" and "a table you
-   could join" are two different offers and the accent is how every other
-   surface in this game says "this one is yours". */
-.table-tile--mine { border-color: var(--accent); }
+/* OURS READS DIFFERENTLY FROM THEIRS, because "your table" and "a table you
+   could join" are two different offers. */
+.table-tile--mine { box-shadow: inset 0 0 0 1px var(--tile-accent); }
+
+.table-tile__top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
 
 .table-tile__who {
-  font-size: 0.9rem;
+  font-size: 0.78rem;
   font-weight: 600;
+  opacity: 0.8;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.table-tile__pill {
+  font-size: 0.68rem;
+  font-weight: 700;
+  padding: 0.12rem 0.5rem;
+  border-radius: 999px;
+  white-space: nowrap;
+  background: var(--chip-bg);
+  border: 1px solid var(--tile-border);
+}
+.table-tile__pill--open {
+  background: var(--tile-accent);
+  color: var(--ribbon-text);
+  border-color: transparent;
 }
 
 .table-tile__game {
-  font-size: 0.78rem;
-  opacity: 0.85;
+  font-size: 1.05rem;
+  font-weight: 700;
 }
 
+.table-tile__foot {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.table-tile__dots { display: inline-flex; gap: 0.2rem; }
+.table-tile__dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  border: 1.5px solid var(--tile-accent);
+}
+.table-tile__dot--taken { background: var(--tile-accent); }
+
 .table-tile__state {
-  font-size: 0.72rem;
-  opacity: 0.7;
+  font-size: 0.74rem;
+  opacity: 0.8;
 }
 
 /* THE DEMOTED SOLO DOOR. Present when a pack holds both a party table and an
@@ -137,70 +195,42 @@
 
 .tile__solo:hover { opacity: 1; }
 
-/* HOW LONG A SEAT GETS, set before the cards are out. A row of three rather
-   than a field: see the note on GRACE_CHOICES in src/ui/party.js for why this
-   is a choice and not a number somebody types. */
-.party-grace {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.35rem;
-  width: 100%;
-  margin-bottom: 0.4rem;
+/* A TABLE WHOSE HOST IS NOT HERE. Flat and dashed: no hover lift, because
+   there is nobody on the other end of a tap — but it keeps its colour and its
+   one control, Forget, for a host who is never coming back (#285). */
+.table-tile--dormant {
+  cursor: default;
+  border-style: dashed;
+  background: var(--tile-bg);
 }
+.table-tile--dormant > :not(.table-tile__forget) { opacity: 0.6; }
+.table-tile--dormant:hover { transform: none; }
 
-.party-grace__label {
-  font-size: 0.76rem;
-  opacity: 0.7;
-  margin-right: 0.15rem;
-}
+.table-tile__pill--offline { background: transparent; }
 
-.party-grace__option {
+.table-tile__forget {
+  align-self: flex-start;
+  margin-top: 0.15rem;
   font: inherit;
-  font-size: 0.76rem;
-  padding: 0.25rem 0.55rem;
+  font-size: 0.74rem;
+  font-weight: 600;
+  padding: 0.25rem 0.65rem;
   color: inherit;
   background: var(--chip-bg);
   border: 1px solid var(--tile-border);
   border-radius: 999px;
   cursor: pointer;
 }
-
-/* The one that is chosen reads as chosen, in the accent every other surface
-   uses for "this one is yours". */
-.party-grace__option--on {
-  border-color: var(--accent);
-  color: var(--accent);
-  font-weight: 600;
-}
-
-/* A TABLE WHOSE HOST IS NOT HERE. Greyed and flat: no pointer, no hover lift,
-   nothing that reads as tappable, because there is nobody on the other end of a
-   tap. It is still on the row rather than hidden — the whole point of the seat
-   stub is that the promise stays visible while the host is away, and a seat
-   that vanishes overnight is indistinguishable from one that was lost. */
-.table-tile--dormant {
-  cursor: default;
-  opacity: 0.55;
-  border-style: dashed;
-}
-
-.table-tile--dormant:hover { transform: none; border-color: var(--tile-border); }
-
-/* The one word that matters on a dormant tile, so it is not dimmed twice over
-   by the tile's own opacity. */
-.table-tile--dormant .table-tile__state {
-  opacity: 1;
-  font-weight: 600;
-}
+.table-tile__forget:hover { background: var(--ghost-hover); }
 
 /* YOUR SEAT IS THE ONE FACT WORTH RAISING ITS VOICE FOR. Everything else on a
    table tile is about the table; this is about you, and it is the reason to
    come back to a game that has been sitting for a day. */
 .table-tile__seat {
+  margin-left: auto;
   font-size: 0.72rem;
-  font-weight: 600;
-  color: var(--accent);
+  font-weight: 700;
+  color: var(--tile-accent);
 }
 
 /* A tile is a mat on the felt in the pack's own colour — not a list row. The

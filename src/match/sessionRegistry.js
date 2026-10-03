@@ -8,20 +8,16 @@
 // the bug T1 removed (being in earshot of a neighbour's table is not being at
 // one).
 //
-// THE TWO INVARIANTS ARE BOTH PER-PACK, not per-device:
+// ONE TABLE PER DEVICE (#285), hosting or sitting. The rule was per-pack —
+// host Hearts while sitting at Crazy Eights — and two live tables on one
+// device turned out to be one more than anybody could follow: the 2026-10-03
+// playtest's "hosting multiple tables seems buggy". So a device is AT one
+// table at a time. Watching a table (a client that never sat down) is not
+// being at it, and refuses nothing.
 //
-//   one hosted table per pack   two Hearts tables on one device would be two
-//                               games with one name, and `(hostDeviceId,
-//                               packId)` is the uniqueness rule the wire
-//                               already assumes for LIVE tables (§2).
-//   one held seat per pack      you cannot sit at two Hearts games at once.
-//                               You can host Hearts and sit at Crazy Eights,
-//                               and that is the case the old `if (client)`
-//                               refusal got wrong. You can also sit at Dana's
-//                               Hearts AND Bo's Crazy Eights, which is what
-//                               made this half worth enforcing at last: until
-//                               #49 there was only ever one joiner session, so
-//                               the rule had nothing to refuse.
+// `holding()` is the table this device is at, if any. party.js asks it before
+// hosting or sitting somewhere new, and offers to close or leave that table
+// first rather than refusing outright.
 //
 // Both refusals return a SENTENCE rather than false. A dead button that will
 // not say why is the thing #43 called out, so the notice travels with the
@@ -57,6 +53,9 @@ export function createSessionRegistry() {
    */
   const seatedForPack = (packId) =>
     all().find((s) => !s.hosting() && s.packId === packId && s.seatedAt() !== null) || null;
+
+  const holding = (exceptId = null) =>
+    all().find((s) => s.tableId !== exceptId && (s.hosting() || s.seatedAt() !== null)) || null;
 
   return {
     all,
@@ -102,18 +101,25 @@ export function createSessionRegistry() {
      * @param nameOf  packId -> display name, for a notice worth reading
      */
     refusalToHost(packId, { nameOf = (id) => id } = {}) {
-      if (hostedForPack(packId)) return `You are already hosting ${nameOf(packId)}.`;
-      const seated = seatedForPack(packId);
-      if (seated) return `You are sitting at another ${nameOf(packId)} table. Leave it to host your own.`;
-      return null;
+      const at = holding();
+      if (!at) return null;
+      if (at.hosting()) return `You are already hosting ${nameOf(at.packId)}. Close that table to host another.`;
+      return `You are sitting at a ${nameOf(at.packId)} table. Leave it to host your own.`;
     },
 
     /** May we take a seat at this table? Same contract as refusalToHost. */
-    refusalToSit(packId, { nameOf = (id) => id } = {}) {
-      if (hostedForPack(packId)) return `You are hosting ${nameOf(packId)}. Stop hosting to sit at another one.`;
-      if (seatedForPack(packId)) return `You are already sitting at a ${nameOf(packId)} table.`;
-      return null;
+    refusalToSit(packId, { nameOf = (id) => id, tableId = null } = {}) {
+      const at = holding(tableId);
+      if (!at) return null;
+      if (at.hosting()) return `You are hosting ${nameOf(at.packId)}. Close that table to sit at another.`;
+      return `You are already sitting at a ${nameOf(at.packId)} table. Leave it to sit at another.`;
     },
+
+    /**
+     * The table this device is AT — hosting it, or holding a seat — other than
+     * `exceptId`. One at most, by the rule above; null when there is none.
+     */
+    holding,
 
     /**
      * Point the felt at a session. Everything else keeps running.

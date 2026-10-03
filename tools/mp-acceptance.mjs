@@ -65,6 +65,10 @@
 //
 // Usage:  node tools/mp-acceptance.mjs            (all scenarios)
 //         node tools/mp-acceptance.mjs --only=3   (one, by number)
+//         node tools/mp-acceptance.mjs --scenarios=./mp-screens.mjs
+//                                                 (screenshots of the hosting
+//                                                 and joining sheets, to
+//                                                 $MP_SCREENS_DIR)
 //
 // Exit code: 0 if every check passes, 1 otherwise.
 
@@ -296,7 +300,10 @@ try {
 
   /* --- 7. The checklist ------------------------------------------- */
 
-  const { SCENARIOS } = await import('./mp-scenarios.mjs');
+  // `--scenarios=./mp-screens.mjs` swaps the checklist for another list of the
+  // same shape — the design screenshots (#286) ride the same three devices.
+  const list = process.argv.find((a) => a.startsWith('--scenarios='))?.split('=')[1] || './mp-scenarios.mjs';
+  const { SCENARIOS } = await import(list);
   const only = process.argv.find((a) => a.startsWith('--only='))?.split('=')[1];
   for (const [index, scenario] of SCENARIOS.entries()) {
     if (only && String(index + 1) !== only) continue;

@@ -90,15 +90,21 @@
        thing underneath is the context ("who is joining WHAT"), and a table you
        are hosting must not be torn down to look at the seats. -->
   <div id="party-overlay" hidden>
-    <div class="panel panel--wide">
-      <div id="party-heading" class="panel__title"></div>
-      <p id="party-summary" class="party__summary"></p>
+    <!-- THE TABLE SHEET (#286). One sheet, two readers: the host sets the
+         table here — who sits where, how many chairs, how long a turn — and
+         deals; a guest picks a chair and waits for the deal. The game's own
+         accent tints the head, so whose game this is reads before any word. -->
+    <div class="panel panel--wide party-sheet" id="party-sheet">
+      <button type="button" id="party-back" class="party-sheet__close" aria-label="Close">&times;</button>
+      <header class="party-sheet__head">
+        <p id="party-eyebrow" class="party-sheet__eyebrow"></p>
+        <div id="party-heading" class="panel__title party-sheet__title"></div>
+        <p id="party-summary" class="party-sheet__status"></p>
+      </header>
       <p id="party-note" class="party__note" hidden></p>
       <div id="party-seats" class="party__seats"></div>
+      <div id="party-settings" class="party-sheet__settings" hidden></div>
       <div id="party-actions" class="party__actions"></div>
-      <div class="panel__actions">
-        <button type="button" id="party-back" class="ghost-button">Close</button>
-      </div>
     </div>
   </div>
 

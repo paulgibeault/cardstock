@@ -114,19 +114,20 @@ test('a session with nothing dealt yet has no context', () => {
  * The registry's door
  * ------------------------------------------------------------------ */
 
-test('hosting one pack does not refuse hosting another', () => {
+test('one table per device: hosting any pack is refused while hosting another (#285)', () => {
   const reg = createSessionRegistry();
   reg.add(sessionFor(ID.hearts, 'hearts', 'host').session);
 
-  assert.equal(reg.refusalToHost('eights'), null);
+  assert.match(reg.refusalToHost('eights'), /already hosting/);
   assert.match(reg.refusalToHost('hearts'), /already hosting/);
+  assert.equal(reg.holding().tableId, ID.hearts);
 });
 
-test('a seat at somebody else’s Crazy Eights does not refuse hosting Hearts', () => {
+test('one table per device: a seat anywhere refuses hosting anything (#285)', () => {
   const reg = createSessionRegistry();
   reg.add(sessionFor(ID.eights, 'eights', 'joiner', { seat: 2 }).session);
 
-  assert.equal(reg.refusalToHost('hearts'), null, 'the refusal T1 was written to remove');
+  assert.match(reg.refusalToHost('hearts'), /Leave it to host your own/);
   assert.match(reg.refusalToHost('eights'), /Leave it to host your own/);
 });
 
@@ -263,14 +264,11 @@ test('hosted and joined split the same registry', () => {
   assert.equal(reg.seatedForPack('eights').tableId, ID.eights);
 });
 
-test('two tables of different packs can both be hosted — the #43 case', () => {
+test('the table you are at is not in your way — `holding` skips the one named (#285)', () => {
   const reg = createSessionRegistry();
-  reg.add(sessionFor(ID.hearts, 'hearts', 'host').session);
-  assert.equal(reg.refusalToHost('eights'), null);
-  reg.add(sessionFor(ID.eights, 'eights', 'host').session);
-
-  assert.equal(reg.hosted().length, 2);
-  assert.notEqual(reg.get(ID.hearts), reg.get(ID.eights));
+  reg.add(sessionFor(ID.hearts, 'hearts', 'joiner', { seat: 1 }).session);
+  assert.equal(reg.holding(ID.hearts), null, 're-claiming at the same table is not a second table');
+  assert.equal(reg.refusalToSit('hearts', { tableId: ID.hearts }), null);
 });
 
 test('seat zero is a held seat, not a falsy one', () => {
@@ -344,20 +342,20 @@ test('stop moves the epoch before it clears the state', () => {
  * The seat half of the door (T4d)
  * ------------------------------------------------------------------ */
 
-test('you may sit at two tables of different packs, but not two of the same', () => {
+test('one seat per device, whatever the pack (#285)', () => {
   const reg = createSessionRegistry();
   reg.add(sessionFor(ID.hearts, 'hearts', 'joiner', { seat: 1 }).session);
 
-  assert.equal(reg.refusalToSit('eights'), null, 'Dana’s Hearts and Bo’s Crazy Eights are two evenings');
+  assert.match(reg.refusalToSit('eights'), /already sitting/);
   assert.match(reg.refusalToSit('hearts'), /already sitting/);
 });
 
-test('you cannot sit at a pack you are hosting', () => {
+test('you cannot sit anywhere while you host (#285)', () => {
   const reg = createSessionRegistry();
   reg.add(sessionFor(ID.hearts, 'hearts', 'host').session);
 
-  assert.match(reg.refusalToSit('hearts'), /Stop hosting/);
-  assert.equal(reg.refusalToSit('eights'), null);
+  assert.match(reg.refusalToSit('hearts'), /Close that table/);
+  assert.match(reg.refusalToSit('eights'), /Close that table/);
 });
 
 test('a client that never sat down does not refuse a seat', () => {
