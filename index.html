@@ -112,13 +112,17 @@
        INTERRUPTED seat: that one keeps playing, and asking about it would turn
        a tunnel into a decision. -->
   <div id="party-decision" hidden>
-    <div class="panel">
-      <div class="panel__title">Somebody left</div>
-      <p id="party-decision-text"></p>
-      <div class="panel__actions">
-        <button type="button" data-choice="bot">Fill with a bot</button>
-        <button type="button" data-choice="pause" class="ghost-button">Wait for them</button>
-        <button type="button" data-choice="end" class="ghost-button">End the table</button>
+    <div class="panel sheet-dialog" id="party-decision-panel" role="alertdialog" aria-modal="true"
+         aria-labelledby="party-decision-title">
+      <header class="confirm__head">
+        <p class="party-sheet__eyebrow">Your table</p>
+        <div id="party-decision-title" class="panel__title">Somebody left</div>
+      </header>
+      <p id="party-decision-text" class="confirm__detail"></p>
+      <div class="sheet-dialog__actions">
+        <button type="button" data-choice="bot" class="party-primary">Fill their seat with a bot</button>
+        <button type="button" data-choice="pause" class="sheet-dialog__second">Wait for them</button>
+        <button type="button" data-choice="end" class="party-exit">End the table</button>
       </div>
     </div>
   </div>
@@ -477,8 +481,16 @@
   </div>
 
   <div id="confirm-modal" hidden>
-    <div class="panel">
-      <div id="confirm-message" class="panel__title"></div>
+    <!-- One dialog, two dresses. Plain for solo play; at a shared table it
+         wears the table sheet's (#286): the game's colour across a head that
+         says whose table, the question, a sentence of consequence, and one
+         big button over a quiet way out. src/ui/confirm.js `sheet`. -->
+    <div class="panel" id="confirm-panel" role="alertdialog" aria-modal="true" aria-labelledby="confirm-message">
+      <header class="confirm__head">
+        <p id="confirm-eyebrow" class="party-sheet__eyebrow" hidden></p>
+        <div id="confirm-message" class="panel__title"></div>
+      </header>
+      <p id="confirm-detail" class="confirm__detail" hidden></p>
       <div class="panel__actions">
         <button id="confirm-cancel" class="ghost-button">Keep playing</button>
         <button id="confirm-ok" class="danger-button">Start over</button>

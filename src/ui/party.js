@@ -1318,8 +1318,11 @@ async function shrinkTable(session) {
     }
     if (seat < 0) return;
     const who = nameForSeat(seat, session);
-    const ok = await confirmAction(`Every seat is taken. Remove ${who} to make the table smaller?`,
-      { okLabel: `Remove ${who}`, cancelLabel: 'Keep everyone' });
+    const ok = await askAboutTable(session, `Remove ${who}?`, {
+      detail: `Every seat is taken, so a smaller table means somebody goes. ${who} will be told the host removed them.`,
+      okLabel: `Remove ${who}`,
+      cancelLabel: 'Keep everyone',
+    });
     if (!ok || session.state || !sessions.get(session.tableId)) return;
     const owner = session.seats.ownerOf(seat);
     if (owner.kind === 'device') session.host?.sendBye('replaced', { to: owner.deviceId });
@@ -1453,9 +1456,29 @@ function renderActions() {
       el.actions.append(button('Back to the table',
         () => { switchToSeat(session.tableId); }, { className: 'party-primary' }));
     }
-    el.actions.append(button('Leave table', () => { leaveTable(); goToLobby(); },
+    el.actions.append(button('Leave table', () => { leaveAsked(session).catch(reportFailure); },
       { className: 'party-exit' }));
   }
+}
+
+/**
+ * A guest stands up — after asking, when they hold a seat, because the host
+ * then has a chair to decide about. Watching without a seat leaves at once.
+ */
+async function leaveAsked(session) {
+  if (!session) return;
+  if (session.client?.seat?.() != null) {
+    const ok = await askAboutTable(session, `Leave ${hostNameOf(session)}’s table?`, {
+      detail: session.state
+        ? `${hostNameOf(session)} decides what happens to your seat — a bot can take your hand, or they can wait for you to come back.`
+        : 'Your seat goes back to the host. You can sit down again while they are still waiting to deal.',
+      okLabel: 'Leave table',
+      cancelLabel: 'Stay',
+    });
+    if (!ok) return;
+  }
+  leaveSeatedTable(session);
+  goToLobby();
 }
 
 /**
@@ -1466,9 +1489,11 @@ async function closeOwnTable(session) {
   if (!session) return;
   const guests = remoteGuests(session).length;
   if (guests) {
-    const ok = await confirmAction(
-      `Close this table? ${guests === 1 ? 'The player' : `All ${guests} players`} at it will be told it ended.`,
-      { okLabel: 'Close table', cancelLabel: 'Keep it open' });
+    const ok = await askAboutTable(session, 'Close this table?', {
+      detail: `The game ends for everybody — ${guestsAtIt(guests)} will be told.`,
+      okLabel: 'Close table',
+      cancelLabel: 'Keep it open',
+    });
     if (!ok) return;
   }
   closeHostedTable(session);
@@ -2155,7 +2180,7 @@ export async function hostGame(packId) {
   // out loud rather than by a dead button.
   // ONE TABLE PER DEVICE (#285). A table of a different game, hosted or sat
   // at, is closed or left first — once the player says so.
-  if (!await clearTheWay({ doing: `host ${packName(packId)}` })) return false;
+  if (!await clearTheWay({ doing: `hosting ${packName(packId)}` })) return false;
   const refusal = sessions.refusalToHost(packId, { nameOf: packName });
   if (refusal) {
     setNotice(refusal);
@@ -2540,6 +2565,31 @@ function closeHostedTable(session) {
 }
 
 /**
+ * A QUESTION ABOUT A TABLE, ASKED IN THE TABLE'S OWN DRESS (#286): its colour,
+ * whose table it is above the question, and a sentence of consequence under
+ * it. The shared confirm dialog does the asking (src/ui/confirm.js `sheet`).
+ */
+function askAboutTable(session, question, { detail = '', okLabel, cancelLabel }) {
+  const accent = session ? knownManifest(session.packId)?.accent : null;
+  return confirmAction(question, {
+    okLabel,
+    cancelLabel,
+    sheet: {
+      eyebrow: !session ? '' : (session.hosting() ? 'Your table' : `${hostNameOf(session)}’s table`),
+      detail,
+      accent: accent ? safeAccent(accent, '#c9a227') : null,
+    },
+  });
+}
+
+/** "The player at it" / "Both players at it" / "All 3 players at it". */
+function guestsAtIt(count) {
+  if (count === 1) return 'the player at it';
+  if (count === 2) return 'both players at it';
+  return `all ${count} players at it`;
+}
+
+/**
  * ONE TABLE PER DEVICE (#285): before hosting or sitting somewhere new, the
  * table this device is already at is closed or left — after asking, because
  * either one is somebody else's evening too.
@@ -2554,11 +2604,13 @@ async function clearTheWay({ except = null, doing }) {
   const game = packName(at.packId);
   const hosting = at.hosting();
   const guests = hosting ? remoteGuests(at).length : 0;
-  const question = hosting
-    ? `Close your ${game} table to ${doing}?`
-      + (guests ? ` ${guests === 1 ? 'The player' : `All ${guests} players`} at it will be told it ended.` : '')
-    : `Leave ${hostNameOf(at)}’s ${game} table to ${doing}?`;
-  const ok = await confirmAction(question, {
+  const question = hosting ? `Close your ${game} table?` : `Leave ${hostNameOf(at)}’s ${game} table?`;
+  const detail = hosting
+    ? `You can be at one table at a time, so ${doing} closes this one`
+      + (guests ? ` — ${guestsAtIt(guests)} will be told it ended.` : '.')
+    : `You can be at one table at a time, so ${doing} gives up your seat here.`;
+  const ok = await askAboutTable(at, question, {
+    detail,
     okLabel: hosting ? 'Close it' : 'Leave it',
     cancelLabel: hosting ? 'Keep my table' : 'Stay',
   });
@@ -2599,8 +2651,11 @@ async function removeSeat(seat, session) {
   // bot a seat at whichever table the player had wandered to.
   if (!session?.host || !session.seats) return;
   const who = nameForSeat(seat, session) || `Seat ${seat + 1}`;
-  const ok = await confirmAction(`Remove ${who} from the table? A bot takes over their hand.`,
-    { okLabel: 'Remove them', cancelLabel: 'Keep them' });
+  const ok = await askAboutTable(session, `Remove ${who}?`, {
+    detail: `A bot takes over their seat${session.state ? ' and their hand' : ''}, and ${who} is told the host removed them.`,
+    okLabel: 'Remove them',
+    cancelLabel: 'Keep them',
+  });
   if (!ok) return;
   const owner = session.seats.ownerOf(seat);
   if (owner.kind === 'device' && owner.deviceId) {
@@ -2640,7 +2695,15 @@ function checkForDrops(session) {
 function askAboutSeat(seat, session) {
   if (!el.decision) return;
   const who = nameForSeat(seat, session) || `Seat ${seat + 1}`;
-  el.decisionText.textContent = `${who} has left the table.`;
+  // THE TABLE'S DRESS (#286): its colour, and the person named in the title.
+  const panel = el.decision.querySelector('.sheet-dialog');
+  const accent = knownManifest(session?.packId)?.accent;
+  if (panel && accent) panel.style.setProperty('--sheet-accent', safeAccent(accent, '#c9a227'));
+  const title = el.decision.querySelector('#party-decision-title');
+  if (title) title.textContent = `${who} left the table`;
+  el.decisionText.textContent = session?.state
+    ? `Put a bot in ${who}’s seat to keep the hand going, or hold the game until they come back.`
+    : `Put a bot in ${who}’s seat, or keep it open for them to come back to.`;
   el.decision.hidden = false;
 
   const answer = (choice) => {
@@ -2878,7 +2941,10 @@ async function attachToActive() {
 /** Sit down, becoming a client of the table on screen first. */
 async function claimSeat(seat) {
   const target = activeTable();
-  if (target && !await clearTheWay({ except: target.key, doing: 'sit here' })) return;
+  if (target && !await clearTheWay({
+    except: target.key,
+    doing: `sitting at ${target.hostName || 'another'}’s ${packName(target.packId)} table`,
+  })) return;
   if (!await attachToActive()) return;
   client()?.claimSeat(seat);
 }

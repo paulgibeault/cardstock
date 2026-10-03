@@ -105,7 +105,7 @@ function hostGameAnswering(frame, packId, answer = true) {
     pending.then(() => { settled = true; }, () => { settled = true; });
     for (let i = 0; i < 100 && !settled; i++) {
       if (!modal.hidden) {
-        asked = document.getElementById('confirm-message').textContent;
+        asked = `${document.getElementById('confirm-message').textContent} ${document.getElementById('confirm-detail').textContent}`;
         document.getElementById(yes ? 'confirm-ok' : 'confirm-cancel').click();
         break;
       }
@@ -121,7 +121,7 @@ function answerIfAsked(frame, answer = true, withinMs = 1500) {
     const modal = document.getElementById('confirm-modal');
     for (let waited = 0; waited < ms; waited += 100) {
       if (!modal.hidden) {
-        const asked = document.getElementById('confirm-message').textContent;
+        const asked = `${document.getElementById('confirm-message').textContent} ${document.getElementById('confirm-detail').textContent}`;
         document.getElementById(yes ? 'confirm-ok' : 'confirm-cancel').click();
         return asked;
       }
@@ -717,7 +717,7 @@ const oneTable = {
     //    without a word; now the second asks about the first.
     const kept = await hostGameAnswering(frames.H, SECOND, false);
     check('host: hosting a second game asks to close the first',
-      /Close your .+ table to host Hearts\?/.test(kept.asked || ''), kept.asked);
+      /Close your .+ table\? .*hosting Hearts closes this one/.test(kept.asked || ''), kept.asked);
     check('host: and keeping it keeps it — still one table, the same one',
       kept.result === false && (await oursNow()).map((t) => t.key).join() === first.key);
 
@@ -774,7 +774,7 @@ const oneTable = {
     // 4. A GUEST TRYING TO HOST IS ASKED TO LEAVE FIRST — and can stay.
     const stayed = await hostGameAnswering(frames.A, 'crazy-eights', false);
     check('guest A: hosting while seated asks to leave the table first',
-      /Leave .+ table to host Crazy Eights\?/.test(stayed.asked || ''), stayed.asked);
+      /Leave .+ table\? .*hosting Crazy Eights gives up your seat/.test(stayed.asked || ''), stayed.asked);
     check('guest A: and staying keeps the seat', (await party(frames.A, 'partySnapshot')).seat === 1);
 
     // 5. A TILE FOR A TABLE THAT CLOSED WHILE WE WERE AWAY. A seat note naming

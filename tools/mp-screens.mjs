@@ -87,6 +87,25 @@ const screens = {
     await shoot(pages.H, '09-host-asked-to-close');
     await frames.H.evaluate(() => document.getElementById('confirm-cancel').click());
 
+    // THE GUEST'S "LEAVE TABLE", asked in the table's own dress.
+    await party(frames.A, 'showPartyScreen', table.key);
+    await frames.A.evaluate(() => [...document.querySelectorAll('.party-exit')]
+      .find((b) => /Leave table/.test(b.textContent))?.click());
+    await new Promise((r) => setTimeout(r, 600));
+    await shoot(pages.A, '09b-guest-asked-to-leave');
+    await frames.A.evaluate(() => document.getElementById('confirm-cancel').click());
+
+    // THE HOST'S "SOMEBODY LEFT", raised by hand for the picture.
+    await frames.H.evaluate(() => {
+      const d = document.getElementById('party-decision');
+      d.querySelector('#party-decision-title').textContent = 'Bea left the table';
+      d.querySelector('#party-decision-text').textContent =
+        'Put a bot in Bea’s seat to keep the hand going, or hold the game until they come back.';
+      d.hidden = false;
+    });
+    await shoot(pages.H, '09c-host-somebody-left');
+    await frames.H.evaluate(() => { document.getElementById('party-decision').hidden = true; });
+
     // A SEAT AT A TABLE WHOSE HOST IS GONE, with its Forget.
     await frames.B.evaluate(() => {
       const now = Date.now();
