@@ -23,6 +23,8 @@ import { createTableHost } from '../src/match/host.js';
 import { createTableClient } from '../src/match/client.js';
 import { cardIdsIn } from '../src/engine/view.js';
 import { tableRules } from '../src/engine/tableRules.js';
+import { forkState } from '../src/engine/fork.js';
+import { posesFor } from '../src/engine/poses.js';
 import { createPeerNetwork } from './peer-stub.mjs';
 import { PACKS_DIR, readJson, listPackIds, loadPackFromDisk } from './lib/packs.mjs';
 import { pickMove, stepRound, noMoveReason } from './lib/botLoop.mjs';
@@ -479,14 +481,37 @@ function moveKey(move) {
  * another product of the same filter — a check graded against the thing it is
  * checking passes for as long as the bug is consistent.
  */
-function auditClient({ state, seat, client, delivered, isCardId, faults }) {
+function auditClient({ state, seat, client, delivered, isCardId, faults, poses = null }) {
   const view = client.view();
   if (!view) { faults.push(`seat ${seat} holds no view after a published move`); return; }
 
   // 1. Privacy, on the wire: what this device was actually handed.
+  //
+  // A POSE IS AUDITED AGAINST THE POSITION IT IS A VIEW OF (#283), not against
+  // the live state: the hand as it ended shows cards that the next deal has
+  // already put in somebody else's hand, and that is no leak — it is the last
+  // hand, which everybody watched being played. Graded against the simulator's
+  // OWN posing of the move, so the filter is never checked against itself.
+  const sendsPose = (key) => delivered.some((frame) => frame?.poses?.[key]);
+  for (const key of ['trick', 'final']) {
+    if (!sendsPose(key)) continue;
+    if (!poses?.[key]) { faults.push(`seat ${seat} was sent a ${key} pose the move did not earn`); continue; }
+    const posedForeign = foreignHands(poses[key], seat);
+    const posedAllowed = entitledTo(poses[key], seat);
+    for (const id of cardIdsIn(delivered.map((frame) => frame?.poses?.[key]), isCardId)) {
+      if (posedForeign.has(id)) faults.push(`seat ${seat} was sent ${id} from another seat's hand in the ${key} pose`);
+      else if (!posedAllowed.has(id)) faults.push(`seat ${seat} was sent ${id} in the ${key} pose, which it may not see`);
+    }
+  }
+  // The rest of the frame: the live view, and the events — whose trick cards
+  // were face up on the table in the trick pose, even though the sweep has
+  // since buried them (and a new deal may have handed them to a neighbour).
+  const bare = delivered.map((frame) => (frame && frame.poses ? { ...frame, poses: undefined } : frame));
+  const public_ = poses?.trick ? entitledTo(poses.trick, seat) : new Set();
   const foreign = foreignHands(state, seat);
   const allowed = entitledTo(state, seat);
-  for (const id of cardIdsIn(delivered, isCardId)) {
+  for (const id of cardIdsIn(bare, isCardId)) {
+    if (public_.has(id)) continue;
     if (foreign.has(id)) faults.push(`seat ${seat} was sent ${id} from another seat's hand`);
     else if (!allowed.has(id)) faults.push(`seat ${seat} was sent ${id}, which it may not see`);
   }
@@ -597,6 +622,8 @@ function playOneOverProtocol(pack, seatCount, seed) {
     const before = state.log.length;
     clock += 1000;
     net.clearLog();
+    // What the audit grades the poses against (#283) — the simulator's own fork.
+    const pre = forkState(state);
 
     if (actingSeat === 0) {
       const verdict = host.applyLocal(move);
@@ -630,6 +657,7 @@ function playOneOverProtocol(pack, seatCount, seed) {
         auditClient({
           state, seat, client: clients[seat],
           delivered: net.deliveredTo(`d${seat}`), isCardId, faults,
+          poses: posesFor(pre, move, state.events),
         });
       }
       if (faults.length) return { outcome: 'error', moves, reason: faults[0] };

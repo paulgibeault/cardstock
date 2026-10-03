@@ -63,7 +63,11 @@ import { confirmAction } from './confirm.js';
 import {
   adoptSharedView, leaveSharedTable, tableContext, setSeating, dealHostedTable, resumeHostedTable,
   setLocalMoveListener, afterRemoteMove, rearmTableBots, rerenderTable,
+  setHostBeatListener, setRoundReadyLine, guestTrickHoldMs, guestTrickMessage,
+  showGuestRoundSummary, paintGuestRoundReady, closeGuestRoundSummary,
+  showGuestResults, hideGuestResults,
 } from './table.js';
+import { createGuestBeats } from './guestBeats.js';
 import { motionAllowed } from './flight.js';
 import { createSeatTable, deserializeSeatTable } from '../players/seats.js';
 import { sidesOf } from '../engine/sides.js';
@@ -1589,14 +1593,17 @@ function openHostSession({ tableId, packId, packName: name, variants, seats }) {
     nameFor: (seat) => nameForSeat(seat, session),
     deadlines: () => session.timer?.deadlines() || [],
     graceMs: () => graceOf(session),
+    // A BEAT IS ONLY HELD WHERE SOMEBODY CAN CLOSE IT (#283): the score sheet
+    // is on this device's felt only while the felt is showing this table.
+    holdsBeats: () => sessions.isBound(session),
     hooks: {
       // THE FELT ONLY ANIMATES THE TABLE IT IS SHOWING. `afterRemoteMove` draws
       // on whatever `tableContext()` currently holds, so calling it for a
       // backgrounded table would play another game's card onto the open one.
       // Unbound, the move is applied and published and nothing is drawn — which
       // is the whole of what "headless" means here.
-      onApplied: (_state, move) => {
-        if (sessions.isBound(session)) afterRemoteMove(move);
+      onApplied: (_state, move, _events, { pre } = {}) => {
+        if (sessions.isBound(session)) afterRemoteMove(move, { pre });
         armTimer(session);
         driveBots(session);
         persist(session);
@@ -1605,6 +1612,13 @@ function openHostSession({ tableId, packId, packName: name, variants, seats }) {
       // host must stop moving that seat and start calling it by its name. No
       // re-broadcast — handleClaim already sends one, and this fires inside it.
       onSeatsChanged: () => refreshSeats(session),
+      // THE PAUSE OPENED, A GUEST TICKED, OR THE PAUSE CLOSED (#283). Nobody's
+      // turn runs out between hands, so the timer stands down for the beat and
+      // is armed again — before the closing view goes out with its deadlines.
+      onBeat: (info) => {
+        setRoundReadyLine(readyLine(session, info));
+        armTimer(session);
+      },
       onEmote: ({ emote }) => burst(emote),
       onError: (detail) => surfaceError(detail, session),
       onBye: () => refreshSeats(session),
@@ -1664,12 +1678,122 @@ function openHostSession({ tableId, packId, packName: name, variants, seats }) {
     refreshSeats(session);
     checkForDrops(session);
   });
-  setLocalMoveListener((_state, _move, events) => {
-    session.host?.publish(events);
+  setLocalMoveListener((_state, _move, events, poses) => {
+    session.host?.publish(events, { poses });
     armTimer(session);
     persist(session);
   });
+  setHostBeatListener({
+    // The host's sheet dealt on, so every guest's sheet closes with it.
+    summaryClosed: () => sessions.bound()?.host?.endBeat(),
+    rematch: (table) => dealAgain(table),
+  });
   return session;
+}
+
+/**
+ * Who at a hosted table has said they are ready for the next hand (#283), as
+ * the host's sheet says it. Guests only — bots are always ready and the host
+ * is the one dealing.
+ */
+function readyLine(session, info) {
+  if (!info) return '';
+  const guests = [];
+  for (let seat = 0; seat < (session.seats?.count ?? 0); seat++) {
+    const owner = session.seats.ownerOf(seat);
+    if (owner?.kind === 'device' && owner.deviceId !== selfId()) guests.push(seat);
+  }
+  const ready = guests.filter((seat) => info.ready.includes(seat));
+  if (!ready.length) return '';
+  if (ready.length === guests.length && guests.length > 1) return '\u2713 Everyone is ready.';
+  const names = ready.map((seat) => nameForSeat(seat, session));
+  return `\u2713 ${listOf(names)} ${names.length === 1 ? 'is' : 'are'} ready.`;
+}
+
+/** "Ada", "Ada and Bo", "Ada, Bo and Cy". */
+function listOf(names) {
+  if (names.length < 2) return names[0] || '';
+  return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+}
+
+/**
+ * Deal a hosted table again from its results (#283).
+ *
+ * "Play again" used to start a SOLO match on the host's felt: the hosted table
+ * was left on its finished state and every guest stayed on the old results.
+ * This is `dealParty`'s second half for a table that already had a match —
+ * same seats, same people, a fresh deal published to all of them.
+ */
+async function dealAgain(session) {
+  if (!session?.host || !session.seats) return false;
+  await dealHostedTable({ table: session });
+  bindFelt(session.tableId);
+  session.host.broadcastLobby();
+  session.host.publish([]);
+  armTimer(session);
+  persist(session);
+  refreshSeats(session);
+  return true;
+}
+
+/**
+ * The name a guest's sheet gives the host — the person whose sheet theirs is
+ * waiting on.
+ */
+function hostNameOf(session) {
+  const frame = session.lobbyFrame;
+  const entry = frame?.seats?.find((s) => s.deviceId && s.deviceId === frame.hostDeviceId);
+  return entry?.name || 'The host';
+}
+
+/** A guest's line under the score: who deals, and who else is ready. */
+function guestWaitingLine(session, ready = []) {
+  const frame = session.lobbyFrame;
+  const mine = session.client?.seat?.() ?? null;
+  const others = (frame?.seats || [])
+    .filter((s) => s.kind === 'device' && s.deviceId !== frame.hostDeviceId && s.seat !== mine
+      && ready.includes(s.seat))
+    .map((s) => s.name || `Seat ${s.seat}`);
+  const deals = `${hostNameOf(session)} deals the next hand.`;
+  return others.length ? `${deals} ${listOf(others)} ${others.length === 1 ? 'is' : 'are'} ready.` : deals;
+}
+
+/**
+ * The guest's pauses (#283): src/ui/guestBeats.js sequences them, and every
+ * one of them draws through the felt's ordinary door for a shared view.
+ */
+function guestBeatsFor(session) {
+  const show = (view, { message = '', dealing = false } = {}) => {
+    // DRAWN BEFORE IT IS BOUND — see `onView`'s note on the order.
+    adoptSharedView({
+      table: session,
+      view,
+      // A joiner has no seed, so who is at the table is a fact the host
+      // publishes rather than one we derive.
+      seating: seatingFromRoster(session.lobbyFrame),
+      message,
+      dealing,
+    });
+    bindFelt(session.tableId);
+    goToTable();
+    pulse();
+    renderStrip();
+  };
+  return createGuestBeats({
+    show,
+    openSummary: ({ view, event, ready }) => showGuestRoundSummary({
+      view, event, ready, waiting: guestWaitingLine(session, ready),
+    }),
+    paintReady: (ready) => paintGuestRoundReady(ready, guestWaitingLine(session, ready)),
+    closeSummary: () => closeGuestRoundSummary(),
+    showResults: (view) => showGuestResults(view, {
+      waiting: `${hostNameOf(session)} can deal a new match from here.`,
+    }),
+    hideResults: () => hideGuestResults(),
+    holdMs: (events) => guestTrickHoldMs(events),
+    trickMessage: (ev) => guestTrickMessage(ev),
+    schedule,
+  });
 }
 
 /**
@@ -2025,6 +2149,9 @@ function bindFelt(tableId) {
   const bound = sessions.bind(tableId);
   for (const other of sessions.hosted()) {
     if (other === bound) continue;
+    // A SHEET NOBODY IS LOOKING AT CANNOT BE CLOSED (#283), so a table the
+    // felt has left lets its guests go on.
+    other.host?.endBeat();
     other.cancelBots();
     driveBots(other);
   }
@@ -2043,7 +2170,10 @@ function bindFelt(tableId) {
  */
 export function leaveFelt() {
   sessions.unbind();
-  for (const session of sessions.hosted()) driveBots(session);
+  for (const session of sessions.hosted()) {
+    session.host?.endBeat();
+    driveBots(session);
+  }
 }
 
 
@@ -2057,7 +2187,11 @@ export function leaveFelt() {
 function armTimer(session) {
   const state = session?.state;
   if (!session?.timer || !state) return;
-  session.timer.arm(state);
+  // NOBODY'S TURN RUNS OUT BETWEEN HANDS (#283). Every move re-arms through
+  // here, including the one that opened the pause — so the pause is asked
+  // here, not only when it opens.
+  if (session.host?.beat?.()) session.timer.cancelAll();
+  else session.timer.arm(state);
   pulse();
   renderStrip();
 }
@@ -2260,7 +2394,7 @@ async function joinTable(entry) {
         sightings.noteLobby(next, { provenance: 'client' });
         repaint();
       },
-      onView: (view, _events, meta) => {
+      onView: (view, events, meta) => {
         // THE VIEW IS THIS TABLE'S, and it is kept on this table's session — so
         // a second table's view can arrive without overwriting it. The felt
         // writes it there (#225): the model it draws becomes `session.state`,
@@ -2268,21 +2402,14 @@ async function joinTable(entry) {
         //
         // DRAWN BEFORE IT IS BOUND. Adopting lets go of whatever table the felt
         // was showing, and letting go cancels the bot turns scheduled on it; the
-        // bind below then hands every unbound hosted table to the headless
-        // driver. The other order would cancel the headless turn it had just
+        // bind then hands every unbound hosted table to the headless driver.
+        // The other order would cancel the headless turn it had just
         // scheduled, and a hosted game behind the felt would stall.
-        adoptSharedView({
-          table: session,
-          view,
-          // A joiner has no seed, so who is at the table is a fact the host
-          // publishes rather than one we derive.
-          seating: seatingFromRoster(session.lobbyFrame),
-          message: meta?.snapshot ? 'Caught up.' : '',
-        });
-        bindFelt(session.tableId);
-        goToTable();
-        pulse();
-        renderStrip();
+        //
+        // THROUGH THE HOST'S PAUSES (#283): the completed trick, the score
+        // sheet and the results are held here as long as the host holds them.
+        session.beats ??= guestBeatsFor(session);
+        session.beats.receive(view, events, meta || {});
       },
       onReject: (frame2) => Arcade.ui.toast(frame2.reason || 'That move is not legal.',
         { kind: 'error', duration: 2500 }),
@@ -2394,6 +2521,7 @@ async function claimSeat(seat) {
 
 export function leaveTable() {
   const session = theirTable();
+  session?.beats?.reset();
   if (session?.client) session.client.sendBye('leave');
   joining = false;
   if (tick) { clearInterval(tick); tick = null; }

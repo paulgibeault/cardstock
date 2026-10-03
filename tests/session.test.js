@@ -194,13 +194,16 @@ test("the felt lets go of a table before the registry re-binds it (#225)", () =>
     assert.ok(at >= 0, `${name} must still exist`);
     return party.slice(at, party.indexOf("\n}\n", at));
   };
+  // A GUEST'S VIEW NOW GOES THROUGH ITS PAUSES (#283): `onView` hands it to the
+  // sequencer, and the sequencer's `show` is where the draw and the bind are.
   const onView = party.slice(party.indexOf("onView: (view"), party.indexOf("onReject:"));
-  for (const [where, text] of [["onView", onView], ["switchToSeat", body("switchToSeat")]]) {
+  assert.match(onView, /\.beats\.receive\(/, "onView must hand the view to the guest's pauses");
+  for (const [where, text] of [["guestBeatsFor", body("guestBeatsFor")], ["switchToSeat", body("switchToSeat")]]) {
     assert.ok(text.indexOf("adoptSharedView(") >= 0 && text.indexOf("bindFelt(") >= 0, `${where} must still draw and bind`);
     assert.ok(text.indexOf("adoptSharedView(") < text.indexOf("bindFelt("),
       `${where} binds before the felt has let go of the table it was showing`);
   }
-  for (const name of ["returnToOurTable", "dealParty"]) {
+  for (const name of ["returnToOurTable", "dealParty", "dealAgain"]) {
     const text = body(name);
     assert.ok(text.indexOf("HostedTable(") < text.indexOf("bindFelt("),
       `${name} binds before the felt has taken the table over`);

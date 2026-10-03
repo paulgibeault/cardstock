@@ -243,14 +243,23 @@ export function visibleCardIds(state, seat) {
  * over-hiding.
  *
  * Card ids appear in exactly two events today and both are already public by
- * the time they are emitted: `trickWon.cards` were face up in the `trick` zone,
+ * the time they are emitted (see `also` below for what "public" is asked of): `trickWon.cards` were face up in the `trick` zone,
  * and contract-rummy's melds are laid face up. They are checked against the
  * seat's own view anyway rather than trusted, so a template that starts putting
  * a hidden card in an event payload is caught by the leak tests instead of
  * shipping.
  */
-export function eventsFor(state, seat, events = []) {
+export function eventsFor(state, seat, events = [], { also = [] } = {}) {
   const visible = visibleCardIds(state, seat);
+  // "ALREADY PUBLIC" HAS TO BE ASKED OF THE POSITION WHERE THEY WERE PUBLIC
+  // (#283). Checked against the post-move state alone, `trickWon.cards` had
+  // already been swept into a `won` pile nobody may see, and every guest was
+  // told "four hidden cards" about a trick that was face up on the table. The
+  // host hands in the posed trick it is also sending, so a card passes if this
+  // seat could see it in EITHER position — never one it could see in neither.
+  for (const extra of also) {
+    if (extra) for (const id of visibleCardIds(extra, seat)) visible.add(id);
+  }
 
   return events.map((ev) => {
     if (!Array.isArray(ev.cards)) return { ...ev };

@@ -4,7 +4,8 @@
 // docs/plans/TABLES_PLAN.md §10 asked for, and is the only automated evidence that a
 // device can host two packs at once. 10 is the 2026-08-16 field test that
 // produced the framework's open-game redesign, replayed from a cold start: the
-// shape the party model got wrong, and the proof it no longer is.
+// shape the party model got wrong, and the proof it no longer is. 11 is the
+// 2026-10-03 playtest (#283): a guest sees the trick and the score sheet.
 //
 // Separated from tools/mp-acceptance.mjs on purpose: that file is the harness —
 // three devices, three launchers, the game mounted and the caps gate satisfied
@@ -90,14 +91,14 @@ const skip = (name, why) => console.log(`  ⊘ ${name} — SKIPPED: ${why}`);
  * 1. A scripted hand, end to end
  * ------------------------------------------------------------------ */
 
-async function seatEverybody({ check, waitFor, frames }) {
+async function seatEverybody({ check, waitFor, frames }, packId = PACK) {
   // THE TABLE IS BUILT BEFORE IT IS DEALT. The host picks a game from a lobby
   // tile, everybody takes a chair, and the cards come out once — which is why
   // there is no bot holding a hand for a joiner to take it off.
   const hosted = await frames.H.evaluate(async (packId) => {
     const p = await window.__mod('src/ui/party.js');
     return p.hostGame(packId);
-  }, PACK);
+  }, packId);
   check('host: a lobby tile opens a party for that game', hosted === true);
   check('host: role is host before a single card is dealt',
     (await party(frames.H, 'partyRole')) === 'host');
@@ -227,6 +228,15 @@ const scriptedHand = {
     check('the hand played out to the end of a round',
       !!after && (after.round > before.round || after.over),
       `${after?.moves} moves, round ${before.round} → ${after?.round}; left on ${JSON.stringify(restingOn)}`);
+
+    // THE HOST DEALS ON FIRST (#283). A round that just ended is held on every
+    // guest's felt under the score sheet until the host's own sheet closes, so
+    // until then a guest is RIGHTLY showing the hand as it ended rather than
+    // the next one — and "whose turn is it" has two honest answers.
+    // The sheet opens a beat after the last card lands, so it is waited for.
+    const sheet = await waitFor(() => overlayUp(frames.H, 'round-overlay'), 15000);
+    check("host: the round's score sheet opens", sheet);
+    await frames.H.evaluate(() => document.getElementById('round-continue').click());
 
     // A joiner that fell behind would be holding a stale view, and the only
     // honest check of that is against the host's own numbers.
@@ -943,7 +953,128 @@ const theFieldTestShape = {
   },
 };
 
+/* ------------------------------------------------------------------ *
+ * 11. The guests keep the host's time (#283)
+ * ------------------------------------------------------------------ */
+
+/** Is this overlay on screen in this frame? */
+function overlayUp(frame, id) {
+  return frame.evaluate((i) => !document.getElementById(i).hidden, id);
+}
+
+const sharedBeats = {
+  title: "a guest sees the completed trick, and the score sheet for as long as the host's is up",
+  async run(ctx) {
+    const { check, waitFor, frames } = ctx;
+    // A TRICK GAME, because a trick is the beat the 2026-10-03 playtest lost —
+    // and one no earlier scenario has touched, seated the way scenario 10 seats
+    // strangers: by the table's own key, since this device already hosts others.
+    const PACK11 = 'team-spades';
+    const hosted = await party(frames.H, 'hostGame', PACK11);
+    check(`host: opens a ${PACK11} table`, hosted === true, `hostGame → ${hosted}`);
+    const table = (await party(frames.H, 'partySnapshot')).tables.find((t) => t.packId === PACK11);
+    check('host: the table is in its own directory', !!table, JSON.stringify(table));
+    if (!table) return;
+    const SEAT = { A: 1, B: 2 };
+    for (const label of ['A', 'B']) {
+      const sighted = await waitFor(async () => {
+        await party(frames[label], 'refreshEntry');
+        return (await party(frames[label], 'partySnapshot')).tables.some((t) => t.key === table.key);
+      }, 20000);
+      check(`guest ${label}: sights the table`, sighted);
+      await party(frames[label], 'showPartyScreen', table.key);
+      const offered = await waitFor(() => frames[label].evaluate(
+        (seat) => !!document.querySelector(`.party-seat[data-seat="${seat}"] .party-seat__actions button`),
+        SEAT[label]), 20000);
+      check(`guest ${label}: the seat grid offers seat ${SEAT[label]}`, offered);
+      if (!offered) return;
+      await frames[label].evaluate(
+        (seat) => document.querySelector(`.party-seat[data-seat="${seat}"] .party-seat__actions button`).click(),
+        SEAT[label]);
+    }
+    const seated = await waitFor(async () => {
+      await party(frames.H, 'showPartyScreen', table.key);
+      const seats = (await party(frames.H, 'partySnapshot')).seats;
+      return [1, 2].every((seat) => seats.find((r) => r.seat === seat)?.status === 'connected');
+    }, 20000);
+    check('host: both guests are seated', seated);
+    await party(frames.H, 'showPartyScreen', table.key);
+    await frames.H.evaluate(async () => {
+      const p = await window.__mod('src/ui/party.js');
+      await p.dealParty();
+    });
+
+    // WHAT A'S FELT DREW, sampled in A's own page: the most cards its trick
+    // zone ever held. Before #283 a guest's felt went from three cards straight
+    // to an empty trick, so four was never once on its screen.
+    await frames.A.evaluate(() => {
+      window.__mostOnTrick = 0;
+      window.__sampler = setInterval(async () => {
+        const table = await window.__mod('src/ui/table.js');
+        const n = table.tableContext()?.state?.view?.zones?.trick?.cards?.length ?? 0;
+        window.__mostOnTrick = Math.max(window.__mostOnTrick, n);
+      }, 40);
+    });
+
+    const before = await hostState(frames.H);
+    let last = before.moves;
+    let idle = 0;
+    for (let i = 0; i < 900 && idle < 40; i++) {
+      for (const label of ['H', 'A', 'B']) {
+        try { await party(frames[label], 'takeTurn'); } catch { /* a frame mid-render */ }
+      }
+      const now = await hostState(frames.H);
+      if (!now) break;
+      if (now.moves === last) idle++; else { idle = 0; last = now.moves; }
+      if (now.round > before.round || now.over) break;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    const after = await hostState(frames.H);
+    check('the hand played out to the end of a round', !!after && after.round > before.round,
+      `${after?.moves} moves, round ${before.round} → ${after?.round}`);
+
+    const most = await frames.A.evaluate(() => { clearInterval(window.__sampler); return window.__mostOnTrick; });
+    check('guest A was shown a completed trick — all four cards on the felt', most === 4, `most seen: ${most}`);
+
+    // THE SHEET, ON BOTH SIDES OF THE TABLE.
+    const hostSheet = await waitFor(() => overlayUp(frames.H, 'round-overlay'), 20000);
+    check('host: the score sheet is up', hostSheet);
+    for (const label of ['A', 'B']) {
+      const up = await waitFor(() => overlayUp(frames[label], 'round-overlay'), 20000);
+      check(`guest ${label}: the score sheet is up too`, up);
+    }
+    const says = await frames.A.evaluate(() => document.getElementById('round-ready').textContent);
+    check('guest A: the sheet says who deals', /deals the next hand/.test(says), says);
+    await new Promise((r) => setTimeout(r, 1500));
+    check('guest A: and it stays up while the host is still reading',
+      await overlayUp(frames.A, 'round-overlay') && await overlayUp(frames.H, 'round-overlay'));
+
+    // A's tick reaches the host's sheet.
+    await frames.A.evaluate(() => document.getElementById('round-continue').click());
+    const ticked = await waitFor(() => frames.H.evaluate(
+      () => /ready/.test(document.getElementById('round-ready').textContent)), 10000);
+    check("host: the sheet shows a guest's ready tick", ticked,
+      await frames.H.evaluate(() => document.getElementById('round-ready').textContent));
+    check('guest A: its button says it is ready',
+      await frames.A.evaluate(() => document.getElementById('round-continue').disabled));
+
+    // The host deals on, and the guests' sheets close with it.
+    await frames.H.evaluate(() => document.getElementById('round-continue').click());
+    for (const label of ['A', 'B']) {
+      const down = await waitFor(async () => !(await overlayUp(frames[label], 'round-overlay')), 10000);
+      check(`guest ${label}: the sheet closes when the host deals`, down);
+    }
+    const moving = await waitFor(async () => {
+      for (const label of ['H', 'A', 'B']) {
+        try { await party(frames[label], 'takeTurn'); } catch { /* not our turn */ }
+      }
+      return (await hostState(frames.H)).moves > after.moves;
+    }, 20000);
+    check('and play goes on in the new hand', moving);
+  },
+};
+
 export const SCENARIOS = [
   scriptedHand, privacy, unknownTarget, interruption, overflow, capsStripped, namesAndChips,
-  rejoining, twoPacks, theFieldTestShape,
+  rejoining, twoPacks, theFieldTestShape, sharedBeats,
 ];

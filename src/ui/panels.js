@@ -24,6 +24,7 @@ const el = {
   roundScores: document.getElementById('round-scores'),
   roundContinue: document.getElementById('round-continue'),
   roundTarget: document.getElementById('round-target'),
+  roundReady: document.getElementById('round-ready'),
   roundEndMatch: document.getElementById('round-end-match'),
   roundRing: document.getElementById('round-ring'),
   roundRingFill: document.querySelector('#round-ring .deal-ring__fill'),
@@ -170,7 +171,7 @@ function sideNameCell(className, members, seating) {
  * reason was nowhere on this sheet — least of all for the human, whose own bid
  * was not shown anywhere at all (#123, item 28).
  */
-export function showRoundSummary(state, ev, seating, contract = null, pace = null) {
+export function showRoundSummary(state, ev, seating, contract = null, pace = null, { guest = null } = {}) {
   el.roundTitle.textContent = `Round ${ev.round} over`;
   el.roundScores.replaceChildren();
   // A COLUMN WITH NOTHING TO SAY SAYS NOTHING (#124, item 43): a pack that pegs
@@ -202,6 +203,15 @@ export function showRoundSummary(state, ev, seating, contract = null, pace = nul
   el.roundContinue.textContent = `Deal round ${state.roundNumber}`;
   el.roundTarget.textContent = targetSentence(state, ev);
   el.roundTarget.hidden = !el.roundTarget.textContent;
+  // A GUEST'S SHEET IS THE HOST'S SHEET WITH THE HOST'S CONTROLS TAKEN OFF
+  // (#283). The host deals, so the guest's button is a tick instead; ending
+  // the match and the pace are the host's to set; and the trick-by-trick map
+  // reads a log that only the host keeps.
+  el.roundEndMatch.hidden = !!guest;
+  el.roundMapToggle.hidden = !!guest;
+  el.roundContinue.disabled = false;
+  if (guest) paintGuestReady(guest);
+  else paintRoundReady(hostReadyLine);
   el.roundOverlay.hidden = false;
   // AFTER THE UNHIDE, and it has to be: the ring's geometry is measured off the
   // button, and a button inside `display: none` measures zero.
@@ -313,6 +323,32 @@ export function paintRoundPace(pace) {
  */
 function targetSentence(state, ev) {
   return matchTargetSentence(state.pack, state.seats, ev.totals);
+}
+
+// The host's ready line, kept so a sheet opened (or re-opened from a review)
+// after the ticks arrived still shows them.
+let hostReadyLine = '';
+
+/** Who at a shared table has said they are ready — the host's sheet (#283). */
+export function setHostReadyLine(text) {
+  hostReadyLine = text || '';
+  if (!el.roundOverlay.hidden && !el.roundEndMatch.hidden) paintRoundReady(hostReadyLine);
+}
+
+/**
+ * The ready line under the score (#283) — the host's "Bea is ready", or the
+ * guest's "Ada deals the next hand". Empty hides it.
+ */
+export function paintRoundReady(text) {
+  el.roundReady.textContent = text || '';
+  el.roundReady.hidden = !text;
+}
+
+/** A guest's button: a tick they give once, then a tick they have given. */
+export function paintGuestReady({ ready = false, waiting = '' }) {
+  el.roundContinue.textContent = ready ? 'Ready \u2713' : 'I\u2019m ready';
+  el.roundContinue.disabled = !!ready;
+  paintRoundReady(waiting);
 }
 
 export function hideRoundSummary() {
@@ -468,10 +504,12 @@ export function hideFinalLook() {
  */
 function statsInto(node, template, stats, seating, seats, winner, { hints = 0, hintSeat = null, scoreLine = null } = {}) {
   node.replaceChildren();
-  if (!stats) return;
+  // NO STATS IS NOT NO SCORE (#283): a guest keeps no log to compute stats
+  // from, but the number that decided the match is in its view all the same.
+  if (!stats && !scoreLine) return;
 
   for (let s = 0; s < seats; s++) {
-    const lines = statLinesFor(template, stats.perSeat[s]);
+    const lines = stats ? statLinesFor(template, stats.perSeat[s]) : [];
     const score = scoreLine?.(s);
     if (score) lines.unshift(score);
     // Hints are not in the log (src/ui/hint.js), so they are not in `stats`;
@@ -503,7 +541,13 @@ function statsInto(node, template, stats, seating, seats, winner, { hints = 0, h
  */
 export function showGameOver(state, {
   seating, stats, recordText, heroFaces = [], renderFace, hints = 0, hintSeat = null, sides = null,
+  guest = false,
 }) {
+  // A GUEST'S RESULTS (#283): the same sheet, without the doors that need the
+  // log (review, the map) or the host's authority (dealing again).
+  el.playAgainButton.hidden = guest;
+  el.gameOverReview.hidden = guest;
+  el.gameOverMapToggle.hidden = guest;
   el.gameOverFan.replaceChildren();
   for (const face of heroFaces) {
     const span = document.createElement('span');
