@@ -300,7 +300,9 @@ export function zoneBadge(state, inst) {
   // won pile is read against a bid that is counted in tricks — and because a
   // bare 3 under a stack of twelve cards would need the same explaining.
   const reading = zoneReadingOf(state, inst);
-  if (reading?.badge) return { text: reading.badge, kind: 'count', name };
+  // A reading may RENAME the pile as well (`name`): a numbered pile whose
+  // number IS the badge would otherwise wear it twice — "Hand 1" over "1".
+  if (reading?.badge) return { text: reading.badge, kind: 'count', name: reading.name ?? name };
   const focus = zoneFocusOf(state, address);
   if (focus) return { text: focus.label, kind: 'focus', name };
   if (def.capacity != null) return { text: `${count}/${def.capacity}`, kind: 'count', name };
@@ -364,6 +366,6 @@ export function zoneAriaLabel(state, inst) {
   // screen reader hearing "Won, twelve cards" while the felt says "3 tricks"
   // is being told a different thing from everybody else.
   const reading = zoneReadingOf(state, inst);
-  return `${title}, ${reading?.badge ?? `${count} ${count === 1 ? 'card' : 'cards'}`}.`
+  return `${title}, ${reading?.aria ?? reading?.badge ?? `${count} ${count === 1 ? 'card' : 'cards'}`}.`
     + (notes.length ? ` ${notes.join(' ')}` : '');
 }

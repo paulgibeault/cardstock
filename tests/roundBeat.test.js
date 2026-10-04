@@ -27,7 +27,7 @@ import { ROOT } from "../tools/stage.mjs";
 import {
   roundBeatPlan, showSteps, MIN_HOLD_MS, MIN_TRICK_HOLD_MS, SHOW_STEP_MS,
   trickRevealPlan, MIN_TRICK_REVEAL_MS, READ_AFTER_LANDING_MS, SHARED_TRICK_HOLD_MS,
-  nextShowBeat, SHARED_SHOW_STEP_MS, finalShowPlan,
+  nextShowBeat, SHARED_SHOW_STEP_MS, finalShowPlan, READ_LAST_PLAY_MS,
 } from "../src/ui/roundBeat.js";
 import { PACE_LEVELS, DEFAULT_PACE } from "../src/ui/pace.js";
 import { FLIGHT_MIN_MS, FLIGHT_MS, FLIGHT_MAX_MS } from "../src/ui/flight.js";
@@ -96,9 +96,12 @@ test("a show that ends the match mid-count yields no round plan", () => {
  * ------------------------------------------------------------------ */
 
 test("the felt is held before anything opens over it", () => {
-  const plan = roundBeatPlan([{ type: 'roundOver', round: 2, scores: {}, totals: [0, 0], over: false }]);
-  assert.equal(plan.holdMs, MIN_HOLD_MS);
-  assert.equal(plan.summaryAt, MIN_HOLD_MS);
+  const plan = roundBeatPlan([{ type: 'roundOver', round: 2, scores: {}, totals: [0, 0], over: false }],
+    { pace: 'quick' });
+  // The landing (280ms past a zero flight) and then the last play's reading time.
+  assert.equal(plan.holdMs, 280 + READ_LAST_PLAY_MS);
+  assert.equal(plan.summaryAt, plan.holdMs);
+  assert.ok(plan.holdMs >= MIN_HOLD_MS);
   assert.ok(plan.summaryAt > 0, 'the summary never opens on the move itself');
 });
 
@@ -107,10 +110,10 @@ test("the felt is held before anything opens over it", () => {
 test("the hold clears the card flight, at any pace setting", () => {
   const slow = roundBeatPlan(
     [{ type: 'roundOver', round: 2, scores: {}, totals: [0, 0], over: false }],
-    { flightMs: 700 },
+    { flightMs: 700, pace: 'quick' },
   );
   assert.ok(slow.holdMs > 700, `${slow.holdMs} must outlast a 700ms flight`);
-  assert.equal(slow.holdMs, 980);
+  assert.equal(slow.holdMs, 980 + READ_LAST_PLAY_MS);
 });
 
 test("a closing trick is given time to be gathered first", () => {
@@ -121,10 +124,11 @@ test("a closing trick is given time to be gathered first", () => {
   const plan = roundBeatPlan(events, { flightMs: 420 });
   assert.equal(plan.gathered, true);
   assert.equal(plan.holdMs, 1060);
-  // A gather is longer than a flight, so the trick hold is longer than the
-  // plain one at the same setting — and never shorter than the 900ms the felt
-  // has always used, which is the floor a fast table falls back to.
-  assert.ok(plan.holdMs > roundBeatPlan(events.slice(1), { flightMs: 420 }).holdMs);
+  // NOT stretched by the last play's reading time: a closing trick has already
+  // been held whole for reading (`trickRevealPlan`) before this hold begins —
+  // and never shorter than the 900ms the felt has always used, which is the
+  // floor a fast table falls back to.
+  assert.ok(plan.holdMs < roundBeatPlan(events.slice(1), { flightMs: 420 }).holdMs);
   assert.equal(roundBeatPlan(events, { flightMs: 200 }).holdMs, MIN_TRICK_HOLD_MS);
   const slow = roundBeatPlan(events, { flightMs: 700 });
   assert.equal(slow.holdMs, 1340);
@@ -288,13 +292,17 @@ test("a walk from nowhere in particular still lands on the sheet rather than not
 test("a rung that names a step counts exactly as it did before the sequence existed", () => {
   const quick = roundBeatPlan(cribbageShow, { flightMs: 420, pace: 'quick' });
   assert.strictEqual(quick.stepMs, SHOW_STEP_MS);
-  assert.deepStrictEqual(quick.steps.map((s) => s.at), [700, 2200, 3700]);
-  assert.strictEqual(quick.summaryAt, 5200);
+  // The first count opens once the last pegging card has been read
+  // (READ_LAST_PLAY_MS); the counts after it are spaced exactly as before.
+  const q0 = 700 + READ_LAST_PLAY_MS;
+  assert.deepStrictEqual(quick.steps.map((s) => s.at), [q0, q0 + 1500, q0 + 3000]);
+  assert.strictEqual(quick.summaryAt, q0 + 4500);
 
   const relaxed = roundBeatPlan(cribbageShow, { flightMs: 420, pace: 'relaxed' });
   assert.strictEqual(relaxed.stepMs, 2100);
-  assert.deepStrictEqual(relaxed.steps.map((s) => s.at), [700, 2800, 4900]);
-  assert.strictEqual(relaxed.summaryAt, 7000);
+  const r0 = 700 + 2 * READ_LAST_PLAY_MS;
+  assert.deepStrictEqual(relaxed.steps.map((s) => s.at), [r0, r0 + 2100, r0 + 4200]);
+  assert.strictEqual(relaxed.summaryAt, r0 + 6300);
 });
 
 test("Instant still has no show to sequence", () => {

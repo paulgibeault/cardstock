@@ -662,7 +662,7 @@ test("the priority gate the settle passes is unchanged", () => {
   // #151's floor keys off a trick banner having fired for this move. It fires
   // EARLIER now; it is still the same move, so the same number goes in.
   assert.match(read("src/ui/table.js"),
-    /celebrateAction\(shown, events, \{ floor: trick \? TRICK_BANNER_PRIORITY : -1 \}\)/,
+    /celebrateAction\(shown, plan\?\.steps\.length \? playedPart\(events\) : events,\s*\{ floor: trick \? TRICK_BANNER_PRIORITY : -1 \}\)/,
     "the floor the settle passes celebrateAction has moved");
 });
 
