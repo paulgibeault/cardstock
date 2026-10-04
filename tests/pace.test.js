@@ -19,7 +19,7 @@ import path from "node:path";
 import { ROOT } from "../tools/stage.mjs";
 import { PACE_LEVELS, DEFAULT_PACE, paceLevel, nextSummaryPace } from "../src/ui/pace.js";
 import {
-  roundBeatPlan, SHOW_STEP_MS, MIN_HOLD_MS, trickRevealPlan, READ_AFTER_LANDING_MS,
+  roundBeatPlan, SHOW_STEP_MS, MIN_HOLD_MS, trickRevealPlan, READ_AFTER_LANDING_MS, READ_LAST_PLAY_MS,
 } from "../src/ui/roundBeat.js";
 import { SETTINGS_DEFAULTS } from "../src/arcade/storage.js";
 import { tableCss } from "./fixtures/tableCss.js";
@@ -237,14 +237,17 @@ test("the plan carries its rung's wait, and Manual carries none", () => {
 // THE HOLD IS NOT THE PACE. It is measured against the flight so the last card
 // has LANDED before anything asks to be read, and the flight is already the
 // player's own speed setting. Every rung that shows a sheet keeps it.
+// THE LANDING IS NOT THE RUNG'S; THE READING AFTER IT IS. The hold clears the
+// flight by the same 280ms at every rung, and the time to read the play that
+// ended the hand (READ_LAST_PLAY_MS) is the rung's `trickReadScale` — Manual,
+// which has no clock on a trick, reads it at Relaxed's length.
 test("a faster rung never shortens the hold that clears the card flight", () => {
-  const base = roundBeatPlan(plainEnd, { flightMs: 700, pace: 'manual' }).holdMs;
-  assert.strictEqual(base, 980);
-  for (const id of ['relaxed', 'quick']) {
-    assert.strictEqual(roundBeatPlan(plainEnd, { flightMs: 700, pace: id }).holdMs, base,
+  for (const [id, scale] of [['manual', 2], ['relaxed', 2], ['quick', 1]]) {
+    const hold = roundBeatPlan(plainEnd, { flightMs: 700, pace: id }).holdMs;
+    assert.strictEqual(hold - READ_LAST_PLAY_MS * scale, 980,
       `${id}: the pause between hands is the preference, not whether a card has arrived`);
+    assert.ok(hold - 700 >= READ_LAST_PLAY_MS, `${id} leaves no time to read the last play`);
   }
-  assert.ok(base > 700, "the hold must outlast the flight at every rung that has one");
 });
 
 test("Instant has no beat at all: no hold, no steps, no sheet", () => {

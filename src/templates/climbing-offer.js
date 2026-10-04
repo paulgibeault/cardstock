@@ -156,7 +156,7 @@ export function offerZones(rules, seats) {
   return [
     // THE PILES ON OFFER, and only at the table that plays for them. Labelled
     // "Hand" because that is what the player is choosing — the felt draws
-    // "Hand 1" over a count of seventeen, and a second pile called "Pile"
+    // "Hand" over the pile's number (`offerReading`), and a second pile called "Pile"
     // beside the play pile would name two different things the same.
     //
     // `visibility: 'none'` is the rule and not the dressing: nobody may look
@@ -238,7 +238,7 @@ export function applyTakeHand(ctx, move, openPlay) {
   // would be filtered out of the event for every other seat anyway
   // (src/engine/view.js), so putting them in would be a leak the filter
   // happens to catch rather than a fact nobody published.
-  ctx.emit('handTaken', { seat, count: cards.length });
+  ctx.emit('handTaken', { seat, count: cards.length, hand: Number(String(move.from).split('.')[1]) || null });
   // The last seat to pick ends the phase. Asked of the HANDS rather than
   // counted in a var: the state already knows how many seats are holding
   // cards, and a counter beside it is one more thing that can disagree.
@@ -325,6 +325,26 @@ export function zoneOnFelt(ctx, address) {
 }
 
 /**
+ * WHAT AN OFFERED PILE'S BADGE SAYS — its number, not its size, or null for
+ * every other pile.
+ *
+ * The felt drew "Hand 1" over a count of 17, three times, and the count is the
+ * one thing about the three piles that is the same: the choice is between
+ * Hand 1, Hand 2 and Hand 3, so the number is what the badge says big and the
+ * word sits above it. The size is still said — in the pile's accessible name,
+ * and in the line that announces the pick (`describeOfferEvent`).
+ */
+export function offerReading(ctx, { def, n, address }) {
+  if (def.id !== OFFER || n == null) return null;
+  const cards = ctx.countIn(address);
+  return {
+    badge: String(n),
+    name: def.label,
+    aria: `${cards} ${cards === 1 ? 'card' : 'cards'}, face down`,
+  };
+}
+
+/**
  * The one event this phase emits, described — or null, which is
  * `describeEvent`'s own "I have nothing to say about this one".
  *
@@ -336,9 +356,11 @@ export function describeOfferEvent(ev, { who, mine }) {
     // The count, because the count is the public fact — and because the other
     // player is about to want to know how big the hand they are picking from
     // the rest of is.
+    // And WHICH hand, by the number its badge wears (`offerReading`).
+    const which = ev.hand ? `Hand ${ev.hand}` : 'a hand';
     return mine(ev.seat)
-      ? { text: `You took a hand of ${ev.count}`, tone: 'good' }
-      : { text: `${who(ev.seat)} took a hand of ${ev.count}`, tone: 'neutral' };
+      ? { text: `You took ${which} — ${ev.count} cards`, tone: 'good' }
+      : { text: `${who(ev.seat)} took ${which} — ${ev.count} cards`, tone: 'neutral' };
   }
   return null;
 }
