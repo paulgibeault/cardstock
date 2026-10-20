@@ -15,11 +15,13 @@
 import { statLinesFor } from '../stats/matchStats.js';
 import { sideScoreOf, sidesOf, foldToSides } from '../engine/sides.js';
 import { targetSentence as matchTargetSentence, winDirection } from './scoreDirection.js';
-import { line } from './dom.js';
+import { line, svgNode } from './dom.js';
 
 const el = {
   roundOverlay: document.getElementById('round-overlay'),
   roundPanel: document.getElementById('round-panel'),
+  roundFold: document.getElementById('round-fold'),
+  roundFoot: document.querySelector('#round-panel .round-panel__foot'),
   roundTitle: document.getElementById('round-title'),
   roundScores: document.getElementById('round-scores'),
   roundContinue: document.getElementById('round-continue'),
@@ -55,11 +57,6 @@ const el = {
   rulesBody: document.getElementById('rules-body'),
   rulesClose: document.getElementById('rules-close'),
 
-  finalLook: document.getElementById('final-look'),
-  finalLookResult: document.getElementById('final-look-result'),
-  finalLookPlay: document.getElementById('final-look-play'),
-  finalLookHand: document.getElementById('final-look-hand'),
-  finalLookContinue: document.getElementById('final-look-continue'),
 
   gameOverOverlay: document.getElementById('game-over-overlay'),
   gameOverFan: document.getElementById('game-over-fan'),
@@ -171,15 +168,22 @@ function sideNameCell(className, members, seating) {
  * reason was nowhere on this sheet — least of all for the human, whose own bid
  * was not shown anywhere at all (#123, item 28).
  */
-export function showRoundSummary(state, ev, seating, contract = null, pace = null, { guest = null } = {}) {
-  el.roundTitle.textContent = `Round ${ev.round} over`;
+export function showRoundSummary(state, ev, seating, contract = null, pace = null, {
+  guest = null, counts = [], art = null, focus = null, final = null,
+} = {}) {
+  // ONE SHEET, TWO MOMENTS. Between hands it deals the next one; at the end of
+  // the match it is the final look (#120) — the same sheet with the winner as
+  // its title and the results as the only way on, so the last hand is
+  // inspected exactly as every hand before it was.
+  el.roundTitle.textContent = final ? final.result : `Round ${ev.round} over`;
   el.roundScores.replaceChildren();
+  activeFocus = focus;
   // A COLUMN WITH NOTHING TO SAY SAYS NOTHING (#124, item 43): a pack that pegs
   // its points live scores nothing at the round boundary, and `roundScores`
   // comes back empty. Tested structurally, so a pack that genuinely scored
   // nobody still prints "+0". The cell stays because the grid is `display:
   // contents` and a skipped cell shifts every cell after it.
-  const hasDeltas = Object.keys(ev.scores || {}).length > 0;
+  const hasDeltas = Object.keys(ev?.scores || {}).length > 0;
   // ONE ROW PER SIDE (#125): both partnership scorers bank a side's whole result
   // on its first member, so a per-seat delta at a partnership pack is
   // structurally "+0" beside a total the seat never earned alone. A teamless
@@ -187,35 +191,198 @@ export function showRoundSummary(state, ev, seating, contract = null, pace = nul
   // the identity. The contract note (#123, "Bid 3, took 2") is per seat, so a
   // side's row carries one per member in member order.
   const sides = sidesOf(state.pack, state.seats);
-  const deltas = foldToSides(ev.scores, sides);
-  const totals = foldToSides(ev.totals, sides);
+  const deltas = foldToSides(ev?.scores || {}, sides);
+  const totals = foldToSides(ev?.totals || state.scores, sides);
+  // ONE CARD PER SIDE, SIDE BY SIDE. The sheet sits under the felt while the
+  // board is read, so it is laid out WIDE and short — a row of sides, each with
+  // its number and the counts that made it — rather than a tall list that
+  // climbs over the cards it is about.
+  el.roundScores.classList.add('round-scores--sides');
   sideRowsOf(state, seating).forEach(({ members, mine }, side) => {
-    const row = document.createElement('div');
-    row.className = `round-scores__row ${mine ? 'round-scores__row--you' : ''}`;
-    const name = sideNameCell('round-scores__name', members, seating);
+    const card = document.createElement('div');
+    card.className = `round-side ${mine ? 'round-side--you' : ''}`;
+    const head = document.createElement('div');
+    head.className = 'round-side__head';
+    const name = sideNameCell('round-side__name', members, seating);
+    head.appendChild(name);
+    const nums = document.createElement('span');
+    nums.className = 'round-side__nums';
+    if (hasDeltas) nums.appendChild(line('round-side__delta', signed(deltas[side] ?? 0)));
+    nums.appendChild(line('round-side__total', `${totals[side] ?? 0}`));
+    head.appendChild(nums);
+    card.appendChild(head);
     const notes = members.map((s) => contract?.[s]).filter(Boolean);
-    if (notes.length) name.appendChild(line('round-scores__note', notes.join(' · ')));
-    row.appendChild(name);
-    row.appendChild(line('round-scores__delta', hasDeltas ? signed(deltas[side] ?? 0) : ''));
-    row.appendChild(line('round-scores__total', `${totals[side] ?? 0}`));
-    el.roundScores.appendChild(row);
+    if (notes.length) card.appendChild(line('round-side__note', notes.join(' · ')));
+    // WHAT THE NUMBER WAS MADE OF, inside the side it explains — every count
+    // this side's seats made, at once, instead of one floating card per tap.
+    const own = (counts || []).filter((c) => members.includes(c.seat));
+    if (own.length) card.appendChild(countsCell(own, art));
+    el.roundScores.appendChild(card);
   });
-  el.roundContinue.textContent = `Deal round ${state.roundNumber}`;
-  el.roundTarget.textContent = targetSentence(state, ev);
+  el.roundPanel.classList.toggle('round-panel--final', !!final);
+  el.roundContinue.textContent = final ? 'See the results' : `Deal round ${state.roundNumber}`;
+  el.roundTarget.textContent = final ? (final.play || '') : targetSentence(state, ev);
   el.roundTarget.hidden = !el.roundTarget.textContent;
   // A GUEST'S SHEET IS THE HOST'S SHEET WITH THE HOST'S CONTROLS TAKEN OFF
   // (#283). The host deals, so the guest's button is a tick instead; ending
   // the match and the pace are the host's to set; and the trick-by-trick map
-  // reads a log that only the host keeps.
-  el.roundEndMatch.hidden = !!guest;
-  el.roundMapToggle.hidden = !!guest;
+  // reads a log that only the host keeps. The final look has none of the three:
+  // there is no next hand to pace or to walk away from.
+  el.roundEndMatch.hidden = !!guest || !!final;
+  el.roundMapToggle.hidden = !!guest || !!final;
+  // The foot holds the map and the pace, and neither is offered then.
+  el.roundFoot.hidden = !!guest || !!final;
   el.roundContinue.disabled = false;
   if (guest) paintGuestReady(guest);
-  else paintRoundReady(hostReadyLine);
+  else paintRoundReady(final ? '' : hostReadyLine);
+  setFolded(false);
   el.roundOverlay.hidden = false;
+  dock(true);
   // AFTER THE UNHIDE, and it has to be: the ring's geometry is measured off the
   // button, and a button inside `display: none` measures zero.
-  paintRoundPace(pace);
+  paintRoundPace(final ? null : pace);
+}
+
+/* ------------------------------------------------------------------ *
+ * The counts, on the sheet (src/ui/inspection.js)
+ * ------------------------------------------------------------------ */
+
+/** What the felt is asked to light, or null — set by the sheet that is open. */
+let activeFocus = null;
+/** The count the player PICKED (a tap), which a pointer leaving does not clear. */
+let pinned = null;
+
+/** Light `ids` on the felt (and `seat`'s plate), or put everything back with null. */
+function focusOn(target) {
+  if (activeFocus) activeFocus(target);
+}
+
+/**
+ * One side's counts: whose, the cards, and what each part came to.
+ *
+ * EVERY PIECE IS A WAY TO POINT AT THE FELT. Resting on a count (or focusing
+ * it) lights all of its cards wherever they are on the table; a part — a
+ * fifteen, a pair, "2 cards at 1" — lights only the cards it was made of; a tap
+ * pins either until it is tapped again. The faces drawn here are small and the
+ * point is not to read them — it is the board that is read, and these say
+ * which cards on it to read.
+ *
+ * @param list the side's counts, each `{ seat, title, faces: [{ id, card }],
+ *             parts: [{ label, points, ids }], points, ids }`
+ */
+function countsCell(list, art) {
+  const cell = document.createElement('div');
+  cell.className = 'round-side__counts';
+  for (const count of list) {
+    const block = document.createElement('div');
+    block.className = 'round-count';
+    block.tabIndex = 0;
+    block.setAttribute('role', 'button');
+    block.setAttribute('aria-label', count.aria || count.title);
+    const target = { ids: count.ids, seat: count.seat };
+    const head = document.createElement('div');
+    head.className = 'round-count__head';
+    head.appendChild(line('round-count__title', count.label || count.title));
+    head.appendChild(line('round-count__points', count.zero ? count.zeroLabel : String(count.points)));
+    block.appendChild(head);
+    if (art && count.faces.length) {
+      const faces = document.createElement('div');
+      faces.className = 'round-count__faces';
+      faces.setAttribute('aria-hidden', 'true');
+      for (const face of count.faces) {
+        const node = svgNode(art().face(face.card), 'round-count__face');
+        node.dataset.cardId = face.id;
+        if (face.starter) node.classList.add('round-count__face--starter');
+        faces.appendChild(node);
+      }
+      block.appendChild(faces);
+    }
+    if (count.parts.length) {
+      const parts = document.createElement('div');
+      parts.className = 'round-count__parts';
+      for (const part of count.parts) {
+        const chip = document.createElement('button');
+        chip.type = 'button';
+        chip.className = 'round-count__part';
+        chip.textContent = `${part.label} ${part.points}`;
+        const lights = { ids: part.ids, seat: count.seat };
+        chip.addEventListener('pointerenter', () => { if (!pinned) focusOn(lights); });
+        chip.addEventListener('pointerleave', () => { if (!pinned) focusOn(target); });
+        chip.addEventListener('focus', () => focusOn(lights));
+        chip.addEventListener('click', (event) => {
+          event.stopPropagation();
+          pinned = pinned === chip ? null : chip;
+          focusOn(pinned ? lights : target);
+          paintPinned();
+        });
+        parts.appendChild(chip);
+      }
+      block.appendChild(parts);
+    }
+    block.addEventListener('pointerenter', () => { if (!pinned) focusOn(target); });
+    block.addEventListener('pointerleave', () => { if (!pinned) focusOn(null); });
+    block.addEventListener('focus', () => focusOn(target));
+    block.addEventListener('blur', () => { if (!pinned) focusOn(null); });
+    const pick = () => {
+      pinned = pinned === block ? null : block;
+      focusOn(pinned ? target : null);
+      paintPinned();
+    };
+    block.addEventListener('click', pick);
+    block.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      pick();
+    });
+    cell.appendChild(block);
+  }
+  return cell;
+}
+
+/** Mark the picked count or part on the sheet. */
+function paintPinned() {
+  for (const node of el.roundScores.querySelectorAll('.round-count--pinned, .round-count__part--pinned')) {
+    node.classList.remove('round-count--pinned', 'round-count__part--pinned');
+  }
+  if (!pinned) return;
+  pinned.classList.add(pinned.classList.contains('round-count') ? 'round-count--pinned' : 'round-count__part--pinned');
+}
+
+/**
+ * THE FELT MAKES ROOM FOR THE SHEET rather than going under it. The sheet docks
+ * at the foot of the screen, and at a table whose cards sit low — cribbage's
+ * pegging piles, a shedding pack's discard — an overlay there would cover the
+ * very cards it lists. So while it is up the table screen is padded by the
+ * sheet's own height (measured, because it is one row of counts at one pack and
+ * three at another, and folding it changes it), and the board lays itself out
+ * in what is left — the review drawer's arrangement, turned on its side.
+ */
+let dockObserver = null;
+function dock(on) {
+  const root = document.documentElement;
+  document.body.classList.toggle('round-docked', on);
+  if (!on) {
+    dockObserver?.disconnect();
+    root.style.removeProperty('--round-dock');
+    return;
+  }
+  const measure = () => root.style.setProperty('--round-dock', `${Math.ceil(el.roundPanel.offsetHeight) + 8}px`);
+  measure();
+  if (typeof ResizeObserver === 'function') {
+    dockObserver ??= new ResizeObserver(measure);
+    dockObserver.observe(el.roundPanel);
+  }
+}
+
+/**
+ * FOLDED, the sheet is its title and its buttons — the whole felt is the thing
+ * on screen. A phone has room for the board or the sheet and not both, and the
+ * point of holding a hand open is to look at the board.
+ */
+function setFolded(folded) {
+  el.roundPanel.classList.toggle('round-panel--folded', folded);
+  el.roundFold.setAttribute('aria-expanded', String(!folded));
+  el.roundFold.setAttribute('aria-label', folded ? 'Show the score sheet' : 'Fold the score sheet away');
 }
 
 /* ------------------------------------------------------------------ *
@@ -250,7 +417,7 @@ function showRing(on) {
  * also re-arms the bots — and a panel that could fire it would be a second one.
  * This function draws a duration; it never measures one.
  *
- * @param pace `{ label, autoMs, animate }`, or null to leave the sheet bare:
+ * @param pace `{ label, autoMs, animate, paused }`, or null to leave the sheet bare:
  *             `autoMs` null is the Manual rung (no ring at all), and `animate`
  *             false is reduced motion or a power saver, where the outline is
  *             drawn whole and still, and the timer still fires.
@@ -261,8 +428,10 @@ export function paintRoundPace(pace) {
     showRing(false);
     return;
   }
-  el.roundPace.textContent = `Pace · ${pace.label} ▸`;
-  el.roundPace.setAttribute('aria-label', `Pace: ${pace.label}. Tap to change.`);
+  // PAUSED is a timed rung whose countdown a touch on the table stopped
+  // (`pauseAutoAdvance`): the sheet now waits for the button, and says so.
+  el.roundPace.textContent = `Pace · ${pace.label}${pace.paused ? ' · paused' : ''} ▸`;
+  el.roundPace.setAttribute('aria-label', `Pace: ${pace.label}${pace.paused ? ', paused while you look' : ''}. Tap to change.`);
 
   if (pace.autoMs == null) {
     showRing(false);
@@ -352,7 +521,11 @@ export function paintGuestReady({ ready = false, waiting = '' }) {
 }
 
 export function hideRoundSummary() {
+  focusOn(null);
+  activeFocus = null;
+  pinned = null;
   el.roundOverlay.hidden = true;
+  dock(false);
   el.roundMap.hidden = true;
   el.roundMap.replaceChildren();
   el.roundMapToggle.setAttribute('aria-expanded', 'false');
@@ -434,7 +607,6 @@ export function hideScoreboard() {
  * The last card, before the results
  * ------------------------------------------------------------------ */
 
-let dismissFinalLook = null;
 
 /**
  * Hold the results back until the player has actually looked at the ending.
@@ -443,50 +615,51 @@ let dismissFinalLook = null;
  * ends on a card — somebody's last one — and showGameOver used to open on the
  * same frame that card was still flying to the discard, so the one moment the
  * whole game had been building to was covered by a score sheet before anybody
- * saw who played what. The complaint was exactly that: more time to see the
- * final card and who played it.
+ * saw who played what.
  *
- * So there is no scrim and nothing over the felt. The bar is pinned low, the
- * table underneath stays live — a card can still be held and inspected — and
- * the only thing that opens the results is the player asking for them. Nothing
- * times out: "I want longer to look" is not a thing to answer with a timer.
+ * IT IS THE ROUND SHEET NOW, folded into its final shape. It used to be a bar of
+ * three sentences, which held the felt still and then said nothing about it —
+ * every opponent's last cards were still backs under it. The last hand is now
+ * inspected exactly as every hand before it was: the plates turn face up, the
+ * sheet docks under the felt with the last hand's counts, and the only way on is
+ * the player asking for the results. Nothing times out: "I want longer to look"
+ * is not a thing to answer with a timer.
  *
- * @param result the sentence that says who won
- * @param play   what the last card was and who played it, or '' when the ending
- *               was not a play (a match that ran out of rounds)
- * @param hand   what the last hand did to the totals, or '' when the boundary
- *               scored nobody (src/ui/scoreDirection.js's lastHandSentence)
+ * @param sheet  what `showRoundSummary` draws — `{ state, ev, seating, contract,
+ *               counts, art, focus }` — with `result` (who won) and `play` (the
+ *               last card and who played it, or '')
  * @returns a promise that resolves true when acknowledged, false when the table
  *          closed under it — so a caller can decline to open a panel over a
  *          match that is no longer on screen.
  */
-export function awaitFinalLook(result, play, hand = '') {
-  el.finalLookResult.textContent = result;
-  el.finalLookPlay.textContent = play || '';
-  el.finalLookPlay.hidden = !play;
-  el.finalLookHand.textContent = hand || '';
-  el.finalLookHand.hidden = !hand;
-  el.finalLook.hidden = false;
+export function awaitFinalLook({ state, ev, seating, contract = null, counts = [], art = null, focus = null, result, play = '' }) {
+  if (finalAnswer) finalAnswer(false);
+  showRoundSummary(state, ev || {}, seating, contract, null, {
+    counts, art, focus, final: { result, play },
+  });
   return new Promise((resolve) => {
-    const close = (acknowledged) => {
-      dismissFinalLook = null;
-      el.finalLookContinue.onclick = null;
-      el.finalLook.hidden = true;
+    finalAnswer = (acknowledged) => {
+      finalAnswer = null;
+      hideRoundSummary();
       resolve(acknowledged);
     };
-    dismissFinalLook = () => close(false);
-    el.finalLookContinue.onclick = () => close(true);
-    // preventScroll for the same reason the rules panel uses it: the bar is
-    // fixed, but focusing into it still scrolls the felt behind it — and the
-    // felt is the thing this exists to let people look at.
-    el.finalLookContinue.focus({ preventScroll: true });
+    // preventScroll: the sheet is fixed, but focusing into it still scrolls the
+    // felt behind it — and the felt is the thing this exists to let people see.
+    el.roundContinue.focus({ preventScroll: true });
   });
 }
 
-/** Take the bar down without answering it — a screen change under it. */
+/** The final look's answer, while it is waiting for one. */
+let finalAnswer = null;
+
+/** Take the final look down without answering it — a screen change under it. */
 export function hideFinalLook() {
-  if (dismissFinalLook) dismissFinalLook();
-  el.finalLook.hidden = true;
+  if (finalAnswer) finalAnswer(false);
+}
+
+/** Is the sheet up as the final look rather than between hands? */
+export function isFinalLookOpen() {
+  return !!finalAnswer;
 }
 
 /* ------------------------------------------------------------------ *
@@ -736,33 +909,21 @@ export function initPanels({
   el.reviewClose.addEventListener('click', () => hideReviewMap());
   el.reviewDrawerClose.addEventListener('click', () => { hideReviewMap(); onReviewMapClosed?.(); });
   el.scoreRules.addEventListener('click', () => onRules?.());
-  el.roundContinue.addEventListener('click', () => onContinueRound());
+  el.roundContinue.addEventListener('click', () => {
+    if (finalAnswer) finalAnswer(true);
+    else onContinueRound();
+  });
+  el.roundFold.addEventListener('click', () => {
+    setFolded(!el.roundPanel.classList.contains('round-panel--folded'));
+  });
   el.roundEndMatch.addEventListener('click', () => onEndMatch());
   el.roundPace.addEventListener('click', () => onCyclePace?.());
-  // THE WHOLE SHEET DEALS (#150). A player who has read the score reaches for
-  // what they are looking at, not for the one word at the bottom of it — so the
-  // panel is the target and the button is merely where the target says so.
-  //
-  // TWO THINGS OPT OUT, and they are the two things on this panel that mean
-  // something else. "End match" leaves the game, and swallowing that tap into a
-  // deal is the worst possible misread of it; the pace control is a tap you
-  // make BECAUSE you do not want to deal yet. Both are found with `closest`
-  // rather than compared to `target`, because the tap can land on a text node
-  // inside either. The Deal button opts out too and for a duller reason: it has
-  // a listener of its own one line up, and letting this one see the same click
-  // would call the door twice. It is idempotent — `dismissRoundSummary` checks
-  // `roundSummaryOpen` — but a second call that only survives on a guard is not
-  // a design.
-  el.roundPanel.addEventListener('click', (event) => {
-    // A TAP WHOSE TARGET HAS ALREADY LEFT THE DOM is not a tap on the sheet.
-    // A play in the map (#191) opens the review in its own handler, which
-    // takes the sheet — and the map — down before this listener runs; the
-    // detached button then has no `#round-map` ancestor for `closest` to
-    // find, and the deal fired on a tap that meant "show me that trick".
-    if (!event.target.isConnected) return;
-    if (event.target.closest('#round-end-match, #round-pace, #round-continue, #round-map-toggle, #round-map')) return;
-    onContinueRound();
-  });
+  // THE SHEET NO LONGER DEALS FROM ANYWHERE BUT ITS BUTTON. It did (#150): a
+  // player who had read the score reached for what they were looking at. What
+  // they are looking at now is a list of counts, each of which is a way to
+  // point at the board, so a tap on the sheet means "show me that" — and a deal
+  // fired by a tap meant as a question is the one misread this sheet cannot
+  // afford. The button, Enter on it, and the countdown are the three doors.
   el.playAgainButton.addEventListener('click', () => onPlayAgain());
   el.gameOverLobbyButton.addEventListener('click', () => onLobby());
   el.scoreClose.addEventListener('click', () => {

@@ -31,7 +31,7 @@
   color: var(--panel-text);
   border: 1px solid var(--panel-border);
   box-shadow: 0 10px 34px var(--panel-shadow);
-  animation: final-look-in 0.4s cubic-bezier(0.2, 0.9, 0.3, 1) both;
+  animation: dock-in 0.4s cubic-bezier(0.2, 0.9, 0.3, 1) both;
   max-width: calc(100vw - 2rem);
 }
 

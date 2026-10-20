@@ -40,10 +40,10 @@ export function handValue(cards, scoring) {
  * So the three strategies that price CARDS emit the same event cribbage does,
  * one per seat whose cards cost or earned anything, in the order the table
  * would read them — round the table from the seat that ended the hand. The
- * felt already knows what to do with a `showScored`: hold it as a card with the
- * faces on it, one tap per seat at the rung that waits (src/ui/roundBeat.js),
- * and at the match end too (finalShowPlan). Nothing in the UI had to learn
- * what Thirteen is.
+ * felt already knows what to do with a `showScored`: list it on the docked round
+ * sheet with the faces on it and turn the seat's plate face up
+ * (src/ui/inspection.js), between hands and at the match end alike. Nothing in
+ * the UI had to learn what Thirteen is.
  *
  * WHAT THE EVENT CARRIES. `reason` says which of the three prices this is —
  * `leftover` (each seat pays for its own hand), `to-winner` (every hand pays

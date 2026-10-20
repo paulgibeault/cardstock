@@ -317,178 +317,6 @@
   80% { margin-left: -3px; }
 }
 
-/* ------------------------------------------------------------------ *
- * THE SHOW CARD (#152) — src/ui/showCard.js
- * ------------------------------------------------------------------ *
- *
- * What the banner used to say in one sentence, drawn: the name, the five cards
- * and one row per combination with its points.
- *
- * IN #felt-middle RATHER THAN FIXED TO THE VIEWPORT, which is the one thing
- * worth reading this block for. #event-banner is `position: fixed; top: 34%`
- * and fine as a pill, but this is a panel — at 375x812 a fixed one sized to its
- * contents lands wherever the contents put it, and what is directly below 34%
- * on a phone is the fan. Parented to the felt's middle and inset to it, the
- * card is bounded by the row it sits in: it cannot reach the hand at any
- * viewport, because the hand is not in this box.
- *
- * The middle is 191px of slack at 375x812 during the play (measured for the
- * board, see #136 above) and the piles under it are what the card covers — the
- * played cards it is COUNTING, which the player has just watched go down. The
- * `max-height: 100%` plus the scroll on the combination list is what holds the
- * promise that it fits without the page scrolling: on the narrowest felt the
- * rows give up the room, never the cards or the total.
- *
- * BATTERY RULE (cardstock#24): one 220ms fade-and-rise on arrival, and then it
- * is still. The highlight is a transition on a class, not a keyframe.
- */
-#show-card {
-  position: absolute;
-  inset: 0;
-  z-index: 8;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  /* The felt underneath stays readable around the card, and the card itself is
-     what takes the pointer — the rows are pokeable (`wireHighlight`). */
-  pointer-events: none;
-}
-#show-card[hidden] { display: none; }
-
-.show-card {
-  pointer-events: auto;
-  box-sizing: border-box;
-  max-width: min(20rem, 100%);
-  max-height: 100%;
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-  padding: 0.6rem 0.75rem;
-  border-radius: 0.8rem;
-  background: var(--panel-bg);
-  color: var(--panel-text);
-  border: 1px solid var(--panel-border);
-  box-shadow: 0 10px 30px var(--panel-shadow);
-  animation: show-card-in 220ms ease-out both;
-}
-
-@keyframes show-card-in {
-  from { opacity: 0; transform: translateY(0.5rem) scale(0.97); }
-  to { opacity: 1; transform: none; }
-}
-
-.show-card__title {
-  font-size: 0.78rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  opacity: 0.8;
-}
-
-.show-card__faces {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.2rem;
-  flex: none;
-  /* A reveal (src/engine/scoring.js) can be a whole Thirteen hand; cribbage's
-     five never wrapped and still do not. */
-  flex-wrap: wrap;
-  max-width: min(88vw, 30rem);
-}
-
-.show-card__face {
-  /* Sized off the felt's own card variable so the card steps down with
-     everything else on a narrow screen (see #table). Small enough that five of
-     them and the starter's gap fit inside 20rem at any of those sizes. */
-  width: calc(var(--hand-card-w) * 0.62);
-  flex: none;
-  border-radius: 3px;
-  transition: transform 140ms ease-out, filter 140ms ease-out;
-}
-.show-card__face svg { display: block; width: 100%; height: auto; }
-
-/* The cut belongs to nobody, so it stands off the four that are somebody's. */
-.show-card__face--starter { margin-left: 0.45rem; }
-
-/* THE COMBINATION UNDER THE FINGER, and only its cards. Lifted and ringed
-   rather than dimming the others: dimming four cards to emphasise two is a
-   bigger change to the picture than the question deserves, and the ring is the
-   accent the felt already uses for "this is the one".
-
-   THE RING IS AN OUTLINE, not a drop-shadow. It was written
-   `drop-shadow(0 0 0 2px var(--accent))` — and `drop-shadow()` takes at most
-   three lengths (x, y, blur), so the fourth made the whole `filter` invalid
-   and the cascade dropped BOTH shadows in silence: the computed filter on a
-   lit face was `none` and the highlight was a 3px lift and nothing else. An
-   outline cannot fail that way, it follows the face's own corner radius, and
-   it costs no filter pass on five card faces. */
-.show-card__face--lit {
-  transform: translateY(-0.2rem);
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
-  filter: drop-shadow(0 3px 6px var(--card-shadow));
-}
-
-.show-card__parts {
-  display: flex;
-  flex-direction: column;
-  gap: 0.1rem;
-  /* The half that gives way on a short felt — the cards and the total never
-     do. `min-height: 0` is what lets it actually shrink inside the column. */
-  min-height: 0;
-  overflow-y: auto;
-}
-
-.show-card__part {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 0.75rem;
-  padding: 0.1rem 0.25rem;
-  border-radius: 0.3rem;
-  font-size: 0.82rem;
-  cursor: default;
-  transition: background-color 140ms ease-out;
-}
-.show-card__part:hover { background: var(--chip-bg); }
-.show-card__part-name::first-letter { text-transform: uppercase; }
-.show-card__part-points { font-weight: 700; font-variant-numeric: tabular-nums; }
-
-.show-card__total {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 0.75rem;
-  padding: 0.25rem 0.25rem 0;
-  border-top: 1px solid var(--panel-border);
-  font-size: 0.9rem;
-}
-.show-card__total-label {
-  text-transform: uppercase;
-  font-size: 0.62rem;
-  letter-spacing: 0.06em;
-  opacity: 0.75;
-}
-.show-card__total-points {
-  font-weight: 800;
-  font-size: 1.15rem;
-  color: var(--accent);
-  font-variant-numeric: tabular-nums;
-}
-
-/* NINETEEN: the traditional name for a hand worth nothing, and the reason a
-   zero is not printed here. It is the one number five cards cannot make, so a
-   player who sees the word knows exactly what happened. */
-.show-card__nineteen {
-  align-self: center;
-  padding: 0.15rem 0.5rem;
-  font-size: 1rem;
-  font-weight: 700;
-  font-style: italic;
-  opacity: 0.75;
-}
-
 /* The winner's cards glow when a trick lands well; your own hand flinches
    when the trick you just took was full of points. */
 .zone-celebrate { animation: zone-celebrate 0.9s ease-out; }
@@ -752,80 +580,6 @@
 .round-pace[hidden] { display: none; }
 
 /* ------------------------------------------------------------------ *
- * The last card, before the results
- * ------------------------------------------------------------------ *
- *
- * Everything about this element is about NOT covering the table. It is fixed
- * and full-bleed only so the bar can be pinned to the bottom edge without the
- * felt's own layout deciding where that is; it has no scrim, and it is
- * pointer-transparent everywhere except the bar itself — so a player can still
- * hold the winning card to inspect it while the results wait.
- *
- * Below the modals (z-index 10) and above the felt, because a scoreboard opened
- * from the status bar is still a thing that should land on top of this. */
-#final-look {
-  position: fixed;
-  inset: 0;
-  z-index: 9;
-  display: flex;
-  align-items: flex-end;
-  justify-content: center;
-  padding: 0 1rem 1.1rem;
-  pointer-events: none;
-}
-#final-look[hidden] { display: none; }
-
-.final-look__bar {
-  pointer-events: auto;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.2rem;
-  padding: 0.7rem 1.2rem 0.85rem;
-  border-radius: 14px;
-  text-align: center;
-  background: var(--panel-bg);
-  color: var(--panel-text);
-  border: 1px solid var(--panel-border);
-  box-shadow: 0 10px 34px var(--panel-shadow);
-  animation: final-look-in 0.4s cubic-bezier(0.2, 0.9, 0.3, 1) both;
-}
-
-.final-look__result {
-  margin: 0;
-  font-size: 1.15rem;
-  font-weight: 700;
-}
-
-/* The caption the whole pause exists for: what the last card was, and whose it
-   was. Quieter than the result because you are meant to read it while looking
-   at the card itself, which is still sitting on the discard behind this. */
-.final-look__play {
-  margin: 0 0 0.45rem;
-  font-size: 0.85rem;
-  opacity: 0.75;
-}
-.final-look__play[hidden] { display: none; }
-
-#final-look-continue {
-  font: inherit;
-  padding: 0.5rem 1.2rem;
-  border-radius: 8px;
-  border: none;
-  cursor: pointer;
-  background: var(--action-bg);
-  color: var(--action-text);
-  font-weight: 600;
-}
-#final-look-continue:hover { background: var(--action-bg-hover); }
-#final-look-continue:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-
-@keyframes final-look-in {
-  from { opacity: 0; transform: translateY(14px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-/* ------------------------------------------------------------------ *
  * Game over
  * ------------------------------------------------------------------ */
 
@@ -877,4 +631,132 @@
 
 @keyframes cascade-in {
   from { opacity: 0; transform: translateY(-70px) rotate(0deg) scale(0.8); }
+}
+
+/* ------------------------------------------------------------------ *
+ * The hand, opened (src/ui/inspection.js)
+ *
+ * A finished hand's cards go face up ON THE PLATES, all at once, at a step
+ * that keeps every corner index readable — the opposite bargain from
+ * .mini-hand, which closes a fan of backs to slivers because a back has
+ * nothing to read. A seventeen-card Thirteen hand still fits: the step
+ * shrinks toward the corner's own width and stops there.
+ * ------------------------------------------------------------------ */
+.seat__reveal {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+  margin-top: 0.25rem;
+}
+.reveal-fan {
+  --reveal-w: var(--seat-reveal-w, 38px);
+  --reveal-max: var(--seat-reveal-max, 220px);
+  --reveal-step: clamp(
+    calc(var(--reveal-w) * 0.34),
+    calc((var(--reveal-max) - var(--reveal-w)) / max(1, var(--reveal-count, 1) - 1)),
+    calc(var(--reveal-w) * 0.7)
+  );
+  display: flex;
+  justify-content: center;
+  animation: reveal-turn 0.32s ease-out both;
+}
+.reveal-fan > * { flex: none; width: var(--reveal-w); display: block; transition: transform 0.18s ease; }
+.reveal-fan > *:not(:first-child) { margin-left: calc(var(--reveal-step) - var(--reveal-w)); }
+@keyframes reveal-turn {
+  from { opacity: 0; transform: rotateX(70deg) translateY(-4px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* What the cards came to, in the tone the reveal's sentence uses: a cost to
+   the viewer is red, a gain gold-rimmed, everybody else's business plain. */
+.seat__reveal-chip {
+  font-size: 0.68rem;
+  font-weight: 700;
+  padding: 0.12rem 0.5rem;
+  border-radius: 999px;
+  background: var(--chip-bg);
+  border: 1px solid var(--chip-border);
+  white-space: nowrap;
+}
+.seat__reveal-chip--bad { background: #8c2740; color: #fff; border-color: transparent; }
+.seat__reveal-chip--good { background: #2c6e49; color: #fff; border-color: var(--accent); }
+
+/* A COUNT PICKED ON THE SHEET LIGHTS ITS CARDS WHEREVER THEY LIE — on a
+   plate, in the middle, in the hand. A class and a transition, no loop
+   (battery rule, cardstock#24). */
+.card-lit {
+  transform: translateY(-0.25rem);
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-radius: 6%;
+  filter: drop-shadow(0 3px 6px var(--card-shadow));
+  z-index: 2;
+}
+.seat--lit { box-shadow: 0 0 0 2px var(--accent); }
+
+/* ------------------------------------------------------------------ *
+ * The last trick, a tap away (src/ui/lastTrick.js)
+ *
+ * A chip tucked under the trick's slot, and the four cards it opens beside
+ * it. Absolutely placed against the pile so it
+ * never moves the piles beside it — the row is a fixed place on the table.
+ * ------------------------------------------------------------------ */
+.pile:has(> .last-trick) { position: relative; }
+.last-trick {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1.9rem;
+  z-index: 4;
+  display: flex;
+  justify-content: center;
+}
+.last-trick__chip {
+  font: inherit;
+  font-size: 0.66rem;
+  font-weight: 600;
+  padding: 0.12rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid var(--chip-border);
+  background: var(--chip-bg);
+  color: var(--chrome-text);
+  cursor: pointer;
+  opacity: 0.8;
+  white-space: nowrap;
+}
+.last-trick__chip:hover,
+.last-trick--open .last-trick__chip { opacity: 1; border-color: var(--accent); }
+/* BESIDE the trick, never over it: the trick in progress is what the player
+   is about to answer, and the peek is a glance back, not a replacement. */
+.last-trick__card {
+  position: absolute;
+  right: calc(100% + 0.6rem);
+  bottom: 1.9rem;
+  padding: 0.5rem 0.6rem 0.4rem;
+  border-radius: 12px;
+  background: var(--panel-bg);
+  color: var(--panel-text);
+  border: 1px solid var(--panel-border);
+  box-shadow: 0 10px 30px var(--panel-shadow);
+  animation: dock-in 0.2s ease-out both;
+}
+.last-trick__faces { display: flex; gap: 0.3rem; }
+.last-trick__slot { display: flex; flex-direction: column; align-items: center; gap: 0.2rem; }
+.last-trick__face { width: 44px; display: block; }
+.last-trick__slot--won .last-trick__face { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: 6%; }
+.last-trick__mark {
+  width: 1.15rem;
+  height: 1.15rem;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  font-size: 0.62rem;
+  color: #fff;
+}
+.last-trick__who { margin-top: 0.3rem; font-size: 0.72rem; text-align: center; opacity: 0.8; }
+/* A phone has no room beside the trick, so the peek opens above its chip —
+   the player asked for it, and the trick is one tap away again. */
+@media (max-width: 600px) {
+  .last-trick__card { right: auto; left: 50%; transform: translateX(-50%); }
 }

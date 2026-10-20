@@ -252,16 +252,6 @@
            short things that stack perfectly well — so it reads as a column
            down the left and gives the piles the vertical space back. -->
       <div id="felt-middle">
-        <!-- THE SHOW, DRAWN (src/ui/showCard.js). One scoring step of cribbage's
-             show — the name, the five faces, the combinations and the total —
-             over the middle of the felt, where the banner band would be and
-             where the piles already are. Decorative, like #event-banner it
-             replaces: #log carries the same sentence. In here rather than in
-             #table so it can never reach the hand: the fan is the one thing a
-             player may still be looking at, and an overlay sized to the felt's
-             middle is one that cannot cover it at any viewport. -->
-        <div id="show-card" hidden></div>
-
         <!-- The contract ladder: every rung of a contract-rummy race, with each
              player's face on the one they are standing on. Rendered only for
              packs that declare `rules.contracts`; hidden for everything else. -->
@@ -420,49 +410,61 @@
   </div>
 
   <div id="round-overlay" hidden>
-    <!-- TAPPING THE PANEL DEALS (#150). The whole sheet is the button, not
-         merely the button — a player who has read the score reaches for the
-         thing they are looking at. "End match" and the pace control opt out of
-         that in src/ui/panels.js, because a tap meant for either of them must
-         not be swallowed by the deal. -->
+    <!-- DOCKED UNDER THE FELT, NOT OVER IT (src/ui/inspection.js). While a
+         finished hand is held, the board is what is being read — every plate
+         turned face up — so the sheet sits at the foot of the screen with no
+         scrim, and each count on it points at cards on the felt. It folds away
+         to its title and buttons when the board needs the whole screen. -->
     <div class="panel" id="round-panel">
-      <div id="round-title" class="panel__title"></div>
+      <!-- THE HEAD IS THE DECISION: what happened, how far the match has to
+           run, and the two buttons — on one line, so the sheet stays short
+           enough to sit in the room the empty hand leaves. -->
+      <div class="round-panel__head">
+        <div class="round-panel__titles">
+          <div id="round-title" class="panel__title"></div>
+          <!-- How far this match still has to run — or, at the final look, the
+               last card and who played it. -->
+          <div id="round-target" class="round-target"></div>
+        </div>
+        <div class="panel__actions">
+          <!-- The countdown, drawn ON the button it is counting down to rather
+               than beside it as digits: the fact worth showing is "this is about
+               to happen", and a number turns that into arithmetic. The two rects
+               are sized from the button by src/ui/panels.js — the outline has to
+               match a pill whose width is the round number's, and the geometry is
+               a measurement, not a constant. -->
+          <span class="deal-ring-wrap">
+            <svg id="round-ring" class="deal-ring" aria-hidden="true" hidden focusable="false">
+              <rect class="deal-ring__track" x="0" y="0" width="100%" height="100%"></rect>
+              <rect class="deal-ring__fill" x="0" y="0" width="100%" height="100%"></rect>
+            </svg>
+            <button id="round-continue">Deal the next round</button>
+          </span>
+          <!-- The round summary is the one moment a player is actually deciding
+               whether to keep going, so it is where leaving belongs. Without it,
+               a match that runs to 500 points offers no exit but closing the
+               table, which keeps the game in progress and waiting in the lobby. -->
+          <button id="round-end-match" class="ghost-button">End match</button>
+        </div>
+        <button type="button" id="round-fold" class="round-fold" aria-expanded="true"></button>
+      </div>
       <div id="round-scores" class="round-scores"></div>
-      <!-- The round summary is the one moment a player is actually deciding
-           whether to keep going, so it is where leaving belongs. Without it,
-           a match that runs to 500 points offers no exit but closing the
-           table, which keeps the game in progress and waiting in the lobby. -->
-      <div id="round-target" class="round-target"></div>
       <!-- WHO IS WAITING ON WHOM, at a shared table (#283): the host's sheet
            names the guests who are ready; a guest's says the host deals. -->
       <div id="round-ready" class="round-target round-ready" hidden></div>
-      <!-- THE GAME SO FAR, ON THE SHEET (src/ui/review.js): the hand just
-           finished, trick by trick, without dealing the next one. Opening it
-           stops the countdown — a player reading this is not ready to deal —
-           and every play in it is a door onto the felt at that moment. -->
-      <button type="button" id="round-map-toggle" class="sheet-disclosure" aria-expanded="false" aria-controls="round-map">
-        Trick by trick
-      </button>
-      <div id="round-map" class="sheet-disclosure__body" hidden></div>
-      <div class="panel__actions">
-        <!-- The countdown, drawn ON the button it is counting down to rather
-             than beside it as digits: the fact worth showing is "this is about
-             to happen", and a number turns that into arithmetic. The two rects
-             are sized from the button by src/ui/panels.js — the outline has to
-             match a pill whose width is the round number's, and the geometry is
-             a measurement, not a constant. -->
-        <span class="deal-ring-wrap">
-          <svg id="round-ring" class="deal-ring" aria-hidden="true" hidden focusable="false">
-            <rect class="deal-ring__track" x="0" y="0" width="100%" height="100%"></rect>
-            <rect class="deal-ring__fill" x="0" y="0" width="100%" height="100%"></rect>
-          </svg>
-          <button id="round-continue">Deal the next round</button>
-        </span>
-        <button id="round-end-match" class="ghost-button">End match</button>
+      <div class="round-panel__foot">
+        <!-- THE GAME SO FAR, ON THE SHEET (src/ui/review.js): the hand just
+             finished, trick by trick, without dealing the next one. Opening it
+             stops the countdown — a player reading this is not ready to deal —
+             and every play in it is a door onto the felt at that moment. -->
+        <button type="button" id="round-map-toggle" class="sheet-disclosure" aria-expanded="false" aria-controls="round-map">
+          Trick by trick
+        </button>
+        <!-- Changing the pace AT THE MOMENT YOU FEEL IT, rather than in a sheet
+             two screens away that you next see when the match is over. -->
+        <button type="button" id="round-pace" class="round-pace"></button>
       </div>
-      <!-- Changing the pace AT THE MOMENT YOU FEEL IT, rather than in a sheet
-           two screens away that you next see when the match is over. -->
-      <button type="button" id="round-pace" class="round-pace"></button>
+      <div id="round-map" class="sheet-disclosure__body" hidden></div>
     </div>
   </div>
 
@@ -543,29 +545,11 @@
     </div>
   </div>
 
-  <!-- The last card, left on the table.
-       A match ends the instant somebody's hand empties, and the results panel
-       used to land on that instant — so the play that actually won it was
-       covered before anyone had looked at it. This is the beat in between: no
-       scrim, nothing over the felt, just a pill saying what happened and one
-       way forward. The felt underneath stays live, so the winning card can
-       still be held and inspected while this waits. -->
-  <div id="final-look" hidden>
-    <div class="final-look__bar">
-      <p id="final-look-result" class="final-look__result"></p>
-      <p id="final-look-play" class="final-look__play"></p>
-      <!-- The last hand's numbers, per side (#189): the sheet the match-ending
-           round never opens, as one line under the last card. -->
-      <p id="final-look-hand" class="final-look__play"></p>
-      <button type="button" id="final-look-continue">See the results</button>
-    </div>
-  </div>
-
   <!-- THE REEL (REVIEW_PLAN.md phase 3, src/ui/review.js): while the felt is
        standing at a past position of the match, this bar is how you move —
        a hand or a turn either way, the map from the label in the middle, and
-       the way back to the game. Low and outside #table like #final-look, for
-       the same reason: the felt is the thing being looked at. -->
+       the way back to the game. Low and outside #table like the docked round
+       sheet, for the same reason: the felt is the thing being looked at. -->
   <div id="review-bar" hidden>
     <div class="review-bar__bar" role="group" aria-label="Review the game">
       <button type="button" id="review-prev-hand" class="review-bar__step" aria-label="Previous hand">⏮</button>

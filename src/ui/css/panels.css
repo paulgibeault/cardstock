@@ -177,6 +177,170 @@
   text-overflow: ellipsis;
 }
 
+/* ------------------------------------------------------------------ *
+ * THE ROUND SHEET, DOCKED (src/ui/inspection.js).
+ *
+ * It used to be a modal: a scrim over the felt and a card in the middle of
+ * it, which is exactly the wrong shape for a moment whose whole point is the
+ * board — every plate has just turned face up. So the sheet sits at the foot
+ * of the screen with no scrim, the overlay lets every pointer through except
+ * on the sheet itself, and the felt above stays readable and inspectable
+ * (press-and-hold still opens a card). It is capped at under half the window
+ * and scrolls inside itself; folded, it is its title and its buttons.
+ * ------------------------------------------------------------------ */
+#round-overlay {
+  background: transparent;
+  align-items: flex-end;
+  pointer-events: none;
+  padding: 0 0.5rem 0.5rem;
+  z-index: 9;
+}
+#round-overlay #round-panel {
+  pointer-events: auto;
+  width: min(46rem, 100%);
+  max-width: min(46rem, 100%);
+  max-height: min(46dvh, 28rem);
+  overflow: auto;
+  margin: 0 auto;
+  padding: 0.8rem 1rem 0.7rem;
+  text-align: left;
+  box-shadow: 0 -6px 30px var(--panel-shadow);
+  animation: dock-in 0.32s cubic-bezier(0.2, 0.9, 0.3, 1) both;
+}
+/* The felt lays itself out above the sheet, not under it (see `dock` in
+   src/ui/panels.js); a felt too tall for what is left scrolls, as it does on
+   any window too short for its pack. */
+body.round-docked #table-screen { padding-bottom: var(--round-dock, 0px); }
+@keyframes dock-in {
+  from { opacity: 0; transform: translateY(18px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.round-panel__head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.75rem;
+  margin-bottom: 0.55rem;
+}
+.round-panel__titles { flex: 1 1 13rem; min-width: 0; }
+.round-panel__titles .panel__title { margin: 0; }
+#round-panel .round-target { margin: 0.1rem 0 0; font-size: 0.78rem; }
+#round-panel .round-panel__head .panel__actions {
+  flex: none;
+  gap: 0.45rem;
+  justify-content: flex-end;
+  border-top: none;
+  padding-top: 0;
+}
+.round-fold {
+  flex: none;
+  width: 1.9rem;
+  height: 1.9rem;
+  border-radius: 999px;
+  border: 1px solid var(--panel-border);
+  background: transparent;
+  color: var(--panel-text);
+  cursor: pointer;
+  opacity: 0.75;
+}
+.round-fold::before { content: "▾"; }
+#round-panel.round-panel--folded .round-fold::before { content: "▴"; }
+.round-fold:hover { opacity: 1; }
+#round-panel .round-scores { margin-bottom: 0; }
+.round-panel__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-top: 0.45rem;
+  border-top: 1px solid var(--panel-border);
+}
+.round-panel__foot[hidden] { display: none; }
+.round-panel__foot .sheet-disclosure { width: auto; flex: 1; border-top: none; padding: 0.4rem 0.2rem; }
+.round-panel__foot .round-pace { margin: 0; flex: none; }
+#round-panel.round-panel--folded .round-scores,
+#round-panel.round-panel--folded .round-ready,
+#round-panel.round-panel--folded .round-panel__foot,
+#round-panel.round-panel--folded .sheet-disclosure__body { display: none; }
+#round-panel.round-panel--folded .round-panel__head { margin-bottom: 0; }
+
+/* ONE CARD PER SIDE, side by side: the round sheet is wide and short so it
+   never climbs over the board it is about. The scoreboard keeps the grid. */
+#round-panel .round-scores--sides {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  font-size: 0.85rem;
+}
+.round-side {
+  flex: 1 1 9rem;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding: 0.45rem 0.55rem;
+  border-radius: 10px;
+  border: 1px solid var(--panel-border);
+  background: color-mix(in srgb, var(--panel-text) 4%, transparent);
+}
+.round-side--you { border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
+.round-side__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.round-side__name { display: flex; flex-wrap: wrap; align-items: center; gap: 0.2rem; min-width: 0; }
+.round-side--you .round-side__name,
+.round-side--you .round-side__total { font-weight: 700; }
+.round-side__nums { display: flex; gap: 0.45rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.round-side__delta { opacity: 0.75; }
+.round-side__total { font-weight: 600; }
+.round-side__note { font-size: 0.72rem; opacity: 0.7; }
+.round-side__counts { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+.round-count {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 0.4rem;
+  padding: 0.3rem 0.4rem;
+  border-radius: 8px;
+  border: 1px solid var(--panel-border);
+  background: color-mix(in srgb, var(--panel-text) 4%, transparent);
+  cursor: pointer;
+  min-width: 0;
+}
+.round-count:hover,
+.round-count:focus-visible,
+.round-count--pinned { border-color: var(--accent); outline: none; }
+.round-count__head {
+  flex: 1 0 100%;
+  display: flex;
+  justify-content: space-between;
+  gap: 0.8rem;
+  font-size: 0.75rem;
+}
+.round-count__title { opacity: 0.8; }
+.round-count__points { font-weight: 700; font-variant-numeric: tabular-nums; }
+.round-count__faces { display: flex; }
+.round-count__face { width: 22px; flex: none; display: block; }
+.round-count__face:not(:first-child) { margin-left: -7px; }
+.round-count__faces .round-count__face--starter { margin-left: 4px; }
+.round-count__parts { display: flex; flex-wrap: wrap; gap: 0.25rem; }
+.round-count__part {
+  font: inherit;
+  font-size: 0.68rem;
+  padding: 0.08rem 0.4rem;
+  border-radius: 999px;
+  border: 1px solid var(--panel-border);
+  background: transparent;
+  color: var(--panel-text);
+  cursor: pointer;
+}
+.round-count__part:hover,
+.round-count__part:focus-visible,
+.round-count__part--pinned { border-color: var(--accent); color: var(--accent); outline: none; }
+
 /* How far this match still has to run. Sits between the sheet and the buttons
    because it is the fact the two buttons are a choice between. */
 .round-target {
@@ -536,8 +700,6 @@
 /* On the round sheet the target line sits directly on the first fold, and a
    map inside a fold is tighter than one standing on its own — this is the
    only margin either map has. */
-#round-panel .round-target { margin-bottom: 0.6rem; }
-#round-panel .sheet-disclosure { margin-top: 0.2rem; }
 #round-map,
 #game-over-map { margin: 0.4rem 0 0.2rem; }
 #game-over-overlay .round-history.sheet-disclosure__body { margin-top: 0.4rem; }

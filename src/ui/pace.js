@@ -50,32 +50,33 @@
 // carries the argument in full, because that is where the value on disk lives.
 //
 // WHAT THAT COSTS, SAID PLAINLY, because it is one word here and three beats on
-// the felt: `manual`'s `trickReadScale` and `stepScale` are null as well as its
-// `autoMs`, so a game at the defaults now holds EVERY COMPLETED TRICK until a
-// tap, EVERY COUNT OF A SHOW until a tap, and every score sheet — thirteen taps
-// a hand plus one at a trick-taking pack, and four at a cribbage hand, where the
-// shipped table used to run itself end to end. That is the single biggest
-// behaviour change in #176 and #181 and it is intended. What keeps it a beat
+// the felt: `manual`'s `trickReadScale` is null as well as its `autoMs`, so a
+// game at the defaults holds EVERY COMPLETED TRICK until a tap and every
+// finished hand until the deal — thirteen taps a hand plus one at a
+// trick-taking pack. That is the single biggest behaviour change in #176 and it
+// is intended. (#181 added a tap per count of a show on top; the show now opens
+// all at once on the docked sheet — src/ui/inspection.js — so a cribbage hand
+// is one decision again, not four.) What keeps it a beat
 // rather than a freeze is that every one of those waits ends on a tap anywhere
 // on the felt or on Enter/Space, and that the felt SAYS so at exactly the rungs
 // where nothing else will: src/ui/statusBar.js's `statusTextFor` reads "<seat>'s
-// trick. Tap to go on." and "Round over. Tap to go on." whenever the beat has no
-// clock on it, and the same sentence goes to #log. A shared table is the one
-// place those gates are closed for you (src/ui/roundBeat.js's
-// SHARED_TRICK_HOLD_MS and SHARED_SHOW_STEP_MS).
+// trick. Tap to go on." whenever the hold has no clock on it, and the same
+// sentence goes to #log; a finished hand waits on its sheet's Deal button. A shared table is the one
+// place the trick's gate is closed for you (src/ui/roundBeat.js's
+// SHARED_TRICK_HOLD_MS).
+//
+// AND A TIMED RUNG STOPS FOR A PERSON TOO. The sheet's countdown is a guess at
+// how long a hand takes to read; a touch on the table while it runs says the
+// guess was wrong, and the sheet waits for its button from then on
+// (src/ui/roundEnding.js's `pauseAutoAdvance`).
 
 /**
  * `autoMs` is how long the summary stays up before it deals itself, and `null`
- * is the rung that never does. `stepScale` multiplies one show step
- * (src/ui/roundBeat.js's SHOW_STEP_MS) — cribbage's count is the one reveal a
- * pace preference has to stretch with, because "fifteen two, fifteen four, and
- * a pair is six" is the part of a hand that is read rather than watched — and
- * `null` there is the same word as `autoMs`'s: not a slower count but no clock
- * on it at all, one count per tap (#181).
+ * is the rung that never does.
  *
  * `instant` is its own flag rather than `autoMs === 0`, because it means
  * something arithmetically different: not "hold the summary for no time" but
- * "there is no transition" — no hold on the ending, no show steps, no sheet.
+ * "there is no transition" — no hold on the ending, no hand held open, no sheet.
  * The result goes to #log as one line and the deal begins.
  *
  * `trickReadScale` is the same preference ONE MOVE SMALLER (issue #176). It
@@ -89,8 +90,7 @@
  * you, exactly as `autoMs` is between hands: the four cards stay whole until the
  * player taps the felt or presses a key. `0` keeps no reading time AND no floor
  * — the card still has to land, so the hold is the flight and nothing more.
- * `stepScale` now says the same two things with the same two values, so the
- * three terms read alike at every rung: a number is a duration, a null is a
+ * The two terms read alike at every rung: a number is a duration, a null is a
  * person, and a zero is nothing to read.
  *
  * WHY THIS IS A SCALE ON THE READ AND NOT A DURATION PER RUNG: `quick` is the
@@ -107,14 +107,6 @@ export const PACE_LEVELS = Object.freeze([
     id: 'manual',
     label: 'Manual',
     autoMs: null,
-    // AND THE COUNT WAITS TOO (#181). This was 1 — the show ran at the shipped
-    // step while the two beats on either side of it waited for a person, so
-    // "fifteen two, fifteen four, and a pair is six" came and went in a second
-    // and a half, three times, at the rung whose whole meaning is that nothing
-    // moves without you. Null is the same word `autoMs` uses one line up: the
-    // count stays on the felt until the player dismisses it, and a cribbage hand
-    // ends in four deliberate inputs — pone, the dealer, the crib, the sheet.
-    stepScale: null,
     // A BEHAVIOUR CHANGE FOR EVERY PLAYER, NOT ONLY THE ONES ALREADY STANDING
     // HERE, because this is the shipped rung now. Manual used to mean "the
     // SHEET waits for you" and a completed trick still swept itself after
@@ -127,13 +119,12 @@ export const PACE_LEVELS = Object.freeze([
     // see SHARED_TRICK_HOLD_MS.
     trickReadScale: null,
     instant: false,
-    description: 'The table waits for you: a finished trick, each count of a show and the score sheet all stay until you say so.',
+    description: 'The table waits for you: a finished trick and a finished hand both stay until you say so.',
   }),
   Object.freeze({
     id: 'relaxed',
     label: 'Relaxed',
     autoMs: 6000,
-    stepScale: 1.4,
     // TWICE THE READING TIME, AND DELIBERATELY NOWHERE NEAR `autoMs`. 6000ms is
     // what a four-seat SCORE SHEET is worth; a trick is four cards and the
     // question "who took that?", and thirteen of those at six seconds each is 78
@@ -143,13 +134,12 @@ export const PACE_LEVELS = Object.freeze([
     // so out loud — and costs about six and a half seconds over a whole hand.
     trickReadScale: 2,
     instant: false,
-    description: 'A long look at the score, a longer look at each trick, and the counting slows to match.',
+    description: 'A long look at each finished hand and a longer look at each trick. Touch the table to keep a hand open.',
   }),
   Object.freeze({
     id: 'quick',
     label: 'Quick',
     autoMs: 2500,
-    stepScale: 1,
     // TODAY'S NUMBER, EXACTLY. #176's acceptance criterion was that the rung
     // this repo ships must not make a thirteen-trick hand one millisecond
     // longer than it already is, and this was that rung when the criterion was
@@ -159,13 +149,12 @@ export const PACE_LEVELS = Object.freeze([
     // what they are asking for.
     trickReadScale: 1,
     instant: false,
-    description: 'Long enough to read what happened, then the next trick — and the next hand — comes.',
+    description: 'Long enough to read what happened, then the next trick — and the next hand — comes. Touch the table to keep a hand open.',
   }),
   Object.freeze({
     id: 'instant',
     label: 'Instant',
     autoMs: 0,
-    stepScale: 0,
     // NO READING TIME AND NO FLOOR — but still not nothing. See trickRevealPlan:
     // the hold becomes the flight, because the one thing this rung may not do is
     // start the gather while the fourth card is still in the air.

@@ -230,12 +230,11 @@ export const SETTINGS_DEFAULTS = {
   // Quick → Relaxed → Manual → Quick — and the new-game sheet still offers all
   // four, Instant included.
   //
-  // WHAT THIS COSTS, PLAINLY, because it is one word here and three beats on
-  // the felt: `manual` also means `trickReadScale: null` and `stepScale: null`
-  // (src/ui/pace.js, #176 and #181), so a game at the defaults holds EVERY
-  // COMPLETED TRICK and EVERY COUNT OF A SHOW until a tap as well as every score
-  // sheet — thirteen taps in a trick-taking hand plus one, and four in a
-  // cribbage hand, where the shipped table used to run itself end to end. That
+  // WHAT THIS COSTS, PLAINLY, because it is one word here and two beats on
+  // the felt: `manual` also means `trickReadScale: null` (src/ui/pace.js,
+  // #176), so a game at the defaults holds EVERY COMPLETED TRICK until a tap as
+  // well as every finished hand — thirteen taps in a trick-taking hand plus the
+  // deal, where the shipped table used to run itself end to end. That
   // is intended, it is the biggest behaviour change in the two issues together,
   // and what keeps it a beat rather than a freeze is that all of those waits end
   // on a tap anywhere on the felt or on Enter/Space and that the felt says "Tap

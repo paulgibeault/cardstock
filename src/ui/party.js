@@ -65,7 +65,7 @@ import {
   setLocalMoveListener, afterRemoteMove, rearmTableBots, rerenderTable,
   setHostBeatListener, setRoundReadyLine, guestTrickHoldMs, guestTrickMessage,
   showGuestRoundSummary, paintGuestRoundReady, closeGuestRoundSummary,
-  showGuestResults, hideGuestResults,
+  showGuestResults, hideGuestResults, noteGuestTrick,
 } from './table.js';
 import { createGuestBeats } from './guestBeats.js';
 import { safeAccent } from './css.js';
@@ -2116,14 +2116,16 @@ function guestBeatsFor(session) {
   };
   return createGuestBeats({
     show,
-    openSummary: ({ view, event, ready }) => showGuestRoundSummary({
-      view, event, ready, waiting: guestWaitingLine(session, ready),
+    openSummary: ({ view, event, ready, events }) => showGuestRoundSummary({
+      view, event, ready, events, waiting: guestWaitingLine(session, ready),
     }),
     paintReady: (ready) => paintGuestRoundReady(ready, guestWaitingLine(session, ready)),
     closeSummary: () => closeGuestRoundSummary(),
-    showResults: (view) => showGuestResults(view, {
+    showResults: (view, events) => showGuestResults(view, {
+      events,
       waiting: `${hostNameOf(session)} can deal a new match from here.`,
     }),
+    noteTrick: (trick, posed) => noteGuestTrick(trick, posed),
     hideResults: () => hideGuestResults(),
     holdMs: (events) => guestTrickHoldMs(events),
     trickMessage: (ev) => guestTrickMessage(ev),
