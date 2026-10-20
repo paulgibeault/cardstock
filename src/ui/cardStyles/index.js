@@ -32,6 +32,35 @@ const STYLES = { vanilla, classic, shedding, sequencing, rankrun };
 
 export const STYLE_IDS = Object.freeze(Object.keys(STYLES));
 
+/**
+ * HOW BIG THE INDEX IS DRAWN — the player's own answer, not the pack's.
+ *
+ * `large` is a jumbo-index deck: the rank and suit in the corner drawn close
+ * to twice the standard size, because a hand on a phone is dealt at 46px
+ * and fanned, and the corner is the only part of most cards you can see. Every
+ * style draws both; what each one gives up to make the room is its own call
+ * (classic drops the pip layout; the others only had to move their corners).
+ *
+ * MODULE STATE, deliberately, rather than a field on the theme. The theme is
+ * the PACK's and is frozen for the life of a renderer; this is the PLAYER's and
+ * flips mid-match from the help sheet. Holding it here means a flip is one
+ * assignment and a re-render, with no renderer rebuilt and no cache thrown
+ * away — the renderer keeps one cache per size, so flipping back is free too.
+ */
+export const FACE_SIZES = Object.freeze(['standard', 'large']);
+
+let currentSize = 'standard';
+
+/** Set the face size every renderer draws at. Anything unrecognised is `standard`. */
+export function setFaceSize(size) {
+  currentSize = FACE_SIZES.includes(size) ? size : 'standard';
+  return currentSize;
+}
+
+export function faceSize() {
+  return currentSize;
+}
+
 /** Colour names are lookup keys, never markup — but keep them boring anyway. */
 const PALETTE_KEY_RE = /^[a-zA-Z][a-zA-Z0-9_-]{0,23}$/;
 
@@ -175,11 +204,11 @@ export function makeCardRenderer(manifest, cardsById = null) {
   const theme = buildTheme(manifest, cardsById);
   const style = STYLES[theme.style];
   const canCache = !!cardsById && typeof cardsById.get === 'function';
-  // Two maps rather than one keyed by `id + muted`: a pack writes its own card
-  // ids, so any separator this composed a key with is a separator a pack could
-  // put in an id and collide on.
-  const faces = new Map();
-  const mutedFaces = new Map();
+  // Separate maps rather than one keyed by `id + muted`: a pack writes its own
+  // card ids, so any separator this composed a key with is a separator a pack
+  // could put in an id and collide on. One pair per face size, so flipping the
+  // size and flipping it back redraws nothing.
+  const caches = Object.fromEntries(FACE_SIZES.map((size) => [size, [new Map(), new Map()]]));
   let back = null;
   return {
     theme,
@@ -194,11 +223,12 @@ export function makeCardRenderer(manifest, cardsById = null) {
      */
     face: (card, muted = false) => {
       const safe = card && typeof card === 'object' ? card : {};
-      if (!canCache || cardsById.get(safe.id) !== safe) return style.face(safe, theme, muted);
-      const cache = muted ? mutedFaces : faces;
+      const large = currentSize === 'large';
+      if (!canCache || cardsById.get(safe.id) !== safe) return style.face(safe, theme, muted, large);
+      const cache = caches[currentSize][muted ? 1 : 0];
       let markup = cache.get(safe.id);
       if (markup === undefined) {
-        markup = style.face(safe, theme, muted);
+        markup = style.face(safe, theme, muted, large);
         cache.set(safe.id, markup);
       }
       return markup;

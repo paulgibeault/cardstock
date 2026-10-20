@@ -128,7 +128,27 @@
 /* Phones: small enough that Stockpile's deck-plus-four-builds row still fits
    on one line (5 × 52px + gaps < 375px). */
 @media (max-width: 420px) {
-  #table { --pile-w: 52px; --hand-card-w: 46px; }
+  /* THE WAY OUT IS AN ARROW ON A PHONE. The word cost 49px of an 85px button,
+     and every one of them came out of the status sentence beside it, which was
+     ellipsising "Your crib — pick 2" at 108px. The button keeps its aria-label,
+     so it is still "Back to the lobby" to a screen reader. */
+  .lobby-button__word { display: none; }
+  #lobby-button { padding-inline: 0.65rem; }
+
+  /* A phone shows one and a half seats, so the soft edge that says "more this
+     way" (seats.css, #133) has to be wide enough to be seen at all: 24px of
+     fade on a half-shown plate read as the plate being cut off. */
+  .opponent-row--more-left,
+  .opponent-row--more-right { --seat-fade: 44px; }
+
+  /* THE HAND GROWS WITH THE PHONE'S HEIGHT; THE PILES DO NOT. The piles are
+     held to 52px by Stockpile's row of five, which is a WIDTH problem — but the
+     hand never was: its fan closes and opens to fit (src/ui/handOrder.js), and
+     past the readable floor it splits into rows using the felt's spare height.
+     A fixed 46px left that height as an empty band between the piles and the
+     hand on every phone taller than the shortest one. 7vh is 47px on a 667px
+     phone, 52px at 740 and the 60px ceiling from about 860. */
+  #table { --pile-w: 52px; --hand-card-w: clamp(46px, 7vh, 60px); }
   #center-piles { gap: 0.4rem 0.7rem; }
   #player-piles { gap: 0.3rem 0.55rem; }
   .pile--mini { --pile-w: 24px; }
@@ -143,7 +163,8 @@
 @media (max-width: 360px) {
   #table {
     --pile-w: 44px;
-    --hand-card-w: 40px;
+    /* The same height rule as the 420px block, from this block's own floor. */
+    --hand-card-w: clamp(40px, 6.4vh, 54px);
     gap: 0.3rem;
     padding: 0.4rem 0.3rem;
     margin: 0.3rem;

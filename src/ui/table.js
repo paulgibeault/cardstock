@@ -213,6 +213,7 @@ const el = {
   helpRules: document.getElementById('help-rules'),
   helpHint: document.getElementById('help-hint'),
   helpHintNote: document.getElementById('help-hint-note'),
+  helpFaces: document.getElementById('help-faces'),
   stageRow: document.getElementById('stage-row'),
   stageTray: document.getElementById('stage-tray'),
   handRow: document.getElementById('hand-row'),
@@ -2481,6 +2482,7 @@ export function initTable({ onExit }) {
     renderSelection,
     persistMatch,
     showRules,
+    rerender: rerenderTable,
   });
 
   // THE ROW IS CONSTRUCTED BEFORE ANYTHING LISTENS. `placeOpenPlate` is handed

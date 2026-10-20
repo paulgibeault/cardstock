@@ -59,6 +59,11 @@
 .card-face__corner--xs { font-size: 9.5px; }
 .card-face__corner--br { text-anchor: end; }
 .card-face__pip { font-size: 34px; text-anchor: middle; opacity: 0.9; }
+/* The large face size (src/ui/cardStyles/index.js, FACE_SIZES). vanilla.js
+   moves the corners in to y=32/120 to make the room these take. */
+.card-face--large .card-face__corner { font-size: 26px; font-weight: 800; }
+.card-face--large .card-face__corner--sm { font-size: 19px; }
+.card-face--large .card-face__corner--xs { font-size: 14px; }
 .card-face__badge { font-size: 20px; font-weight: 700; text-anchor: middle; fill: #333; }
 
 /* Colored cards with NO SUIT (Wildfire, Milestones) get their face painted by
@@ -86,13 +91,18 @@
    what lets a white number sit legibly straight on top of Wildfire's red. */
 .cs-text { paint-order: stroke; stroke-linejoin: round; }
 
+/* The last line on the screen, so it gets the bottom padding the felt's rail
+   and the screen edge would otherwise crowd it against — it sat 4px off the
+   bottom of a phone, reading as text that had fallen off the table. */
 #log {
   max-width: 30rem;
   margin: 0 auto;
+  padding: 0.1rem 1rem 0.45rem;
   font-size: 0.8rem;
+  line-height: 1.25;
   opacity: 0.8;
   text-align: center;
-  min-height: 1.2em;
+  min-height: 1.25em;
 }
 
 /* ------------------------------------------------------------------ *

@@ -21,7 +21,8 @@
 
 import { suggestMove } from './hint.js';
 import { packRules } from './rules.js';
-import { loadSettings } from '../arcade/storage.js';
+import { loadSettings, saveSettings } from '../arcade/storage.js';
+import { faceSize, setFaceSize } from './cardStyles/index.js';
 import { actingSeats as actingSeatsOf } from '../engine/context.js';
 
 /** What the Hint line says about itself when it cannot be taken. */
@@ -36,7 +37,7 @@ export const HINT_OFFER = Object.freeze({
 
 export function createHelpSheet({
   el, session, liveState, livePack, isMySeat, mySeat, movesFor, renderSelection, persistMatch,
-  showRules,
+  showRules, rerender,
 }) {
   /** Is this card part of the hint on the bar right now? */
   function hintedCard(cardId) {
@@ -116,6 +117,24 @@ export function createHelpSheet({
     el.helpHintNote.textContent = offer.why;
   }
 
+  /** The faces toggle says which way it is set. */
+  function renderFacesToggle() {
+    el.helpFaces.setAttribute('aria-pressed', String(faceSize() === 'large'));
+  }
+
+  /**
+   * Flip the card faces between standard and large, keep the answer, and
+   * repaint the felt under the sheet. Nothing is rebuilt: the renderer keeps a
+   * cache per size (src/ui/cardStyles/index.js), so this is a re-render and no
+   * more, and flipping back costs less than that.
+   */
+  function toggleFaces() {
+    const next = setFaceSize(faceSize() === 'large' ? 'standard' : 'large');
+    saveSettings({ ...loadSettings(), cardFaces: next });
+    renderFacesToggle();
+    rerender();
+  }
+
   function helpOpen() {
     return !el.helpSheet.hidden;
   }
@@ -133,6 +152,7 @@ export function createHelpSheet({
     el.helpSheet.hidden = !open;
     el.helpButton.setAttribute('aria-expanded', String(open));
     if (open) {
+      renderFacesToggle();
       el.helpRules.focus({ preventScroll: true });
     } else if (el.helpSheet.contains(document.activeElement)) {
       el.helpButton.focus({ preventScroll: true });
@@ -157,6 +177,7 @@ export function createHelpSheet({
       setHelpOpen(false);
       showHint();
     });
+    el.helpFaces.addEventListener('click', toggleFaces);
     // A tap anywhere else closes it, the way the seat plate (initTable) answers the
     // same gesture. Capturing, so the tap still reaches whatever it was aimed
     // at: this closes a sheet, it does not swallow a move.

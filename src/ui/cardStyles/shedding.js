@@ -24,17 +24,31 @@ import {
 const WILD_BODY = '#26262b';
 const PANEL = '#fdfdfa';
 
-function cornerMark(kind, card, body) {
+/**
+ * The corner, at either face size (src/ui/cardStyles/index.js, FACE_SIZES).
+ *
+ * The large corner is the same mark grown into the triangle of body the
+ * diamond leaves free: the diamond's edge runs from (19,70) to (50,39), so a
+ * mark inked inside x<30, y<37 never meets it, and the mirrored copy clears it
+ * the same way at the other end.
+ */
+const CORNER = {
+  standard: { x: 14, y: 26, size: 17, outline: 2.6, drawX: 15, drawY: 25, drawSize: 15, iconY: 22, iconR: 8, dots: [15, 22, 4.2, 3] },
+  large: { x: 19, y: 36, size: 30, outline: 3.4, drawX: 20, drawY: 33, drawSize: 23, iconY: 25, iconR: 12, dots: [19, 25, 6, 4.4] },
+};
+
+function cornerMark(kind, card, body, at) {
   if (kind === 'number') {
     const rank = card.rank == null ? '' : String(card.rank).slice(0, 2);
-    return text(rank, { x: 14, y: 26, size: 17, fill: '#ffffff', outline: shade(body, -0.45), outlineWidth: 2.6 });
+    return text(rank, { x: at.x, y: at.y, size: at.size, fill: '#ffffff', outline: shade(body, -0.45), outlineWidth: at.outline });
   }
-  if (kind === 'drawN') return text(`+${drawCount(card)}`, { x: 15, y: 25, size: 15, fill: '#ffffff' });
-  return actionIcon(kind === 'reverse' ? 'reverse' : 'skip', 15, 22, 8, '#ffffff');
+  if (kind === 'drawN') return text(`+${drawCount(card)}`, { x: at.drawX, y: at.drawY, size: at.drawSize, fill: '#ffffff' });
+  return actionIcon(kind === 'reverse' ? 'reverse' : 'skip', at.drawX, at.iconY, at.iconR, '#ffffff');
 }
 
-export function face(card, theme, muted = false) {
+export function face(card, theme, muted = false, large = false) {
   const kind = cardKind(card);
+  const at = large ? CORNER.large : CORNER.standard;
   const wild = kind === 'wild' || kind === 'wildDrawN';
   // Grey stock, deeper body — see the muting note in shared.js. This is the one
   // style with no white card to grey: the PANEL is its paper and the painted
@@ -64,7 +78,7 @@ export function face(card, theme, muted = false) {
     parts.push(diamond(50, cy, half + 4, panel));
     parts.push(diamondRosette(50, cy, half - 2, colors.length >= 2 ? colors : [body, shade(body, 0.3), shade(body, -0.3), shade(body, 0.5)]));
     if (drawFour) parts.push(text('+4', { x: 50, y: 118, size: 30, fill: '#ffffff', weight: 800, outline: shade(WILD_BODY, -0.5), outlineWidth: 3.5 }));
-    parts.push(mirrored(colorDots(15, 22, 4.2, 3, colors)));
+    parts.push(mirrored(colorDots(...at.dots, colors)));
   } else {
     // Icons and numerals sit on the WHITE panel, not on the card, so they take
     // a darkened body colour. Wildfire's yellow is the case that forces it:
@@ -91,10 +105,10 @@ export function face(card, theme, muted = false) {
       // the corners. The reverse arrows are wide and were doing exactly that.
       parts.push(actionIcon(kind, 50, 70, kind === 'reverse' ? 16.5 : 21, ink));
     }
-    parts.push(mirrored(cornerMark(kind, card, body)));
+    parts.push(mirrored(cornerMark(kind, card, body, at)));
   }
 
-  return openSvg(`card-face card-face--shedding${muted ? ' card-face--muted' : ''}`, cardAriaLabel(card)) + parts.join('') + '</svg>';
+  return openSvg(`card-face card-face--shedding${muted ? ' card-face--muted' : ''}${large ? ' card-face--large' : ''}`, cardAriaLabel(card)) + parts.join('') + '</svg>';
 }
 
 export const defaults = {
