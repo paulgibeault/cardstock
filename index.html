@@ -162,7 +162,7 @@
          sentence keeps 95px. #status-text remains the only elastic item. -->
     <div id="status-bar">
       <button id="lobby-button" class="ghost-button" aria-label="Back to the lobby">
-        <span aria-hidden="true">←</span> Lobby
+        <span aria-hidden="true">←</span><span class="lobby-button__word"> Lobby</span>
       </button>
       <span id="status-text">Loading…</span>
       <!-- How fast a card crosses the felt, cycling on a tap (#175). The
@@ -216,8 +216,8 @@
               aria-expanded="false" aria-controls="help-sheet" aria-label="Help">
         <span aria-hidden="true">?</span>
       </button>
-      <!-- Two things, and deliberately not a menu: a menu promises arrow-key
-           navigation and a roving tabstop, and two buttons in a popover that
+      <!-- Three things, and deliberately not a menu: a menu promises arrow-key
+           navigation and a roving tabstop, and three buttons in a popover that
            Tab already walks promise nothing they do not keep. Escape and a tap
            anywhere else close it, as everything else on this screen does. -->
       <div id="help-sheet" class="help-sheet" role="group" aria-labelledby="help-button" hidden>
@@ -232,6 +232,13 @@
         <button type="button" id="help-hint" class="help-sheet__item">
           <span class="help-sheet__label">Hint</span>
           <span id="help-hint-note" class="help-sheet__note">What a player at this level would do</span>
+        </button>
+        <!-- A toggle rather than a question, so it says which way it is set.
+             The sheet stays open on a flip: the cards repaint behind it, and
+             the player can flip straight back if they prefer the old faces. -->
+        <button type="button" id="help-faces" class="help-sheet__item help-sheet__item--toggle" aria-pressed="false">
+          <span class="help-sheet__label">Large card faces</span>
+          <span class="help-sheet__note">Bigger numbers and suits for small screens</span>
         </button>
       </div>
 
@@ -520,11 +527,12 @@
        because both are part of the rule set a match is replayed under and
        neither can change once cards are out (src/ui/newGame.js). -->
   <div id="new-game-overlay" hidden>
-    <div class="panel">
-      <div id="new-game-title" class="panel__title"></div>
+    <div class="panel new-game" id="new-game-panel">
+      <p class="new-game__eyebrow">New game</p>
+      <div id="new-game-title" class="panel__title new-game__title"></div>
       <div id="new-game-body" class="new-game__body"></div>
-      <div class="panel__actions">
-        <button id="new-game-deal">Deal</button>
+      <div class="panel__actions new-game__actions">
+        <button id="new-game-deal" class="panel-primary">Deal</button>
         <button id="new-game-cancel" class="ghost-button">Cancel</button>
       </div>
     </div>
@@ -540,7 +548,7 @@
       <div id="rules-tagline" class="rules__tagline"></div>
       <div id="rules-body" class="rules__body"></div>
       <div class="panel__actions">
-        <button id="rules-close">Close</button>
+        <button id="rules-close" class="panel-primary">Close</button>
       </div>
     </div>
   </div>
@@ -579,7 +587,7 @@
       <div class="panel__title">The game so far</div>
       <div id="review-map-host"></div>
       <div class="panel__actions">
-        <button id="review-close">Close</button>
+        <button id="review-close" class="panel-primary">Close</button>
       </div>
     </div>
   </div>

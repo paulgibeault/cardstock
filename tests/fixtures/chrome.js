@@ -146,10 +146,11 @@ export function helpSheetHarness(overrides = {}) {
     helpRules: stubNode('button', 'help-rules'),
     helpHint: stubNode('button', 'help-hint'),
     helpHintNote: stubNode('span', 'help-hint-note'),
+    helpFaces: stubNode('button', 'help-faces'),
     log: stubNode('div', 'log'),
   };
   el.helpSheet.hidden = true;
-  el.helpSheet.append(el.helpRules, el.helpHint);
+  el.helpSheet.append(el.helpRules, el.helpHint, el.helpFaces);
   el.helpHint.appendChild(el.helpHintNote);
   const calls = [];
   const h = { store, doc, el, calls, session: chromeSession(), state: null, pack: null, moves: 2 };
@@ -164,6 +165,7 @@ export function helpSheetHarness(overrides = {}) {
     renderSelection: (state) => calls.push(['renderSelection', state]),
     persistMatch: () => calls.push(['persistMatch']),
     showRules: (rules) => calls.push(['showRules', rules]),
+    rerender: () => calls.push(['rerender']),
     ...overrides,
   });
   return h;

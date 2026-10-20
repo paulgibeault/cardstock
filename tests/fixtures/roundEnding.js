@@ -116,7 +116,6 @@ export function roundEndingHarness(overrides = {}) {
     cardById: () => null,
     pulseSeat: spy('pulseSeat'),
     releaseBanner: spy('releaseBanner'),
-    art: () => null,
     focusCards: spy('focusCards'),
     celebrateDeal: spy('celebrateDeal'),
     currentFlightMs: () => 420,

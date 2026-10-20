@@ -248,7 +248,7 @@ test("the final look is the round sheet, handed the hand that ended the match", 
   assert.match(table, /awaitFinalLook\(\{\s*state,\s*ev: ended,/,
     "the final look is no longer handed the match-ending roundOver, so the last hand has no deltas");
   const panels = fs.readFileSync(path.join(ROOT, "src/ui/panels.js"), "utf8");
-  assert.match(panels, /showRoundSummary\(state, ev \|\| \{\}, seating, contract, null, \{\s*counts, art, focus, final: \{ result, play \},/,
+  assert.match(panels, /showRoundSummary\(state, ev \|\| \{\}, seating, contract, null, \{\s*counts, focus, final: \{ result, play \},/,
     "the final look is drawn by something other than the round sheet again");
   const html = fs.readFileSync(path.join(ROOT, "index.html"), "utf8");
   assert.doesNotMatch(html, /id="final-look"/, "the bar the sheet replaced is back");

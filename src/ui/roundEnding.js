@@ -155,9 +155,8 @@ export function createRoundEnding({
   el, session, epoch, liveState, feltState, render, animateMove, renderStatusBar,
   seatLabel, seatPossessive, mySeat, cardById, pulseSeat,
   releaseBanner, celebrateDeal,
-  // The open match's card renderer (the sheet's small faces), and the felt's
-  // pointer: light these card ids, or none (src/ui/inspection.js).
-  art, focusCards,
+  // The felt's pointer: light these card ids, or none (src/ui/inspection.js).
+  focusCards,
   currentFlightMs, powerSaving, scheduleNextTurn, cancelBotTurn,
   cancelAnnouncementBeats, exitToLobby,
   showRoundSummary, hideRoundSummary, paintRoundPace, confirmAction,
@@ -479,6 +478,11 @@ export function createRoundEnding({
       // inside its own seat's card on the sheet, where the possessive is the card.
       return {
         seat: count.seat,
+        // A REVEAL — what a seat was left holding, or what it took — is already
+        // on the board: its plate turns face up wearing this same number as a
+        // chip (revealOf below). The sheet leaves those to the plate and keeps
+        // only the counts the board cannot explain, cribbage's show.
+        reveal: !!count.reason,
         title: model.title,
         label: count.reason === 'taken' ? 'Penalty cards' : capitalise(staging?.what || 'hand'),
         points: count.points,
@@ -762,7 +766,7 @@ export function createRoundEnding({
         showRoundSummary(
           state, plan.roundOver, session().table.seating, roundContractLines(finalState),
           paceView(paceLevel(plan.pace)),
-          { counts, art, focus: focusCards },
+          { counts, focus: focusCards },
         );
         armAutoAdvance(plan.autoAdvanceMs);
       };

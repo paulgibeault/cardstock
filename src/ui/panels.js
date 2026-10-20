@@ -15,7 +15,7 @@
 import { statLinesFor } from '../stats/matchStats.js';
 import { sideScoreOf, sidesOf, foldToSides } from '../engine/sides.js';
 import { targetSentence as matchTargetSentence, winDirection } from './scoreDirection.js';
-import { line, svgNode } from './dom.js';
+import { line } from './dom.js';
 
 const el = {
   roundOverlay: document.getElementById('round-overlay'),
@@ -169,7 +169,7 @@ function sideNameCell(className, members, seating) {
  * was not shown anywhere at all (#123, item 28).
  */
 export function showRoundSummary(state, ev, seating, contract = null, pace = null, {
-  guest = null, counts = [], art = null, focus = null, final = null,
+  guest = null, counts = [], focus = null, final = null,
 } = {}) {
   // ONE SHEET, TWO MOMENTS. Between hands it deals the next one; at the end of
   // the match it is the final look (#120) — the same sheet with the winner as
@@ -215,8 +215,14 @@ export function showRoundSummary(state, ev, seating, contract = null, pace = nul
     if (notes.length) card.appendChild(line('round-side__note', notes.join(' · ')));
     // WHAT THE NUMBER WAS MADE OF, inside the side it explains — every count
     // this side's seats made, at once, instead of one floating card per tap.
-    const own = (counts || []).filter((c) => members.includes(c.seat));
-    if (own.length) card.appendChild(countsCell(own, art));
+    //
+    // BUT NOT WHAT THE BOARD ALREADY SAYS. A reveal (a hand left over, a pile
+    // of penalty cards) is face up on the seat's plate with its points on a
+    // chip, so a "Hand 35" box here was the same fact twice, one screen apart.
+    // What stays is the scoring the board cannot show by itself — cribbage's
+    // fifteens, pairs and runs, each of which still lights its cards.
+    const own = (counts || []).filter((c) => members.includes(c.seat) && !c.reveal);
+    if (own.length) card.appendChild(countsCell(own));
     el.roundScores.appendChild(card);
   });
   el.roundPanel.classList.toggle('round-panel--final', !!final);
@@ -258,19 +264,24 @@ function focusOn(target) {
 }
 
 /**
- * One side's counts: whose, the cards, and what each part came to.
+ * One side's counts: whose, and what each part came to.
  *
  * EVERY PIECE IS A WAY TO POINT AT THE FELT. Resting on a count (or focusing
  * it) lights all of its cards wherever they are on the table; a part — a
  * fifteen, a pair, "2 cards at 1" — lights only the cards it was made of; a tap
- * pins either until it is tapped again. The faces drawn here are small and the
- * point is not to read them — it is the board that is read, and these say
- * which cards on it to read.
+ * pins either until it is tapped again.
  *
- * @param list the side's counts, each `{ seat, title, faces: [{ id, card }],
- *             parts: [{ label, points, ids }], points, ids }`
+ * NO CARD FACES. The block used to repeat the count's cards as a strip of
+ * 22px faces, and every one of them was already on the board at full size —
+ * the plates turn face up when the hand opens, cribbage lays the crib out in
+ * the show, and the cut is the shared pile. A second, smaller copy of the
+ * board under the board was the busiest thing on the sheet and said nothing
+ * the felt above it did not; the count lights the real cards instead.
+ *
+ * @param list the side's counts, each `{ seat, title, parts: [{ label, points,
+ *             ids }], points, ids }`
  */
-function countsCell(list, art) {
+function countsCell(list) {
   const cell = document.createElement('div');
   cell.className = 'round-side__counts';
   for (const count of list) {
@@ -285,18 +296,6 @@ function countsCell(list, art) {
     head.appendChild(line('round-count__title', count.label || count.title));
     head.appendChild(line('round-count__points', count.zero ? count.zeroLabel : String(count.points)));
     block.appendChild(head);
-    if (art && count.faces.length) {
-      const faces = document.createElement('div');
-      faces.className = 'round-count__faces';
-      faces.setAttribute('aria-hidden', 'true');
-      for (const face of count.faces) {
-        const node = svgNode(art().face(face.card), 'round-count__face');
-        node.dataset.cardId = face.id;
-        if (face.starter) node.classList.add('round-count__face--starter');
-        faces.appendChild(node);
-      }
-      block.appendChild(faces);
-    }
     if (count.parts.length) {
       const parts = document.createElement('div');
       parts.className = 'round-count__parts';
@@ -626,16 +625,16 @@ export function hideScoreboard() {
  * is not a thing to answer with a timer.
  *
  * @param sheet  what `showRoundSummary` draws — `{ state, ev, seating, contract,
- *               counts, art, focus }` — with `result` (who won) and `play` (the
+ *               counts, focus }` — with `result` (who won) and `play` (the
  *               last card and who played it, or '')
  * @returns a promise that resolves true when acknowledged, false when the table
  *          closed under it — so a caller can decline to open a panel over a
  *          match that is no longer on screen.
  */
-export function awaitFinalLook({ state, ev, seating, contract = null, counts = [], art = null, focus = null, result, play = '' }) {
+export function awaitFinalLook({ state, ev, seating, contract = null, counts = [], focus = null, result, play = '' }) {
   if (finalAnswer) finalAnswer(false);
   showRoundSummary(state, ev || {}, seating, contract, null, {
-    counts, art, focus, final: { result, play },
+    counts, focus, final: { result, play },
   });
   return new Promise((resolve) => {
     finalAnswer = (acknowledged) => {

@@ -245,6 +245,10 @@ export const SETTINGS_DEFAULTS = {
   // it lives in settings rather than beside the match because a preference
   // outlives the game it was formed in.
   hands: {},
+  // HOW BIG A CARD'S INDEX IS DRAWN: 'standard' or 'large' (FACE_SIZES in
+  // src/ui/cardStyles/index.js). Flipped from the felt's help sheet and applied
+  // at boot. Presentation only, like `hands` — it never reaches the engine.
+  cardFaces: 'standard',
 };
 
 // §7b: this id reaches a fetch path and a DOM attribute.

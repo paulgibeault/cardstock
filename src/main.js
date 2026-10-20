@@ -18,7 +18,8 @@
 // looking at keeps arbitrating and keeps playing its bots — which is the whole
 // of #43, and the reason `goToLobby` below no longer stops hosting.
 
-import { registerStorageErrorHandler, packOverride } from './arcade/storage.js';
+import { registerStorageErrorHandler, packOverride, loadSettings } from './arcade/storage.js';
+import { setFaceSize } from './ui/cardStyles/index.js';
 import {
   initTable, openTable, closeTable, flushTable, rerenderTable, isTableOpen, reportTableError,
 } from './ui/table.js';
@@ -112,6 +113,9 @@ function showSharedTable() {
  * whatever happened to be on screen.
  */
 async function route() {
+  // The face size is the player's, so it is read from the save that is about
+  // to be shown — at boot, and again after an import replaces it.
+  setFaceSize(loadSettings().cardFaces);
   const deepLink = packOverride(location.search);
   if (deepLink) await goToTable(deepLink);
   else await goToLobby();

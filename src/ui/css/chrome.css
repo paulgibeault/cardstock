@@ -941,3 +941,35 @@ body {
   opacity: 0.55;
 }
 .help-sheet__item:disabled:hover { background: transparent; }
+
+/* A SWITCH, drawn from aria-pressed so the state and what a screen reader
+   hears cannot disagree. Opaque fills only, and no transition: it changes on a
+   tap, and the cards repainting behind the sheet are the feedback that matters. */
+.help-sheet__item--toggle {
+  position: relative;
+  padding-right: 2.9rem;
+}
+.help-sheet__item--toggle::before,
+.help-sheet__item--toggle::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  border-radius: 999px;
+}
+.help-sheet__item--toggle::before {
+  right: 0.55rem;
+  width: 1.9rem;
+  height: 1.1rem;
+  margin-top: -0.55rem;
+  background: var(--chip-bg);
+  border: 1px solid var(--panel-border);
+}
+.help-sheet__item--toggle::after {
+  right: calc(0.55rem + 0.95rem);
+  width: 0.8rem;
+  height: 0.8rem;
+  margin-top: -0.4rem;
+  background: var(--panel-text);
+}
+.help-sheet__item--toggle[aria-pressed="true"]::before { background: var(--accent); border-color: var(--accent); }
+.help-sheet__item--toggle[aria-pressed="true"]::after { right: calc(0.55rem + 0.15rem); background: #fff; }
