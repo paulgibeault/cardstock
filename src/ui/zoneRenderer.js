@@ -26,6 +26,7 @@ import { safeCssColor } from './css.js';
 import { isSelected, describeContractItem } from './interaction.js';
 import { describeZone, zoneAriaLabel, zoneBadge, zoneFocusOf, cardName } from './describe.js';
 import { seatSideMarks } from './seatRing.js';
+import { isHiddenCardId } from './tableModel.js';
 import { handValue } from '../engine/scoring.js';
 import { makeCtx } from '../engine/context.js';
 
@@ -278,6 +279,10 @@ export function createZoneRenderer({
       node.style.setProperty('--stack-index', String(i - (visibleCount - 1) / 2));
       node.style.setProperty('--overlap-index', String(i));
       if (cardId) node.style.setProperty('--stack-tilt', `${tiltFor(cardId, isTop ? 2 : 5).toFixed(2)}deg`);
+      // WHICH CARD THIS IS, for the felt to point at while a finished hand is
+      // inspected (src/ui/inspection.js): a count picked on the sheet lights its
+      // cards wherever they lie. Only a card this device may name.
+      if (cardId && !isHiddenCardId(cardId)) node.dataset.cardId = cardId;
       stack.appendChild(node);
       return node;
     };

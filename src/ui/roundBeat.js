@@ -28,12 +28,12 @@
 // shared table puts on it: "does this table ever wait forever with three other
 // people at it" has to be answerable without a browser.
 //
-// AND A SCHEDULE IS STILL A SCHEDULE WHEN IT HAS NO CLOCK IN IT (#181). At the
-// rung that waits, the show is a SEQUENCE — one count, then a person, then the
-// next — so the `at` a step runs on is null and the arithmetic that used to
-// order the sheet against it has nothing to subtract. What does not change is
-// that the ordering is this module's to state: `nextShowBeat` at the foot of the
-// file is the same question asked in the units that are left.
+// THE SHOW IS NO LONGER A SCHEDULE OF ITS OWN (src/ui/inspection.js). It used
+// to be: one count of a hand at a time, each on its own clock or its own tap,
+// with the sheet after the last of them. Now every count goes on the sheet at
+// once and the cards turn over on the plates, so a round ending is one beat —
+// the last card landing — and then the hand, held open. `showSteps` survives as
+// the list of counts; the arithmetic that spaced them out does not.
 
 import { paceLevel, DEFAULT_PACE } from './pace.js';
 
@@ -117,7 +117,7 @@ export const SHARED_TRICK_HOLD_MS = 2000;
  * `posed` is false when the felt could not reconstruct that position — the
  * multiplayer path, where the host applied the move before this device heard
  * about it and there is no pre-move copy to advance (the same degradation
- * `narrate` describes below). There is nothing to hold then, so nothing is
+ * round ending degrades to). There is nothing to hold then, so nothing is
  * held: the gather happens as it always did.
  *
  * `reads` IS WHETHER THE HOLD CONTAINS READING TIME (#180) — true at every rung
@@ -176,35 +176,7 @@ export function trickRevealPlan(events, {
 }
 
 /**
- * How long one step of a show stays up before the next replaces it.
- *
- * "Fifteen two, fifteen four, and a pair is six" is a sentence a person says
- * out loud at a table, and this is roughly how long saying it takes. Long
- * enough to read a number and look at the cards it came from; short enough that
- * three of them is not a cutscene.
- */
-export const SHOW_STEP_MS = 1500;
-
-/**
- * THE LONGEST A SHARED TABLE WILL LEAVE ONE COUNT UP, whatever the rung says.
- *
- * SHARED_TRICK_HOLD_MS's argument, one beat later and for the same reason. A
- * REMOTE move runs no steps at all — `narrate` is false on that path and the
- * show degrades to the plain hold — but a LOCAL move at a shared table narrates
- * like any other, and a count with no clock on it gates this device's queue on a
- * tap that may never come while three other players keep playing.
- *
- * IT IS THE SLOWEST RUNG'S OWN STEP, not a fourth duration nobody chose. The cap
- * converts exactly one rung, the one that waits for a person, so what it should
- * convert that rung to is the most generous thing any rung already asks for:
- * Relaxed's 1.4 × SHOW_STEP_MS. Every rung that names a step is untouched, which
- * is not a property of the number but of where it is applied — see roundBeatPlan,
- * where the cap replaces a null and is never a `min` over a rung's own answer.
- */
-export const SHARED_SHOW_STEP_MS = 2100;
-
-/**
- * The reveals a round ending owes, in the order the rules put them in.
+ * The counts a round ending made, in the order the rules made them.
  *
  * Cribbage is the only pack that emits `showScored` today and the order is the
  * game: pone counts, then the dealer, then the crib, and a pone sitting on 118
@@ -221,9 +193,9 @@ export const SHARED_SHOW_STEP_MS = 2100;
  *
  * `parts` is the WORDS half of the same payload — fifteen, a pair, his nobs —
  * and it survives the wire where the card ids do not. It is carried here for
- * one reason: the sentence for a step is rebuilt from the step
- * (src/ui/table.js's `playShowStep`), so anything the template's narration
- * reads has to be on it. Dropping it is how "his nobs" stayed invisible while
+ * one reason: a count's title and rows on the sheet are rebuilt from the step
+ * (src/ui/roundEnding.js's `countModels`), so anything they read has to be on
+ * it. Dropping it is how "his nobs" stayed invisible while
  * being in the pack's own tagline (#124, item 41).
  */
 export function showSteps(events) {
@@ -258,30 +230,16 @@ export function showSteps(events) {
  *                 `offerFinalLook`'s is: the beat exists so the last card has
  *                 LANDED before anything asks to be read, and the flight scales
  *                 with the player's own pace setting.
- * @param narrate  false when the felt cannot reconstruct the ending position —
- *                 the multiplayer path, where the move was applied by the host
- *                 module before this device heard about it and there is no
- *                 pre-move snapshot to pose. The hold still applies; the
- *                 step-by-step reveal, which has to repaint the felt, does not.
- * @param pace     the player's rung (src/ui/pace.js). It stretches the show and
- *                 decides whether the sheet deals itself — and at `instant` it
- *                 removes the beat entirely. At the rung that waits it takes the
- *                 clock off the show altogether (#181).
- * @param shared   is anybody else at this table? The one thing it changes is
- *                 that a count cannot wait forever — see SHARED_SHOW_STEP_MS. It
- *                 is a DIFFERENT question from `narrate`, which is about a
- *                 REMOTE move having no position to pose; this is about a local
- *                 move at a table other people are playing at.
+ * @param pace     the player's rung (src/ui/pace.js). It decides whether the
+ *                 sheet deals itself — and at `instant` it removes the beat
+ *                 entirely.
  * @returns null when this move did not end a round with the match still going;
- *          otherwise { roundOver, gathered, holdMs, steps, summaryAt, pace,
- *          stepMs, autoAdvanceMs, instant } where every step carries the `at`
- *          it runs on — or `null` for a step that runs on a person instead —
- *          and `summaryAt` is after all of them either by arithmetic or, at the
- *          rung with no arithmetic left, by `nextShowBeat` below.
+ *          otherwise { roundOver, gathered, holdMs, summaryAt, pace,
+ *          autoAdvanceMs, instant }. `summaryAt` is when the hand opens — the
+ *          plates turn over and the sheet docks — which is the hold and nothing
+ *          more: every count goes up at once (src/ui/inspection.js).
  */
-export function roundBeatPlan(events, {
-  flightMs = 0, stepMs = SHOW_STEP_MS, narrate = true, pace = DEFAULT_PACE, shared = false,
-} = {}) {
+export function roundBeatPlan(events, { flightMs = 0, pace = DEFAULT_PACE } = {}) {
   const roundOver = (events || []).find((e) => e.type === 'roundOver' && !e.over);
   if (!roundOver) return null;
 
@@ -298,151 +256,23 @@ export function roundBeatPlan(events, {
     ? Math.max(MIN_TRICK_HOLD_MS, flightMs + 640)
     : Math.max(MIN_HOLD_MS, flightMs + 280));
 
-  // A show is the part of a round ending that is READ rather than watched, so
-  // it is the part a pace rung stretches. `instant` scales it to nothing, which
-  // drops the steps altogether — there is no such thing as a step you are given
-  // no time to read.
-  //
-  // AND `null` IS THE RUNG THAT DOES NOT STRETCH THE COUNT BUT STOPS IT (#181).
-  // The third term to say "wait for me" with an absence rather than a number,
-  // after `autoMs` and `trickReadScale`, and it is read the same way everywhere
-  // it lands below: no duration, because at that rung a count does not have one.
-  // A shared table is where the gate is closed for you, and the cap REPLACES the
-  // null rather than being a ceiling over every rung — a `min` here would re-pace
-  // Relaxed's count for everybody at the table, which is not what it is for.
-  const scaled = level.stepScale == null
-    ? (shared ? SHARED_SHOW_STEP_MS : null)
-    : Math.round(stepMs * level.stepScale);
-
-  // THE SHOW IS A TIMELINE OR A SEQUENCE, AND `at` IS WHICH (#181). A step with
-  // a number on it runs on a clock, that many milliseconds after the move; a
-  // step with `null` runs when the step before it is dismissed — the same word
-  // `holdMs` uses for a hold that ends when a person ends it.
-  //
-  // THE FIRST STEP KEEPS ITS NUMBER AT EITHER KIND OF RUNG, and that is not an
-  // inconsistency in the idiom: there is nothing on the felt to dismiss until a
-  // count is on it, so the first one opens on the hold and the taps begin after
-  // it. Cribbage's show is then exactly the three taps it was asked for — pone,
-  // the dealer, the crib — with the sheet's own as the fourth.
-  const steps = (narrate && !level.instant ? showSteps(events) : []).map((step, i) => ({
-    ...step,
-    at: i === 0 ? holdMs : (scaled == null ? null : holdMs + i * scaled),
-  }));
-  // THE SUMMARY IS ALWAYS LAST, and this is the line that says so. It is the
-  // acknowledgement — its Continue is what deals the next hand — so anything it
-  // covers has to have been readable first.
-  //
-  // NULL IS THAT SAME SENTENCE WITH THE CLOCK TAKEN OUT OF IT. The sheet opens
-  // when the last count is dismissed, which is after every count by construction
-  // rather than by arithmetic — `nextShowBeat` below is where that becomes a
-  // question a test can still ask. A round with no steps to wait on has nothing
-  // to sequence, so its sheet opens on the hold at every rung, exactly as it
-  // does for every pack that counts no show at all.
-  const summaryAt = !steps.length ? holdMs
-    : (scaled == null ? null : steps[steps.length - 1].at + scaled);
-
   return {
     roundOver,
     gathered,
     holdMs,
-    steps,
-    summaryAt,
+    // THE SHEET IS ALWAYS LAST, and with nothing to walk through first it opens
+    // on the hold. It is the acknowledgement — its Continue is what deals the
+    // next hand — so the last card has to have landed before it.
+    summaryAt: holdMs,
     pace: level.id,
-    // How long one count stands, or null for the rung where a count stands
-    // until it is dismissed. The renderer reads THIS to know which kind of show
-    // it is running, for the same reason it reads `holdMs == null` for the trick.
-    stepMs: scaled,
     // How long the sheet stands before it deals itself, or null for the rung
     // that never does. The renderer arms one timer off this and nothing else,
-    // so "Manual never advances" is this being null.
+    // so "Manual never advances" is this being null — and a touch on the table
+    // at a rung that does count turns it back into a null for this hand
+    // (src/ui/roundEnding.js's `pauseAutoAdvance`).
     autoAdvanceMs: level.autoMs,
     // No sheet at all: the result is a line in #log and the deal is the next
-    // thing on the felt (src/ui/table.js's runRoundBeat).
+    // thing on the felt (src/ui/roundEnding.js's runRoundBeat).
     instant: level.instant,
   };
-}
-
-/**
- * The show a MATCH-ENDING round owes, or null when there is nothing to count.
- *
- * THE HAND THAT ENDS THE MATCH ENDS LIKE EVERY OTHER HAND (issue #189).
- * `roundBeatPlan` returns null for a `roundOver` carrying `over: true`, and that
- * is right for the SHEET — there is no next deal under a finished match to hold
- * back, and the final look is the acknowledgement. It was wrong for the SHOW:
- * cribbage emits the count that wins the match INSIDE the match-ending move
- * (`theShow` in src/templates/cribbage.js; `peg` answers false and the show
- * stops), and the game-over path went from the render straight to the final
- * look, so pone's, the dealer's or the crib's deciding count — the one moment
- * the whole match was building to — came and went in a frame. Every other pack
- * ends on a card the trick hold or the final look already covers, which is why
- * this was "sometimes" and why it is a plan of its own rather than a flag on
- * the other one.
- *
- * SCHEDULED EXACTLY AS A LIVE ROUND'S SHOW IS, and tests/roundBeat.test.js pins
- * the two against each other: the first count opens on the same flight-measured
- * hold, the rung that waits makes it a sequence, the rungs that count make it a
- * timeline, and a shared table's cap replaces the null the same way. What
- * differs is only what FOLLOWS the last count — `lookAt` is when the final look
- * opens, where `summaryAt` was the sheet — and what a null answer means: no
- * plan here is "nothing to narrate", and the game-over path then holds the
- * ending exactly as it did before this existed.
- *
- * NULL FOR A ROUND THE MATCH SURVIVES, so the two plans can never both claim
- * one move, and null at Instant and on the remote path for the reasons
- * `roundBeatPlan` gives — Instant has no show, and a move with no position to
- * pose has nothing to count over.
- */
-export function finalShowPlan(events, {
-  flightMs = 0, stepMs = SHOW_STEP_MS, narrate = true, pace = DEFAULT_PACE, shared = false,
-} = {}) {
-  const roundOver = (events || []).find((e) => e.type === 'roundOver' && e.over);
-  if (!roundOver) return null;
-  const level = paceLevel(pace);
-  if (!narrate || level.instant) return null;
-  const counts = showSteps(events);
-  if (!counts.length) return null;
-
-  const gathered = (events || []).some((e) => e.type === 'trickWon');
-  // The same three expressions `roundBeatPlan` uses, deliberately: the hold is
-  // measured against the flight, the count is the rung's, and the cap replaces
-  // the null. Kept as expressions rather than a shared helper because the test
-  // that says "these agree" is worth more than the ten lines it would save.
-  const holdMs = gathered
-    ? Math.max(MIN_TRICK_HOLD_MS, flightMs + 640)
-    : Math.max(MIN_HOLD_MS, flightMs + 280);
-  const scaled = level.stepScale == null
-    ? (shared ? SHARED_SHOW_STEP_MS : null)
-    : Math.round(stepMs * level.stepScale);
-  const steps = counts.map((step, i) => ({
-    ...step,
-    at: i === 0 ? holdMs : (scaled == null ? null : holdMs + i * scaled),
-  }));
-  // When the final look opens: one step after the last count, or on the tap
-  // that dismisses it (`nextShowBeat` running off the end of the steps).
-  const lookAt = scaled == null ? null : steps[steps.length - 1].at + scaled;
-
-  return { roundOver, gathered, holdMs, steps, lookAt, pace: level.id, stepMs: scaled, final: true };
-}
-
-/**
- * What the show puts up after `dismissed` counts, or null for the round summary.
- *
- * THE SEQUENCE'S OWN ARITHMETIC, for the rung that has no other kind (#181).
- * While a show runs on a clock, "does the summary open after everything it is
- * meant to follow" is a comparison of two numbers and that is how this module
- * has always answered it. A show that waits for a person has no numbers left to
- * compare — every `at` after the first is null and so is `summaryAt` — and the
- * question does not stop mattering just because the arithmetic went away. So it
- * becomes a function, and the renderer WALKS THIS ONE (src/ui/table.js's
- * runShowSequence) rather than keeping its own cursor beside it: a rule with a
- * test on it and nothing reading it is the same as no rule.
- *
- * COUNTING DISMISSALS RATHER THAN THE STEP ON SCREEN, because that is what the
- * renderer actually knows at the moment it asks: it has just been tapped, and
- * the question is what to put up next. Nothing but the last count can be
- * followed by the sheet, which is the whole of the ordering.
- */
-export function nextShowBeat(plan, dismissed) {
-  const steps = plan?.steps || [];
-  return dismissed >= 0 && dismissed < steps.length ? steps[dismissed] : null;
 }

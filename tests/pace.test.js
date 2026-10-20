@@ -19,7 +19,7 @@ import path from "node:path";
 import { ROOT } from "../tools/stage.mjs";
 import { PACE_LEVELS, DEFAULT_PACE, paceLevel, nextSummaryPace } from "../src/ui/pace.js";
 import {
-  roundBeatPlan, SHOW_STEP_MS, MIN_HOLD_MS, trickRevealPlan, READ_AFTER_LANDING_MS,
+  roundBeatPlan, MIN_HOLD_MS, trickRevealPlan, READ_AFTER_LANDING_MS,
 } from "../src/ui/roundBeat.js";
 import { SETTINGS_DEFAULTS } from "../src/arcade/storage.js";
 import { tableCss } from "./fixtures/tableCss.js";
@@ -247,115 +247,36 @@ test("a faster rung never shortens the hold that clears the card flight", () => 
   assert.ok(base > 700, "the hold must outlast the flight at every rung that has one");
 });
 
-test("Instant has no beat at all: no hold, no steps, no sheet", () => {
+test("Instant has no beat at all: no hold, no hand held open, no sheet", () => {
   const plan = roundBeatPlan(showEnd, { flightMs: 420, pace: 'instant' });
   assert.strictEqual(plan.instant, true);
   assert.strictEqual(plan.holdMs, 0);
-  assert.deepStrictEqual(plan.steps, []);
   assert.strictEqual(plan.summaryAt, 0,
     "Instant means the deal is the next thing on the felt, not a sheet raced away");
   assert.strictEqual(plan.autoAdvanceMs, 0);
 });
 
 /* ------------------------------------------------------------------ *
- * The rung inside the SHOW (issue #181)
+ * The rung and the SHOW (issue #181, and after it)
  * ------------------------------------------------------------------ *
  *
- * The third term to say "wait for me" with an absence rather than a number. The
- * shipped rung waited at the trick and at the sheet and counted the show in
- * between on a clock — "fifteen two, fifteen four, and a pair is six" three
- * times in four and a half seconds, at the rung whose whole meaning is that
- * nothing moves without you.
+ * #181 gave the show a term of its own (`stepScale`): a count stood for a
+ * rung's length, or at Manual until a tap — three taps a cribbage hand before
+ * the sheet's. The counts now all open at once on the docked sheet
+ * (src/ui/inspection.js), so there is no count for a rung to pace, and the
+ * term is gone rather than left meaning nothing.
  */
 
-test("every rung says how long a count stands, and only Manual leaves it open", () => {
+test("no rung paces a count any more: every hand opens on its hold", () => {
   for (const level of PACE_LEVELS) {
-    assert.ok('stepScale' in level,
-      `${level.id}: a rung with no show term is a rung the felt cannot pace a count at`);
-    assert.ok(level.stepScale === null || level.stepScale >= 0,
-      `${level.id}: ${level.stepScale} is neither "wait for me" nor a multiplier`);
+    assert.ok(!('stepScale' in level),
+      `${level.id}: a show term with no show to pace is a dial that says nothing`);
+    const plan = roundBeatPlan(showEnd, { flightMs: 420, pace: level.id });
+    assert.strictEqual(plan.summaryAt, plan.holdMs,
+      `${level.id}: three counts must not make the sheet wait longer than none do`);
+    assert.ok(plan.summaryAt >= (level.instant ? 0 : MIN_HOLD_MS),
+      `${level.id}: the sheet opened before the last card had landed`);
   }
-  assert.deepStrictEqual(
-    PACE_LEVELS.filter((l) => l.stepScale === null).map((l) => l.id), ['manual'],
-    'exactly one rung may leave a count up until a person dismisses it, and it has '
-    + 'to be the one whose `autoMs` and `trickReadScale` already mean the same thing '
-    + 'at the two beats on either side of it');
-  // The ladder, same as `autoMs` and `trickReadScale`: every rung after Manual
-  // reads for less time than the one before it.
-  const reads = PACE_LEVELS.map((l) => (l.stepScale == null ? Infinity : l.stepScale));
-  for (let i = 1; i < reads.length; i++) {
-    assert.ok(reads[i] < reads[i - 1],
-      `${PACE_LEVELS[i].id} counts at ${reads[i]}×, no less than ${PACE_LEVELS[i - 1].id}'s`);
-  }
-  // THE THREE TERMS READ ALIKE AT EVERY RUNG, which is the whole argument for
-  // spelling this one as a null: a rung is one answer to "how much of this game
-  // do I want to watch", so a rung that waits at one beat and runs itself at
-  // another is a dial saying two different things at once.
-  for (const level of PACE_LEVELS) {
-    assert.strictEqual(level.stepScale === null, level.autoMs === null,
-      `${level.id} waits at one beat and not the other; the dial has to mean one thing`);
-    assert.strictEqual(level.stepScale === null, level.trickReadScale === null,
-      `${level.id} waits at the trick and not at the count, or the other way round`);
-  }
-});
-
-// THE SHIPPED RUNG COUNTS ONE TAP AT A TIME, and that is a decision rather than
-// arithmetic: a player who has never opened the settings gets it on their first
-// cribbage hand, and Paul asked for it by name — "three taps one per player and
-// crib to continue".
-test("the shipped default waits for a person at the count too", () => {
-  assert.strictEqual(paceLevel(DEFAULT_PACE).stepScale, null,
-    'no count of a show may replace itself at the shipped rung');
-  const plan = roundBeatPlan(showEnd, { flightMs: 420 });
-  assert.strictEqual(plan.steps.length, 3,
-    'pone, the dealer and the crib — three counts, which is three taps');
-  assert.strictEqual(plan.summaryAt, null,
-    'and the sheet after the last of them, which is the fourth');
-  // The felt promises it at exactly the rung that needs it promised, on the bar
-  // and in the live region — three motionless counts read as a hang otherwise.
-  // Asked of the bar itself (src/ui/statusBar.js), with a count waiting on a tap.
-  const session = { roundBeat: true, beatResume: () => {} };
-  const bar = createStatusBar({ el: {}, session: () => session, ...seatAnswers(), winnerSentence: () => '' });
-  assert.strictEqual(bar.statusTextFor({}, [0]), 'Round over. Tap to go on.',
-    'the status bar must offer the tap whenever a count is waiting for one, which at '
-    + 'the shipped rung is every count of every cribbage hand');
-});
-
-test("the show stretches and shrinks with the rung", () => {
-  const quick = roundBeatPlan(showEnd, { flightMs: 420, pace: 'quick' });
-  const relaxed = roundBeatPlan(showEnd, { flightMs: 420, pace: 'relaxed' });
-  assert.strictEqual(quick.steps.length, 3);
-  assert.strictEqual(relaxed.steps.length, 3);
-  assert.strictEqual(quick.stepMs, SHOW_STEP_MS,
-    "the default rung must not change a number that was chosen by reading it out loud");
-  assert.ok(relaxed.stepMs > quick.stepMs,
-    `Relaxed counts at ${relaxed.stepMs}ms, no slower than Quick's ${quick.stepMs}ms`);
-  // The whole reveal moves with it, not just the gap between the first two.
-  assert.ok(relaxed.summaryAt > quick.summaryAt);
-  for (let i = 1; i < relaxed.steps.length; i++) {
-    assert.strictEqual(relaxed.steps[i].at - relaxed.steps[i - 1].at, relaxed.stepMs);
-  }
-});
-
-// #120's invariant, re-asserted per rung: the summary is the acknowledgement,
-// so everything it covers has to have been on screen before it.
-//
-// ASKED ONLY OF THE RUNGS THAT COUNT ON A CLOCK. At `manual` the show is a
-// sequence and there are no numbers left to compare (#181) — the same invariant
-// is asserted for it in the section below, through `nextShowBeat`, which is what
-// "after" means once the arithmetic is gone.
-test("the summary still opens last, at every rung that opens one", () => {
-  for (const id of ['relaxed', 'quick']) {
-    const plan = roundBeatPlan(showEnd, { flightMs: 420, pace: id });
-    assert.ok(plan.summaryAt >= MIN_HOLD_MS, `${id}: the summary opened on the move itself`);
-    for (const step of plan.steps) {
-      assert.ok(plan.summaryAt > step.at,
-        `${id}: summary at ${plan.summaryAt} must follow a step at ${step.at}`);
-    }
-  }
-  // And the rung with no clock still opens a sheet, which is the half of this
-  // that is not about ordering: `manual` is not `instant`.
-  assert.strictEqual(roundBeatPlan(showEnd, { flightMs: 420, pace: 'manual' }).instant, false);
 });
 
 /* ------------------------------------------------------------------ *
@@ -514,14 +435,8 @@ test("the felt builds its trick plan with the player's rung and its own shared f
   const round = read("src/ui/roundEnding.js").match(/roundBeatPlan\(events, \{[\s\S]*?\}\) : null/);
   assert.ok(round, "beginRoundEnding must be the one place a round ending is planned");
   assert.match(round[0], /pace: currentPace\(\)\.id/,
-    "without the rung the show is counted at the default for everybody, whatever "
+    "without the rung the sheet deals itself at the default for everybody, whatever "
     + "dial the player set");
-  // `session()` rather than `session` because the seam is handed a thunk — it is
-  // replaced wholesale by adoptMatch, so a captured object would be a closure
-  // over a match that has gone (src/ui/roundEnding.js's header).
-  assert.match(round[0], /shared: !!session\(\)\?\.table\.hosting\(\)/,
-    "without the shared flag a count with no clock on it stalls one device's queue "
-    + "three times a hand while the other players keep playing");
 });
 
 // AND IT HAS TO BE THE ONLY ONE (#202). The assertion above was true of
@@ -546,9 +461,8 @@ test("both paths that end a round plan it through the one shared builder", () =>
 
   const builder = ending.match(/function beginRoundEnding\([\s\S]*?\n  \}/);
   assert.ok(builder, "beginRoundEnding must exist — it is the shared round-ending tail");
-  assert.match(builder[0], /shared: !!session\(\)\?\.table\.hosting\(\)/,
-    "the shared builder must carry the table's own shared flag, or EVERY path that "
-    + "ends a round leaves a hosted device gated on taps nobody else can make");
+  assert.match(builder[0], /pace: currentPace\(\)\.id/,
+    "the shared builder must read the player's rung as the round ends");
 
   // AND BOTH PATHS MUST ACTUALLY REACH IT. `performAnnouncement` deliberately
   // does not re-enter `afterMove` (re-scheduling the turn would restart a bot's
@@ -629,8 +543,8 @@ test("an unknown rung runs the default schedule rather than no schedule", () => 
   // Instant also carries no wait. The beat itself has to still be there.
   assert.strictEqual(plan.instant, false,
     'an unreadable saved rung must not collapse the beat to no sheet at all');
-  assert.strictEqual(plan.steps.length, 3,
-    'a cribbage show still owes its three steps at the fallback rung');
+  assert.strictEqual(plan.summaryAt, plan.holdMs,
+    'a cribbage hand still opens on its hold at the fallback rung');
 });
 
 /* ------------------------------------------------------------------ *
@@ -765,13 +679,13 @@ test("every round-ending timer is held on the session and cancelled with it", ()
   }
   // AND EVERY TIMER A ROUND ENDING ARMS ACTUALLY LANDS IN ONE OF THE THREE, which
   // is what the source gate here used to try to say by refusing one shape of
-  // unheld `schedule(` call. Driven since #223: run a whole timed show and count.
+  // unheld `schedule(` call. Driven since #223: run a whole timed ending and count.
   const h = roundEndingHarness();
   h.session.roundBeat = true;
   const plan = roundBeatPlan(showEnd, { flightMs: 420, pace: "quick" });
   h.ending.runRoundBeat(h.state, plan, h.state);
-  assert.strictEqual(h.live().length, plan.steps.length + 1,
-    "three counts and the sheet's own opening, on a clock");
+  assert.strictEqual(h.live().length, 1,
+    "the sheet's own opening, on the hold — the counts open with it, not on clocks of their own");
   assert.deepStrictEqual(h.session.beatTimers, h.live(),
     "every one of them must be held on `beatTimers`, or stopSession leaves a table "
     + "counting a hand nobody is looking at");
@@ -814,14 +728,15 @@ test("the ring's perimeter is measured in layout pixels, not through a transform
     "a client rect here is read mid-settle-in and comes back 4% short");
 });
 
-test("the panel offers the cycling control and refuses to swallow End match", () => {
+test("the panel offers the cycling control and deals only from its button", () => {
   const panels = read("src/ui/panels.js");
-  assert.match(panels, /roundPanel\.addEventListener\('click'/,
-    "the whole sheet must be the deal target, not only the button");
-  // ...and the map on the sheet (#191), which is read, not tapped to deal.
-  assert.match(panels, /closest\('#round-end-match, #round-pace, #round-continue, #round-map-toggle, #round-map'\)/,
-    "End match and the pace control must opt out of tap-to-deal, and the Deal "
-    + "button must not be handled twice");
+  // THE WHOLE SHEET USED TO DEAL (#150). It is a list of counts now, each one a
+  // way to point at the board (src/ui/inspection.js), so a tap on the sheet is a
+  // question — and a deal fired by a question is the misread to rule out.
+  assert.doesNotMatch(panels, /roundPanel\.addEventListener\('click'/,
+    "a tap anywhere on the sheet deals again, including a tap on a count meant to "
+    + "light its cards");
+  assert.match(panels, /el\.roundContinue\.addEventListener\('click'/);
   assert.match(panels, /el\.roundPace\.addEventListener\('click'/);
   const table = read("src/ui/table.js");
   assert.match(table, /onCyclePace: \(\) => roundEnding\.cyclePace\(\)/,

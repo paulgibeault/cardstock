@@ -40,7 +40,7 @@
 // src/players/roster.js, THE OPPONENT ROW — the fit ladder, the seat plate,
 // the view toggle, the edge fades, the height reserve and the counters and chips
 // a plate wears — in src/ui/seatRow.js (#223 seam 1), and THE ROUND ENDING —
-// the pre-move fork, the completed trick's held beat, the show's counts, how
+// the pre-move fork, the completed trick's held beat, the hand held open, how
 // fast the table moves between hands, the three timer APIs and the doors out of
 // the sheet — in src/ui/roundEnding.js (#223 seam 2), and THE HAND — the fan,
 // its fit and its second row, the gathered-card tray, the observer that re-fans
@@ -88,9 +88,9 @@ import {
 } from './seatRow.js';
 // THE ROUND ENDING (#223, seam 2), for the same reason — src/ui/roundEnding.js
 // takes `el`, `session` and `epoch` in, so the rules of the held beat and the
-// show are importable. `currentPace` and `posedForShow` are pure and come across
-// as functions; everything that paints or schedules is behind the factory.
-import { createRoundEnding, currentPace, posedForShow } from './roundEnding.js';
+// hand held open are importable. `currentPace` is pure and comes across as a
+// function; everything that paints or schedules is behind the factory.
+import { createRoundEnding, currentPace } from './roundEnding.js';
 // THE HAND (#223, seam 3). The fan's DOM side — the tray, the fit, the row
 // split and the observer that re-asks it — takes `el` and `session` in the same
 // way; the math it measures for is in src/ui/handOrder.js.
@@ -129,7 +129,6 @@ import { schedule } from './clock.js';
 import { line } from './dom.js';
 import { promptChoice, closeChoiceDialog } from './choiceDialog.js';
 import { createCelebrations, TRICK_BANNER_PRIORITY, dealEvents } from './celebrations.js';
-import { renderShowCard } from './showCard.js';
 import { createContractLadder } from './contractLadder.js';
 import { createContractStrip } from './contractStrip.js';
 import { createSeatLens } from '../players/seats.js';
@@ -156,8 +155,9 @@ import {
 } from './panels.js';
 import { modelFromView } from './tableModel.js';
 import { packRules } from './rules.js';
-import { trickRevealPlan, finalShowPlan, SHARED_TRICK_HOLD_MS } from './roundBeat.js';
-import { lastHandSentence } from './scoreDirection.js';
+import { trickRevealPlan, SHARED_TRICK_HOLD_MS } from './roundBeat.js';
+import { lastTrickOf, lastTrickOffered, renderLastTrickPeek } from './lastTrick.js';
+import { inspectionOf } from './inspection.js';
 import { persistTable } from '../arcade/persist.js';
 import {
   playCardPlayed, playDraw, playShuffle, playInvalid, playWin, playAnnouncement,
@@ -220,7 +220,6 @@ const el = {
   handSort: document.getElementById('hand-sort'),
   log: document.getElementById('log'),
   eventBanner: document.getElementById('event-banner'),
-  showCard: document.getElementById('show-card'),
 };
 
 // ONE OPEN MATCH, ONE OBJECT (src/ui/session.js). Everything the felt keeps
@@ -1247,6 +1246,7 @@ function render(state, message) {
   // shares this row and whether it is on screen decides whether the row exists
   // at all for a pack that has one and no `table` zone.
   renderTablePlay(state, ui, draggable);
+  paintLastTrick(state);
   // The two bars go BEFORE the hand, and the order is load-bearing: renderHand
   // ends by measuring how much room the fan has. Measured with the previous
   // render's bars still showing, the fan was laid out against a row of the
@@ -1438,8 +1438,8 @@ let record = null;
 // initTable rather than resolving any of its own.
 let seatRow = null;
 // The round ending (src/ui/roundEnding.js), the same way: the pre-move fork, the
-// trick's held beat, the show's counts, the three timer APIs and the doors out
-// of the sheet.
+// trick's held beat, the hand held open, the three timer APIs and the doors
+// out of the sheet.
 let roundEnding = null;
 // The human's own hand (src/ui/handFan.js): the fan, the gathered-card tray,
 // the width observer, the reorder a drop implies and the sort toggle.
@@ -1461,36 +1461,85 @@ let statusBar = null;
 // The help mark and its sheet (src/ui/helpSheet.js), and the hint it asks for.
 let helpSheet = null;
 
-// THE BANNER AND THE SHOW CARD ARE ONE SLOT. The card replaces the banner for
-// a scoring step (#152) and they must never be on the felt together — so every
-// door that puts one up or takes one down goes through here and clears the
-// other. That is also the card's whole teardown story: it is torn down exactly
-// where the banner would have been, which is every path that already called
-// `hideBanner` (leaving the table, a new deal, a closed session).
 function hideBanner() {
-  hideShowCard();
   if (moments) moments.hideBanner(session);
 }
 function showBanner(text, tone) {
-  hideShowCard();
   if (moments) moments.showBanner(session, text, tone);
 }
 
-/** Put one scoring step's card on the felt, over the middle. */
-function showShowCard(model) {
-  if (!el.showCard) return;
-  const node = renderShowCard(model, { art });
-  if (!node) return;
-  if (moments) moments.hideBanner(session);
-  el.showCard.replaceChildren(node);
-  el.showCard.hidden = false;
+/**
+ * POINT AT CARDS ON THE FELT while a finished hand is inspected
+ * (src/ui/inspection.js): every node carrying one of `ids` — on a plate, in the
+ * middle, in the hand — is lit, and `seat`'s plate with them. `null` puts the
+ * felt back. The sheet calls this as a count or a part is rested on or picked.
+ */
+function focusCards(target) {
+  for (const node of el.screen.querySelectorAll('.card-lit')) node.classList.remove('card-lit');
+  for (const node of el.screen.querySelectorAll('.seat--lit')) node.classList.remove('seat--lit');
+  if (!target) return;
+  for (const id of target.ids || []) {
+    for (const node of el.screen.querySelectorAll(`[data-card-id="${CSS.escape(id)}"]`)) node.classList.add('card-lit');
+  }
+  if (Number.isInteger(target.seat)) {
+    el.opponentsTop.querySelector(`.seat[data-seat="${target.seat}"]`)?.classList.add('seat--lit');
+  }
+}
+/**
+ * Keep the trick just won for the peek (src/ui/lastTrick.js).
+ *
+ * `round` is the hand the trick belonged to: the posed position's when there is
+ * one, otherwise the live state's — less one when this move also ended the hand,
+ * because the engine has already dealt the next one underneath it.
+ */
+function noteTrick(pose, trick, round, state) {
+  if (!session) return;
+  const hand = round ?? (state.events.some((e) => e.type === 'roundOver') ? state.roundNumber - 1 : state.roundNumber);
+  session.lastTrick = lastTrickOf(pose, trick, hand);
+  session.lastTrickOpen = false;
 }
 
-function hideShowCard() {
-  if (!el.showCard) return;
-  el.showCard.hidden = true;
-  el.showCard.replaceChildren();
+/**
+ * The peek, beside the pile the trick was played on — or nothing. Rebuilt with
+ * every render, like everything else on the felt; whether it is OPEN lives on
+ * the session so a bot's move does not shut it under the player's eye.
+ */
+function paintLastTrick(state) {
+  for (const node of el.screen.querySelectorAll('.last-trick')) node.remove();
+  const record = session?.lastTrick;
+  const held = !!(session.trickBeat || session.roundBeat || session.review || session.inspection);
+  if (!lastTrickOffered(record, state, { held })) return;
+  const pile = zoneStackNode(record.address)?.closest('.pile');
+  if (!pile) return;
+  const node = renderLastTrickPeek(record, {
+    open: !!session.lastTrickOpen,
+    art,
+    cardOf: (id) => cardById(state, id),
+    nameOf: cardName,
+    identity: identityOf,
+    label: seatLabel,
+    onToggle: () => {
+      session.lastTrickOpen = !session.lastTrickOpen;
+      paintLastTrick(feltState());
+    },
+  });
+  if (node) pile.appendChild(node);
 }
+
+/**
+ * A GUEST'S TRICK, kept for the same peek. A guest applies no moves, so the
+ * record comes from the trick event and the posed view the host sent with it
+ * (src/ui/guestBeats.js).
+ */
+export function noteGuestTrick(trick, posedView) {
+  const pack = session?.table?.pack;
+  if (!pack || !trick) return;
+  const pose = posedView ? modelFromView(posedView, pack) : null;
+  const round = pose ? pose.roundNumber : null;
+  session.lastTrick = lastTrickOf(pose, trick, round ?? liveState()?.roundNumber ?? null);
+  session.lastTrickOpen = false;
+}
+
 function celebrateTrick(state, ev) { return moments ? moments.celebrateTrick(session, state, ev) : null; }
 // THE TWO HALVES OF THAT, for the beat that now has room between them (#180):
 // what the table SAYS when the hold opens, and what it DOES when the hold ends.
@@ -1599,10 +1648,15 @@ function finalPlaySentence(state, move) {
 /**
  * Leave the ending on the felt until the player has had their look at it.
  *
- * Delayed by a beat so the final card has landed on the discard before anything
- * asks to be read — the bar arriving mid-flight would be the same interruption
- * the panel used to be, only smaller. The winner's seat pulses underneath, so
- * the answer to "who?" is on the table and not only in the sentence.
+ * THE LAST HAND IS HELD OPEN LIKE EVERY HAND BEFORE IT (src/ui/inspection.js):
+ * the plates turn face up, the counts go on the docked sheet, and the sheet's
+ * one button is the way to the results. At match end the live state IS the
+ * ending position — `maybeFinishRound` never dealt over it — so that is the
+ * position held.
+ *
+ * Delayed by a beat so the final card has landed before anything asks to be
+ * read. The winner's seat pulses underneath, so the answer to "who?" is on the
+ * table and not only in the sentence.
  *
  * THE BEAT IS MEASURED AGAINST THE FLIGHT, not against the 700 it used to be.
  * That number was a comfortable margin over a fixed 260ms flight and became a
@@ -1611,29 +1665,29 @@ function finalPlaySentence(state, move) {
  * Floored at the old value so nobody waits longer than they already did unless
  * they have asked for a slower table.
  */
-function offerFinalLook(state, move, ending, { ended = null, now = false } = {}) {
+function offerFinalLook(state, move, ending, { ended = null, events = [] } = {}) {
   const myEpoch = epoch;
   pulseSeat(state.winner, 'good');
   const ask = async () => {
-    if (myEpoch !== epoch) return;
-    const acknowledged = await awaitFinalLook(
-      winnerSentence(state),
-      finalPlaySentence(state, move),
-      lastHandSentence(state.pack, state.seats, ended, seatLabel),
-    );
+    if (myEpoch !== epoch || !session) return;
+    roundEnding.openInspection(events, state, { final: true });
+    const acknowledged = await awaitFinalLook({
+      state,
+      ev: ended,
+      seating: session.table.seating,
+      counts: roundEnding.countModels(state, session.inspection?.counts),
+      art,
+      focus: focusCards,
+      result: winnerSentence(state),
+      play: finalPlaySentence(state, move),
+    });
     // Closed under it, or a new game started while it was up — either way these
     // results belong to a match that is no longer the one on screen.
     if (!acknowledged || myEpoch !== epoch) return;
-    // THE LAST COUNT COMES DOWN WITH THE RESULTS GOING UP (#189), not with the
-    // bar: the bar exists so the cards can be read, and the show card is the
-    // reading. A no-op at every ending that had no show.
-    hideShowCard();
+    if (session) session.inspection = null;
+    focusCards(null);
     showGameOver(state, ending);
   };
-  // NOW is the path a final show has already held (runFinalShow, #189): the
-  // deciding count was on the felt until the player dismissed it, so the flight
-  // this beat waits out landed three taps ago.
-  if (now) { ask(); return; }
   const beat = Math.max(700, currentFlightMs() + 280);
   schedule(ask, beat);
 }
@@ -1697,6 +1751,8 @@ function afterMove(state, move, from, message, { publish = true } = {}) {
   // pre-move snapshot, and the last trick of a hand wants both poses off it.
   // Neither can throw — a template that cannot pose falls back to null.
   const trickPose = trick ? roundEnding.takeTrickPose(move) : null;
+  // THE TRICK BEFORE THIS ONE, for the peek during play (src/ui/lastTrick.js).
+  if (trick) noteTrick(trickPose, trick, trickPose ? trickPose.roundNumber : null, state);
   // WHERE THE ROUND ENDED, and the whole schedule for it — the one builder
   // `performAnnouncement` shares (#202). It consumes the pre-move snapshot
   // whether or not it is wanted, so a fork is never left behind to be re-used
@@ -1771,33 +1827,16 @@ function afterMove(state, move, from, message, { publish = true } = {}) {
     // is special about this path is what comes AFTER the gather — the win cue
     // and the final look — and both of those still wait for the hold.
     //
-    // AND THE HAND THAT ENDS THE MATCH ENDS LIKE EVERY OTHER HAND (#189). A
-    // cribbage match ends INSIDE a show — the deciding count is in this move's
-    // event window — and until this plan existed that count was never played:
-    // the felt went from the last pegging card to the final-look bar in a
-    // frame. `finalShowPlan` is null for every pack that ends on a card, so
-    // the path below is exactly what it was for all of them.
-    const show = finalShowPlan(events, {
-      flightMs: currentFlightMs(),
-      narrate: !!finalState,
-      pace: currentPace().id,
-      shared: !!session?.table.hosting(),
-    });
-    const look = (now) => {
-      playWin();
-      offerFinalLook(state, move, ending, { ended, now });
-    };
+    // AND THE HAND THAT ENDS THE MATCH ENDS LIKE EVERY OTHER HAND (#189): its
+    // counts — cribbage's deciding one among them — go on the final look's
+    // sheet with the plates turned over, exactly as a live round's go on the
+    // round sheet (offerFinalLook).
     const finish = () => {
-      if (show && finalState) {
-        roundEnding.runFinalShow(state, show, finalState, posedForShow(finalState, show), {
-          message, move, from, reveal, closeTrick, done: () => look(true),
-        });
-        return;
-      }
       render(state, message);
       if (!reveal) moveFlight.animateMove(state, move, from);
       closeTrick(state);
-      look(false);
+      playWin();
+      offerFinalLook(state, move, ending, { ended, events });
     };
     if (reveal && trickPose) roundEnding.runTrickReveal(trickPose, move, from, reveal, finish, announce);
     else finish();
@@ -1829,7 +1868,7 @@ function afterMove(state, move, from, message, { publish = true } = {}) {
     // but the card that breaks a suit is very often the fourth card of a trick,
     // and suppressing that banner suppressed the only time the felt ever
     // mentioned the rule (#151). See celebrations.js for the scale.
-    const action = plan?.steps.length
+    const action = plan && events.some((e) => e.type === 'showScored')
       ? null
       : celebrateAction(shown, events, { floor: trick ? TRICK_BANNER_PRIORITY : -1 });
     // The action is the better sentence: "Rook played." says less than nothing
@@ -2260,13 +2299,19 @@ export function guestTrickMessage(ev) {
  * `event` is the hand's `roundOver`; a guest who reconnected mid-sheet has
  * none, and is shown the totals with no deltas rather than nothing at all.
  */
-export function showGuestRoundSummary({ view, event, ready = [], waiting = '' }) {
+export function showGuestRoundSummary({ view, event, ready = [], waiting = '', events = [] }) {
   const table = session?.table;
   if (!table?.pack) return;
   const model = modelFromView(view, table.pack);
   const ev = event || { round: Math.max(1, model.roundNumber - 1), scores: {}, totals: model.scores };
   guestSheet = { ready: ready.includes(view.seat), waiting, seat: view.seat };
-  showRoundSummary(model, ev, table.seating, null, null, { guest: guestSheet });
+  // THE SAME HAND, HELD OPEN THE SAME WAY (src/ui/inspection.js). The felt is
+  // already showing the host's open pose of the ending (guestBeats' `show`), so
+  // turning the plates over is a repaint of what is on screen.
+  const shown = feltState();
+  if (shown) roundEnding.openInspection(events, shown);
+  const counts = shown ? roundEnding.countModels(shown, session.inspection?.counts) : [];
+  showRoundSummary(model, ev, table.seating, null, null, { guest: guestSheet, counts, art, focus: focusCards });
 }
 
 /** The host's ticks arrived: repaint the guest's button and line. */
@@ -2288,6 +2333,7 @@ function guestReady() {
 export function closeGuestRoundSummary() {
   if (!guestSheet) return;
   guestSheet = null;
+  if (session) session.inspection = null;
   hideRoundSummary();
 }
 
@@ -2296,13 +2342,25 @@ export function closeGuestRoundSummary() {
  * sees over the final position, then the results — without the doors that
  * need the host's log or the host's authority.
  */
-export async function showGuestResults(view, { waiting = '' } = {}) {
+export async function showGuestResults(view, { waiting = '', events = [] } = {}) {
   const table = session?.table;
   if (!table?.pack) return;
   const model = modelFromView(view, table.pack);
   const myEpoch = epoch;
   pulseSeat(model.winner, 'good');
-  const acknowledged = await awaitFinalLook(winnerSentence(model), '', '');
+  const shown = feltState() || model;
+  roundEnding.openInspection(events, shown, { final: true });
+  const ended = (events || []).find((e) => e.type === 'roundOver') || null;
+  const acknowledged = await awaitFinalLook({
+    state: model,
+    ev: ended,
+    seating: table.seating,
+    counts: roundEnding.countModels(shown, session.inspection?.counts),
+    art,
+    focus: focusCards,
+    result: winnerSentence(model),
+  });
+  if (session) session.inspection = null;
   if (!acknowledged || myEpoch !== epoch || session?.table !== table) return;
   showGameOver(model, { seating: table.seating, stats: null, recordText: waiting, guest: true });
 }
@@ -2449,6 +2507,9 @@ export function initTable({ onExit }) {
     perPlayerZoneInstances,
     performAnnouncement,
     isBusy: () => !!drag && drag.isDragging(),
+    // What a plate turns face up while a finished hand is held — a thunk,
+    // because the round ending is built after the row.
+    revealOf: (state, seat) => (roundEnding ? roundEnding.revealOf(state, seat) : null),
   });
 
   // AND THE FLIGHTS, RIGHT BEHIND THE ROW THEY MEASURE: the round ending below
@@ -2488,14 +2549,11 @@ export function initTable({ onExit }) {
     seatLabel,
     seatPossessive,
     mySeat,
-    voiceOf,
     cardById,
-    zoneStackNode,
     pulseSeat,
-    showBanner,
-    showShowCard,
-    hideShowCard,
     releaseBanner,
+    art,
+    focusCards,
     celebrateDeal,
     currentFlightMs,
     powerSaving,
@@ -2587,7 +2645,6 @@ export function initTable({ onExit }) {
     scheduleNextTurn,
     scheduleAnnouncementBeats,
     hideBanner,
-    hideShowCard,
     showGameOver,
     hideGameOver,
     hideScoreboard,
@@ -2648,13 +2705,12 @@ export function initTable({ onExit }) {
   // A TAP ON THE FELT ENDS WHATEVER BEAT THE FELT IS HOLDING (#176, #181).
   //
   // ASKED OF THE GATE, NOT OF THE BEAT. It read `session.trickBeat` while a
-  // completed trick was the only thing that ever waited for a person; the counts
-  // of a cribbage show wait at the same rung now, and they are not a trick.
-  // `session.beatResume` is the one field either of them sets and the one thing
-  // this listener actually needs — there is something standing on the felt
-  // asking to be dismissed — so it needs no list of what kinds there are. The
-  // show card is inside #table, which is what makes a tap on the thing being
-  // READ the tap that continues.
+  // completed trick was the only thing that ever waited for a person, and the
+  // counts of a cribbage show waited too for a while (#181). `session.beatResume`
+  // is the one thing this listener actually needs — there is something standing
+  // on the felt asking to be dismissed — so it needs no list of what kinds there
+  // are. The trick is inside #table, which is what makes a tap on the thing
+  // being READ the tap that continues (and see the disabled-pile press below).
   //
   // ON THE FELT, NOT ON THE SCREEN. #status-bar is outside #table, so the Lobby
   // button and the score chip are exempt by construction — they are not on the
@@ -2687,6 +2743,43 @@ export function initTable({ onExit }) {
     roundEnding.endHeldBeat(event);
   });
 
+  // A TAP ON A HELD TRICK IS A TAP ON THE FELT. While a beat is held nothing on
+  // the felt is actable, so every pile is a DISABLED <button> — and a browser
+  // fires no click on a disabled control at all. The trick sits exactly where a
+  // player taps to go on, so the one tap the status bar asks for was the one
+  // tap that never arrived (found driving Hearts' hold: five taps on the four
+  // cards, nothing). Pointer events DO reach a disabled control, so a short,
+  // still press on one stands in for the click it cannot send. A press long
+  // enough to open the inspector (src/ui/inspector.js) is a look, not a tap.
+  let disabledPress = null;
+  el.table.addEventListener('pointerdown', (event) => {
+    disabledPress = session?.beatResume && event.target.closest?.('button:disabled')
+      ? { x: event.clientX, y: event.clientY, at: event.timeStamp } : null;
+  });
+  el.table.addEventListener('pointerup', (event) => {
+    const press = disabledPress;
+    disabledPress = null;
+    if (!press || !session?.beatResume) return;
+    if (!event.target.closest?.('button:disabled')) return;
+    if (event.timeStamp - press.at > 450) return;
+    if ((event.clientX - press.x) ** 2 + (event.clientY - press.y) ** 2 > 36) return;
+    roundEnding.endHeldBeat(event);
+  });
+
+  // A TOUCH ON THE BOARD HOLDS THE HAND OPEN (src/ui/inspection.js). At a rung
+  // that deals by itself, the sheet's countdown is a guess about how long a
+  // hand takes to read; a player reaching for a plate, a card or a count on the
+  // sheet has just said the guess was short. Capturing, so a control that stops
+  // its own event still counts. The two controls on the sheet that ARE the
+  // decision — deal, and the pace dial — are not a reason to stop the clock.
+  document.addEventListener('pointerdown', (event) => {
+    if (!session?.roundSummaryOpen || !roundEnding) return;
+    const t = event.target;
+    if (t.closest?.('#round-continue, #round-pace')) return;
+    if (!t.closest?.('#table-screen, #round-panel')) return;
+    roundEnding.pauseAutoAdvance();
+  }, true);
+
   // The plate is anchored to a seat's rect, so anything that moves that rect
   // has to move the plate with it — the row scrolling under it most of all.
   el.opponentsTop.addEventListener('scroll', seatRow.placeOpenPlate, { passive: true });
@@ -2695,7 +2788,7 @@ export function initTable({ onExit }) {
   window.addEventListener('keydown', (event) => {
     if (!session) return;
     // THE SAME DOOR, WITHOUT A POINTER (#176, #181). At the Manual rung the
-    // trick hold is indefinite and so is every count of a show, so a beat only a
+    // trick hold is indefinite, so a beat only a
     // tap could end would strand anyone playing this from a keyboard or a screen
     // reader in a table that never moves again. Enter and Space, because that is
     // what "activate" already means everywhere on this screen and it is what the

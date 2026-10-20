@@ -214,7 +214,7 @@ platform file.
 | `contractChips` | `(ctx, seat) -> Chip[] \| null` | `src/ui/contractStrip.js` | none — the strip stays hidden |
 | `getMeldGroups` | `(ctx, seat) -> Group[]` | `table.js` | `[]` |
 | `meldCardOrder` | `(ctx, group) -> cardId[]` | `src/ui/zoneRenderer.js`, `table.js` | the order the group's cards are STORED in |
-| `showStep` | `(ctx, step) -> {pose?, spotlight?, starterId?, what?} \| null` | `src/ui/table.js` | the platform's own reveal — see below |
+| `showStep` | `(ctx, step) -> {starterId?, what?} \| null` | `src/ui/roundEnding.js` | the platform's own reveal — see below |
 | `roundLines` | `(ctx) -> (string\|null)[] \| null` | `table.js`, `src/ui/panels.js` | none — a round sheet row is a name, a delta and a total |
 | `describeEvent` | `(ev, {seatLabel, seatPossessive, seatVerb, viewerSeat} = {}) -> {text, tone, priority?} \| null` | `table.js`, `celebrations.js` | the engine-effect vocabulary |
 | `ruleLines` | `(rules) -> string[]` | `src/ui/rules.js` | none |
@@ -499,32 +499,26 @@ phraseMove(ctx, move) -> { full, short } | null   // null: no opinion
   phrasing stands. Like every presentation hook it reads and never writes: it is
   asked on the live state, before the move is made, and a hint is not a move.
 
-## `showStep` — how one count of a show is staged
+## `showStep` — how one count of a show is drawn
 
-A `showScored` event is held up as a card, one count at a time, at the rung that
-waits (`showSteps` in `src/ui/roundBeat.js`, `playShowStep` in `src/ui/table.js`).
-Staging one meant knowing four things about cribbage, and the felt knew all four
-by name until #219: that the crib is turned over by moving `crib → show`, that a
-hand is counted in front of its seat in `play.<seat>` while the crib is counted in
-`show`, that the fifth card is the shared `starter`, and that the two piles are
-called a hand and a crib. Four zone ids and two nouns from one template, in the
-file this document exists because of.
+A `showScored` event is a count on the docked round sheet, every count of the
+hand at once, each one lighting the cards it was made of on the board
+(`showSteps` in `src/ui/roundBeat.js`, `countModels` in `src/ui/roundEnding.js`,
+`src/ui/inspection.js`). Drawing one needs two facts about cribbage, and the felt
+knew both by name until #219: that the fifth card is the shared `starter`, and
+that the two piles are called a hand and a crib.
 
 ```js
-showStep(ctx, step) -> { pose?, spotlight?, starterId?, what? } | null
+showStep(ctx, step) -> { starterId?, what? } | null
 ```
 
 | Field | Meaning |
 |---|---|
-| `pose` | `{from, to}` — every card in `from` goes back to `to` BEFORE the show starts, and the position is released when this step's own count arrives. Cribbage's crib is turned face up inside the move that ends the hand, so without posing it back its "turn" is a caption on cards that have been face up through the other two counts (#152) |
-| `spotlight` | the zone address whose cards this count is counting; the felt rings them |
 | `starterId` | one more card drawn after the step's own, and the last position the part `at`s index: cribbage's cut, which belongs to all three counts |
-| `what` | the pile in one word — "hand", "crib" — for the fallback sentence under `describeEvent`'s |
+| `what` | the pile in one word — "hand", "crib" — for the count's title on the sheet |
 
-The pose is applied to a **throwaway fork** of the ending position, the same copy
-`poseMove` gets and under the same rule: it is never logged, saved, published or
-scored, and the felt paints the live state everywhere else. The platform keeps the
-fork, the "both zones exist and `from` is not empty" guards, and the release.
+It is asked of the **ending position** — the throwaway fork the felt holds while
+the hand is open — and reads, never writes.
 
 **Answer `null` for a step that is not yours.** A step carrying a `reason` is the
 platform's own reveal (`emitReveal`, `src/engine/scoring.js`) — it prices the cards

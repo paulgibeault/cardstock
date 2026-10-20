@@ -643,13 +643,12 @@ test("only a hold with reading time in it announces early", () => {
     + "the winner, and sound the cue, with the deciding card still in the air");
   assert.match(source, /if \(announce\) gatherTrick\(st, trick\);\s*\n\s*else celebrateTrick\(st, trick\);/,
     "a path with no early announcement no longer celebrates the whole trick at its resume");
-  // THREE SINCE #189: the trick's own settle, the match ending on a card, and the
-  // match ending inside a show — and the third is counted in src/ui/roundEnding.js
-  // since #223, because `runFinalShow` went with the seam and `closeTrick` is
-  // handed to it.
+  // TWO: the trick's own settle and the match ending. There were three while
+  // the match could end inside a show (#189's `runFinalShow`); the last hand's
+  // counts now go on the final look's sheet, so that ending is the second path.
   const both = source + read("src/ui/roundEnding.js");
-  assert.strictEqual((both.match(/closeTrick\(/g) || []).length, 3,
-    "the three resumes no longer all go through closeTrick");
+  assert.strictEqual((both.match(/closeTrick\(/g) || []).length, 2,
+    "the two resumes no longer both go through closeTrick");
   assert.doesNotMatch(both, /if \(trick\) celebrateTrick\(/,
     "a resume celebrates the whole trick itself again, so a held announcement is said twice");
   assert.strictEqual(

@@ -24,7 +24,7 @@ import path from "node:path";
 import { createState } from "../src/engine/state.js";
 import { loadPackFromDisk } from "../tools/pack-test.mjs";
 import { ROOT } from "../tools/stage.mjs";
-import { targetSentence, trickNarration, winDirection, lastHandSentence } from "../src/ui/scoreDirection.js";
+import { targetSentence, trickNarration, winDirection } from "../src/ui/scoreDirection.js";
 
 const seatLabel = (seat) => ["You", "Nell", "Ada", "Bo"][seat] ?? `Seat ${seat}`;
 
@@ -234,40 +234,22 @@ test("both narration surfaces go through the shared direction read", () => {
 });
 
 /* ------------------------------------------------------------------ *
- * The final look's last-hand line (#189)
+ * The final look's last hand (#189)
  * ------------------------------------------------------------------ */
 
-const label = (seat) => seatLabel(seat);
-
-test("the last hand's numbers are said per seat at a teamless pack", async () => {
-  const state = await table("hearts");
-  const ev = { type: 'roundOver', round: 9, scores: { 0: 0, 1: 26, 2: 0, 3: 0 }, totals: [70, 104, 61, 49], over: true };
-  assert.strictEqual(lastHandSentence(state.pack, state.seats, ev, label),
-    "Last hand: You 0 · Nell +26 · Ada 0 · Bo 0.");
-});
-
-test("a partnership's last hand is one number per side, both names on it", async () => {
-  const state = await table("team-spades");
-  const ev = { type: 'roundOver', round: 6, scores: { 0: 63, 1: -40, 2: 0, 3: 0 }, totals: [511, 300, 0, 0], over: true };
-  assert.strictEqual(lastHandSentence(state.pack, state.seats, ev, label),
-    "Last hand: You & Ada +63 · Nell & Bo -40.");
-});
-
-test("a boundary that scored nobody says nothing", async () => {
-  const state = await table("cribbage", { seats: 2 });
-  // Cribbage pegs live: its roundOver carries no deltas at all.
-  assert.strictEqual(lastHandSentence(state.pack, state.seats, { type: 'roundOver', scores: {}, totals: [121, 90], over: true }, label), '');
-  assert.strictEqual(lastHandSentence(state.pack, state.seats, null, label), '');
-});
-
-// PART GREP, as above: the bar is built in src/ui/panels.js, which cannot be
-// loaded here, and the sentence reaches it through src/ui/table.js's final look.
-test("the final look is handed the last hand's line", () => {
+// THE LAST HAND'S NUMBERS WERE ONE LINE ON A BAR ("Last hand: You 0 · Nell
+// +26"), because the round that ends the match never opened the round sheet.
+// The final look IS the round sheet now (src/ui/inspection.js), so the last
+// hand gets the same rows every hand did — per side, with each count under the
+// row it explains — and the line it stood in for is gone. PART GREP: the sheet
+// is built in src/ui/panels.js, which cannot be loaded here.
+test("the final look is the round sheet, handed the hand that ended the match", () => {
   const table = fs.readFileSync(path.join(ROOT, "src/ui/table.js"), "utf8");
-  assert.match(table, /lastHandSentence\(state\.pack, state\.seats, ended, seatLabel\)/);
+  assert.match(table, /awaitFinalLook\(\{\s*state,\s*ev: ended,/,
+    "the final look is no longer handed the match-ending roundOver, so the last hand has no deltas");
   const panels = fs.readFileSync(path.join(ROOT, "src/ui/panels.js"), "utf8");
-  assert.match(panels, /export function awaitFinalLook\(result, play, hand = ''\)/);
-  assert.match(panels, /el\.finalLookHand\.hidden = !hand/);
+  assert.match(panels, /showRoundSummary\(state, ev \|\| \{\}, seating, contract, null, \{\s*counts, art, focus, final: \{ result, play \},/,
+    "the final look is drawn by something other than the round sheet again");
   const html = fs.readFileSync(path.join(ROOT, "index.html"), "utf8");
-  assert.match(html, /id="final-look-hand"/);
+  assert.doesNotMatch(html, /id="final-look"/, "the bar the sheet replaced is back");
 });

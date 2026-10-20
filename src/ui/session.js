@@ -120,6 +120,20 @@ export function createSession({ table, cardArt, handPrefs }) {
     // seat being claimed — paints the ending rather than the deal underneath.
     // A throwaway `forkState` copy, never logged, saved or published.
     roundFinalState: null,
+    // THE HAND HELD OPEN (src/ui/inspection.js): the counts the round made,
+    // while every seat plate is drawn face up and the docked sheet lists them.
+    // Set when the sheet opens — between rounds and at the final look alike —
+    // and cleared when the ending is let go. Null the rest of the time, which is
+    // every moment a plate is a fan of backs.
+    inspection: null,
+    // THE TRICK BEFORE THIS ONE, for the peek during play: `{ cards: [{ id,
+    // seat }], winner, n }` off the posed trick the felt held, or null at the
+    // start of a hand. A record of what was face up on the table, never a
+    // position — nothing about it is actable.
+    lastTrick: null,
+    // Whether the peek at it is open. Kept here, not in the DOM, because the
+    // felt is rebuilt by every move and a bot playing must not shut it.
+    lastTrickOpen: false,
 
     // THE SAME IDEA, ONE MOVE SMALLER (#123). A trick is completed and gathered
     // inside a single move, so the position with all four cards on the table
@@ -143,8 +157,9 @@ export function createSession({ table, cardArt, handPrefs }) {
     // second set of listeners, a second stamp and a second chance for the two of
     // them to disagree about what a tap means. There is only ever one beat on
     // the felt asking to be dismissed, so there is one handle: the trick hold
-    // sets it, each count of a show sets it, and `endHeldBeat` in
-    // src/ui/table.js is the one door either of them is closed through.
+    // sets it (each count of a show did too, until the counts went on the
+    // docked sheet all at once), and `endHeldBeat` in src/ui/roundEnding.js is
+    // the one door it is closed through.
     //
     // A LIVE HANDLE, NOT A RECORD OF ONE. It is nulled the instant it runs and
     // by `stopSession` below, and the closure itself refuses to run unless the
@@ -223,7 +238,7 @@ export function createSession({ table, cardArt, handPrefs }) {
     // summary deals ITSELF there is a timer that must be cancellable by a tap
     // rather than talked out of acting.
     //
-    // `beatTimers` are the show's steps and the summary's own opening;
+    // `beatTimers` are the summary's own opening, a beat after the last card;
     // `revealTimer` is the completed trick's hold (runTrickReveal);
     // `advanceTimer` is the sheet dealing the next hand by itself.
     beatTimers: [],
@@ -264,6 +279,8 @@ export function stopSession(session) {
   }
   session.review = null;
   session.reopenSummary = null;
+  session.inspection = null;
+  session.lastTrick = null;
   if (session.bannerTimer) session.bannerTimer.cancel();
   session.bannerTimer = null;
   session.bannerHeld = false;
@@ -332,11 +349,11 @@ export function stopSession(session) {
  * them at once and needs no list to maintain.
  *
  * IT FAILS OPEN. An unreadable stamp says yes. At the Manual rung
- * `runTrickReveal` arms no timer whatsoever and neither does `runShowSequence`,
- * so an input is the ONLY way out of either beat, and a predicate that refused
+ * `runTrickReveal` arms no timer whatsoever, so an input is the ONLY way out of
+ * the beat, and a predicate that refused
  * an event it could not read would be a table that never moves again. The cost
- * of guessing wrong in this direction is the bug above — one trick swept, or one
- * count dismissed, a beat early; the cost in the other is a dead game, and the
+ * of guessing wrong in this direction is the bug above — one trick swept a beat
+ * early; the cost in the other is a dead game, and the
  * two are not comparable.
  */
 export function inputEndsHeldBeat(openedAt, inputAt) {

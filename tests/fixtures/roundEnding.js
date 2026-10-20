@@ -36,6 +36,8 @@ export function stubSession(extra = {}) {
     reopenSummary: null,
     roundBeat: false,
     roundFinalState: null,
+    inspection: null,
+    review: null,
     trickBeat: null,
     trickPoseState: null,
     beatResume: null,
@@ -96,7 +98,6 @@ export function roundEndingHarness(overrides = {}) {
 
   const el = {
     log,
-    // `spotlightZone` sweeps the felt for the pile it lit last.
     screen: { querySelectorAll: () => [] },
   };
 
@@ -112,14 +113,11 @@ export function roundEndingHarness(overrides = {}) {
     seatLabel: (seat) => `Seat ${seat}`,
     seatPossessive: (seat) => `Seat ${seat}'s`,
     mySeat: () => 0,
-    voiceOf: () => ({}),
     cardById: () => null,
-    zoneStackNode: () => null,
     pulseSeat: spy('pulseSeat'),
-    showBanner: spy('showBanner'),
-    showShowCard: spy('showShowCard'),
-    hideShowCard: spy('hideShowCard'),
     releaseBanner: spy('releaseBanner'),
+    art: () => null,
+    focusCards: spy('focusCards'),
     celebrateDeal: spy('celebrateDeal'),
     currentFlightMs: () => 420,
     powerSaving: () => false,

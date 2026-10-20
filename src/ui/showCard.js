@@ -7,27 +7,24 @@
 // from (#152). Everything needed to SHOW it was already on the event: the cards
 // scored, the combinations, what each one was worth.
 //
-// So this is a card, not a caption — the name, the five faces, one row per
-// combination with its points, and the total — and it replaces the banner for
-// `showScored` while the same sentence still goes to #log.
+// So a count became a card, not a caption — the name, the faces, one row per
+// combination with its points, and the total. It was a floating card over the
+// middle of the felt, one count at a time; it is now one block per count on the
+// docked round sheet, all of them at once, each a way to light its own cards on
+// the board (src/ui/inspection.js, src/ui/panels.js's `countsCell`). This model
+// is what every block is drawn from.
 //
-// PURE MODEL, THEN DOM, in one file and in that order (the pattern
-// src/ui/counterTrack.js sets): src/ui/table.js touches `document` at import
-// and can never be loaded by a Node test, so a model that can be asserted
-// without a browser is the only way any of this arithmetic is ever checked
-// (tests/showCard.test.js). `showCardModel` knows nothing about elements;
-// `renderShowCard` knows nothing about cribbage.
+// PURE, and only a model now: src/ui/table.js touches `document` at import and
+// can never be loaded by a Node test, so a model that can be asserted without a
+// browser is the only way any of this arithmetic is ever checked
+// (tests/showCard.test.js).
 //
 // NINETEEN. A hand worth nothing is called a nineteen, because nineteen is the
 // lowest score five cards cannot make (`IMPOSSIBLE_SHOWS` in
 // src/templates/cribbage-score.js is the same joke, written down). A zero on a
 // card that otherwise lists combinations reads like a bug; the word reads like
 // the game.
-//
-// BATTERY RULE (cardstock#24): the card fades in once and then sits there. No
-// keyframe in this component loops, and the highlight is a transition.
 
-import { svgNode, line } from './dom.js';
 // WHAT A PART IS CALLED, from the file that documents the event it rides on
 // (`showScored`, src/engine/scoring.js). This used to be
 // `import { partPhrase } from '../templates/cribbage-score.js'` — a platform
@@ -106,94 +103,4 @@ export function showCardModel({
       ? `${title}: ${zeroLabel} — nothing.`
       : `${title}: ${spoken} — ${points}.`,
   };
-}
-
-/**
- * The card, as DOM.
- *
- * `doc` is a parameter rather than the global for the same reason
- * `renderCounterTrack` takes one: so this file can be loaded by a test.
- *
- * DECORATIVE BY CONSTRUCTION, exactly like #event-banner, which is what it
- * replaces: #log is the live region and carries the same sentence, so the whole
- * card is aria-hidden and nothing in it is focusable. A transient overlay that
- * lived for a second and a half and put five buttons in the tab order while it
- * did would be a worse table for everybody.
- *
- * @param art  () => the open match's card renderer, for the faces
- */
-export function renderShowCard(model, { doc = globalThis.document, art } = {}) {
-  if (!model || !doc) return null;
-
-  const card = doc.createElement('div');
-  card.className = 'show-card';
-  card.setAttribute('aria-hidden', 'true');
-  card.appendChild(line('show-card__title', model.title));
-
-  const faces = doc.createElement('div');
-  faces.className = 'show-card__faces';
-  for (const face of model.faces) {
-    const slot = art ? svgNode(art().face(face.card), 'show-card__face') : doc.createElement('span');
-    if (!art) slot.className = 'show-card__face';
-    slot.dataset.at = String(face.at);
-    // THE CUT IS NOT ONE OF YOURS, and every combination on the card may or may
-    // not use it — which is the single most-argued fact at a cribbage table.
-    // Set apart rather than labelled: one gap says it in no words.
-    if (face.starter) slot.classList.add('show-card__face--starter');
-    faces.appendChild(slot);
-  }
-  card.appendChild(faces);
-
-  if (model.zero) {
-    card.appendChild(line('show-card__nineteen', model.zeroLabel || NINETEEN));
-  } else {
-    const list = doc.createElement('div');
-    list.className = 'show-card__parts';
-    for (const row of model.rows) {
-      const item = doc.createElement('div');
-      item.className = 'show-card__part';
-      if (row.at.length) item.dataset.at = row.at.join(' ');
-      item.appendChild(line('show-card__part-name', row.label));
-      item.appendChild(line('show-card__part-points', String(row.points)));
-      list.appendChild(item);
-    }
-    card.appendChild(list);
-
-    const total = doc.createElement('div');
-    total.className = 'show-card__total';
-    total.appendChild(line('show-card__total-label', 'Total'));
-    total.appendChild(line('show-card__total-points', String(model.total)));
-    card.appendChild(total);
-  }
-
-  wireHighlight(card);
-  return card;
-}
-
-/**
- * WHICH CARDS MADE THIS ONE — under the cursor, or under a finger.
- *
- * The positions are on the rows already (`data-at`), so this is a class on the
- * faces and nothing else: no state, no re-render, and it survives the card
- * being thrown away at the next step because it never lived anywhere but the
- * nodes. Pointer events rather than `:hover`, because a phone has no hover and
- * the fifteens are exactly what a player wants to poke at.
- *
- * `pointerdown` rather than `click`: this card is replaced by the next step's
- * in a second and a half and a tap that has to complete to do anything would
- * often not.
- */
-function wireHighlight(card) {
-  const faces = card.querySelectorAll('.show-card__face');
-  const clear = () => faces.forEach((f) => f.classList.remove('show-card__face--lit'));
-  const light = (item) => {
-    clear();
-    const at = (item.dataset.at || '').split(/\s+/).filter(Boolean);
-    for (const face of faces) if (at.includes(face.dataset.at)) face.classList.add('show-card__face--lit');
-  };
-  for (const item of card.querySelectorAll('.show-card__part[data-at]')) {
-    item.addEventListener('pointerenter', () => light(item));
-    item.addEventListener('pointerdown', () => light(item));
-    item.addEventListener('pointerleave', clear);
-  }
 }

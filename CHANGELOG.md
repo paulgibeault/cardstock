@@ -13,6 +13,66 @@ the plans the work was done from are under
 
 ---
 
+## The end of a hand, held open on the board
+
+### What was wrong
+
+A hand ended one floating card at a time. Every seat the round priced got its
+own show card over the middle of the felt — "Nell's hand", tap, "Otto's hand",
+tap — while the seat plates above went on showing the BACKS of the cards being
+counted, and then a modal score sheet dimmed the whole table. The board was
+never the thing you looked at. A completed trick, once swept, was gone for
+good, and tapping the four cards of a held trick did nothing at all: during a
+hold every pile is a disabled `<button>`, and a browser sends no click from one.
+
+### What it does now
+
+- **The plates turn face up.** When a hand ends, every seat's plate draws the
+  hand it was left holding (Thirteen, Crazy Eights, Wildfire, Milestones) or
+  the penalty cards it took (Hearts), at a readable step, with a chip for what
+  they cost — all at once (`src/ui/inspection.js`, `seatRow.buildRevealFan`).
+- **The sheet docks under the felt.** No scrim; one card per side, side by
+  side, each listing the counts that made its number. Resting on a count — or a
+  part of one, a fifteen, a pair — lights those cards wherever they lie on the
+  board (`data-card-id` on pile cards, `focusCards`). The felt pads itself by
+  the sheet's height so it lays out above it, and the sheet folds to its title
+  and buttons. Only the Deal button deals; a tap on the sheet is a question.
+- **One dial, still.** Manual waits for Deal; the timed rungs count down, and a
+  touch on the board or the sheet stops the countdown (`pauseAutoAdvance`);
+  Instant skips the sheet. Cribbage's three counts are no longer three taps.
+- **The last hand of a match is held the same way.** The final look is this
+  sheet with the winner as its title and "See the results" as its button; the
+  old bar and its `lastHandSentence` line are gone.
+- **The last trick is a tap away** in the trick-taking packs: a chip under the
+  trick opens the four cards beside it, who played each, and who took it
+  (`src/ui/lastTrick.js`).
+- **Guests see the same hand.** The host ships the ending pose OPEN — every
+  seat's hand and won pile, never a shared pile (`viewFor(..., { open })`,
+  `opensAtHandEnd`) — and the reveal's ids survive `eventsFor`. Ready-up is
+  unchanged. `tools/simulate.mjs` audits the open pose against its own copy of
+  the rule.
+- **A tap on a held trick goes on**: a short, still press on a disabled pile
+  stands in for the click it cannot send.
+
+### What went
+
+The one-count-at-a-time show: `runShowSequence`, `runShowTimeline`,
+`playShowStep`, `runFinalShow`, `finalShowPlan`, `nextShowBeat`, `posedForShow`,
+`SHOW_STEP_MS`, `SHARED_SHOW_STEP_MS`, the pace rungs' `stepScale`, the floating
+`#show-card` and its CSS, the `#final-look` bar, and cribbage's `showStep`
+`pose`/`spotlight` answers (CONTRACT.md updated).
+
+### Verifying it
+
+`npm test` (1,293), `npm run acceptance` (12/12), `npm run mp-acceptance` (all
+checks). Every pack driven headless to a hand ending (Stockpile, which has none,
+to its match ending) from one-move-short saves, screenshotted before and after,
+no console errors. The new `tests/inspection.test.js` was broken three ways —
+the plate reading only taken cards, the open lens opening nothing, the last
+trick losing its seats — and each break fails it.
+
+---
+
 ## Two-handed Thirteen: three hands on offer, and you pick one (#157)
 
 ### What was wrong

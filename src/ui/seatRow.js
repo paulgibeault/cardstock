@@ -336,11 +336,15 @@ export const SEAT_VIEW_LABEL = 'Minimize player cards';
  * @param perPlayerZoneInstances (state, seat) => all of them, `table` zones included
  * @param performAnnouncement (state, move) => void — the Catch! button
  * @param isBusy      () => true while a drag owns the pointer
+ * @param revealOf    (state, seat) => what the seat's plate turns face up while a
+ *                    finished hand is inspected (src/ui/inspection.js's
+ *                    `plateReveal`, dressed with a chip), or null
  */
 export function createSeatRow({
   el, session, zones, liveState, feltState, render, mySeat, isMySeat, identityOf, art,
   markEntry, turnToken, committingToken, humanAnnouncements, heldValueText,
   ownZoneInstances, perPlayerZoneInstances, performAnnouncement, isBusy,
+  revealOf = () => null,
 }) {
   // Where the seat row is smooth-scrolling TO, and when it set off:
   // { row, left, at }. Read by pendingSeatShift so a rect measured while the row
@@ -403,6 +407,17 @@ export function createSeatRow({
   function buildSeatBody(state, seat, stagger, ui, into, { compactZones = true } = {}) {
     const count = state.zones.count(`hand.${seat}`);
 
+    // THE HAND IS OVER AND THE CARDS ARE DOWN (src/ui/inspection.js). The fan of
+    // backs below is a picture of a secret; once the hand has ended there is no
+    // secret left, so the plate draws the cards themselves — at a step a person
+    // can read — with what they came to beside them.
+    const reveal = revealOf(state, seat);
+    if (reveal) {
+      into.appendChild(buildRevealFan(state, reveal));
+      appendSeatZones(state, seat, ui, into, compactZones);
+      return;
+    }
+
     // THE OPPONENT'S HAND, DRAWN AS WHAT IS ACTUALLY VISIBLE OF IT.
     //
     // `--mini-step` closes this fan to as little as a fifth of a card, so all
@@ -448,6 +463,44 @@ export function createSeatRow({
     mini.setAttribute('aria-hidden', 'true');
     into.appendChild(mini);
 
+    appendSeatZones(state, seat, ui, into, compactZones);
+  }
+
+  /**
+   * A seat's ended hand, face up: the cards, and a chip saying what they came to.
+   *
+   * Every face carries its id (`data-card-id`) so a count picked on the sheet
+   * can light it here. Decorative to assistive tech in the same way the fan of
+   * backs is — the sheet's row and #log say the same thing in words.
+   */
+  function buildRevealFan(state, reveal) {
+    const wrap = document.createElement('div');
+    wrap.className = `seat__reveal seat__reveal--${reveal.kind || 'none'}`;
+    if (reveal.cards.length) {
+      const fan = document.createElement('div');
+      fan.className = 'reveal-fan';
+      fan.style.setProperty('--reveal-count', String(reveal.cards.length));
+      reveal.cards.forEach((id, i) => {
+        const card = state.pack.cardsById.get(id);
+        if (!card) return;
+        const node = svgNode(art().face(card), 'reveal-fan__card');
+        node.dataset.cardId = id;
+        node.style.setProperty('--reveal-index', String(i));
+        fan.appendChild(node);
+      });
+      fan.setAttribute('aria-hidden', 'true');
+      wrap.appendChild(fan);
+    }
+    if (reveal.chip) {
+      const chip = line(`seat__reveal-chip seat__reveal-chip--${reveal.chip.tone || 'neutral'}`, reveal.chip.text);
+      if (reveal.chip.aria) chip.setAttribute('aria-label', reveal.chip.aria);
+      wrap.appendChild(chip);
+    }
+    return wrap;
+  }
+
+  /** The seat's own piles, after its fan or its reveal. */
+  function appendSeatZones(state, seat, ui, into, compactZones) {
     // The seat's own piles, compact: a Stockpile stock and discards, laid-down
     // melds (live hit targets), a Hearts won pile with the points it holds.
     //
@@ -957,7 +1010,10 @@ export function createSeatRow({
     const accused = new Set(
       humanAnnouncements(state).filter((a) => a.type === 'challenge').map((a) => a.target),
     );
-    const mustOpen = (seat) => accused.has(seat);
+    // AND A SEAT WHOSE CARDS ARE DOWN. A finished hand is the one moment every
+    // plate has something to show at once, and a minimized row would put each of
+    // them behind its own tap — the one-at-a-time reading this replaces.
+    const mustOpen = (seat) => accused.has(seat) || !!revealOf(state, seat);
 
     // Whose plate the row will open by itself: the opponent whose turn it is.
     // `acting` can name several seats in a simultaneous phase (Hearts' pass), and

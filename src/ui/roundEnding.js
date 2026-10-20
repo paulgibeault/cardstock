@@ -25,19 +25,19 @@
 // So the split runs along "does this need the screen":
 //
 //   - MODULE SCOPE, pure and exported: how a template wants one count of its
-//     show staged (`showStepOf`), the same ending with that count's pose still
-//     held (`posedForShow`), and the player's rung read live (`currentPace`).
-//     None of the three touches `document` at all.
+//     show staged (`showStepOf`) and the player's rung read live
+//     (`currentPace`). Neither touches `document` at all.
 //   - `createRoundEnding(deps)`: everything that paints, stamps or schedules —
-//     the pre-move fork, the trick pose and its held beat, the show steps, the
-//     pace view, the three timer APIs, the two runners, and the doors out of
-//     the sheet.
+//     the pre-move fork, the trick pose and its held beat, the hand held open
+//     (the plates turned over, the counts on the docked sheet — see
+//     src/ui/inspection.js), the pace view, the three timer APIs, and the doors
+//     out of the sheet.
 //
 // THE THREE TIMER APIS, because they are the thing to be careful with here and
 // they are deliberately not one:
 //
-//   - `session.beatTimers[]` — the show's counts and the summary's own opening,
-//     armed by `beatTimer`, swept by `cancelRoundBeat`.
+//   - `session.beatTimers[]` — the sheet's own opening, one beat after the last
+//     card lands, armed by `beatTimer` and swept by `cancelRoundBeat`.
 //   - `session.revealTimer` — the completed trick's hold, one at a time, armed
 //     in `runTrickReveal` and cancelled by the tap that beats it.
 //   - `session.advanceTimer` — the sheet dealing the next hand by itself, armed
@@ -65,7 +65,9 @@ import { showCardModel } from './showCard.js';
 // Node test can reach it there; this file is now reachable too, and the rule
 // still belongs beside the session fields it is about.
 import { inputEndsHeldBeat } from './session.js';
-import { roundBeatPlan, nextShowBeat } from './roundBeat.js';
+import { roundBeatPlan } from './roundBeat.js';
+import { inspectionOf, plateReveal, countCardIds, partCardIds } from './inspection.js';
+import { partPhrase } from '../engine/scoring.js';
 import { revealSentence } from './scoreDirection.js';
 import { paceLevel, nextSummaryPace } from './pace.js';
 // NOT IMPORTED, ALTHOUGH THEY ARE THE SHEET: `showRoundSummary`,
@@ -96,35 +98,6 @@ export function showStepOf(state, step) {
     return state.pack.template.showStep?.(makeCtx(state), step) || null;
   } catch {
     return null;
-  }
-}
-
-/**
- * The same ending with a step's pose still held — cribbage's crib face down.
- *
- * Cribbage turns the crib as part of the move that ends the hand — the reveal
- * IS `moveCards crib -> show` (src/templates/cribbage.js) — so the ending
- * position already has it face up. Posing it back is what makes the crib's step
- * an actual turn on the felt rather than a caption on cards that have been
- * sitting there through the other two counts. WHICH cards go back where is the
- * template's (`showStep`'s `pose`); the fork, the guards and the "a pose is
- * never the live state" rule are this file's.
- */
-export function posedForShow(finalState, plan) {
-  const poses = plan.steps.map((step) => showStepOf(finalState, step)?.pose).filter(Boolean);
-  if (!poses.length) return finalState;
-  try {
-    const posed = forkState(finalState);
-    const ctx = makeCtx(posed);
-    for (const { from, to } of poses) {
-      if (!posed.zones.has(from) || !posed.zones.has(to)) return finalState;
-      const ids = posed.zones.cards(from).slice();
-      if (!ids.length) return finalState;
-      ctx.moveCards(ids, from, to);
-    }
-    return posed;
-  } catch {
-    return finalState;
   }
 }
 
@@ -180,8 +153,11 @@ export function currentPace() {
  */
 export function createRoundEnding({
   el, session, epoch, liveState, feltState, render, animateMove, renderStatusBar,
-  seatLabel, seatPossessive, mySeat, voiceOf, cardById, zoneStackNode, pulseSeat,
-  showBanner, showShowCard, hideShowCard, releaseBanner, celebrateDeal,
+  seatLabel, seatPossessive, mySeat, cardById, pulseSeat,
+  releaseBanner, celebrateDeal,
+  // The open match's card renderer (the sheet's small faces), and the felt's
+  // pointer: light these card ids, or none (src/ui/inspection.js).
+  art, focusCards,
   currentFlightMs, powerSaving, scheduleNextTurn, cancelBotTurn,
   cancelAnnouncementBeats, exitToLobby,
   showRoundSummary, hideRoundSummary, paintRoundPace, confirmAction,
@@ -425,21 +401,13 @@ export function createRoundEnding({
     const finalState = takeRoundFinal(ended ? move : null);
     const plan = roundOver ? roundBeatPlan(events, {
       flightMs: currentFlightMs(),
-      // No snapshot means no ending to pose or repaint, so the reveal degrades to
-      // the plain hold — the multiplayer path (afterRemoteMove).
-      narrate: !!finalState,
       // The rung is read HERE, when the round ends, so a pace changed on the last
       // sheet is the pace this one runs at.
       pace: currentPace().id,
-      // AND THE SAME CEILING ON THE SAME GROUNDS (#181). `narrate` above already
-      // covers a REMOTE move, which walks no steps at all; this covers a LOCAL
-      // move at a shared table, which counts its show like any other and is the
-      // only way a count with no clock on it could ever gate this device's queue.
-      shared: !!session()?.table.hosting(),
     }) : null;
     // What the felt paints. The LIVE state everywhere else: it is what is saved,
     // what the summary reads, and what the next deal is already in.
-    const shown = (plan && finalState) ? posedForShow(finalState, plan) : state;
+    const shown = (plan && finalState) ? finalState : state;
     return { ended, roundOver, finalState, plan, shown };
   }
 
@@ -463,6 +431,8 @@ export function createRoundEnding({
     if (!session()) return;
     session().roundBeat = false;
     session().roundFinalState = null;
+    session().inspection = null;
+    focusCards?.(null);
   }
 
   /** Forget the sheet — it is closed, and nothing is owed to putting it back. */
@@ -472,109 +442,93 @@ export function createRoundEnding({
     session().reopenSummary = null;
   }
 
-  /** Light the cards a step is counting, and only those. */
-  function spotlightZone(address) {
-    for (const node of el.screen.querySelectorAll('.pile-stack--counting')) {
-      node.classList.remove('pile-stack--counting');
-    }
-    const node = address ? zoneStackNode(address) : null;
-    if (node) node.classList.add('pile-stack--counting');
-  }
-
   /**
-   * One step of a show: whose count it is, what it is worth, and the cards.
-   *
-   * The sentence is the TEMPLATE's — cribbage already knows how to say "Your hand
-   * is worth 8" and gets the possessive right (`describeEvent`, and the
-   * possessive comment there is about this exact sentence). The event handed back
-   * to it is rebuilt from the step rather than kept, because `describeEvent`
-   * reads type/seat/isCrib/points and the step is those four things; the card ids
-   * are for the spotlight and do not belong in a sentence.
-   *
-   * `waits` IS WHETHER THIS COUNT HAS A CLOCK ON IT (#181), and the only thing it
-   * changes is the live region: a count that stays until it is dismissed has to
-   * say so, for the same reason an open-ended trick hold does — #log is
-   * `role="status"` and the status bar is not announced, so a player who cannot
-   * see the felt would otherwise be sitting in a pause with no stated end. One
-   * write, both facts, through the same join the trick hold uses.
-   */
-  function playShowStep(finalState, step, { waits = false } = {}) {
-    const staging = showStepOf(finalState, step);
-    // A POSED STEP'S OWN COUNT IS THE TURN. Everything before it has been looking
-    // at the pose (posedForShow); this render is the cards coming face up — and it
-    // is the step that ASKED to be posed, so the felt never has to know that the
-    // pile in question is a crib.
-    if (staging?.pose) {
-      session().roundFinalState = finalState;
-      render(finalState);
-    }
-    // A REVEAL SAYS ITSELF (src/engine/scoring.js, #189): the platform priced the
-    // cards, so the platform has the sentence — and it differs by which price it
-    // was. A cribbage count has no `reason` and stays the template's.
-    const said = revealSentence(step, { label: seatLabel, possessive: seatPossessive, viewerSeat: mySeat() })
-      || finalState.pack.template.describeEvent?.(
-        // `parts` too: the template says WHAT a hand was worth it for — fifteen
-        // two, a pair, his nobs — and a step stripped of them can only say a
-        // number (#124, item 41).
-        { type: 'showScored', seat: step.seat, isCrib: step.isCrib, points: step.points, parts: step.parts },
-        voiceOf(),
-      );
-    // The pile in a word is the template's (`showStep`); "hand" is what the
-    // platform's own reveal counts and the default for a template with no opinion.
-    const text = said?.text
-      || `${seatPossessive(step.seat)} ${staging?.what || 'hand'} is worth ${step.points}.`;
-    // THE CARD INSTEAD OF THE BANNER (#152), and the sentence still in the log —
-    // which is the live region a screen reader hears, so nothing is lost by the
-    // card being decorative. The banner is a fallback rather than a second
-    // surface: a remote client's step has no card ids on it (cribbage.js's
-    // `partsOf` explains why), and a card with no cards on it is a caption in a
-    // box. `showCardFaces` returning empty is the test for that.
-    const model = showCardFor(finalState, step, staging);
-    if (model) showShowCard(model);
-    else showBanner(text, said?.tone || (step.points ? 'good' : 'neutral'));
-    el.log.textContent = waits ? heldBeatLine(text) : text;
-    pulseSeat(step.seat, said?.tone === 'bad' ? 'bad' : (step.points ? 'good' : 'neutral'));
-    // A reveal's cards are in the seat's own hand or won pile, which the platform
-    // priced and therefore knows; anything else is the template's to point at.
-    spotlightZone(step.reason
-      ? `${step.reason === 'taken' ? 'won' : 'hand'}.${step.seat}`
-      : (staging?.spotlight || null));
-  }
-
-  /**
-   * One step of a show as a show card, or null when the felt cannot draw one.
+   * The round's counts as the sheet draws them: whose, the cards, and what each
+   * part came to — with the ids the felt lights when one is picked.
    *
    * THE EXTRA CARD IS READ OFF THE POSITION, not off the event — cribbage's cut,
-   * named by `showStep`'s `starterId` (#219; this file used to read the zone
-   * `'starter'` itself). It is a shared zone with `visibility: 'all'` and it is
-   * right there in the ending fork, so putting its id on the wire would be a
-   * second copy of a public fact, travelling outside the one field the view filter
-   * knows how to check (src/engine/view.js). The ending fork is also the only state
-   * that still HAS it by now: the engine crossed the round boundary inside this
-   * same move and the live state is already holding the next deal's cut.
+   * named by `showStep`'s `starterId` (#219). It is a shared zone with
+   * `visibility: 'all'` and it is right there in the ending fork, so putting its
+   * id on the wire would be a second copy of a public fact. The ending fork is
+   * also the only state that still HAS it by now: the engine crossed the round
+   * boundary inside this same move and the live state holds the next deal's cut.
    *
-   * The positions in `step.parts` are relative to `[...step.cards, starter]`,
-   * which is the order `theShow` scored them in and the order drawn here.
+   * The positions in a count's `parts` are relative to `[...cards, starter]`,
+   * which is the order `theShow` scored them in (src/ui/inspection.js).
    */
-  function showCardFor(finalState, step, staging = null) {
-    if (!Array.isArray(step.cards) || !step.cards.length) return null;
-    const starterId = staging?.starterId ?? null;
-    const ids = starterId ? [...step.cards, starterId] : step.cards.slice();
-    const cards = ids.map((id) => cardById(finalState, id) ?? null);
-    if (!cards.some(Boolean)) return null;
-    return showCardModel({
-      whose: seatPossessive(step.seat),
-      isCrib: step.isCrib,
-      points: step.points,
-      parts: step.parts,
-      cards,
-      starterAt: starterId ? ids.length - 1 : null,
-      // A reveal's card is titled for what it shows and says "nothing" for a
-      // zero; "nineteen" is cribbage's joke and stays on cribbage's counts. A
-      // template's own count is titled for the pile it is counting (`showStep`).
-      what: step.reason === 'taken' ? 'penalty cards' : (staging?.what || null),
-      zeroLabel: step.reason ? 'nothing' : undefined,
+  function countModels(finalState, counts) {
+    return (counts || []).map((count) => {
+      const staging = showStepOf(finalState, count);
+      const starterId = staging?.starterId ?? null;
+      const ids = countCardIds(count, starterId);
+      const faces = ids
+        .map((id) => ({ id, card: cardById(finalState, id), starter: id === starterId }))
+        .filter((face) => face.card);
+      const model = showCardModel({
+        whose: seatPossessive(count.seat),
+        isCrib: count.isCrib,
+        points: count.points,
+        parts: count.parts,
+        // A reveal's count is titled for what it shows and says "nothing" for a
+        // zero; "nineteen" is cribbage's joke and stays on cribbage's counts.
+        what: count.reason === 'taken' ? 'penalty cards' : (staging?.what || null),
+        zeroLabel: count.reason ? 'nothing' : undefined,
+      });
+      const said = revealSentence(count, { label: seatLabel, possessive: seatPossessive, viewerSeat: mySeat() });
+      // The pile alone — "Hand", "Crib", "Penalty cards" — for a block that sits
+      // inside its own seat's card on the sheet, where the possessive is the card.
+      return {
+        seat: count.seat,
+        title: model.title,
+        label: count.reason === 'taken' ? 'Penalty cards' : capitalise(staging?.what || 'hand'),
+        points: count.points,
+        zero: model.zero,
+        zeroLabel: model.zeroLabel,
+        faces,
+        ids,
+        parts: (count.parts || [])
+          .map((part) => ({ label: partPhrase(part), points: part.points ?? 0, ids: partCardIds(count, part, starterId) }))
+          .filter((part) => part.label),
+        tone: said?.tone || 'neutral',
+        aria: said?.text || model.aria,
+      };
     });
+  }
+
+  /**
+   * What a seat's plate turns over while the hand is held, dressed with the chip
+   * it wears — or null. src/ui/seatRow.js asks this of every opponent it draws.
+   *
+   * The chip is the seat's own counts summed, in the tone the reveal's sentence
+   * uses. A won pile already wears its points (`hiddenPileChip`), so a plate
+   * showing what it TOOK carries no second number — unless the take was the
+   * moon, which is the one fact the pile chip has no words for.
+   */
+  function capitalise(word) {
+    return word ? word[0].toUpperCase() + word.slice(1) : word;
+  }
+
+  function revealOf(state, seat) {
+    const inspection = session()?.inspection;
+    // A REVIEW IS ITS OWN LENS (src/ui/reviewController.js): a position scrubbed
+    // to from the sheet is drawn as that position, not as the hand that ended.
+    if (!inspection || session().review) return null;
+    const reveal = plateReveal(state, inspection, seat);
+    if (!reveal) return null;
+    const lead = reveal.counts.find((c) => c.reason) || reveal.counts[0] || null;
+    const said = lead ? revealSentence(lead, { label: seatLabel, possessive: seatPossessive, viewerSeat: mySeat() }) : null;
+    const moon = reveal.counts.find((c) => c.sweep);
+    let chip = null;
+    if (moon) {
+      chip = { text: 'Shot the moon', tone: said?.tone || 'neutral', aria: said?.text };
+    } else if (reveal.points != null && reveal.kind !== 'taken') {
+      chip = {
+        text: `${reveal.points} ${reveal.points === 1 ? 'point' : 'points'}`,
+        tone: said?.tone || 'neutral',
+        aria: said?.text,
+      };
+    }
+    return { ...reveal, chip };
   }
 
   /**
@@ -760,16 +714,18 @@ export function createRoundEnding({
   }
 
   /**
-   * Run a round ending: hold the felt on it, walk the show, then open the sheet.
+   * Run a round ending: hold the felt on it, then open the hand.
    *
-   * NO SECOND ACKNOWLEDGEMENT. `awaitFinalLook` is the pattern (issue #120 says
-   * so) and this is deliberately not a second copy of it: the round summary IS
-   * the acknowledgement here — its Continue is the button that deals the next
-   * hand — so a Continue bar in front of it would be two clicks for one decision.
-   * What `awaitFinalLook` buys at match end, which is that the player decides
-   * when the ending stops being on screen, is bought here by the deal moving from
-   * `afterMove` to `dismissRoundSummary`. The felt holds, the sheet asks, and the
-   * new hand does not exist on screen until the player says go.
+   * ONE BEAT, THEN EVERYTHING AT ONCE. The last card lands (`holdMs`, measured
+   * against its flight); then every plate turns face up, every count goes on
+   * the docked sheet, and the table waits for the deal. It used to walk the
+   * counts one floating card at a time — a tap per seat at the rung that waits,
+   * a clock per seat at the rungs that count — and the board under them never
+   * showed a card. src/ui/inspection.js has the long version.
+   *
+   * NO SECOND ACKNOWLEDGEMENT. The sheet IS the acknowledgement here — its
+   * Continue is the button that deals the next hand — so the felt holds, the
+   * sheet asks, and the new hand does not exist on screen until it is dealt.
    *
    * @param state      the LIVE state — the one the summary reads its round number
    *                   and totals from, and the one the next deal is already in
@@ -786,14 +742,8 @@ export function createRoundEnding({
     if (finalState.roundEnded && finalState.roundWinner != null) {
       pulseSeat(finalState.roundWinner, 'good');
     }
-    const openSummary = () => {
-      // THE LAST SHOW CARD COMES DOWN WITH THE SHEET GOING UP (#152). The banner
-      // this card replaced dismissed itself after 2200ms, so the sheet always
-      // opened onto a clear felt; a card sits until something takes it away, and
-      // the crib's — the last step of the beat — was still there UNDER the
-      // summary panel. The cards are the detail and the panel is the tally: they
-      // are never both the answer at once.
-      hideShowCard();
+    const open = () => {
+      if (!session()?.roundBeat && !plan.instant) return;
       session().roundSummaryOpen = true;
       // THE RUNG THAT SHOWS NO SHEET (#150). Instant does not open the summary
       // and then race it away — it never opens one. `roundSummaryOpen` is still
@@ -803,166 +753,51 @@ export function createRoundEnding({
         dismissRoundSummary(roundResultLine(state, plan.roundOver));
         return;
       }
+      // THE HAND OPENS: every plate turns over on this render.
+      openInspection(state.events, finalState);
       // KEPT AS A CLOSURE, so a review opened from the sheet can put it back
       // exactly as it was (leaveReview) — countdown restarted, not resumed.
+      const counts = countModels(finalState, session().inspection.counts);
       session().reopenSummary = () => {
         showRoundSummary(
           state, plan.roundOver, session().table.seating, roundContractLines(finalState),
           paceView(paceLevel(plan.pace)),
+          { counts, art, focus: focusCards },
         );
         armAutoAdvance(plan.autoAdvanceMs);
       };
       session().reopenSummary();
+      renderStatusBar(feltState(), actingSeatsOf(feltState()));
     };
-
-    // A TIMELINE OR A SEQUENCE, AND THE PLAN SAYS WHICH (#181). `stepMs` is null
-    // at the rung where a count has no duration, exactly as `holdMs` is null at
-    // the rung where a trick hold has no end, and a show with steps to wait on is
-    // then run one tap at a time instead of armed all at once.
-    if (plan.stepMs == null && plan.steps.length) {
-      runShowSequence(plan, finalState, openSummary);
-      return;
-    }
-
-    runShowTimeline(plan, finalState, openSummary, plan.summaryAt);
+    beatTimer(open, plan.summaryAt);
   }
 
   /**
-   * The show on a CLOCK: every count at its own moment, then whatever follows.
+   * Turn the ended hand face up on the felt (src/ui/inspection.js): set what the
+   * plates are to show, then repaint the position the felt is holding.
    *
-   * ONE LOOP, TWO CALLERS (#223). This was written out twice, in `runRoundBeat`
-   * and in `runFinalShow`, identical to the character apart from the last line —
-   * one ends in the sheet at `plan.summaryAt`, the other in the final look at
-   * `plan.lookAt`. So the difference is two arguments, and what a count of a
-   * timed show does is now stated once.
-   *
-   * THE `roundBeat` RE-CHECK IS NOT REDUNDANT with `beatTimer`'s epoch guard, and
-   * that is why it is inside the callback rather than around the loop: an ending
-   * can be released — a review opened, the sheet dismissed by hand, the match
-   * ended from the sheet — WITHOUT the epoch moving, and a count painted onto a
-   * felt that has gone back to the live state is a sentence about a hand that is
-   * no longer on the table.
-   *
-   * @param after what the show runs off the end into
-   * @param at    when, on the plan's own clock
+   * `events` are the move's — the reveals ride on them — and `shown` is what
+   * the felt paints. Both the hand between rounds and the hand that ended the
+   * match come through here, which is what makes them one experience.
    */
-  function runShowTimeline(plan, finalState, after, at) {
-    for (const step of plan.steps) {
-      beatTimer(() => {
-        if (!session().roundBeat) return;
-        playShowStep(finalState, step);
-      }, step.at);
-    }
-    beatTimer(after, at);
+  function openInspection(events, shown, { final = false } = {}) {
+    if (!session()) return;
+    session().inspection = inspectionOf(events, { final });
+    render(shown);
   }
 
   /**
-   * The show as a SEQUENCE: one count, then a person, then the next (#181).
-   *
-   * WHY THIS IS NOT THE LOOP ABOVE WITH A NULL DELAY. A timeline is armed in one
-   * go and every beat of it knows when it runs; a sequence knows only what comes
-   * next, and what comes next is decided by a tap that may not come for a minute.
-   * So the steps are walked with a cursor over `nextShowBeat` (src/ui/roundBeat.js)
-   * — the plan's own statement of what follows what, which is all that is left of
-   * the ordering once the arithmetic is gone — and the sheet is what the cursor
-   * runs off the end into.
-   *
-   * THE FIRST COUNT STILL OPENS ON THE HOLD. There is nothing to dismiss until
-   * something is on the felt, so `steps[0].at` is a real number at every rung and
-   * this arms exactly one timer. Everything after it is a person: pone, then the
-   * dealer, then the crib, then the sheet, which is the four inputs a hand was
-   * asked to end in.
-   *
-   * AND EVERY ONE OF THEM STAMPS WHEN IT OPENED. Each count opens INSIDE the
-   * dispatch of the tap that dismissed the one before it — the felt's listener has
-   * not finished with that click when the next card is already up — so without the
-   * stamp the same gesture would keep finding a new gate and one tap would run the
-   * entire ending off the screen. `inputEndsHeldBeat` in src/ui/session.js is the
-   * rule; the identity check on `advance` is the other half, so a stale closure
-   * from a beat that is already over can never fire a second time.
+   * A TOUCH ON THE TABLE STOPS THE CLOCK. The rungs that deal by themselves are
+   * a guess about how long a hand takes to read, and the moment a player starts
+   * poking at the board the guess is wrong — so the countdown stops where it is
+   * and the sheet waits for the button, as Manual's does. True when there was a
+   * countdown to stop.
    */
-  function runShowSequence(plan, finalState, openSummary) {
-    const myEpoch = epoch();
-    let dismissed = 0;
-
-    // THE BAR SAYS IT TOO, and it is repainted by hand because only the crib's
-    // count renders the felt (`playShowStep`). Without this the other two counts
-    // would leave "Round over." standing over a table that will not move again on
-    // its own — which is the same sentence as a hang — and the sheet would open
-    // under a bar still promising a tap that belongs to a count already gone.
-    const sayTheBar = () => renderStatusBar(feltState(), actingSeatsOf(feltState()));
-
-    const open = () => {
-      if (myEpoch !== epoch() || !session() || !session().roundBeat) return;
-      const step = nextShowBeat(plan, dismissed);
-      if (!step) {
-        openSummary();
-        sayTheBar();
-        return;
-      }
-      // ARMED BEFORE THE COUNT IS PAINTED, and the order is load-bearing twice
-      // over: the stamp has to predate anything that could let an input in, and
-      // the crib's step RENDERS — `statusTextFor` reads this gate to know whether
-      // to promise the tap, so a gate armed afterwards would paint one count of
-      // every hand with the bar saying nothing continues it.
-      session().beatOpenedAt = performance.now();
-      const advance = () => {
-        if (myEpoch !== epoch() || !session() || session().beatResume !== advance) return;
-        session().beatResume = null;
-        session().beatOpenedAt = null;
-        dismissed++;
-        open();
-      };
-      session().beatResume = advance;
-      playShowStep(finalState, step, { waits: true });
-      sayTheBar();
-    };
-
-    beatTimer(open, plan.steps[0].at);
-  }
-
-  /**
-   * The show of the hand that ended the MATCH, held exactly as a live hand's is,
-   * with the final look where the sheet would be (issue #189).
-   *
-   * THE SAME MACHINERY, ON PURPOSE. `runShowSequence` walks the counts one tap at
-   * a time and `beatTimer` runs them on a clock, and both were written for the
-   * sheet to follow; `done` is what follows here instead. The felt holds the
-   * ending under `roundBeat` for the same reason a live round's is held — a
-   * rotation of the phone repaints `feltState()`, and `render` offers nothing on
-   * it — and `finalState` is the same pre-move fork with the move re-applied, so
-   * the crib can be posed face down until its own count (`posedForShow`).
-   *
-   * WHEN THE LAST COUNT IS DISMISSED the felt goes live again under the bar: at
-   * match end the live state IS the ending position (maybeFinishRound never dealt
-   * over it), so nothing is lost by letting go of the fork, and the final look's
-   * promise — the table under it stays inspectable — holds. The show card stays
-   * up; `offerFinalLook` takes it down with the results.
-   *
-   * @param plan       a finalShowPlan
-   * @param finalState the ending with the crib face up (takeRoundFinal)
-   * @param shown      the same ending posed for the first count (posedForShow)
-   * @param done       what the final look owes once the counts are read
-   */
-  function runFinalShow(state, plan, finalState, shown, { message, move, from, reveal, closeTrick, done }) {
-    cancelRoundBeat();
-    const myEpoch = epoch();
-    holdRoundEnding(plan, finalState, shown);
-    render(shown, message);
-    if (!reveal) animateMove(shown, move, from);
-    closeTrick(shown);
-
-    const open = () => {
-      if (myEpoch !== epoch() || !session() || !session().roundBeat) return;
-      releaseRoundEnding();
-      render(state);
-      done();
-    };
-    if (plan.stepMs == null) {
-      runShowSequence(plan, finalState, open);
-      return;
-    }
-    runShowTimeline(plan, finalState, open, plan.lookAt);
+  function pauseAutoAdvance() {
+    if (!session()?.roundSummaryOpen || !session().advanceTimer) return false;
+    cancelAutoAdvance();
+    paintRoundPace({ ...paceView(currentPace()), autoMs: null, paused: true });
+    return true;
   }
 
   /* ------------------------------------------------------------------ *
@@ -1106,7 +941,10 @@ export function createRoundEnding({
     beginRoundEnding,
     holdRoundEnding,
     runRoundBeat,
-    runFinalShow,
+    openInspection,
+    countModels,
+    revealOf,
+    pauseAutoAdvance,
     cancelRoundBeat,
     // The sheet's map stops the countdown and puts Manual in the control while
     // it is open (roundMapNode, src/ui/reviewController.js), which is the
@@ -1119,19 +957,14 @@ export function createRoundEnding({
     endMatchFromSummary,
     // NOT CALLED FROM src/ui/table.js. These are the pieces the tests have a
     // direct question about, and every one of those questions was a regex over
-    // this function's source for as long as there was no way to call it: what a
-    // count of a show does to the felt (`playShowStep`), that a show which waits
-    // is walked one input at a time and the sheet is what the cursor runs off
-    // the end into (`runShowSequence`), that a beat timer is held as well as
+    // this function's source for as long as there was no way to call it: that a
+    // beat timer is held as well as
     // epoch-guarded (`beatTimer`), that Manual arms nothing and a delay which is
     // not a wait arms nothing either (`armAutoAdvance`), what the hold raises and
     // lets go of (`holdRoundEnding`/`releaseRoundEnding`), what a closed sheet
     // forgets (`closeRoundSummary`), and the one sentence the rung with no sheet
     // leaves behind (`roundResultLine`). See tests/roundBeat.test.js,
     // tests/pace.test.js and tests/eventBanner.test.js.
-    playShowStep,
-    runShowSequence,
-    runShowTimeline,
     beatTimer,
     armAutoAdvance,
     releaseRoundEnding,
