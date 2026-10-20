@@ -478,6 +478,11 @@ export function createRoundEnding({
       // inside its own seat's card on the sheet, where the possessive is the card.
       return {
         seat: count.seat,
+        // A REVEAL — what a seat was left holding, or what it took — is already
+        // on the board: its plate turns face up wearing this same number as a
+        // chip (revealOf below). The sheet leaves those to the plate and keeps
+        // only the counts the board cannot explain, cribbage's show.
+        reveal: !!count.reason,
         title: model.title,
         label: count.reason === 'taken' ? 'Penalty cards' : capitalise(staging?.what || 'hand'),
         points: count.points,

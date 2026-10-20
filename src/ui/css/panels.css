@@ -284,9 +284,15 @@ body.round-docked #table-screen { padding-bottom: var(--round-dock, 0px); }
 
 /* ONE CARD PER SIDE, side by side: the round sheet is wide and short so it
    never climbs over the board it is about. The scoreboard keeps the grid. */
+/* AN EVEN GRID, NOT A WRAPPING ROW. As a flex row the side that wrapped
+   stretched across the whole sheet on its own (four seats on a 600px window
+   came out three-and-a-wide-one); as a grid every side is the same width and a
+   wrapped one keeps its column. 9.5rem is what "Juniper  +35  35" needs
+   without the name running into the numbers. auto-fit, so two sides still
+   share the full width between them. */
 #round-panel .round-scores--sides {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 9.5rem), 1fr));
   gap: 0.45rem;
   font-size: 0.85rem;
 }

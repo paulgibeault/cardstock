@@ -215,7 +215,13 @@ export function showRoundSummary(state, ev, seating, contract = null, pace = nul
     if (notes.length) card.appendChild(line('round-side__note', notes.join(' · ')));
     // WHAT THE NUMBER WAS MADE OF, inside the side it explains — every count
     // this side's seats made, at once, instead of one floating card per tap.
-    const own = (counts || []).filter((c) => members.includes(c.seat));
+    //
+    // BUT NOT WHAT THE BOARD ALREADY SAYS. A reveal (a hand left over, a pile
+    // of penalty cards) is face up on the seat's plate with its points on a
+    // chip, so a "Hand 35" box here was the same fact twice, one screen apart.
+    // What stays is the scoring the board cannot show by itself — cribbage's
+    // fifteens, pairs and runs, each of which still lights its cards.
+    const own = (counts || []).filter((c) => members.includes(c.seat) && !c.reveal);
     if (own.length) card.appendChild(countsCell(own));
     el.roundScores.appendChild(card);
   });
