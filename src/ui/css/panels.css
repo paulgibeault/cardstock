@@ -131,6 +131,24 @@
 }
 .panel .ghost-button:hover { opacity: 1; background: transparent; }
 
+/* THE PANEL'S PRIMARY BUTTON. Deal on the new-game sheet and Close on the
+   rules and review sheets were bare <button>s with no rule at all, so they
+   drew as the browser's own small grey button — the weakest-looking control
+   on the sheet, beside a styled Cancel. Same treatment as the round sheet's
+   own primary (#round-continue). */
+.panel-primary {
+  font: inherit;
+  font-weight: 700;
+  padding: 0.7rem 1.5rem;
+  border-radius: 10px;
+  border: none;
+  cursor: pointer;
+  background: var(--action-bg);
+  color: var(--action-text);
+}
+.panel-primary:hover { background: var(--action-bg-hover); }
+.panel-primary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
 /* The score sheet between rounds: one row per seat — this round's damage and
    the running total. The human's row is the one you look for, so it leads.
  *

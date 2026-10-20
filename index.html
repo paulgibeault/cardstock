@@ -527,11 +527,12 @@
        because both are part of the rule set a match is replayed under and
        neither can change once cards are out (src/ui/newGame.js). -->
   <div id="new-game-overlay" hidden>
-    <div class="panel">
-      <div id="new-game-title" class="panel__title"></div>
+    <div class="panel new-game" id="new-game-panel">
+      <p class="new-game__eyebrow">New game</p>
+      <div id="new-game-title" class="panel__title new-game__title"></div>
       <div id="new-game-body" class="new-game__body"></div>
-      <div class="panel__actions">
-        <button id="new-game-deal">Deal</button>
+      <div class="panel__actions new-game__actions">
+        <button id="new-game-deal" class="panel-primary">Deal</button>
         <button id="new-game-cancel" class="ghost-button">Cancel</button>
       </div>
     </div>
@@ -547,7 +548,7 @@
       <div id="rules-tagline" class="rules__tagline"></div>
       <div id="rules-body" class="rules__body"></div>
       <div class="panel__actions">
-        <button id="rules-close">Close</button>
+        <button id="rules-close" class="panel-primary">Close</button>
       </div>
     </div>
   </div>
@@ -586,7 +587,7 @@
       <div class="panel__title">The game so far</div>
       <div id="review-map-host"></div>
       <div class="panel__actions">
-        <button id="review-close">Close</button>
+        <button id="review-close" class="panel-primary">Close</button>
       </div>
     </div>
   </div>
