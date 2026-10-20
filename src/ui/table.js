@@ -1677,7 +1677,6 @@ function offerFinalLook(state, move, ending, { ended = null, events = [] } = {})
       ev: ended,
       seating: session.table.seating,
       counts: roundEnding.countModels(state, session.inspection?.counts),
-      art,
       focus: focusCards,
       result: winnerSentence(state),
       play: finalPlaySentence(state, move),
@@ -2357,7 +2356,6 @@ export async function showGuestResults(view, { waiting = '', events = [] } = {})
     ev: ended,
     seating: table.seating,
     counts: roundEnding.countModels(shown, session.inspection?.counts),
-    art,
     focus: focusCards,
     result: winnerSentence(model),
   });
@@ -2554,7 +2552,6 @@ export function initTable({ onExit }) {
     cardById,
     pulseSeat,
     releaseBanner,
-    art,
     focusCards,
     celebrateDeal,
     currentFlightMs,

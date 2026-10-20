@@ -155,9 +155,8 @@ export function createRoundEnding({
   el, session, epoch, liveState, feltState, render, animateMove, renderStatusBar,
   seatLabel, seatPossessive, mySeat, cardById, pulseSeat,
   releaseBanner, celebrateDeal,
-  // The open match's card renderer (the sheet's small faces), and the felt's
-  // pointer: light these card ids, or none (src/ui/inspection.js).
-  art, focusCards,
+  // The felt's pointer: light these card ids, or none (src/ui/inspection.js).
+  focusCards,
   currentFlightMs, powerSaving, scheduleNextTurn, cancelBotTurn,
   cancelAnnouncementBeats, exitToLobby,
   showRoundSummary, hideRoundSummary, paintRoundPace, confirmAction,
@@ -762,7 +761,7 @@ export function createRoundEnding({
         showRoundSummary(
           state, plan.roundOver, session().table.seating, roundContractLines(finalState),
           paceView(paceLevel(plan.pace)),
-          { counts, art, focus: focusCards },
+          { counts, focus: focusCards },
         );
         armAutoAdvance(plan.autoAdvanceMs);
       };

@@ -340,10 +340,6 @@ body.round-docked #table-screen { padding-bottom: var(--round-dock, 0px); }
 }
 .round-count__title { opacity: 0.8; }
 .round-count__points { font-weight: 700; font-variant-numeric: tabular-nums; }
-.round-count__faces { display: flex; }
-.round-count__face { width: 22px; flex: none; display: block; }
-.round-count__face:not(:first-child) { margin-left: -7px; }
-.round-count__faces .round-count__face--starter { margin-left: 4px; }
 .round-count__parts { display: flex; flex-wrap: wrap; gap: 0.25rem; }
 .round-count__part {
   font: inherit;
