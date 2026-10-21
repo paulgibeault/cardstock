@@ -13,6 +13,38 @@ the plans the work was done from are under
 
 ---
 
+## Thirteen: two seats by default, a 2 can end a run, and royal bombs
+
+### What changed
+
+- **Two players by default.** `players.best` is 2, so the new-game sheet and
+  a bare link both open the head-to-head pick deal. Three and four still work.
+- **`two-tops-runs` is on by default.** `K-A-2` is a run; it still never
+  wraps, and a 2 is still no part of consecutive pairs.
+- **Bombs chop 2s, and only 2s.** Any four of a kind and any strip of three
+  or more consecutive pairs chops a lone 2. A pair of 2s takes a *royal*
+  bomb: four jacks, queens, kings or aces, or a strip made only of those
+  ranks. Bombs no longer chop each other (four of a kind used to chop three
+  consecutive pairs), and nothing beats three 2s (five consecutive pairs used
+  to beat anything). The variant `quad-needs-four-pairs` is gone with the
+  ladder it patched.
+
+### Why the code reads the way it does
+
+The pack tags J/Q/K/A `royal` through `cardTags`, and a bomb `shape` now
+takes the same card selector its `beats` tokens already did —
+`quad:tag:royal` — so the stronger form of a shape is a second rung rather
+than a new key. `tokenMatches` already handled the selector; only the schema
+pattern and `bombShapes` (which wants the bare shape) had to learn it.
+
+### Verifying it
+
+New rule tests for each rung, including `10-10 J-J Q-Q` (one non-royal pair
+makes the strip plain) and an unanswerable three 2s. Renaming the tag to
+something else fails exactly the two royal tests.
+
+---
+
 ## The end of a hand, held open on the board
 
 ### What was wrong
