@@ -235,7 +235,8 @@ export function tokenMatches(ctx, token, combo) {
 export function bombShapes(ctx) {
   const shapes = [];
   for (const bomb of ctx.rules.bombs || []) {
-    const shape = parseShape(bomb.shape);
+    // A selector narrows WHICH cards make the bomb, never its shape.
+    const shape = parseShape(String(bomb.shape).split(':')[0]);
     if (shape) shapes.push({ kind: shape.kind, size: shape.size ?? FIXED_SIZE[shape.kind] ?? null });
   }
   return shapes;
