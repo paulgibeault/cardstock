@@ -536,6 +536,12 @@ export function scoreDiscard(ctx, move, w = WEIGHTS) {
   const card = ctx.cardById(cardId);
   const reach = meldReach(ctx, seat);
 
+  // WHO A SKIP IS AIMED AT. Every target used to cost the same, so the stable
+  // sort kept the first one enumerated — seat 0, the host, every time, even
+  // when the host was already sitting out a turn and a second skip did nothing.
+  const target = move.choice?.target;
+  const aimed = target === undefined ? 0 : skipValue(ctx, seat, target, w);
+
   let keep;
   if (ctx.playerVar(seat, 'laidDown')) {
     // Past the lay-down every hittable card has already been hit this turn
@@ -549,7 +555,37 @@ export function scoreDiscard(ctx, move, w = WEIGHTS) {
     const handIds = ctx.cardIdsIn(ctx.zoneAddr('hand', seat));
     keep = keepValue(ctx, card, handShape(ctx, handIds), contractWants(ctx, seat, w), cardId);
   }
-  return -discardCost(ctx, seat, card, keep, reach, w);
+  return aimed - discardCost(ctx, seat, card, keep, reach, w);
+}
+
+/**
+ * WHAT A SKIP AIMED AT `target` IS WORTH — nothing if they are already
+ * skipping their next turn (the flag is a boolean; a second skip is a card
+ * thrown away), otherwise more the closer they are to going out.
+ *
+ * "Closer" is the table's public reading of a seat: laid down or not, how many
+ * cards it is holding, and how far up the ladder it has climbed — the rung is
+ * what wins the match, so a seat one contract from the top is worth stalling
+ * even with a full hand. Scaled to [1, 2] across the rivals so the leader is
+ * always the first choice and the skip is never worth less than one turn.
+ */
+function skipThreat(ctx, s, w) {
+  return publicStanding(ctx, s, w) + (ctx.playerVar(s, 'phase') ?? 1) * w.CARD_IN_HAND;
+}
+
+export function skipValue(ctx, seat, target, w = WEIGHTS) {
+  if (ctx.playerVar(target, 'skipNextTurn')) return 0;
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (let s = 0; s < ctx.seats; s++) {
+    if (s === seat) continue;
+    const t = skipThreat(ctx, s, w);
+    if (t < lo) lo = t;
+    if (t > hi) hi = t;
+  }
+  const spread = hi - lo;
+  const share = spread > 0 ? (skipThreat(ctx, target, w) - lo) / spread : 0;
+  return w.SKIP_WORTH * (1 + share);
 }
 
 /**
@@ -707,6 +743,14 @@ const WILD_HOLD = 10;
 const RIVAL_SHARE = 0.6;
 
 /**
+ * What aiming a skip is worth, at the least threatening rival; the leader gets
+ * twice this (see `skipValue`). Small on purpose: it only has to order the
+ * targets of one skip card, and a skip is already the first card out of any
+ * hand (keepValue −1), so it cannot promote a skip over anything.
+ */
+const SKIP_WORTH = 0.5;
+
+/**
  * What the table can see of a seat's position — asked about every seat,
  * including the one doing the asking.
  */
@@ -806,4 +850,5 @@ export const WEIGHTS = Object.freeze({
   OUT_WORTH,
   WILD_HOLD,
   RIVAL_SHARE,
+  SKIP_WORTH,
 });
