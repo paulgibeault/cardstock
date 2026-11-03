@@ -22,7 +22,7 @@ import {
   getMeldGroups, meldDisplayOrder, meldKindOf, pinnedAttr, wildHitValues,
 } from './melds.js';
 import {
-  findContractLayDown, findHits, scoreDraw, scoreDiscard, evaluateState, WEIGHTS,
+  findContractLayDown, findHits, scoreDraw, scoreDiscard, evaluateState, WEIGHTS, skipValue,
   rememberPileTake, forgetPileTakes, PILE_TAKEN_VAR,
 } from './contract-rummy-bot.js';
 import { arrangeContract, suggestMeld } from './contract-rummy-ui.js';
@@ -537,8 +537,22 @@ const contractRummy = {
     for (const cardId of hand) {
       const card = ctx.cardById(cardId);
       if (hasKnownEffect(card, 'discard')) {
+        // MOST THREATENING TARGET FIRST. The lookahead cannot tell skip targets
+        // apart — the turn advance consumes the flag at once when the target
+        // sits next — so ties fall to this order, and seat order sent every
+        // skip at seat 0, the host, already skipped or not. `skipValue` puts
+        // the seat nearest going out first and an already-skipped seat last.
+        const targets = [];
         for (let target = 0; target < ctx.seats; target++) {
-          if (target === seat) continue;
+          if (target !== seat) targets.push(target);
+        }
+        // A seat already skipping its next turn is not offered while another
+        // target exists: the flag is a boolean, so that skip is a wasted card,
+        // and offering it only lets a persona's slip pick it.
+        const value = new Map(targets.map((t) => [t, skipValue(ctx, seat, t)]));
+        targets.sort((a, b) => value.get(b) - value.get(a));
+        const live = targets.filter((t) => !ctx.playerVar(t, 'skipNextTurn'));
+        for (const target of (live.length ? live : targets)) {
           moves.push({ actor: seat, type: 'discard', cards: [cardId], choice: { target } });
         }
       } else {
