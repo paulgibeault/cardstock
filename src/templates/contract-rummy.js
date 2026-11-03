@@ -23,7 +23,7 @@ import {
 } from './melds.js';
 import {
   findContractLayDown, findHits, scoreDraw, scoreDiscard, evaluateState, WEIGHTS, skipValue,
-  rememberPileTake, forgetPileTakes, PILE_TAKEN_VAR,
+  rememberPileTake, forgetPileTakes, PILE_TAKEN_VAR, rememberDiscard, PILE_THROWN_VAR,
 } from './contract-rummy-bot.js';
 import { arrangeContract, suggestMeld } from './contract-rummy-ui.js';
 
@@ -79,7 +79,7 @@ const contractRummy = {
   // one shared thing: who has been taking cards off the face-up pile, which
   // everyone at the table watched happen. See PILE_TAKEN_VAR for why it is
   // public rather than hidden, and for what it deliberately does not store.
-  publicVars: [PILE_TAKEN_VAR],
+  publicVars: [PILE_TAKEN_VAR, PILE_THROWN_VAR],
 
   defaultZones(rules, seats) {   // eslint-disable-line no-unused-vars
     return [
@@ -297,6 +297,7 @@ const contractRummy = {
       const cardId = move.cards[0];
       const card = ctx.cardById(cardId);
       ctx.moveCards([cardId], ctx.zoneAddr('hand', seat), 'discard');
+      rememberDiscard(ctx, seat, card);
 
       if (ctx.cardIdsIn(ctx.zoneAddr('hand', seat)).length === 0) {
         ctx.endRound(seat);
