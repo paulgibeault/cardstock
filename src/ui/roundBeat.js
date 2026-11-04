@@ -83,6 +83,37 @@ export const MIN_TRICK_REVEAL_MS = 700;
 export const READ_AFTER_LANDING_MS = 500;
 
 /**
+ * How long the PLAY THAT ENDED A HAND stays readable once it has landed, at the
+ * shipped rung — before the plates turn over and the sheet docks over it.
+ *
+ * A round that ends on a played card used to hold for the flight plus 280ms,
+ * which is "it has landed" and not "it has been seen": in Thirteen the hand's
+ * last play is the winning one, and the leftover-hand count opened over the
+ * middle of the felt about 0.7s after it was played (playtest, 2026-10-04 —
+ * "it's important to see the final play"). A closing TRICK already has its own
+ * reading time (`trickRevealPlan`), so this is the same idea for the endings
+ * that are not one.
+ *
+ * Scaled by the rung's `trickReadScale`, the preference that already says how
+ * long a play is looked at. The rung with no clock on the trick (`manual`,
+ * null) reads it at Relaxed's length rather than waiting on a tap: the sheet
+ * that follows already waits for one at that rung, and a tap to open it would
+ * be one more press between every hand. 1500ms makes the default hold
+ * end about when the banner that names the play fades (BANNER_HOLD_MS).
+ */
+export const READ_LAST_PLAY_MS = 1500;
+
+/** The `trickReadScale` the last play is read at when the rung has none. */
+const UNCLOCKED_READ_SCALE = 2;
+
+/** The hold before anything opens over a round's ending. */
+function endingHoldMs(gathered, flightMs, level) {
+  if (gathered) return Math.max(MIN_TRICK_HOLD_MS, flightMs + 640);
+  const read = Math.round(READ_LAST_PLAY_MS * (level.trickReadScale ?? UNCLOCKED_READ_SCALE));
+  return Math.max(MIN_HOLD_MS, flightMs + 280 + read);
+}
+
+/**
  * THE LONGEST A SHARED TABLE WILL HOLD A TRICK, whatever the rung says.
  *
  * The trick hold is purely local and that is what makes a per-device pause safe
@@ -246,15 +277,13 @@ export function roundBeatPlan(events, { flightMs = 0, pace = DEFAULT_PACE } = {}
   const level = paceLevel(pace);
   const gathered = (events || []).some((e) => e.type === 'trickWon');
 
-  // THE HOLD IS NOT SCALED BY THE PACE, and that is deliberate. It is measured
-  // against the FLIGHT — it exists so the last card has landed before anything
-  // asks to be read — and the flight is already the player's own speed setting
-  // (flightDurationMs). A pace rung that shortened it would be a preference for
-  // reading a card that is still in the air. The pace is about the pause
-  // BETWEEN hands, and `instant` is the one rung that says there is not one.
-  const holdMs = level.instant ? 0 : (gathered
-    ? Math.max(MIN_TRICK_HOLD_MS, flightMs + 640)
-    : Math.max(MIN_HOLD_MS, flightMs + 280));
+  // THE LANDING IS NOT SCALED BY THE PACE, and that is deliberate. It is
+  // measured against the FLIGHT — the last card has to have landed before
+  // anything asks to be read — and the flight is already the player's own speed
+  // setting (flightDurationMs). What the rung DOES scale is the reading time
+  // after it (`READ_LAST_PLAY_MS`), the same split the trick hold makes; and
+  // `instant` is the one rung that says there is no pause at all.
+  const holdMs = level.instant ? 0 : endingHoldMs(gathered, flightMs, level);
 
   return {
     roundOver,

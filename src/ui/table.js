@@ -1640,10 +1640,30 @@ function winnerSentence(state) {
  */
 function finalPlaySentence(state, move) {
   if (!move || (move.type !== 'playCard' && move.type !== 'discard')) return '';
-  const card = cardById(state, move.cards && move.cards[0]);
-  if (!card) return '';
+  // EVERY CARD OF IT, not the first: a climbing play is several cards at once,
+  // and "Last card: 5 of hearts" under a run of five named a fifth of it.
+  const cards = (move.cards || []).map((id) => cardById(state, id)).filter(Boolean);
+  if (!cards.length) return '';
   const who = isMySeat(move.actor) ? 'you' : seatLabel(move.actor);
-  return `Last card: ${cardName(card)}, played by ${who}.`;
+  return cards.length === 1
+    ? `Last card: ${cardName(cards[0])}, played by ${who}.`
+    : `Last play: ${cards.map(cardName).join(', ')}, played by ${who}.`;
+}
+
+/**
+ * The part of a move's event window that is the PLAY, before any count of the
+ * hand it ended (`showScored`) or the round boundary itself. Those belong to
+ * the show and the sheet; what comes before them is what was just played.
+ */
+function playedPart(events) {
+  const end = events.findIndex((e) => e.type === 'showScored' || e.type === 'roundOver');
+  return end < 0 ? events : events.slice(0, end);
+}
+
+/** Name the play that ended the match, on the banner and in the log. */
+function sayPlayed(state, events, trick) {
+  const action = celebrateAction(state, playedPart(events), { floor: trick ? TRICK_BANNER_PRIORITY : -1 });
+  if (action) el.log.textContent = action.text;
 }
 
 /**
@@ -1835,6 +1855,9 @@ function afterMove(state, move, from, message, { publish = true } = {}) {
       render(state, message);
       if (!reveal) moveFlight.animateMove(state, move, from);
       closeTrick(state);
+      // The match-winning play, named while it is still on the felt — the same
+      // sentence a hand's last play gets in `settle`.
+      sayPlayed(state, events, trick);
       playWin();
       offerFinalLook(state, move, ending, { ended, events });
     };
@@ -1868,9 +1891,15 @@ function afterMove(state, move, from, message, { publish = true } = {}) {
     // but the card that breaks a suit is very often the fourth card of a trick,
     // and suppressing that banner suppressed the only time the felt ever
     // mentioned the rule (#151). See celebrations.js for the scale.
-    const action = plan && events.some((e) => e.type === 'showScored')
-      ? null
-      : celebrateAction(shown, events, { floor: trick ? TRICK_BANNER_PRIORITY : -1 });
+    //
+    // AND A COUNT NO LONGER SILENCES THE PLAY THAT ENDED THE HAND. The counts
+    // still own everything from the first `showScored` on — they are on the
+    // sheet — but the events BEFORE it are the play itself, in Thirteen the
+    // winning one, and the hold now gives it time to be read
+    // (READ_LAST_PLAY_MS), so it is named.
+    const action = celebrateAction(shown,
+      plan && events.some((e) => e.type === 'showScored') ? playedPart(events) : events,
+      { floor: trick ? TRICK_BANNER_PRIORITY : -1 });
     // The action is the better sentence: "Rook played." says less than nothing
     // next to "You draw 4 and lose your turn", and the log is the live region a
     // screen reader hears.

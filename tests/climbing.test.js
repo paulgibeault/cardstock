@@ -32,6 +32,7 @@ import { cardOrder, rankLadderOf } from "../src/engine/cards.js";
 import { determinizeState } from "../src/engine/determinize.js";
 import { createRng } from "../src/engine/rng.js";
 import { actingSeats } from "./fixtures/engine.js";
+import { zoneBadge, zoneAriaLabel } from "../src/ui/describe.js";
 
 const PACK = "thirteen";
 
@@ -824,7 +825,7 @@ test("only a suited answer is enumerated once the trick has been upgraded", asyn
   // cards being answered, and "Run of 3" would be the same words over a pile a
   // mixed run can beat and a pile only a suited run can.
   const focus = state.pack.template.zoneFocus(makeCtx(state), "pile");
-  assert.strictEqual(focus.label, "Run of 3 in hearts");
+  assert.strictEqual(focus.label, "Flush run ♥ 5–7");
 });
 
 test("the upgrade announces itself exactly once, and names the suit", async () => {
@@ -849,8 +850,10 @@ test("the upgrade announces itself exactly once, and names the suit", async () =
   const say = (viewerSeat) => state.pack.template.describeEvent(upgrade, {
     seatLabel: (s) => (s === viewerSeat ? 'You' : `Seat ${s}`), viewerSeat,
   });
-  assert.match(say(3).text, /You played a run in spades — only suited runs answer it now/);
-  assert.match(say(0).text, /Seat 3 played a run in spades — only suited runs answer it now/);
+  assert.strictEqual(say(3).text,
+    "You played a flush run in spades, 6–8 — only a higher flush run answers it now");
+  assert.strictEqual(say(0).text,
+    "Seat 3 played a flush run in spades, 6–8 — only a higher flush run answers it now");
 
   // ONCE. Every answer from here on is suited too, so a suit carried on all of
   // them would announce the same upgrade once a turn for the rest of the trick.
@@ -1326,4 +1329,66 @@ test("a match plays from the deal to game over, and the lowest total wins", asyn
   const lowest = state.scores.indexOf(Math.min(...state.scores));
   assert.strictEqual(state.scores[state.winner], state.scores[lowest],
     `seat ${state.winner} won on ${state.scores[state.winner]} against a low of ${state.scores[lowest]}`);
+});
+
+/* ------------------------------------------------------------------ *
+ * Playtest 2026-10-04: say which cards, and which hand
+ * ------------------------------------------------------------------ */
+
+test("a chop names what it chopped and what chopped it", async () => {
+  const state = await stacked([
+    ["clubs-3", "spades-2", "hearts-9"],
+    ["spades-10"],
+    ["diamonds-3"],
+    ["hearts-4", "spades-4", "clubs-5", "hearts-5", "clubs-6", "hearts-6", "diamonds-9"],
+  ]);
+  applyMove(state, { actor: 0, type: "playCard", cards: ["spades-2"] });
+  applyMove(state, { actor: 3, type: "playCard",
+    cards: ["hearts-4", "spades-4", "clubs-5", "hearts-5", "clubs-6", "hearts-6"] });
+  const ev = state.events.find((e) => e.type === "combinationPlayed");
+  assert.ok(ev.chopped, "an out-of-shape play did not say it was a chop");
+  const say = (viewerSeat) => state.pack.template.describeEvent(ev, {
+    seatLabel: (s) => (s === viewerSeat ? "You" : `Seat ${s}`), viewerSeat,
+  });
+  assert.strictEqual(say(1).text,
+    "Seat 3 chopped the 2♠ with three pairs in a row, 4s to 6s (6♥ high)!");
+  assert.strictEqual(say(0).tone, "bad", "the seat whose 2 was chopped hears it as bad news");
+  assert.strictEqual(say(3).tone, "good");
+  assert.strictEqual(state.pack.template.zoneFocus(makeCtx(state), "pile").label,
+    "3 pairs in a row 4–6 · 6♥ high");
+});
+
+test("a flush run answering a flush run is still called a flush run", async () => {
+  const state = await stacked([
+    ["clubs-3", "diamonds-4", "hearts-5", "spades-2"],
+    ["spades-9", "spades-10", "spades-J", "hearts-2"],
+    ["diamonds-3"],
+    ["spades-6", "spades-7", "spades-8", "clubs-2"],
+  ]);
+  applyMove(state, { actor: 0, type: "playCard", cards: ["clubs-3", "diamonds-4", "hearts-5"] });
+  applyMove(state, { actor: 3, type: "playCard", cards: ["spades-6", "spades-7", "spades-8"] });
+  applyMove(state, { actor: 2, type: "pass" });
+  applyMove(state, { actor: 1, type: "playCard", cards: ["spades-9", "spades-10", "spades-J"] });
+  const ev = state.events.find((e) => e.type === "combinationPlayed");
+  const said = state.pack.template.describeEvent(ev, { seatLabel: (s) => `Seat ${s}`, viewerSeat: 0 });
+  assert.strictEqual(said.text, "Seat 1 played a flush run in spades, 9–J");
+});
+
+test("the hands on offer are numbered 1, 2, 3 — not all labelled 17", async () => {
+  const state = await dealt(2, "offer-badges");
+  assert.strictEqual(state.turn.phase, "choose");
+  const def = state.zones.defs.get("offer");
+  for (const n of [1, 2, 3]) {
+    const inst = { def, n, address: `offer.${n}` };
+    const badge = zoneBadge(state, inst);
+    assert.strictEqual(badge.text, String(n), "the badge is the hand's number");
+    assert.strictEqual(badge.name, "Hand", "the number is not said twice — \"Hand 1\" over \"1\"");
+    assert.match(zoneAriaLabel(state, inst), new RegExp(`^Hand ${n}, 17 cards, face down\\.`),
+      "the size is still said, to the screen reader");
+  }
+  const seat = state.turn.seat;
+  applyMove(state, { actor: seat, type: "takeHand", from: "offer.2" });
+  const ev = state.events.find((e) => e.type === "handTaken");
+  const said = state.pack.template.describeEvent(ev, { seatLabel: () => "You", viewerSeat: seat });
+  assert.strictEqual(said.text, "You took Hand 2 — 17 cards");
 });

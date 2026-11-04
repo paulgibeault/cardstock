@@ -208,7 +208,7 @@ platform file.
 | `commitPrompt` | `(ctx, seat, voice?) -> {action, staging, waiting, count \| min+max, moveType?} \| null` | `interaction.js`, `table.js` | count and move type read off the enumeration; the button says "Commit" |
 | `poseMove` | `(ctx, move) -> boolean` | `src/ui/table.js` | no pose; the felt paints where the move ENDED |
 | `phraseMove` | `(ctx, move) -> {full, short} \| null` | `src/ui/hint.js` | the platform's own phrasing of the move — see below |
-| `zoneReading` | `(ctx, inst) -> {badge, line?} \| null` | `src/ui/describe.js` | the pile's number is its card count |
+| `zoneReading` | `(ctx, inst) -> {badge, line?, name?, aria?} \| null` | `src/ui/describe.js` | the pile's number is its card count |
 | `committedSelection` | `(ctx, seat) -> cardId[] \| null` | `table.js` | none |
 | `zoneCardOwners` | `(ctx, address) -> (seat\|null)[] \| null` | `src/ui/zoneRenderer.js` | none — a spread zone's cards carry no owner |
 | `contractChips` | `(ctx, seat) -> Chip[] \| null` | `src/ui/contractStrip.js` | none — the strip stays hidden |

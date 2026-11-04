@@ -54,12 +54,12 @@ import {
 } from './climbing-shapes.js';
 import {
   offerZones, beginOffer, validateOffer, applyTakeHand, offerMoves,
-  offerActingSeats, interactionMode, zoneOnFelt, describeOfferEvent, offerRuleLines,
+  offerActingSeats, interactionMode, zoneOnFelt, describeOfferEvent, offerRuleLines, offerReading,
 } from './climbing-offer.js';
 import { WEIGHTS, botHeuristic, evaluateState } from './climbing-bot.js';
 
 /**
- * WHAT THE STANDING COMBINATION IS CALLED — "Pair of 4s", "Run of 5".
+ * WHAT A COMBINATION IS CALLED — "Pair of 7s · 7♥ high", "Flush run ♥ 5–9".
  *
  * The whole of this game is "what am I answering", and the felt used to say it
  * with a number: the pile wore a count of every card played this trick, so a
@@ -67,32 +67,84 @@ import { WEIGHTS, botHeuristic, evaluateState } from './climbing-bot.js';
  * (#122, round-5 item 18). A count cannot answer that question — the SHAPE is
  * what `matchShape` compares — so the pile is named instead.
  *
- * The rank is the top card's, which is also the card being beaten: for every
- * shape this game has, the highest card is what a higher answer has to clear.
- * Ranks are the glyphs the cards themselves print (`A`, `K`, `10`), because
- * that is what a player is reading them off.
+ * AND NAMED DOWN TO THE CARD, because the first cut of this said "Run of 5" and
+ * "Single 9" and the playtest called that absent: suits break every tie in this
+ * game, so the 9♠ and the 9♥ are different things to beat, and a run is
+ * answered by clearing its TOP card — which "Run of 5" never said. So a name
+ * carries the span a run covers and the card an answer has to clear, suit
+ * included, wherever the suit can decide it. A triple and a four of a kind
+ * cannot meet another of the same rank, so they say the rank and stop.
+ *
+ * A FLUSH RUN SAYS SO IN BOTH VOICES (`runUpgrade: "same-suit"`): "Run of 4 in
+ * hearts" read like a description of the cards rather than a different
+ * combination with a different set of answers, which is what it is.
+ *
+ * Built from FACES rather than ids, so the banner — which is handed an event
+ * and no ctx (`describeEvent`) — names a play in exactly the words the pile
+ * does. Ranks are the glyphs the cards print (`A`, `K`, `10`).
+ *
+ * @returns { name, phrase } — `name` is the pile's label, `phrase` is the same
+ *          combination as the object of a sentence ("played a pair of 7s").
  */
+const SUIT_GLYPH = { clubs: '♣', diamonds: '♦', hearts: '♥', spades: '♠' };
+const RANK_PLURAL = { J: 'Jacks', Q: 'Queens', K: 'Kings', A: 'Aces' };
+const COUNT_WORD = { 3: 'three', 4: 'four', 5: 'five', 6: 'six' };
+
+const faceText = (face) => `${face.rank}${SUIT_GLYPH[face.suit] ?? ''}`;
+const plural = (rank) => RANK_PLURAL[rank] ?? `${rank}s`;
+
+/** A combination's cards as public faces, lowest first. */
+function facesOf(ctx, ids) {
+  const ladder = rankLadderOf(ctx.pack);
+  return (ids || []).map((id) => ctx.cardById(id)).filter((card) => card && card.rank != null)
+    .sort((a, b) => cardOrder(a, ladder) - cardOrder(b, ladder))
+    .map((card) => ({ rank: String(card.rank), suit: card.suit }));
+}
+
+export function comboWords({ kind, size, suit = null, faces = [] } = {}) {
+  const low = faces[0];
+  const top = faces[faces.length - 1];
+  const high = top ? `${faceText(top)} high` : '';
+  const count = COUNT_WORD[size] ?? String(size);
+  if (kind === 'single') {
+    return top ? { name: `Single ${faceText(top)}`, phrase: `the ${faceText(top)}` }
+      : { name: 'A single', phrase: 'a single' };
+  }
+  if (kind === 'pair') {
+    return top ? { name: `Pair of ${plural(top.rank)} · ${high}`, phrase: `a pair of ${plural(top.rank)} (${high})` }
+      : { name: 'A pair', phrase: 'a pair' };
+  }
+  if (kind === 'triple') {
+    return top ? { name: `Three ${plural(top.rank)}`, phrase: `three ${plural(top.rank)}` }
+      : { name: 'A triple', phrase: 'a triple' };
+  }
+  if (kind === 'quad') {
+    return top ? { name: `Four ${plural(top.rank)}`, phrase: `four ${plural(top.rank)}` }
+      : { name: 'Four of a kind', phrase: 'four of a kind' };
+  }
+  if (kind === 'run') {
+    const span = top ? `${low.rank}–${top.rank}` : '';
+    if (suit) {
+      const glyph = SUIT_GLYPH[suit] ?? suit;
+      return span ? { name: `Flush run ${glyph} ${span}`, phrase: `a flush run in ${suit}, ${span}` }
+        : { name: `Flush run of ${size} ${glyph}`, phrase: `a flush run of ${size} in ${suit}` };
+    }
+    return span ? { name: `Run ${span} · ${high}`, phrase: `a run, ${span} (${high})` }
+      : { name: `Run of ${size}`, phrase: `a run of ${size}` };
+  }
+  if (kind === 'consecutive-pairs') {
+    return top ? {
+      name: `${size} pairs in a row ${low.rank}–${top.rank} · ${high}`,
+      phrase: `${count} pairs in a row, ${plural(low.rank)} to ${plural(top.rank)} (${high})`,
+    } : { name: `${size} pairs in a row`, phrase: `${count} pairs in a row` };
+  }
+  return null;
+}
+
+/** What the standing combination on the pile is called, or null. */
 function comboName(ctx, combo) {
   if (!combo) return null;
-  const ladder = rankLadderOf(ctx.pack);
-  let best = null;
-  for (const id of combo.cards || []) {
-    const card = ctx.cardById(id);
-    if (card && (!best || cardOrder(card, ladder) > cardOrder(best, ladder))) best = card;
-  }
-  const rank = best?.rank == null ? '' : String(best.rank);
-  // THE SUIT IS PART OF THE NAME once the trick has been upgraded, because it
-  // is part of what has to be answered: "Run of 4" would be the same words over
-  // a pile a plain run can beat and a pile only a suited run can.
-  if (combo.kind === 'run') {
-    return combo.suit ? `Run of ${combo.size} in ${combo.suit}` : `Run of ${combo.size}`;
-  }
-  if (combo.kind === 'consecutive-pairs') return `${combo.size} consecutive pairs`;
-  if (combo.kind === 'single') return rank ? `Single ${rank}` : 'A single';
-  if (combo.kind === 'pair') return rank ? `Pair of ${rank}s` : 'A pair';
-  if (combo.kind === 'triple') return rank ? `Triple ${rank}s` : 'A triple';
-  if (combo.kind === 'quad') return rank ? `Four ${rank}s` : 'Four of a kind';
-  return null;
+  return comboWords({ ...combo, faces: facesOf(ctx, combo.cards) })?.name ?? null;
 }
 
 /* ------------------------------------------------------------------ *
@@ -823,7 +875,7 @@ const climbing = {
         // they have to reverse-engineer from a greyed-out button.
         if (current.suit && !played.suit) {
           return ctx.fail('not-suited',
-            `The ${said} can only be answered by a higher run all of one suit — or pass.`);
+            `The ${said} can only be answered by a higher run all of one suit — a flush run — or pass.`);
         }
         return ctx.fail('not-higher', `That does not beat the ${said}.`);
       }
@@ -886,8 +938,22 @@ const climbing = {
     // Spent, and spent for EVERY seat: the requirement belongs to the opening
     // lead of the hand, not to one seat's next turn.
     for (let s = 0; s < ctx.seats; s++) ctx.setPlayerVar(s, '__mustInclude', null);
+    // OUT OF SHAPE IS A CHOP, and the banner names what was chopped: "played
+    // four 7s" is true and misses the point of the play.
+    const chopped = standing && (standing.kind !== played.kind || standing.size !== played.size)
+      ? {
+        seat: standing.seat, kind: standing.kind, size: standing.size,
+        ...(standing.suit ? { suit: standing.suit } : {}), faces: facesOf(ctx, standing.cards),
+      }
+      : null;
     ctx.emit('combinationPlayed', {
       seat, kind: played.kind, size: played.size, cards: played.cards.slice(),
+      // THE CARDS' FACES, so the sentence can name the play to the card
+      // (`comboWords`) — `describeEvent` is handed the event and no ctx to look
+      // ids up in. Public: they are lying face up on the pile.
+      faces: facesOf(ctx, played.cards),
+      ...(played.suit ? { suit: played.suit } : {}),
+      ...(chopped ? { chopped } : {}),
       // THE MOMENT THE TRICK CHANGED, and only that moment: every answer from
       // here on is suited too (`beatsInShape`), so carrying the suit on all of
       // them would announce the same upgrade once a turn. The suit is a public
@@ -1058,6 +1124,11 @@ const climbing = {
     return counters;
   },
 
+  /** The piles on offer wear their number (./climbing-offer.js, `offerReading`). */
+  zoneReading(ctx, inst) {
+    return offerReading(ctx, inst);
+  },
+
   /**
    * WHICH CARDS IN THE PILE ARE THE THING TO ANSWER, and what they are called.
    *
@@ -1129,22 +1200,29 @@ const climbing = {
     if (ev.type === 'combinationPlayed') {
       // SINGLES SAY SOMETHING TOO. They used to return null, so the banner kept
       // whatever it last had — which is how a pass from three turns ago was
-      // still standing over your own lead (item 22 again).
-      const shape = ev.kind === 'consecutive-pairs' ? `${ev.size} consecutive pairs`
-        : ev.kind === 'single' ? 'a single'
-          : `a ${ev.kind}`;
+      // still standing over your own lead (item 22 again). And every play says
+      // WHICH cards (`comboWords`): "Nell played a run" left the player reading
+      // the pile to find out what the banner was for.
+      const { phrase } = comboWords(ev) || { phrase: 'a combination' };
+      const tone = mine(ev.seat) ? 'good' : (ev.chopped && mine(ev.chopped.seat) ? 'bad' : 'neutral');
+      // A CHOP IS THE LOUDEST THING THAT HAPPENS IN THIS GAME, and the sentence
+      // says what died as well as what killed it.
+      if (ev.chopped) {
+        const victim = comboWords(ev.chopped)?.phrase || 'the combination';
+        return { text: `${who(ev.seat)} chopped ${victim} with ${phrase}!`, tone, priority: 1 };
+      }
       // THE UPGRADE IS THE LOUDER HALF OF THE SENTENCE, because it changes what
-      // everybody else may do next and nothing else on the felt says so: the
-      // pile's name carries the suit from here on, but a player already looking
-      // at their own run needs telling before they gather it.
+      // everybody else may do next: the pile's name says "Flush run" from here
+      // on, but a player already looking at their own run needs telling before
+      // they gather it.
       if (ev.suited) {
         return {
-          text: `${who(ev.seat)} played ${shape} in ${ev.suited} — only suited runs answer it now`,
+          text: `${who(ev.seat)} played ${phrase} — only a higher flush run answers it now`,
           tone: mine(ev.seat) ? 'good' : 'neutral',
           priority: 1,
         };
       }
-      return { text: `${who(ev.seat)} played ${shape}`, tone: 'neutral' };
+      return { text: `${who(ev.seat)} played ${phrase}`, tone: 'neutral' };
     }
     return null;
   },
@@ -1167,8 +1245,8 @@ const climbing = {
     }
     if (rules.bombs?.length) out.push('A bomb can be played out of shape to kill the highest cards.');
     if (rules.runUpgrade === 'same-suit') {
-      out.push('A run all of one suit upgrades the trick, and from then on only a higher run '
-        + 'all of one suit answers it.');
+      out.push('A run all of one suit — a flush run — upgrades the trick, and from then on only a '
+        + 'higher flush run answers it.');
     }
     // The opening lead is a rule about the first turn of a hand, and the felt
     // refuses moves over it, so it says so rather than being discovered.

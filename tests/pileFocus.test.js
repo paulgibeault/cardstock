@@ -89,16 +89,24 @@ test("every shape this game has says what it is", async () => {
   const name = (combo) => pack.template.zoneFocus(
     { ...ctx, var: (k) => (k === "combo" ? combo : ctx.var(k)) }, "pile").label;
 
-  assert.strictEqual(name({ kind: "single", size: 1, cards: ["hearts-9"] }), "Single 9");
-  assert.strictEqual(name({ kind: "pair", size: 2, cards: ["hearts-4", "spades-4"] }), "Pair of 4s");
-  assert.strictEqual(name({ kind: "triple", size: 3, cards: ["hearts-A", "spades-A", "clubs-A"] }), "Triple As");
+  // DOWN TO THE CARD (playtest 2026-10-04: "the labelling here is absent or not
+  // useful"). Suits break every tie, so the card an answer has to clear is
+  // named with its suit wherever another of the same rank could still beat it.
+  assert.strictEqual(name({ kind: "single", size: 1, cards: ["hearts-9"] }), "Single 9♥");
+  assert.strictEqual(name({ kind: "pair", size: 2, cards: ["hearts-4", "spades-4"] }), "Pair of 4s · 4♥ high");
+  assert.strictEqual(name({ kind: "triple", size: 3, cards: ["hearts-A", "spades-A", "clubs-A"] }), "Three Aces");
   assert.strictEqual(name({ kind: "quad", size: 4, cards: ["hearts-2", "spades-2", "clubs-2", "diamonds-2"] }), "Four 2s");
-  assert.strictEqual(name({ kind: "run", size: 3, cards: ["hearts-3", "spades-4", "clubs-5"] }), "Run of 3");
-  assert.strictEqual(name({ kind: "consecutive-pairs", size: 3, cards: [] }), "3 consecutive pairs");
+  assert.strictEqual(name({ kind: "run", size: 3, cards: ["hearts-3", "spades-4", "clubs-5"] }), "Run 3–5 · 5♣ high");
+  assert.strictEqual(name({ kind: "run", size: 3, suit: "hearts", cards: ["hearts-7", "hearts-5", "hearts-6"] }),
+    "Flush run ♥ 5–7");
+  assert.strictEqual(name({ kind: "consecutive-pairs", size: 3,
+    cards: ["hearts-5", "spades-5", "clubs-6", "hearts-6", "diamonds-7", "spades-7"] }),
+  "3 pairs in a row 5–7 · 7♦ high");
+  assert.strictEqual(name({ kind: "consecutive-pairs", size: 3, cards: [] }), "3 pairs in a row");
 
-  // The rank named is the TOP card's, which is the card an answer has to clear —
+  // The card named is the TOP card, which is the card an answer has to clear —
   // not whichever id happens to come first in the array.
-  assert.strictEqual(name({ kind: "pair", size: 2, cards: ["spades-K", "hearts-K"] }), "Pair of Ks");
+  assert.strictEqual(name({ kind: "pair", size: 2, cards: ["hearts-K", "spades-K"] }), "Pair of Kings · K♥ high");
 });
 
 test("no other pack's pile pretends to have one", async () => {
@@ -179,9 +187,11 @@ test("the event that ENDS the move outranks the one that was part of it", async 
 
   // A single used to say nothing, so the banner kept whatever it last had — a
   // pass from three turns ago standing over your own lead.
-  const single = say({ type: "combinationPlayed", seat: 1, kind: "single", size: 1, cards: ["hearts-9"] });
+  const single = say({ type: "combinationPlayed", seat: 1, kind: "single", size: 1, cards: ["hearts-9"],
+    faces: [{ rank: "9", suit: "hearts" }] });
   assert.ok(single && single.text.length, "a single must say something");
-  assert.strictEqual(single.text, "Nell played a single");
+  assert.strictEqual(single.text, "Nell played the 9♥",
+    "the banner names the card, not just the shape");
 });
 
 test("celebrateAction picks the highest priority, not the first sentence", () => {
