@@ -99,6 +99,32 @@ const PIP_LAYOUT = {
 const COURT = new Set(['J', 'Q', 'K']);
 
 /**
+ * THE LARGE FACE: a jumbo-index deck (src/ui/cardStyles/index.js, FACE_SIZES).
+ *
+ * One index, top left, close to twice the standard size, and one big suit in
+ * the opposite corner. The pip layout goes, and that is the trade the whole
+ * option is: on a phone a fanned hand shows the left strip of every card but
+ * the last, so the pips were only ever counted on one card in thirteen while
+ * the index was read on all of them. Here the index gets that room instead.
+ *
+ * NOT MIRRORED. Nothing on this table turns a card upside down, and the second
+ * index would land exactly where the big suit is.
+ *
+ * Geometry, in card units: the rank inks from about y=11 down to its baseline
+ * at 40, the corner suit from about 46 to 70, and the column they share is
+ * x=5..39 — inside the strip a thirteen-card fan leaves showing on a 375px
+ * phone (half a card), and still the left third of it at the fan's tightest.
+ * The big suit takes x=53..89, y=84..120, and the court panel x=52..90: both
+ * kept right of that half-card strip, because a sliver of them showing past
+ * the next card in the fan reads as a stray mark beside the index.
+ */
+const JUMBO_X = 22;
+const JUMBO_RANK = 40;
+const JUMBO_RANK_WIDE = 30;
+const JUMBO_SUIT = 34;
+const JUMBO_BIG = 52;
+
+/**
  * A glyph centred on (cx, cy) rather than sitting on a baseline there.
  *
  * `glyph` is never escaped and never needs to be: it only ever arrives from a
@@ -142,7 +168,31 @@ function courtMotif(rank, glyph, fill, soft) {
   return crest + band + glyphAt(glyph, 50, 63, COURT_SUIT, fill);
 }
 
-export function face(card, theme, muted = false) {
+/** Index top left, big suit bottom right — see the note on JUMBO_X. */
+function largeFace(rank, glyph, ink, paper, muted) {
+  const parts = [cardBase(paper), `<rect x="4.5" y="4.5" width="91" height="131" rx="5.5" fill="none" stroke="${blend(paper, '#000000', 0.07)}" />`];
+  if (!glyph) {
+    // A joker: no suit to print, so the word goes where the index would be and
+    // large across the middle, as it does at the standard size.
+    parts.push(text(rank.slice(0, 5), { x: 9, y: 30, size: 20, fill: ink, anchor: 'start' }));
+    parts.push(text(rank.slice(0, 6), { x: 50, y: 88, size: rank.length > 2 ? 24 : 48, fill: ink }));
+    return parts;
+  }
+  const size = rank.length > 1 ? JUMBO_RANK_WIDE : JUMBO_RANK;
+  parts.push(text(rank, { x: JUMBO_X, y: 40, size, fill: ink, weight: 800, cls: 'cs-text' }));
+  parts.push(glyphAt(glyph, JUMBO_X, 58, JUMBO_SUIT, ink));
+  if (COURT.has(rank)) {
+    // The court still has to read as a court, so its ornament moves into the
+    // open corner on the same washed panel, in place of the big suit.
+    parts.push(`<rect x="52" y="78" width="38" height="53" rx="4" fill="${muted ? blend(paper, ink, 0.08) : shade(ink, 0.92)}" stroke="${ink}" stroke-width="1.4" />`);
+    parts.push(`<g transform="translate(21 51)">${courtMotif(rank, glyph, ink, paper)}</g>`);
+  } else {
+    parts.push(glyphAt(glyph, 71, 102, JUMBO_BIG, ink));
+  }
+  return parts;
+}
+
+export function face(card, theme, muted = false, large = false) {
   const suit = card.suit;
   const glyph = (suit && SUIT_GLYPH[suit]) || '';
   const isRed = suit === 'hearts' || suit === 'diamonds';
@@ -152,6 +202,13 @@ export function face(card, theme, muted = false) {
   const rawInk = suit ? (isRed ? RED : BLACK) : '#3f3f46';
   const ink = muted ? dullInk(rawInk) : rawInk;
   const rank = card.rank == null ? '' : String(card.rank);
+  const tone = suit ? (isRed ? ' card-face--red' : ' card-face--black') : '';
+  const classes = `card-face card-face--classic${tone}${muted ? ' card-face--muted' : ''}`;
+
+  if (large) {
+    return openSvg(`${classes} card-face--large`, cardAriaLabel(card))
+      + largeFace(rank, glyph, ink, paper, muted).join('') + '</svg>';
+  }
 
   // The inner rule and the ace's ellipses are drawn straight onto the paper, so
   // both are blended against it here rather than shipped as alpha (see the
@@ -187,9 +244,7 @@ export function face(card, theme, muted = false) {
     parts.push(text(rank.slice(0, 6), { x: 50, y: 80, size: rank.length > 2 ? 21 : 40, fill: ink }));
   }
 
-  const tone = suit ? (isRed ? ' card-face--red' : ' card-face--black') : '';
-  return openSvg(`card-face card-face--classic${tone}${muted ? ' card-face--muted' : ''}`, cardAriaLabel(card))
-    + parts.join('') + '</svg>';
+  return openSvg(classes, cardAriaLabel(card)) + parts.join('') + '</svg>';
 }
 
 export const defaults = {

@@ -22,10 +22,13 @@
 /**
  * @param effects  what each pause does to the screen:
  *   show(view, { message, dealing })   draw a view on the felt
- *   openSummary({ view, event, ready }) the round sheet, the guest's version
+ *   openSummary({ view, event, ready, events }) the round sheet, the guest's
+ *                                       version — `events` carry the hand's
+ *                                       counts for the sheet and the plates
  *   paintReady(ready)                   the sheet's ready line, refreshed
  *   closeSummary()
- *   showResults(view)                   the match is over
+ *   showResults(view, events)           the match is over
+ *   noteTrick(trickWon, posedView)      keep the trick for the peek (lastTrick.js)
  *   hideResults()
  *   holdMs(events)                      how long the completed trick stays
  *   trickMessage(trickWonEvent)         what the log says while it does
@@ -33,7 +36,7 @@
  */
 export function createGuestBeats(effects) {
   const fx = {
-    paintReady: () => {}, holdMs: () => 0, trickMessage: () => '', ...effects,
+    paintReady: () => {}, holdMs: () => 0, trickMessage: () => '', noteTrick: () => {}, ...effects,
   };
   const queue = [];
   let holding = null; // the trick hold in progress: { handle }
@@ -89,6 +92,7 @@ export function createGuestBeats(effects) {
 
     const trick = events.find((e) => e.type === 'trickWon');
     const posed = meta.poses?.trick;
+    if (trick) fx.noteTrick(trick, posed || null);
     if (trick && posed) {
       fx.show(posed, { message: fx.trickMessage(trick) });
       const mine = generation;
@@ -112,14 +116,14 @@ export function createGuestBeats(effects) {
       fx.show(meta.poses?.final || view, {});
       if (!resultsUp) {
         resultsUp = true;
-        fx.showResults(view);
+        fx.showResults(view, events);
       }
       return;
     }
     if (ended && meta.beat) {
       fx.show(meta.poses?.final || view, {});
       betweenHands = true;
-      fx.openSummary({ view, event: ended, ready: meta.beat.ready || [] });
+      fx.openSummary({ view, event: ended, ready: meta.beat.ready || [], events });
       return;
     }
     // A hand that ended with nobody holding it open (the host is not looking at

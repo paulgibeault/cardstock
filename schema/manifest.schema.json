@@ -1384,7 +1384,8 @@
             "properties": {
               "shape": {
                 "type": "string",
-                "pattern": "^(single|pair|triple|quad|run|consecutive-pairs)(\\([0-9]+\\))?$"
+                "pattern": "^(single|pair|triple|quad|run|consecutive-pairs)(\\([0-9]+\\))?(:.+)?$",
+                "description": "The bomb's shape, optionally narrowed by a card selector after a colon that EVERY card must match ('quad:tag:royal' is four of a kind in a rank tagged royal), so one shape can sit on the ladder twice with a longer list for its stronger form."
               },
               "beats": {
                 "type": "array",

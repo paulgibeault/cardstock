@@ -198,83 +198,94 @@ test("the reveal's sentence follows the price, and its tone follows the viewer",
   assert.strictEqual(say({ seat: 1, isCrib: false, points: 8, parts: [] }), null, "a cribbage count is the template's sentence");
 });
 
-// DRIVEN SINCE #223. The step player — the one thing that turns these events into
-// a held card, asks the platform for the sentence, and lights the hand rather than
-// a play pile — used to be pinned by reading table.js's source, because nothing
-// could load it. `playShowStep` is the round ending's now, so it can be run.
-test("the step player says a reveal in the platform's words and lights the right zone", async () => {
-  const lit = [];
+// DRIVEN SINCE #223. The counts used to be played one floating card at a time
+// (`playShowStep`); they now all go on the docked sheet at once and the plates
+// turn over (src/ui/inspection.js). What each count SAYS is still the platform's
+// for a reveal and the template's for its own count, and that is what this pins.
+test("the sheet's counts say a reveal in the platform's words, and a plate turns over its own hand", async () => {
   const state = stubState({
     seats: 4,
-    // A card for every id the steps below name, so the show card is drawable.
-    pack: { id: "p", manifest: { name: "P" }, template: {} },
+    pack: { id: "p", manifest: { name: "P" }, template: {}, cardsById: new Map() },
   });
   const h = roundEndingHarness({
     state,
     cardById: (_s, id) => ({ id, rank: "5", suit: "hearts" }),
-    zoneStackNode: (address) => { lit.push(address); return null; },
   });
 
   // A PENALTY REVEAL: the platform priced the cards, so the platform has the
-  // sentence (revealSentence) and knows the pile — the seat's own WON pile.
-  h.ending.playShowStep(state, {
-    seat: 1, reason: "taken", n: 3, points: 9, cards: ["c1", "c2"], parts: [],
-  });
-  assert.deepStrictEqual(lit, ["won.1"],
-    "a reveal's cards are in the seat's own won pile, which the platform priced "
-    + "and therefore knows");
-  assert.strictEqual(h.said.at(-1),
-    revealSentence({ seat: 1, reason: "taken", n: 3, points: 9 },
+  // sentence (revealSentence) — and its title says what it shows.
+  const [taken] = h.ending.countModels(state, [
+    { seat: 1, reason: "taken", n: 2, points: 9, cards: ["c1", "c2"], parts: [] },
+  ]);
+  assert.strictEqual(taken.aria,
+    revealSentence({ seat: 1, reason: "taken", n: 2, points: 9 },
       { label: (s) => `Seat ${s}`, possessive: (s) => `Seat ${s}'s`, viewerSeat: 0 }).text,
     "the sentence must be the platform's own, not a number in a sentence of the felt's");
+  assert.strictEqual(taken.title, "Seat 1's penalty cards");
+  assert.deepStrictEqual(taken.ids, ["c1", "c2"], "the count lights the cards it priced");
+  assert.strictEqual(taken.faces.length, 2);
 
-  // A HAND REVEAL lights the hand instead, off the same one branch.
-  lit.length = 0;
-  h.ending.playShowStep(state, {
-    seat: 2, reason: "held", n: 2, points: 4, cards: ["c3"], parts: [],
-  });
-  assert.deepStrictEqual(lit, ["hand.2"]);
+  // AND A ZERO IS "nothing" RATHER THAN A NUMBER on a reveal (#189).
+  const [zero] = h.ending.countModels(state, [
+    { seat: 2, reason: "leftover", n: 1, points: 0, cards: ["c3"], parts: [] },
+  ]);
+  assert.strictEqual(zero.zeroLabel, "nothing");
 
-  // AND A ZERO IS "nothing" RATHER THAN A NUMBER on a reveal's card (#189).
-  const card = h.calls.filter((c) => c[0] === "showShowCard").at(-1)[1];
-  assert.strictEqual(card.zeroLabel, "nothing");
+  // THE PLATE: while the hand is held open, a seat's plate turns over the hand
+  // it was left holding, with a chip for what it cost.
+  const ended = {
+    ...state,
+    zones: {
+      has: (a) => a === "hand.2",
+      cards: (a) => (a === "hand.2" ? ["c3", "c4"] : []),
+    },
+  };
+  assert.strictEqual(h.ending.revealOf(ended, 2), null, "no plate turns over before the hand is held open");
+  h.session.inspection = {
+    counts: [{ seat: 2, reason: "leftover", n: 2, points: 2, cards: ["c3", "c4"], parts: [] }],
+  };
+  const plate = h.ending.revealOf(ended, 2);
+  assert.deepStrictEqual(plate.cards, ["c3", "c4"]);
+  assert.strictEqual(plate.kind, "hand");
+  assert.strictEqual(plate.chip.text, "2 points");
+  // A REVIEW IS ITS OWN LENS: a position scrubbed to from the sheet is not the
+  // ending, and nothing turns over on it.
+  h.session.review = { state: ended };
+  assert.strictEqual(h.ending.revealOf(ended, 2), null);
+  h.session.review = null;
+  // Let go of the ending, and every plate is backs again.
+  h.ending.releaseRoundEnding();
+  assert.strictEqual(h.ending.revealOf(ended, 2), null);
 
-  // ...AND THE OTHER HALF OF THE SAME BRANCH IS THE TEMPLATE'S (#219). A step
-  // with no `reason` is a template's own count, and staging one used to mean
-  // spelling out four of cribbage's zone ids and two of its nouns in the felt:
-  // `'show'`/`'crib'` for the pose, `'show'` or `play.<seat>` for the spotlight,
-  // `'starter'` for the cut, and "crib"/"hand" for the sentence. `showStepOf` is
-  // the hook, and it is importable, so this asks it rather than reading it.
+  // ...AND THE TEMPLATE'S OWN COUNT IS STAGED BY THE TEMPLATE (#219). `showStep`
+  // names what the pile is called and which card is the shared cut, which every
+  // part of a cribbage count may use — so the cut's id is appended for the parts
+  // to point at by position.
   const staged = {
     pack: {
       template: {
         showStep: (_ctx, step) => (step.isCrib
-          ? { what: "crib", spotlight: "show", pose: { from: "show", to: "crib" }, starterId: "s1" }
-          : { what: "hand", spotlight: `play.${step.seat}`, starterId: "s1" }),
+          ? { what: "crib", starterId: "s1" }
+          : { what: "hand", starterId: "s1" }),
       },
     },
   };
-  assert.deepStrictEqual(showStepOf(staged, { seat: 0, isCrib: true }).pose,
-    { from: "show", to: "crib" },
-    "the template must be the one that says which cards go back where");
-  assert.strictEqual(showStepOf(staged, { seat: 3, isCrib: false }).spotlight, "play.3");
+  assert.strictEqual(showStepOf(staged, { seat: 0, isCrib: true }).what, "crib");
   assert.strictEqual(showStepOf(null, { seat: 0 }), null);
   assert.strictEqual(showStepOf(staged, null), null);
   // A hook that throws is a bug worth surviving: the round is over either way.
   assert.strictEqual(
     showStepOf({ pack: { template: { showStep: () => { throw new Error("no"); } } } }, { seat: 0 }),
     null);
-  // And a template with no opinion is the platform's own reveal, which is what
-  // every other pack's round ending is.
   assert.strictEqual(showStepOf({ pack: { template: {} } }, { seat: 0 }), null);
-
-  // THE FELT ASKS, and the spotlight it lights for a template's count is the
-  // template's answer rather than one of cribbage's zone ids.
-  lit.length = 0;
-  h.ending.playShowStep({ ...state, ...staged, pack: { ...state.pack, ...staged.pack } },
-    { seat: 3, isCrib: false, points: 8, cards: ["c4"], parts: [] });
-  assert.deepStrictEqual(lit, ["play.3"],
-    "the felt is picking the zone to light for a template's count itself again");
+  const [crib] = h.ending.countModels({ ...state, ...staged, pack: { ...state.pack, ...staged.pack } }, [
+    { seat: 3, isCrib: true, points: 4, cards: ["c5", "c6"], parts: [{ kind: "fifteen", points: 2, at: [1, 2] }] },
+  ]);
+  assert.strictEqual(crib.title, "Seat 3's crib");
+  assert.deepStrictEqual(crib.ids, ["c5", "c6", "s1"], "the cut is drawn with the count it scores in");
+  assert.deepStrictEqual(crib.parts[0].ids, ["c6", "s1"],
+    "a part's positions run over the count's cards with the cut appended");
+  assert.ok(crib.faces.at(-1).starter, "the cut is marked as the cut");
 
   // Comments stripped for the negative half: the fix is documented beside where
   // the old code was, and a gate that fires on prose about itself teaches people

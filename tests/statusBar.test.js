@@ -41,11 +41,12 @@ test('the bar names whose turn it is, and nobody during a beat', async () => {
   assert.equal(say([0]), 'Your turn');
   assert.equal(say([1], { ...state, turn: { ...state.turn, seat: 1 } }), "Fig's turn");
 
-  // THE ROUND BEAT IS NOBODY'S TURN, and it promises the tap exactly while a
-  // count is waiting for one (#181) — three motionless counts read as a hang.
+  // THE ROUND BEAT IS NOBODY'S TURN, and it promises no tap: the counts go on
+  // the docked sheet all at once (src/ui/inspection.js) and its Deal button is
+  // the one way on — a stray resume left over from a trick changes nothing.
   h.session.roundBeat = true;
   h.session.beatResume = () => {};
-  assert.equal(say([0]), 'Round over. Tap to go on.');
+  assert.equal(say([0]), 'Round over.');
   h.session.beatResume = null;
   assert.equal(say([0]), 'Round over.');
   h.session.roundBeat = false;

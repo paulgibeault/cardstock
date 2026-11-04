@@ -27,9 +27,11 @@ import { SKILL_LEVELS, skillLevel } from './difficulty.js';
 import { PACE_LEVELS, paceLevel } from './pace.js';
 import { SPEED_LEVELS, speedLevel, speedForDelay } from './speed.js';
 import { loadSettings } from '../arcade/storage.js';
+import { safeAccent } from './css.js';
 
 const el = {
   overlay: document.getElementById('new-game-overlay'),
+  panel: document.getElementById('new-game-panel'),
   title: document.getElementById('new-game-title'),
   body: document.getElementById('new-game-body'),
   deal: document.getElementById('new-game-deal'),
@@ -123,7 +125,15 @@ export function askNewGame(manifest) {
   // range is a manifest bug that should not become a table nobody can seat.
   const preferred = Math.max(min, Math.min(max, players.best ?? 3));
 
-  el.title.textContent = `New ${manifest.name} game`;
+  // The pack's NAME is the title and "New game" is the eyebrow over it, so the
+  // sheet leads with the game being dealt. The header is washed in the pack's
+  // own accent — the colour its lobby tile wears — so the sheet reads as that
+  // tile opening rather than as a generic form. Hex-gated (§7b): a manifest
+  // colour reaches a style property here.
+  el.title.textContent = manifest.name || 'New game';
+  const accent = safeAccent(manifest.accent, null);
+  if (accent) el.panel.style.setProperty('--sheet-accent', accent);
+  else el.panel.style.removeProperty('--sheet-accent');
   el.body.replaceChildren();
 
   let seats = preferred;

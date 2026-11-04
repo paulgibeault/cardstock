@@ -306,16 +306,11 @@ export function createStatusBar({
     // "Your turn" over a table where the player's hand was empty and nothing was
     // tappable. It is not a turn; it is the end of the hand.
     //
-    // AND WHAT CONTINUES IT, WHEN THE COUNT IS WAITING FOR A PERSON (#181). The
-    // gate is the tell rather than the rung: `session.beatResume` is set during
-    // the round beat by exactly one thing, a count of a show that has no clock on
-    // it (runShowSequence), so this promises the tap at precisely the moments a
-    // tap is the only thing there is. Three motionless counts read as a hang
-    // otherwise — the same sentence the trick hold says below, for the same
-    // reason, and #log carries the whole of it.
-    if (session()?.roundBeat) {
-      return session().beatResume ? 'Round over. Tap to go on.' : 'Round over.';
-    }
+    // NO TAP TO PROMISE ANY MORE. The counts of a show used to wait for one each
+    // (#181) and this bar said so; they now go on the docked sheet all at once
+    // (src/ui/inspection.js), whose Deal button is the one way on and says so
+    // itself.
+    if (session()?.roundBeat) return 'Round over.';
     // THE TRICK BEAT IS NOBODY'S TURN EITHER (#123). The posed position's `turn`
     // is still on whoever played the fourth card — the trick has not been
     // resolved on this copy — so the bar would read "Your turn" over four cards

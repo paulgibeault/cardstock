@@ -333,8 +333,10 @@ test("the speed is read from storage, not from a snapshot the lobby cannot refre
   // AND ACROSS EVERY FILE CARVED OUT OF table.js (#223): the round beat's flight
   // is asked in src/ui/roundEnding.js, a move's own in src/ui/moveFlight.js, and
   // the definition lives in src/ui/statusBar.js (seam 7). Seven since #283: a
-  // guest's trick hold is planned off the same live flight as the host's.
-  assert.strictEqual((code.match(/currentFlightMs\(\)/g) || []).length, 7,
+  // guest's trick hold is planned off the same live flight as the host's. Six
+  // since the hand is held open all at once (src/ui/inspection.js): the final
+  // show had a plan of its own and no longer does.
+  assert.strictEqual((code.match(/currentFlightMs\(\)/g) || []).length, 6,
     "every flight-duration call site must ask currentFlightMs, plus its own definition — "
     + "a site left on the snapshot is a card that still flies at the stale rung");
   // The bot driver asks at fire time, the way `difficulty` beside it does (#91) —

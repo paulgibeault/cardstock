@@ -42,6 +42,8 @@
   --chrome-text: #ffffff;
   --chrome-bar: rgba(0, 0, 0, 0.25);
   --accent: #ffd166;
+  /* Text ON an accent fill — a pressed choice, a selected segment. */
+  --accent-text: #10240f;
   --hint: #7cc4ff;
   /* YOUR PARTNER'S CHAIR (src/ui/seatRing.js). Its own colour rather than
      `--accent`, which already means "it is this seat's turn" one plate over —
@@ -126,6 +128,7 @@
   --chrome-text: #14261c;
   --chrome-bar: rgba(255, 255, 255, 0.6);
   --accent: #9a6400;
+  --accent-text: #ffffff;
   --hint: #7cc4ff;
   --partner: #5b3fa8;
   --glow: rgba(20, 38, 28, 0.25);

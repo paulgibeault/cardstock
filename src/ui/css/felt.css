@@ -753,11 +753,20 @@ button.pile-stack:focus-visible { outline: 2px solid var(--accent); outline-offs
 .pile-stack--deep::before { transform: translate(3px, 3px); }
 .pile-stack--deep::after { transform: translate(1.5px, 1.5px); }
 
-.card-face--empty {
+/* AN EMPTY SLOT IS A WELL IN THE FELT, NOT A BOX ON IT. It used to be a 2px
+   dashed outline that also wore every card's drop shadow (`.card-face` in
+   responsive.css), so an empty trick read as a raised, unfinished object — the
+   loudest thing on a felt with nothing on it. Pressed in instead: a faint
+   darker floor and an inset shadow, which is how a card-sized dip in cloth
+   looks. Both selectors, because responsive.css is linked last and its plain
+   `.card-face` shadow would otherwise win. Static paint, nothing composited. */
+.card-face.card-face--empty {
   width: 100%;
   height: 100%;
   border-radius: 8px;
-  border: 2px dashed var(--chip-border);
+  border: 1px solid var(--chip-border);
+  background: rgba(0, 0, 0, 0.1);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.22);
 }
 
 .pile-stack__card {
@@ -1156,7 +1165,7 @@ body.is-dragging .card-face { cursor: grabbing; }
 
 .pile--mini { --pile-w: var(--seat-pile-w, 34px); }
 .pile--mini .pile-stack { border-radius: 4px; }
-.pile--mini .card-face--empty { border-width: 1px; border-radius: 4px; }
+.pile--mini .card-face.card-face--empty { border-radius: 4px; }
 
 /* A hidden per-player pile (Hearts' won tricks) as a text chip: count and,
    when the pack scores it, what it is costing so far. */

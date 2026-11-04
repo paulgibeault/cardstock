@@ -22,8 +22,8 @@ import {
   getMeldGroups, meldDisplayOrder, meldKindOf, pinnedAttr, wildHitValues,
 } from './melds.js';
 import {
-  findContractLayDown, findHits, scoreDraw, scoreDiscard, evaluateState, WEIGHTS,
-  rememberPileTake, forgetPileTakes, PILE_TAKEN_VAR,
+  findContractLayDown, findHits, scoreDraw, scoreDiscard, evaluateState, WEIGHTS, skipValue,
+  rememberPileTake, forgetPileTakes, PILE_TAKEN_VAR, rememberDiscard, PILE_THROWN_VAR,
 } from './contract-rummy-bot.js';
 import { arrangeContract, suggestMeld } from './contract-rummy-ui.js';
 
@@ -79,7 +79,7 @@ const contractRummy = {
   // one shared thing: who has been taking cards off the face-up pile, which
   // everyone at the table watched happen. See PILE_TAKEN_VAR for why it is
   // public rather than hidden, and for what it deliberately does not store.
-  publicVars: [PILE_TAKEN_VAR],
+  publicVars: [PILE_TAKEN_VAR, PILE_THROWN_VAR],
 
   defaultZones(rules, seats) {   // eslint-disable-line no-unused-vars
     return [
@@ -297,6 +297,7 @@ const contractRummy = {
       const cardId = move.cards[0];
       const card = ctx.cardById(cardId);
       ctx.moveCards([cardId], ctx.zoneAddr('hand', seat), 'discard');
+      rememberDiscard(ctx, seat, card);
 
       if (ctx.cardIdsIn(ctx.zoneAddr('hand', seat)).length === 0) {
         ctx.endRound(seat);
@@ -537,8 +538,22 @@ const contractRummy = {
     for (const cardId of hand) {
       const card = ctx.cardById(cardId);
       if (hasKnownEffect(card, 'discard')) {
+        // MOST THREATENING TARGET FIRST. The lookahead cannot tell skip targets
+        // apart — the turn advance consumes the flag at once when the target
+        // sits next — so ties fall to this order, and seat order sent every
+        // skip at seat 0, the host, already skipped or not. `skipValue` puts
+        // the seat nearest going out first and an already-skipped seat last.
+        const targets = [];
         for (let target = 0; target < ctx.seats; target++) {
-          if (target === seat) continue;
+          if (target !== seat) targets.push(target);
+        }
+        // A seat already skipping its next turn is not offered while another
+        // target exists: the flag is a boolean, so that skip is a wasted card,
+        // and offering it only lets a persona's slip pick it.
+        const value = new Map(targets.map((t) => [t, skipValue(ctx, seat, t)]));
+        targets.sort((a, b) => value.get(b) - value.get(a));
+        const live = targets.filter((t) => !ctx.playerVar(t, 'skipNextTurn'));
+        for (const target of (live.length ? live : targets)) {
           moves.push({ actor: seat, type: 'discard', cards: [cardId], choice: { target } });
         }
       } else {

@@ -528,56 +528,128 @@ button.tile__daily:hover { background: var(--ghost-hover); }
  * ------------------------------------------------------------------ */
 
 .new-game__body {
-  max-height: min(58vh, 30rem);
+  /* As tall as the window allows once the head and the Deal row are paid for
+     (about 17rem between them), rather than a flat 58vh that scrolled a
+     four-row sheet on a desktop window with room to spare. */
+  max-height: max(12rem, calc(100dvh - 17rem));
   overflow-y: auto;
   text-align: left;
-  margin-bottom: 1rem;
+  margin: 0 -0.25rem 0.6rem;
+  padding: 0 0.25rem 1.25rem;
+}
+/* "THERE IS MORE BELOW", said softly. A sticky strip at the foot of the
+   scrollport fades the last line into the panel instead of slicing a sentence
+   in half at the Deal button. The body's bottom padding is exactly this
+   strip's height, so scrolled to the end it covers nothing but that padding.
+   One static gradient: no scroll listener, nothing repaints at rest. */
+.new-game__body::after {
+  content: '';
+  display: block;
+  position: sticky;
+  bottom: -1.25rem;
+  height: 1.75rem;
+  margin-top: -0.5rem;
+  pointer-events: none;
+  background: linear-gradient(to bottom, transparent, var(--panel-bg));
+}
+
+/* THE SHEET IS THE TILE, OPENED. A wash of the pack's own accent across the
+   head of the panel (set from the manifest in src/ui/newGame.js, falling back
+   to the table accent) and the pack's name as the title, with "New game" as
+   the eyebrow over it — the same colour and the same name the player just
+   tapped, so the sheet reads as that game's rather than as a form. */
+.panel.new-game {
+  --sheet-accent: var(--accent);
+  width: min(26rem, 100%);
+  padding-top: 1.25rem;
+  background:
+    linear-gradient(to bottom,
+      color-mix(in srgb, var(--sheet-accent) 26%, var(--panel-bg)) 0,
+      var(--panel-bg) 6.5rem);
+  border-top: 3px solid var(--sheet-accent);
+}
+.new-game__eyebrow {
+  margin: 0;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  opacity: 0.65;
+}
+.new-game__title {
+  font-size: 1.45rem;
+  font-weight: 700;
+  margin: 0.1rem 0 1.1rem;
 }
 
 .new-game__heading {
-  margin: 1rem 0 0.5rem;
-  font-size: 0.78rem;
+  margin: 0.85rem 0 0.45rem;
+  font-size: 0.72rem;
   font-weight: 700;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
   opacity: 0.6;
 }
 .new-game__heading:first-child { margin-top: 0; }
 
+/* A SEGMENTED CONTROL, NOT A ROW OF CHIPS. One track per question with its
+   answers as equal segments across the full width, so every row in the sheet
+   lines up with the next and the choice reads as "one of these" at a glance.
+   The four rows share the look on purpose — see the twin note below. */
 .new-game__seats,
-.new-game__skills { display: flex; flex-wrap: wrap; gap: 0.4rem; }
-
-/* The difficulty row is the seat row's twin on purpose: same chip, same
-   pressed state, so the sheet reads as one set of choices rather than as two
-   controls that happen to share a panel. Only the width differs — these hold
-   a word, not a digit. */
-.new-game__skill { min-width: 4.5rem; }
-
-.new-game__seat,
-.new-game__skill {
-  min-width: 2.2rem;
-  padding: 0.35rem 0.5rem;
-  font: inherit;
-  font-weight: 700;
-  color: var(--panel-text);
+.new-game__skills {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 3px;
+  padding: 3px;
+  border-radius: 11px;
   background: var(--chip-bg);
   border: 1px solid var(--chip-border);
+}
+
+/* The difficulty row is the seat row's twin on purpose: same segment, same
+   pressed state, so the sheet reads as one set of choices rather than as two
+   controls that happen to share a panel. */
+.new-game__seat,
+.new-game__skill {
+  min-width: 0;
+  padding: 0.5rem 0.25rem;
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--panel-text);
+  background: transparent;
+  border: 0;
   border-radius: 8px;
   cursor: pointer;
 }
+.new-game__seat:hover,
+.new-game__skill:hover { background: var(--ghost-hover); }
+.new-game__seat:focus-visible,
+.new-game__skill:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .new-game__seat[aria-pressed="true"],
 .new-game__skill[aria-pressed="true"] {
   background: var(--accent);
-  border-color: var(--accent);
-  color: #10240f;
+  color: var(--accent-text);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
 }
 
 .new-game__seat-count {
   display: block;
   margin-top: 0.45rem;
   font-size: 0.8rem;
-  opacity: 0.7;
+  line-height: 1.35;
+  opacity: 0.72;
+  /* TWO LINES RESERVED, so tapping a rung whose sentence is longer than the
+     last one's does not shove every row below it down under the finger. */
+  min-height: 2.7em;
 }
+/* The house-rule rows already carry their own padding below. */
+.new-game__row + .new-game__heading { margin-top: 1rem; }
 
 /* A whole row is the hit target, not just the box — a 13px checkbox is not a
    touch target, and this sheet is used on a phone. */
@@ -591,7 +663,12 @@ button.tile__daily:hover { background: var(--ghost-hover); }
 }
 .new-game__row:hover { background: var(--ghost-hover); }
 
-.new-game__check { margin-top: 0.2rem; flex: none; width: 1rem; height: 1rem; }
+.new-game__check { margin-top: 0.2rem; flex: none; width: 1.1rem; height: 1.1rem; accent-color: var(--accent); }
 .new-game__text { display: flex; flex-direction: column; gap: 0.15rem; }
 .new-game__name { font-size: 0.92rem; font-weight: 600; }
 .new-game__desc { font-size: 0.8rem; opacity: 0.72; line-height: 1.4; }
+
+/* THE DEAL IS THE SHEET'S ONE LOUD THING: full width, at the bottom, where a
+   thumb already is. Cancel stays a quiet button beside the way out. */
+.new-game__actions { flex-wrap: nowrap; }
+.new-game__actions .panel-primary { flex: 1; }

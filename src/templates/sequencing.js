@@ -312,9 +312,24 @@ const DISCARD_WILD = 5;
  * holds, and throwing the wild). The full order, worst first:
  *
  *   pass −10 · wild discard −6 · duplicate −2.5 · {wasted play, burying} −2
- *   · open pile −1 · sequence 0 · every play 0.7 … 6.6
+ *   · open pile −1 · sequence 0 · idle play 0.5 · every play 0.7 … 6.6
  */
 const WASTED_HAND_PLAY = -2;
+/**
+ * The same hand play when it leaves the pile on a rank NO opponent's stock is
+ * waiting for: above every discard, below every play that is going somewhere.
+ *
+ * It used to be WASTED_HAND_PLAY too, and playtests read the result as a bot
+ * that cannot see the board: it discarded cards it could plainly play, about
+ * one discard in seven at `easy`. A play that helps nobody still takes a card
+ * out of the hand (the hand refills to five next turn, so that is a fresh
+ * card) and leaves the discard piles unburied. Measured against the old band
+ * at `easy` (2026-11-02), seats alternating, same seeds: 58.0% of 1500 two-seat
+ * games against a 50.3% same-vs-same control, and 56.2% of 600 four-seat
+ * games against 46.8%. The plays that set up a rival keep the old penalty,
+ * which is what stops this from feeding the build piles dry (see above).
+ */
+const IDLE_HAND_PLAY = 0.5;
 
 /** Would one more card fill this pile and sweep it back into circulation? */
 function completesPile(ctx, buildAddr) {
@@ -345,7 +360,7 @@ function scorePlayMove(ctx, move) {
   // Stock and discard-pile plays are never withheld: one is the race and the
   // other frees a card that was already out of circulation.
   if (kind === 'hand' && !completesPile(ctx, move.to) && mine !== null && wants > mine) {
-    return WASTED_HAND_PLAY;
+    return rivalStockRanks(ctx, move.actor).has(wants) ? WASTED_HAND_PLAY : IDLE_HAND_PLAY;
   }
   let score = PLAY_FROM[kind] ?? PLAY_FROM.hand;
   if (mine !== null && wants === mine) return score + SETS_UP_OWN_PLAY;

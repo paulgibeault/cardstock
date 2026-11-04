@@ -47,8 +47,8 @@ import { currentPace } from './roundEnding.js';
  *
  * The panel doors go IN rather than being imported here: src/ui/panels.js
  * resolves its own element ids at import time, like table.js (see
- * src/ui/roundEnding.js). The same goes for `hideBanner` and `hideShowCard`,
- * which are table.js's one banner slot.
+ * src/ui/roundEnding.js). The same goes for `hideBanner`, which is table.js's
+ * one banner slot.
  *
  * @param deps.el        table.js's element table; this reads `log` and the
  *                       reel's six (`reviewBar`, `reviewPrevHand`,
@@ -61,7 +61,7 @@ import { currentPace } from './roundEnding.js';
 export function createReviewController({
   el, session, roundEnding, liveState, feltState, render, seatLabel, mySeat, cardById, art,
   cancelBotTurn, cancelAnnouncementBeats, scheduleNextTurn, scheduleAnnouncementBeats,
-  hideBanner, hideShowCard,
+  hideBanner,
   showGameOver, hideGameOver, hideScoreboard, hideRoundSummary, paintRoundPace,
   showReviewMap, hideReviewMap, isReviewMapOpen, isReviewDrawerOpen, reviewMapNode,
 }) {
@@ -141,7 +141,6 @@ export function createReviewController({
     review.state = review.lens === 'own'
       ? modelFromView(viewFor(whole, mySeat()), live.pack)
       : whole;
-    hideShowCard();
     render(review.state);
     paintReviewBar();
     // The map follows the felt, in place: the drawer stays open across a whole

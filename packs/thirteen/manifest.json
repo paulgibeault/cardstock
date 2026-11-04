@@ -3,7 +3,7 @@
   "name": "Thirteen",
   "version": "0.1.0",
   "players": {
-    "min": 2, "max": 4, "best": 4,
+    "min": 2, "max": 4, "best": 2,
     "notes": { "2": "Three face-down hands of 17 — you pick one each, and the third is set aside." }
   },
   "deck": "standard-52",
@@ -15,7 +15,7 @@
     "The 2 is the highest card in the game and the 3 is the lowest, which is the opposite of nearly every other game on this shelf. Suits break every tie — spades lowest, then clubs, diamonds, hearts — so no two cards are equal and there is always an answer or a pass. The lowest card in play says who leads every hand — the 3♠ at a full table — and the felt says who has it as the cards land. The lead itself is free: open with anything legal. Switch on \"The opening lead must contain the lowest card\" for the stricter traditional rule.",
     "By default a pass only skips your turn and you are asked again when the play comes back round. Switch off \"Passing keeps you in the trick\" for the stricter rule, where a pass puts you out of the trick for good and passing early to keep a run together is a real decision rather than a shrug.",
     "A run all of one suit upgrades the trick. Play 5♥ 6♥ 7♥ over a mixed run of three and the felt says so, and from that point on nothing but another run all of one suit — same length, higher — is a legal answer. Suits are part of the ladder, so a suited run in hearts beats one in spades of the same ranks, and a hand with a flush run in it is worth holding together.",
-    "The bombs are the point of the game. Three consecutive pairs kill a lone 2, four of a kind kills a pair of them, and a chop can itself be chopped — which is why holding the highest card in the deck is not the free win the ladder makes it look.",
+    "The bombs are the point of the game, and they exist to kill 2s. Three or more consecutive pairs, or any four of a kind, kill a lone 2. A pair of 2s takes a royal bomb: consecutive pairs made only of jacks, queens, kings and aces (J-J Q-Q K-K, say), or four of a royal rank. Bombs do not chop each other — a bomb is only answered by a higher one of its own shape — and nothing at all beats three 2s. That is why holding the highest card in the deck is not the free win the ladder makes it look.",
     "Two-handed, the deal is different. Dealing thirteen each would leave half the deck unseen by anybody, so instead the whole pack goes into three face-down hands of seventeen (with one odd card set aside) and you take one each — the third hand sits out. Whoever lost the last hand picks first, and the first hand of a match is a coin toss; the lowest card in play still leads either way, so the pick and the lead tend to fall on opposite sides of the table."
   ],
   "accent": "#c2562a",
@@ -24,6 +24,12 @@
     { "rank": "3", "suit": "spades" },
     { "rank": "A", "suit": "diamonds" }
   ],
+  "cardTags": {
+    "rank:J": ["royal"],
+    "rank:Q": ["royal"],
+    "rank:K": ["royal"],
+    "rank:A": ["royal"]
+  },
   "rules": {
     "deal": 13,
     "offer": { "atSeats": 2, "piles": 3 },
@@ -34,9 +40,12 @@
     "runUpgrade": "same-suit",
     "bombs": [
       { "shape": "consecutive-pairs(3)", "beats": ["single:rank:2"] },
-      { "shape": "quad", "beats": ["single:rank:2", "pair:rank:2", "consecutive-pairs(3)"] },
-      { "shape": "consecutive-pairs(4)", "beats": ["single:rank:2", "pair:rank:2", "consecutive-pairs(3)", "quad"] },
-      { "shape": "consecutive-pairs(5)", "beats": ["*"] }
+      { "shape": "consecutive-pairs(4)", "beats": ["single:rank:2"] },
+      { "shape": "consecutive-pairs(5)", "beats": ["single:rank:2"] },
+      { "shape": "quad", "beats": ["single:rank:2"] },
+      { "shape": "consecutive-pairs(3):tag:royal", "beats": ["single:rank:2", "pair:rank:2"] },
+      { "shape": "consecutive-pairs(4):tag:royal", "beats": ["single:rank:2", "pair:rank:2"] },
+      { "shape": "quad:tag:royal", "beats": ["single:rank:2", "pair:rank:2"] }
     ],
     "passIsFinal": true,
     "firstLead": { "card": "lowest", "mustInclude": false },
@@ -87,7 +96,7 @@
       "id": "two-tops-runs",
       "name": "A 2 can end a run",
       "description": "Q-K-A-2 is a run. It still never wraps round to the 3, a 2 is still no part of consecutive pairs, and a dragon is still 3-to-A.",
-      "default": false,
+      "default": true,
       "available": true,
       "patch": { "rules.runExcludes": [] }
     },
@@ -106,21 +115,6 @@
       "default": false,
       "available": true,
       "patch": { "rules.lastCardExcludes": ["rank:2"] }
-    },
-    {
-      "id": "quad-needs-four-pairs",
-      "name": "A pair of pigs needs four pairs",
-      "description": "Four of a kind no longer chops a pair of 2s — only four consecutive pairs will do it.",
-      "default": false,
-      "available": true,
-      "patch": {
-        "rules.bombs": [
-          { "shape": "consecutive-pairs(3)", "beats": ["single:rank:2"] },
-          { "shape": "quad", "beats": ["single:rank:2", "consecutive-pairs(3)"] },
-          { "shape": "consecutive-pairs(4)", "beats": ["single:rank:2", "pair:rank:2", "consecutive-pairs(3)", "quad"] },
-          { "shape": "consecutive-pairs(5)", "beats": ["*"] }
-        ]
-      }
     }
   ],
   "ui": {

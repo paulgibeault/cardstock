@@ -14,6 +14,7 @@ import { makeCtx } from '../src/engine/context.js';
 import { loadPackFromDisk } from '../tools/pack-test.mjs';
 import { packRules } from '../src/ui/rules.js';
 import { HINT_OFFER } from '../src/ui/helpSheet.js';
+import { faceSize, setFaceSize } from '../src/ui/cardStyles/index.js';
 import { helpSheetHarness, stubNode } from './fixtures/chrome.js';
 
 async function dealt(packId, seats) {
@@ -92,6 +93,27 @@ test('How to play opens the rules panel, and closes the sheet behind it', async 
   h.el.helpRules.fire('click');
   assert.equal(h.sheet.helpOpen(), false);
   assert.deepEqual(h.calls, [], 'with no pack on the felt there is nothing to open');
+});
+
+test('Large card faces flips the size, keeps the answer, and repaints with the sheet left open', () => {
+  setFaceSize('standard');
+  const h = helpSheetHarness();
+  h.sheet.wire();
+  h.store.set('settings', { botDifficulty: 'hard' });
+  h.sheet.setHelpOpen(true);
+  assert.equal(h.el.helpFaces.getAttribute('aria-pressed'), 'false', 'opening says which way it is set');
+
+  h.el.helpFaces.fire('click');
+  assert.equal(faceSize(), 'large');
+  assert.equal(h.el.helpFaces.getAttribute('aria-pressed'), 'true');
+  assert.equal(h.store.get('settings').cardFaces, 'large', 'the answer outlives the match');
+  assert.equal(h.store.get('settings').botDifficulty, 'hard', 'and writing it disturbs nothing else');
+  assert.deepEqual(h.calls, [['rerender']], 'the felt repaints under it');
+  assert.equal(h.sheet.helpOpen(), true, 'left open, so the player can flip straight back');
+
+  h.el.helpFaces.fire('click');
+  assert.equal(faceSize(), 'standard');
+  assert.equal(h.store.get('settings').cardFaces, 'standard');
 });
 
 test('Hint closes the sheet FIRST, then rings the cards, then saves the count', async () => {

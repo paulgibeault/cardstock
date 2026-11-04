@@ -8,7 +8,7 @@
 import { test } from "node:test";
 import assert from "node:assert";
 import {
-  STYLE_IDS, buildTheme, makeCardRenderer, resolveStyleId,
+  STYLE_IDS, buildTheme, makeCardRenderer, resolveStyleId, setFaceSize, faceSize,
 } from "../src/ui/cardStyles/index.js";
 import { dullPaper, dullInk } from "../src/ui/cardStyles/shared.js";
 import { face as vanillaFace } from "../src/ui/cardStyles/vanilla.js";
@@ -773,3 +773,107 @@ test("a value with no picture gets no picture, not a wrong one", () => {
     assert.strictEqual(renderer.chooser("color", hostile), null, `color ${hostile}`);
   }
 });
+
+/* ------------------------------------------------------------------ *
+ * Large faces — the jumbo index, for small screens
+ * ------------------------------------------------------------------ */
+
+/** Every text run's size and position, for the corner-index assertions. */
+function runs(svg) {
+  return [...svg.matchAll(/<text x="([\d.]+)" y="([\d.]+)" font-size="([\d.]+)"[^>]*>([^<]*)<\/text>/g)]
+    .map(([, x, y, size, body]) => ({ x: Number(x), y: Number(y), size: Number(size), body }));
+}
+
+/** The biggest text in the top-left quarter: the index a fanned hand shows. */
+function cornerSize(svg) {
+  return Math.max(0, ...runs(svg).filter((r) => r.x < 40 && r.y < 70).map((r) => r.size));
+}
+
+const LARGE_SAMPLES = {
+  classic: [{ rank: "7", suit: "hearts" }, { rank: "10", suit: "spades" }, { rank: "K", suit: "clubs" }],
+  shedding: [{ rank: "7", color: "red" }],
+  sequencing: [{ rank: "7", color: "green" }, { rank: "12", color: "yellow" }],
+  rankrun: [{ rank: "6" }, { rank: "11" }],
+};
+
+test("the large face draws a much bigger corner index, in every style that has one", () => {
+  try {
+    for (const [styleId, cards] of Object.entries(LARGE_SAMPLES)) {
+      const renderer = makeCardRenderer({ ui: { cardStyle: styleId } });
+      for (const card of cards) {
+        setFaceSize("standard");
+        const standard = renderer.face(card);
+        setFaceSize("large");
+        const large = renderer.face(card);
+        assert.ok(large.includes("card-face--large"), `${styleId} large face lost its class`);
+        assert.ok(cornerSize(large) >= cornerSize(standard) * 1.3,
+          `${styleId} ${JSON.stringify(card)}: corner ${cornerSize(large)} is not much bigger than ${cornerSize(standard)}`);
+      }
+    }
+  } finally {
+    setFaceSize("standard");
+  }
+});
+
+test("the large classic face trades the pip layout for the index", () => {
+  try {
+    setFaceSize("large");
+    const svg = classic.face({ rank: "9", suit: "diamonds" });
+    assert.strictEqual(pipCount(svg), 0, "no pips at the pip size");
+    // One index (top left) and one big suit — not mirrored, since nothing on
+    // the table turns a card over and a second index would sit on the big suit.
+    assert.ok(!svg.includes("rotate(180"), "the large face is not mirrored");
+    const glyphs = runs(svg).filter((r) => r.body === "♦");
+    assert.strictEqual(glyphs.length, 2, "a corner suit and a big one");
+    // A court card still reads as a court.
+    assert.ok(/<polygon/.test(classic.face({ rank: "K", suit: "spades" })), "the king lost his crown");
+  } finally {
+    setFaceSize("standard");
+  }
+});
+
+test("the face size is the player's, and the renderer caches each size apart", async () => {
+  const pack = await loadPackFromDisk("hearts");
+  const renderer = makeCardRenderer(pack.manifest, pack.cardsById);
+  const card = pack.cardsById.values().next().value;
+  try {
+    const standard = renderer.face(card);
+    setFaceSize("large");
+    const large = renderer.face(card);
+    assert.notStrictEqual(large, standard, "flipping the size redraws the card");
+    assert.strictEqual(renderer.face(card), large, "and the large face is cached");
+    setFaceSize("standard");
+    assert.strictEqual(renderer.face(card), standard, "flipping back is the cached standard face");
+    assert.strictEqual(setFaceSize("enormous"), "standard", "an unknown size is standard");
+    assert.strictEqual(setFaceSize(undefined), "standard", "so is a save written before the setting");
+    assert.strictEqual(faceSize(), "standard");
+  } finally {
+    setFaceSize("standard");
+  }
+});
+
+for (const packId of packIds) {
+  test(`every card in ${packId} renders as a real card at the large size, live and muted`, async () => {
+    const pack = await loadPackFromDisk(packId);
+    const renderer = makeCardRenderer(pack.manifest, pack.cardsById);
+    try {
+      setFaceSize("large");
+      for (const card of pack.cardsById.values()) {
+        for (const muted of [false, true]) {
+          const svg = renderer.face(card, muted);
+          for (const rot of ["undefined", "NaN", "null", "${", "[object Object]"]) {
+            assert.ok(!svg.includes(rot), `${card.id} rendered "${rot}":\n` + svg);
+          }
+          assert.ok(!/\sid="|url\(#|opacity=/.test(svg), `${card.id} broke the id or no-alpha rule:\n` + svg);
+          assert.ok(svg.includes("card-face--large"), `${card.id} is not drawn large`);
+          assert.ok(/aria-label="[^"]+"/.test(svg), `${card.id} has no accessible name`);
+          for (const r of runs(svg)) {
+            assert.ok(r.x >= 0 && r.x <= 100 && r.y >= 0 && r.y <= 140, `${card.id} drew text off the card`);
+          }
+        }
+      }
+    } finally {
+      setFaceSize("standard");
+    }
+  });
+}

@@ -318,7 +318,7 @@ test("the round sheet folds to sides rather than listing chairs", () => {
   const panels = read("src/ui/panels.js");
   assert.match(panels, /from '\.\.\/engine\/sides\.js'/,
     "src/ui/panels.js no longer reads the partnership table");
-  assert.match(code(panels), /foldToSides\(ev\.scores, sides\)/,
+  assert.match(code(panels), /foldToSides\(ev\?\.scores \|\| \{\}, sides\)/,
     "the round sheet's DELTA is per seat again — for every partnership scorer we "
     + "ship that is +0 on one partner every round while the total climbs (#125)");
   assert.doesNotMatch(code(panels), /ev\.scores\[s\]/,

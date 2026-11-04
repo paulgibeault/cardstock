@@ -1077,8 +1077,8 @@
 #felt-middle {
   flex: 1;
   min-height: 0;
-  /* The anchor for #show-card, which is inset to this box so it can never
-     reach the fan (see THE SHOW CARD below). Changes nothing about the row. */
+  /* An anchor for anything inset to the felt's middle, so it can never reach
+     the fan. Changes nothing about the row. */
   position: relative;
   display: flex;
   align-items: center;

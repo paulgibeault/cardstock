@@ -28,8 +28,8 @@
 // turn goes, which cards a hand may not end on, and whether a deal can win on
 // its own. Every one of them is a key in the manifest and every one is read
 // below — `lastCardExcludes` and `instantWins` are #103's house rules, the
-// third (`quad-needs-four-pairs`) needed no key at all because a chopping
-// ladder was already a declaration and the variant simply patches it, and
+// royal bombs needed no key at all because a chopping ladder was already a
+// declaration and a bomb's shape takes a card selector like any token, and
 // `runUpgrade` and `laterLead: "lowest"` are the two adjustments Thirteen
 // asked for after the round-6 playtest.
 //

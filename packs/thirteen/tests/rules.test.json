@@ -2,7 +2,8 @@
   "pack": "thirteen",
   "tests": [
     {
-      "name": "K-A-2 is not a run; Q-K-A is",
+      "name": "K-A-2 is not a run; Q-K-A is — with two-tops-runs off",
+      "variants": [],
       "setup": {
         "seats": 4,
         "turn": { "seat": 0, "phase": "play" },
@@ -142,7 +143,7 @@
       ]
     },
     {
-      "name": "four of a kind chops the three consecutive pairs that just chopped a pig",
+      "name": "four of a kind does not chop the three consecutive pairs that just chopped a pig",
       "setup": {
         "seats": 4,
         "turn": { "seat": 0, "phase": "play" },
@@ -162,7 +163,7 @@
         { "expect": { "turn": { "seat": 2 } } },
         { "move": { "actor": 2, "type": "playCard",
                     "cards": ["spades-8", "clubs-8", "diamonds-8", "hearts-8"] },
-          "legal": true }
+          "legal": false, "rule": "wrong-shape" }
       ]
     },
     {
@@ -334,7 +335,35 @@
       ]
     },
     {
-      "name": "four of a kind chops a pair of 2s — the default (D-6)",
+      "name": "any four of a kind and any run of consecutive pairs chops a lone 2",
+      "setup": {
+        "seats": 4,
+        "turn": { "seat": 3, "phase": "play" },
+        "direction": "counterclockwise",
+        "zones": {
+          "hand.0": ["diamonds-4"],
+          "hand.1": ["diamonds-J"],
+          "hand.2": ["spades-8", "clubs-8", "diamonds-8", "hearts-8", "diamonds-10"],
+          "hand.3": ["spades-4", "clubs-4", "spades-5", "clubs-5", "spades-6", "clubs-6", "spades-7", "clubs-7", "diamonds-9"],
+          "pile": ["hearts-2"]
+        },
+        "vars": {
+          "combo": { "kind": "single", "size": 1, "top": 51, "cards": ["hearts-2"], "seat": 0 },
+          "passed": [], "lastPlayer": 0, "leader": 0, "trickNumber": 1
+        }
+      },
+      "assert": [
+        { "move": { "actor": 3, "type": "playCard",
+                    "cards": ["spades-4", "clubs-4", "spades-5", "clubs-5", "spades-6", "clubs-6", "spades-7", "clubs-7"] },
+          "legal": true },
+        { "apply": { "actor": 3, "type": "pass" } },
+        { "move": { "actor": 2, "type": "playCard",
+                    "cards": ["spades-8", "clubs-8", "diamonds-8", "hearts-8"] },
+          "legal": true }
+      ]
+    },
+    {
+      "name": "a plain four of a kind does not chop a pair of 2s; a royal one does",
       "setup": {
         "seats": 4,
         "turn": { "seat": 2, "phase": "play" },
@@ -342,8 +371,8 @@
         "zones": {
           "hand.0": ["diamonds-4"],
           "hand.1": ["diamonds-J"],
-          "hand.2": ["spades-8", "clubs-8", "diamonds-8", "hearts-8", "diamonds-10"],
-          "hand.3": ["spades-5", "clubs-5", "spades-6", "clubs-6", "spades-7", "clubs-7", "diamonds-9"],
+          "hand.2": ["spades-8", "clubs-8", "diamonds-8", "hearts-8", "spades-K", "clubs-K", "diamonds-K", "hearts-K", "diamonds-10"],
+          "hand.3": ["diamonds-9"],
           "pile": ["spades-2", "clubs-2"]
         },
         "vars": {
@@ -354,12 +383,14 @@
       "assert": [
         { "move": { "actor": 2, "type": "playCard",
                     "cards": ["spades-8", "clubs-8", "diamonds-8", "hearts-8"] },
+          "legal": false, "rule": "wrong-shape" },
+        { "move": { "actor": 2, "type": "playCard",
+                    "cards": ["spades-K", "clubs-K", "diamonds-K", "hearts-K"] },
           "legal": true }
       ]
     },
     {
-      "name": "quad-needs-four-pairs: the quad no longer chops a pair of 2s, four consecutive pairs still do",
-      "variants": ["quad-needs-four-pairs"],
+      "name": "a plain run of consecutive pairs does not chop a pair of 2s; a royal one does",
       "setup": {
         "seats": 4,
         "turn": { "seat": 3, "phase": "play" },
@@ -367,9 +398,8 @@
         "zones": {
           "hand.0": ["diamonds-4"],
           "hand.1": ["diamonds-J"],
-          "hand.2": ["spades-8", "clubs-8", "diamonds-8", "hearts-8", "diamonds-10"],
-          "hand.3": ["spades-4", "clubs-4", "spades-5", "clubs-5", "spades-6", "clubs-6",
-                     "spades-7", "clubs-7", "diamonds-9"],
+          "hand.2": ["diamonds-10"],
+          "hand.3": ["spades-4", "clubs-4", "spades-5", "clubs-5", "spades-6", "clubs-6", "spades-7", "clubs-7", "spades-J", "clubs-J", "spades-Q", "clubs-Q", "spades-K", "clubs-K", "diamonds-9"],
           "pile": ["spades-2", "clubs-2"]
         },
         "vars": {
@@ -379,13 +409,62 @@
       },
       "assert": [
         { "move": { "actor": 3, "type": "playCard",
-                    "cards": ["spades-4", "clubs-4", "spades-5", "clubs-5",
-                              "spades-6", "clubs-6", "spades-7", "clubs-7"] },
-          "legal": true },
+                    "cards": ["spades-4", "clubs-4", "spades-5", "clubs-5", "spades-6", "clubs-6", "spades-7", "clubs-7"] },
+          "legal": false, "rule": "wrong-shape" },
+        { "move": { "actor": 3, "type": "playCard",
+                    "cards": ["spades-J", "clubs-J", "spades-Q", "clubs-Q", "spades-K", "clubs-K"] },
+          "legal": true }
+      ]
+    },
+    {
+      "name": "a strip is royal only if every pair is — 10-10 J-J Q-Q does not chop a pair of 2s",
+      "setup": {
+        "seats": 4,
+        "turn": { "seat": 3, "phase": "play" },
+        "direction": "counterclockwise",
+        "zones": {
+          "hand.0": ["diamonds-4"],
+          "hand.1": ["diamonds-J"],
+          "hand.2": ["diamonds-10"],
+          "hand.3": ["spades-10", "clubs-10", "spades-J", "clubs-J", "spades-Q", "clubs-Q", "diamonds-9"],
+          "pile": ["spades-2", "clubs-2"]
+        },
+        "vars": {
+          "combo": { "kind": "pair", "size": 2, "top": 49, "cards": ["spades-2", "clubs-2"], "seat": 0 },
+          "passed": [], "lastPlayer": 0, "leader": 0, "trickNumber": 1
+        }
+      },
+      "assert": [
+        { "move": { "actor": 3, "type": "playCard",
+                    "cards": ["spades-10", "clubs-10", "spades-J", "clubs-J", "spades-Q", "clubs-Q"] },
+          "legal": false, "rule": "wrong-shape" }
+      ]
+    },
+    {
+      "name": "nothing chops three 2s",
+      "setup": {
+        "seats": 4,
+        "turn": { "seat": 3, "phase": "play" },
+        "direction": "counterclockwise",
+        "zones": {
+          "hand.0": ["diamonds-4"],
+          "hand.1": ["diamonds-J"],
+          "hand.2": ["spades-A", "clubs-A", "diamonds-A", "hearts-A", "diamonds-10"],
+          "hand.3": ["spades-J", "clubs-J", "spades-Q", "clubs-Q", "spades-K", "clubs-K", "diamonds-9"],
+          "pile": ["spades-2", "clubs-2", "diamonds-2"]
+        },
+        "vars": {
+          "combo": { "kind": "triple", "size": 3, "top": 50, "cards": ["spades-2", "clubs-2", "diamonds-2"], "seat": 0 },
+          "passed": [], "lastPlayer": 0, "leader": 0, "trickNumber": 1
+        }
+      },
+      "assert": [
+        { "move": { "actor": 3, "type": "playCard",
+                    "cards": ["spades-J", "clubs-J", "spades-Q", "clubs-Q", "spades-K", "clubs-K"] },
+          "legal": false, "rule": "wrong-shape" },
         { "apply": { "actor": 3, "type": "pass" } },
-        { "expect": { "turn": { "seat": 2 } } },
         { "move": { "actor": 2, "type": "playCard",
-                    "cards": ["spades-8", "clubs-8", "diamonds-8", "hearts-8"] },
+                    "cards": ["spades-A", "clubs-A", "diamonds-A", "hearts-A"] },
           "legal": false, "rule": "wrong-shape" }
       ]
     },

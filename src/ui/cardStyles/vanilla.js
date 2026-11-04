@@ -39,7 +39,10 @@ function cornerSizeClass(label) {
 // its output is pinned by tests and is meant to stay exactly what shipped
 // before the style registry existed), so the grey stock is applied by the
 // `.card-face--muted` rules in table.css instead of being interpolated here.
-export function face(card, theme, muted = false) {
+// `large` (src/ui/cardStyles/index.js, FACE_SIZES) moves the corners down to
+// make room and adds `card-face--large`, which cards.css sizes them up by. The
+// standard output is untouched — it is the one tests/cardStyles.test.js pins.
+export function face(card, theme, muted = false, large = false) {
   const color = cardFaceColor(card);
   const glyph = card.suit ? SUIT_GLYPH[card.suit] : '';
   const rankLabel = isWildRank(card) ? '' : card.rank ?? '';
@@ -57,13 +60,14 @@ export function face(card, theme, muted = false) {
   // colour too (a diamond is red), and without this distinction the stylesheet
   // painted every heart and diamond in a standard deck solid red.
   const painted = !card.suit && !!card.color ? ' card-face--painted' : '';
-  const dull = muted ? ' card-face--muted' : '';
+  const dull = `${muted ? ' card-face--muted' : ''}${large ? ' card-face--large' : ''}`;
+  const [top, bottom] = large ? [32, 120] : [22, 128];
 
   return `
     <svg viewBox="0 0 100 140" class="card-face card-face--${escapeXml(color)}${painted}${dull}" role="img" aria-label="${escapeXml(cardAriaLabel(card))}">
       <rect x="1" y="1" width="98" height="138" rx="8" class="card-face__bg" />
-      <text x="8" y="22" class="card-face__corner${sizeClass}">${escapeXml(corner)}</text>
-      <text x="92" y="128" class="card-face__corner card-face__corner--br${sizeClass}">${escapeXml(corner)}</text>
+      <text x="8" y="${top}" class="card-face__corner${sizeClass}">${escapeXml(corner)}</text>
+      <text x="92" y="${bottom}" class="card-face__corner card-face__corner--br${sizeClass}">${escapeXml(corner)}</text>
       ${glyph ? `<text x="50" y="80" class="card-face__pip">${glyph}</text>` : ''}
       ${badge ? `<text x="50" y="80" class="card-face__badge">${escapeXml(badge)}</text>` : ''}
     </svg>`;

@@ -37,7 +37,9 @@ somebody says "13" at a table with four chairs, it is this.
 ### 1.1 Deck, deal, seating
 
 * Standard 52. No jokers.
-* Four players, thirteen cards each, whole deck dealt.
+* Two to four players; the new-game sheet offers **two** first (D-11). Four
+  players get thirteen cards each, the whole deck dealt; two players pick from
+  three hands of seventeen (§1.6a).
 * Play passes **counter-clockwise** (see D-1).
 
 ### 1.2 The ladder — the rule everything else is built on
@@ -83,9 +85,10 @@ A play is one of these. Nothing else is a play.
 
 Two rules about runs carry all the weight:
 
-* **A 2 may never appear in a run**, or in consecutive pairs. The ladder ends
-  at the ace for sequence purposes. `Q-K-A` is a run; `K-A-2` is not, and
-  `A-2-3` is not (there is no wrap — the 3 is the bottom). The two halves of
+* **A 2 may end a run, and nothing more.** On the default table (D-13)
+  `K-A-2` is a run; `A-2-3` is not (there is no wrap — the 3 is the bottom),
+  and a 2 is never part of consecutive pairs. Switch off `two-tops-runs` and
+  the ladder ends at the ace for runs too. The two halves of
   that sentence are separate rules at a real table, and the pack now states
   them separately (D-13): `rules.runExcludes` for runs, `rules.stripExcludes`
   for consecutive pairs.
@@ -109,30 +112,30 @@ A bomb is a combination that may be played **out of shape**, on somebody
 else's turn-to-answer, to kill a 2. This is the game's signature move, and
 the reason holding a 2 is not the free win the ladder suggests.
 
-The chopping ladder, low to high:
-
-```
-three consecutive pairs  <  four of a kind  <  four consecutive pairs  <  five consecutive pairs
-```
-
-What each may chop:
+A bomb chops 2s and nothing else. A **royal** bomb is one made only of
+jacks, queens, kings and aces — the pack tags those four ranks `royal`.
 
 | Bomb | Beats out of shape |
 |---|---|
-| Three consecutive pairs | a single 2 |
-| Four of a kind | a single 2, a pair of 2s, three consecutive pairs |
-| Four consecutive pairs | a single 2, a pair of 2s, three of the above and any four of a kind |
-| Five consecutive pairs | all of the above, and four consecutive pairs |
+| Three or more consecutive pairs | a single 2 |
+| Four of a kind | a single 2 |
+| Royal consecutive pairs (`J-J Q-Q K-K`, `Q-Q K-K A-A`, `J-J Q-Q K-K A-A`) | a single 2, a pair of 2s |
+| Royal four of a kind (four J, Q, K or A) | a single 2, a pair of 2s |
+| — | **nothing beats three 2s** (or four) |
+
+A strip is royal only if every pair in it is: `10-10 J-J Q-Q` chops a lone 2
+and not a pair of them.
 
 Two things follow that people get wrong at the table:
 
-* **A bomb played as a chop can itself be chopped.** Chopping a pig with a
-  four of a kind does not end the trick; the next player may chop your chop
-  with four consecutive pairs, or with a higher four of a kind.
+* **Bombs do not chop each other.** Four of a kind does not chop consecutive
+  pairs, and consecutive pairs do not chop four of a kind (D-6). A bomb that
+  has chopped a pig is answered only in shape — a higher four of a kind, or a
+  higher strip of the same length.
 * **A bomb may also just be led**, as an ordinary combination of its own
   shape. Led that way it is answered by the same shape, higher — a four of a
   kind led is answered by a higher four of a kind, not by three consecutive
-  pairs. The chopping ladder is only the out-of-shape ladder.
+  pairs.
 
 Consecutive pairs, like runs, **may not contain a 2**: `A-A K-K Q-Q` is three
 consecutive pairs, `2-2 A-A K-K` is not a bomb at all.
@@ -218,14 +221,14 @@ intent without offering a switch that changes nothing.
 | **D-3** | Who leads later hands | **the holder of the lowest card in play, every hand** | Reversed from this document's first draft, which took the previous hand's winner on the grounds that the alternative "rewards the deal rather than the play". Both are played; what settled it is that one rule for every hand is one rule to learn, and the opening constraint (D-2) is the most characteristic thing about the game's first turn — spending it once a match and never again made it feel like a quirk of the deal rather than the game. `rules.laterLead: "lowest"`, and the old rule ships as the variant `winner-leads`. Note the two halves are separate: the TRICK still clears to the last player to have played (§1.6), which is the genre and has no key. |
 | **D-4** | Can you win by playing a 2? | **yes** | The "no ending on a pig" rule is a real house rule and a good variant, but it turns a won position into a trap in a way that needs the UI to warn about it. |
 | **D-5** | Pair/triple comparison | **by highest card, suit included** | `9♥9♦` beats `9♣9♠`. Follows from the total order (§1.2); the alternative (rank only, ties impossible in practice for triples) is a special case nobody needs. |
-| **D-6** | Does four of a kind beat a **pair** of 2s? | **yes** | The commonest Southern rule. Some tables require four consecutive pairs for a pair of pigs; a variant. |
+| **D-6** | What does each bomb chop? | **2s only; a pair of 2s takes a ROYAL bomb; nothing takes three 2s** | Reversed after play (Paul, 2026-10-20). The old ladder let four of a kind chop three consecutive pairs and a pair of 2s, and five consecutive pairs chop anything. Now any four of a kind and any strip of consecutive pairs chop a lone 2; a pair of 2s needs a royal bomb — four jacks, queens, kings or aces, or a strip made only of those ranks (`cardTags` tags those ranks `royal`, and a bomb `shape` takes a selector that every card must match, so `quad:tag:royal` is a second rung for the same shape); bombs never chop each other; and three or four 2s are unanswerable. The variant `quad-needs-four-pairs` went with the old ladder. |
 | **D-7** | Do runs of unequal length compare? | **no** | Same-length only. Universal enough to be a rule, not a variant. |
 | **D-8** | Instant wins on the deal (*tới trắng*) | **off, shipped as a variant** | Four 2s; six pairs; a 3-to-A dragon run; five consecutive pairs; three consecutive triples. Fun, but it ends a hand before anybody plays — which is the wrong first impression from the lobby. Off by default, on by switch. |
 | **D-9** | Scoring | **one point per card left, paid to the winner** | The simplest thing that is really played, and it maps onto the existing `scoring` block. See below. |
 | **D-10** | Pig/bomb penalties (*thúi heo*) | **off, deferred** | Being caught holding a 2 or an unspent bomb costs extra. Real, but it is a second scoring vocabulary; it should follow the first playable build, not lead it. |
-| **D-11** | Player counts other than 4 | **2 and 3 supported; 3 deals 13 each with the remainder out of play, 2 deals for the pick (D-14)** | 3 players leaves 13 cards unseen, which is genuinely how it is played short-handed. Solo-vs-bots means 4 is what almost everybody will see. |
+| **D-11** | Player counts other than 4 | **2 and 3 supported, and 2 is the default (`players.best: 2`); 3 deals 13 each with the remainder out of play, 2 deals for the pick (D-14)** | 3 players leaves 13 cards unseen, which is genuinely how it is played short-handed. The default moved from 4 to 2 after play (2026-10-20): the head-to-head pick deal is the table this game is played at. |
 | **D-12** | Passing out of a trick | **you stay in, shipped as a variant that is ON** | §1.5.3. Somebody asked. The strict rule is still the pack's `rules.passIsFinal: true`; the variant `pass-stays-in` patches it to `false`, ships `default: true`, and is what a new table gets — a pass skips your turn and the play comes back round to you. The strict rule is one toggle away, and a resumed match keeps whichever it was dealt under. |
-| **D-13** | Can a 2 end a run? | **no, shipped as a variant that is OFF** | §1.3. `Q-K-A-2` is a widely played house rule; `2-2 A-A K-K` as a bomb-eligible strip is not, and neither is a 3-to-2 dragon. One exclusion list could not tell those apart, so the pack declares `runExcludes` and `stripExcludes` separately and the variant `two-tops-runs` empties only the first. The run still never wraps (`A-2-3` is not a run), the strip is untouched, and the instant-win dragon is measured against the ranks *both* lists allow, so it stays 3-to-A under either reading. |
+| **D-13** | Can a 2 end a run? | **yes, shipped as a variant that is ON** (reversed 2026-10-20; switch off `two-tops-runs` for the strict rule) | §1.3. `Q-K-A-2` is a widely played house rule; `2-2 A-A K-K` as a bomb-eligible strip is not, and neither is a 3-to-2 dragon. One exclusion list could not tell those apart, so the pack declares `runExcludes` and `stripExcludes` separately and the variant `two-tops-runs` empties only the first. The run still never wraps (`A-2-3` is not a run), the strip is untouched, and the instant-win dragon is measured against the ranks *both* lists allow, so it stays 3-to-A under either reading. |
 | **D-15** | Does a run all of one suit beat a mixed one? | **it upgrades the trick, on by default** | §1.3. *Sảnh đồng chất*, and the one rule here that is on by default without being universal — it is what a suited run is FOR, and without it the suits inside a run are noise. Written as an upgrade to the TRICK rather than as "a suited run beats a mixed one of the same top card", which would be a second comparison rule sitting beside a total order that already answers "higher". `rules.runUpgrade: "same-suit"`, with the variant `plain-runs` to switch it off — it patches the key to `"none"` rather than removing it, because a patch sets a value and cannot take a key away. The answer need not be the same suit, only all of ONE suit; because nothing else can answer a suited run, the upgrade holds for the rest of the trick with no state of its own. |
 | **D-14** | The two-handed deal | **three face-down hands of 17, pick one each; loser picks first** | §1.6a. A flat thirteen each leaves 26 of the 52 unseen, and at two seats that is the difference between a game of Thirteen and a shuffle. `rules.offer: { atSeats: 2, piles: 3 }`; the pile size is derived (deck ÷ piles) so it cannot disagree with the deck, and the odd card plus the pile nobody takes go face down and out of play — hidden rather than discarded, because a discard is public and the bot reads it. Hand one's pick order is a **coin toss** off the match's own seed: "the player who does not hold the lowest card picks first" reads well and cannot be built, since at hand one the pick happens before anybody holds a card, and the rotating opening seat is seat 0 on round one, which is the human. The compensation is D-2's, which already exists: whichever pile you take, the lowest card in play leads. |
 
@@ -377,10 +380,13 @@ Sketch of the `rules` block, to be schema'd against a new
   "matchShape": "same-type-same-size",
   "runUpgrade": "same-suit",
   "bombs": [
-    { "shape": "consecutive-pairs(3)", "beats": ["single:rank:2"] },
-    { "shape": "quad",                 "beats": ["single:rank:2", "pair:rank:2", "consecutive-pairs(3)"] },
-    { "shape": "consecutive-pairs(4)", "beats": ["single:rank:2", "pair:rank:2", "consecutive-pairs(3)", "quad"] },
-    { "shape": "consecutive-pairs(5)", "beats": ["*"] }
+    { "shape": "consecutive-pairs(3)",           "beats": ["single:rank:2"] },
+    { "shape": "consecutive-pairs(4)",           "beats": ["single:rank:2"] },
+    { "shape": "consecutive-pairs(5)",           "beats": ["single:rank:2"] },
+    { "shape": "quad",                           "beats": ["single:rank:2"] },
+    { "shape": "consecutive-pairs(3):tag:royal", "beats": ["single:rank:2", "pair:rank:2"] },
+    { "shape": "consecutive-pairs(4):tag:royal", "beats": ["single:rank:2", "pair:rank:2"] },
+    { "shape": "quad:tag:royal",                 "beats": ["single:rank:2", "pair:rank:2"] }
   ],
   "passIsFinal": true,
   "firstLead": { "card": "spades-3", "mustInclude": true },
@@ -403,7 +409,9 @@ The ones that would catch a wrong build, in the order they are worth writing:
 2. A four-card run is not a legal answer to a three-card run.
 3. `9♥9♦` beats `9♣9♠`; `9♣9♠` does not beat `9♥9♦`.
 4. Three consecutive pairs chops a single 2 and does **not** chop a pair of 2s.
-5. Four of a kind chops the three consecutive pairs that just chopped a pig.
+5. Four of a kind does **not** chop the three consecutive pairs that just
+   chopped a pig; a royal four of a kind chops a pair of 2s and a plain one
+   does not; nothing chops three 2s.
 6. A seat that passed is offered no moves for the rest of the trick.
 7. Under `lead-must-include`, the opening lead of a hand is refused unless it
    contains the lowest card in play — every hand, not only the first. On the

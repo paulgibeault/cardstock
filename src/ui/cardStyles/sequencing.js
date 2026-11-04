@@ -19,7 +19,15 @@ import {
 const PAPER = '#fdfdfa';
 const SLATE = '#475569';
 
-export function face(card, theme, muted = false) {
+/**
+ * The corner at the large face size (src/ui/cardStyles/index.js, FACE_SIZES):
+ * the index grown into the space above the centre numeral, which starts inking
+ * at about y=46. A two-digit rank steps down so "12" stays inside the coloured
+ * border's inner rule at x=10.5.
+ */
+const LARGE_CORNER = { x: 24, y: 38, size: 32, wide: 26, iconY: 26, iconR: 12, dots: [21, 26, 6, 4.4] };
+
+export function face(card, theme, muted = false, large = false) {
   const kind = cardKind(card);
   const wild = kind === 'wild' || kind === 'wildDrawN';
   const skip = kind === 'skip';
@@ -44,10 +52,12 @@ export function face(card, theme, muted = false) {
     parts.push(wedgeDisc(50, 70, 29, colors.length >= 2 ? colors : [SLATE, shade(SLATE, 0.4)]));
     parts.push(`<circle cx="50" cy="70" r="29" fill="none" stroke="${paper}" stroke-width="2" />`);
     parts.push(`<circle cx="50" cy="70" r="9" fill="${paper}" />`);
-    parts.push(mirrored(colorDots(15, 23, 4.4, 3.2, colors)));
+    parts.push(mirrored(large ? colorDots(...LARGE_CORNER.dots, colors) : colorDots(15, 23, 4.4, 3.2, colors)));
   } else if (skip) {
     parts.push(actionIcon('skip', 50, 70, 24, deepen(SLATE)));
-    parts.push(mirrored(actionIcon('skip', 15, 23, 8, deepen(SLATE))));
+    parts.push(mirrored(large
+      ? actionIcon('skip', 21, LARGE_CORNER.iconY, LARGE_CORNER.iconR, deepen(SLATE))
+      : actionIcon('skip', 15, 23, 8, deepen(SLATE))));
   } else {
     // The numeral is inked a step darker than the border it matches. The
     // border can be as bright as the pack likes — it is a band of colour, not
@@ -66,10 +76,12 @@ export function face(card, theme, muted = false) {
     // in tests/cardStyles.test.js reads that class.
     parts.push(text(rank, { x: 52, y: 92, size, fill: blend(paper, border, 0.16), weight: 800, cls: 'cs-text cs-ghost' }));
     parts.push(text(rank, { x: 50, y: 89, size, fill: ink, weight: 800 }));
-    parts.push(mirrored(text(rank, { x: 16, y: 27, size: 18, fill: ink })));
+    parts.push(mirrored(large
+      ? text(rank, { x: LARGE_CORNER.x, y: LARGE_CORNER.y, size: rank.length > 1 ? LARGE_CORNER.wide : LARGE_CORNER.size, fill: ink, weight: 800 })
+      : text(rank, { x: 16, y: 27, size: 18, fill: ink })));
   }
 
-  return openSvg(`card-face card-face--sequencing${muted ? ' card-face--muted' : ''}`, cardAriaLabel(card)) + parts.join('') + '</svg>';
+  return openSvg(`card-face card-face--sequencing${muted ? ' card-face--muted' : ''}${large ? ' card-face--large' : ''}`, cardAriaLabel(card)) + parts.join('') + '</svg>';
 }
 
 export const defaults = {

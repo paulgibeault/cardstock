@@ -293,7 +293,14 @@ export function createTableHost({
     const acting = !beat && rules.actingSeats(state).includes(seat);
     const posed = {};
     for (const key of ['trick', 'final']) {
-      if (poses?.[key]) posed[key] = rules.viewFor(poses[key], seat, { moves: [], announcements: [], deadlines: [], seq });
+      // THE ENDING IS SENT OPEN: every seat's hand face up, as it is on the
+      // host's own felt while the hand is inspected (src/engine/view.js's
+      // `opensAtHandEnd`). The trick pose is the table mid-hand and is not.
+      if (poses?.[key]) {
+        posed[key] = rules.viewFor(poses[key], seat, {
+          moves: [], announcements: [], deadlines: [], seq, open: key === 'final',
+        });
+      }
     }
     return sendTo(deviceId, viewFrame({
       kind,
@@ -312,7 +319,7 @@ export function createTableHost({
         deadlines: beat ? [] : deadlines(),
         seq,
       }),
-      events: rules.eventsFor(state, seat, events, { also: [poses?.trick] }),
+      events: rules.eventsFor(state, seat, events, { also: [poses?.trick], opened: [poses?.final] }),
     }));
   }
 

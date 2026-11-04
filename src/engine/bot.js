@@ -122,6 +122,12 @@ const HOLDING_MOVES = new Set(['draw', 'pass']);
 const TILT_SHARE = 0.25;
 
 /**
+ * How far below the best move a persona's slip may land, as a share of the
+ * turn's score spread (best − worst). See the mistake branch of chooseBotMove.
+ */
+const NEAR_MISS_SHARE = 0.25;
+
+/**
  * ONE PLY IS NOT ALLOWED TO TURN THE DECK OVER — the trap that makes this
  * function longer than it looks like it should be.
  *
@@ -891,10 +897,21 @@ export function chooseBotMove(state, seat, { persona = null, random = Math.rando
   // A mistake is a NEAR-miss, not a random flail: the runner-up, or the one
   // after it. A bot that occasionally plays the third-best card reads as
   // distracted; one that plays the worst card available reads as broken.
+  //
+  // NEAR IN SCORE, AND THE SAME KIND OF MOVE — rank alone was not enough. In a
+  // Milestones hand the runner-up to a hit is a discard, so a slip threw away
+  // the very card that would have hit (and, in a three-card hand, could throw
+  // the wild); playtests read both as a bot that cannot see the table. A slip
+  // now picks a slightly worse CARD for the same action, and only from the
+  // top NEAR_MISS_SHARE of the turn's score spread; with nothing that close,
+  // the persona plays the best move.
   const mistakeRate = persona.mistakeRate ?? 0;
   if (mistakeRate > 0 && random() < mistakeRate) {
-    const alternatives = ranked.slice(1, 3);
-    return alternatives[Math.floor(random() * alternatives.length)].move;
+    const best = ranked[0];
+    const floor = best.score - NEAR_MISS_SHARE * (best.score - ranked[ranked.length - 1].score);
+    const alternatives = ranked.slice(1, 3)
+      .filter((e) => e.move.type === best.move.type && e.score >= floor);
+    if (alternatives.length) return alternatives[Math.floor(random() * alternatives.length)].move;
   }
   return ranked[0].move;
 }

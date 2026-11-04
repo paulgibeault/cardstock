@@ -245,6 +245,25 @@ export function rememberPileTake(ctx, seat, card) {
 
 export function forgetPileTakes(ctx) {
   ctx.setVar(PILE_TAKEN_VAR, Array.from({ length: ctx.seats }, () => []));
+  ctx.setVar(PILE_THROWN_VAR, Array.from({ length: ctx.seats }, () => []));
+}
+
+/**
+ * WHAT EVERY SEAT WATCHED SOMEONE THROW — the other half of the pile's public
+ * record, kept on exactly the terms PILE_TAKEN_VAR is: a discard lands face up
+ * in front of everyone, so it is declared public, bounded per seat, and stores
+ * the rank and colour that were seen, never the card id.
+ *
+ * The rummy player's oldest read: a rank somebody just threw away is a rank
+ * they are not collecting, so throwing them another one is safe.
+ */
+export const PILE_THROWN_VAR = 'pileThrown';
+
+export function rememberDiscard(ctx, seat, card) {
+  const thrown = (ctx.var(PILE_THROWN_VAR) || []).map((entry) => entry.slice());
+  while (thrown.length < ctx.seats) thrown.push([]);
+  thrown[seat] = [{ rank: card.rank, color: card.color ?? null }, ...thrown[seat]].slice(0, PILE_MEMORY);
+  ctx.setVar(PILE_THROWN_VAR, thrown);
 }
 
 /**
@@ -434,6 +453,47 @@ function pileAppetite(ctx, seat, card) {
 }
 
 /**
+ * How SAFE this card is to throw, read off what the other seats have been
+ * throwing away: one for each rival who recently discarded its rank. Counted
+ * per rival, not per discard — one seat throwing three sevens says no more
+ * about the other two seats than one seven does.
+ */
+function discardSafety(ctx, seat, card) {
+  if (!isMeldable(ctx, card) || ctx.isWild(card)) return 0;
+  const thrown = ctx.var(PILE_THROWN_VAR) || [];
+  let safety = 0;
+  for (let s = 0; s < ctx.seats; s++) {
+    if (s === seat) continue;
+    if ((thrown[s] || []).some((seen) => seen.rank === card.rank)) safety += 1;
+  }
+  return safety;
+}
+
+/**
+ * THE SEAT THAT DRAWS NEXT — the one seat that can take this discard before
+ * anybody else sees it. From the discarder's chair it is the next seat not
+ * already skipping; after the discard, it is simply whoever's turn it is.
+ */
+function nextDrawer(ctx, seat) {
+  if (ctx.turn.seat !== seat) return ctx.turn.seat;
+  let next = ctx.nextSeat(seat);
+  for (let i = 0; i < ctx.seats && ctx.playerVar(next, 'skipNextTurn'); i++) next = ctx.nextSeat(next);
+  return next;
+}
+
+/**
+ * Whether the next seat to draw could take this card straight onto the felt.
+ * ANY meld counts, this seat's own included: once a seat has laid down it may
+ * hit everybody's melds, so a card that extends mine is just as good a gift.
+ */
+function feedsNextDrawer(ctx, seat, card, reach) {
+  if (ctx.isWild(card) || !isMeldable(ctx, card)) return false;
+  const next = nextDrawer(ctx, seat);
+  if (next === seat || !ctx.playerVar(next, 'laidDown')) return false;
+  return reaches(reach.mine, card) || reaches(reach.theirs, card);
+}
+
+/**
  * DECK OR PILE. Positive means the face-up card beats an unknown one.
  *
  * A seat that has laid down is asking a different question from one that has
@@ -536,6 +596,12 @@ export function scoreDiscard(ctx, move, w = WEIGHTS) {
   const card = ctx.cardById(cardId);
   const reach = meldReach(ctx, seat);
 
+  // WHO A SKIP IS AIMED AT. Every target used to cost the same, so the stable
+  // sort kept the first one enumerated — seat 0, the host, every time, even
+  // when the host was already sitting out a turn and a second skip did nothing.
+  const target = move.choice?.target;
+  const aimed = target === undefined ? 0 : skipValue(ctx, seat, target, w);
+
   let keep;
   if (ctx.playerVar(seat, 'laidDown')) {
     // Past the lay-down every hittable card has already been hit this turn
@@ -549,7 +615,37 @@ export function scoreDiscard(ctx, move, w = WEIGHTS) {
     const handIds = ctx.cardIdsIn(ctx.zoneAddr('hand', seat));
     keep = keepValue(ctx, card, handShape(ctx, handIds), contractWants(ctx, seat, w), cardId);
   }
-  return -discardCost(ctx, seat, card, keep, reach, w);
+  return aimed - discardCost(ctx, seat, card, keep, reach, w);
+}
+
+/**
+ * WHAT A SKIP AIMED AT `target` IS WORTH — nothing if they are already
+ * skipping their next turn (the flag is a boolean; a second skip is a card
+ * thrown away), otherwise more the closer they are to going out.
+ *
+ * "Closer" is the table's public reading of a seat: laid down or not, how many
+ * cards it is holding, and how far up the ladder it has climbed — the rung is
+ * what wins the match, so a seat one contract from the top is worth stalling
+ * even with a full hand. Scaled to [1, 2] across the rivals so the leader is
+ * always the first choice and the skip is never worth less than one turn.
+ */
+function skipThreat(ctx, s, w) {
+  return publicStanding(ctx, s, w) + (ctx.playerVar(s, 'phase') ?? 1) * w.CARD_IN_HAND;
+}
+
+export function skipValue(ctx, seat, target, w = WEIGHTS) {
+  if (ctx.playerVar(target, 'skipNextTurn')) return 0;
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (let s = 0; s < ctx.seats; s++) {
+    if (s === seat) continue;
+    const t = skipThreat(ctx, s, w);
+    if (t < lo) lo = t;
+    if (t > hi) hi = t;
+  }
+  const spread = hi - lo;
+  const share = spread > 0 ? (skipThreat(ctx, target, w) - lo) / spread : 0;
+  return w.SKIP_WORTH * (1 + share);
 }
 
 /**
@@ -567,7 +663,10 @@ export function scoreDiscard(ctx, move, w = WEIGHTS) {
  */
 function discardCost(ctx, seat, card, keep, reach, w) {
   const feedsThem = reaches(reach.theirs, card) ? w.FEEDS_A_MELD : 0;
-  return keep + feedsThem + pileAppetite(ctx, seat, card) * w.APPETITE_WORTH;
+  const feedsNext = feedsNextDrawer(ctx, seat, card, reach) ? w.FEEDS_NEXT : 0;
+  return keep + feedsThem + feedsNext
+    + pileAppetite(ctx, seat, card) * w.APPETITE_WORTH
+    - discardSafety(ctx, seat, card) * w.SAFE_WORTH;
 }
 
 /* ------------------------------------------------------------------ *
@@ -707,6 +806,36 @@ const WILD_HOLD = 10;
 const RIVAL_SHARE = 0.6;
 
 /**
+ * What aiming a skip is worth, at the least threatening rival; the leader gets
+ * twice this (see `skipValue`). Small on purpose: it only has to order the
+ * targets of one skip card, and a skip is already the first card out of any
+ * hand (keepValue −1), so it cannot promote a skip over anything.
+ */
+const SKIP_WORTH = 0.5;
+
+/**
+ * THE TWO READS A RUMMY PLAYER MAKES BEFORE LETTING GO OF A CARD, and the two
+ * that earned their place at the match level (2026-11-02).
+ *
+ * FEEDS_NEXT — extra cost of a discard the next seat to draw could take and
+ * hit with at once (see `feedsNextDrawer`). FEEDS_A_MELD alone could not say
+ * this: it only looks at opponents' melds and ignores who draws next, and
+ * swinging it from 1 to 3 changed nothing.
+ *
+ * SAFE_WORTH — what one rival's recent discard of this rank takes off the
+ * cost of throwing it (see `discardSafety`).
+ *
+ * Measured with seats alternating between these weights and the previous
+ * ones, against a same-vs-same control on the same seeds: at two seats over
+ * 1200 matches on unseen deals, 54.9% against a 49.5% control (medium) and
+ * 54.5% against 49.1% (easy); at four seats over 600, 53.5% against 49.7%.
+ * Each alone was about half the gain. Holding a skip until a rival lays down
+ * was tried beside them and cost ground (51.1%), so it is not here.
+ */
+const FEEDS_NEXT = 2;
+const SAFE_WORTH = 1;
+
+/**
  * What the table can see of a seat's position — asked about every seat,
  * including the one doing the asking.
  */
@@ -741,8 +870,11 @@ export function evaluateState(ctx, seat, w = WEIGHTS) {
   if (topId !== undefined) {
     const top = ctx.cardById(topId);
     if (reaches(reach.theirs, top)) score -= w.FEEDS_A_MELD;
+    if (feedsNextDrawer(ctx, seat, top, reach)) score -= w.FEEDS_NEXT;
     score -= pileAppetite(ctx, seat, top) * w.APPETITE_WORTH;
+    score += discardSafety(ctx, seat, top) * w.SAFE_WORTH;
   }
+
 
   if (ctx.playerVar(seat, 'laidDown')) {
     // Past the lay-down a hand only shrinks by hitting, so what matters is how
@@ -806,4 +938,7 @@ export const WEIGHTS = Object.freeze({
   OUT_WORTH,
   WILD_HOLD,
   RIVAL_SHARE,
+  SKIP_WORTH,
+  FEEDS_NEXT,
+  SAFE_WORTH,
 });

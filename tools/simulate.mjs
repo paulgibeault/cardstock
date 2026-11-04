@@ -433,6 +433,25 @@ function entitledTo(state, seat) {
   return ok;
 }
 
+/**
+ * Every card the hand as it ENDED shows a seat: what it was entitled to anyway,
+ * plus every pile that belongs to a seat — its hand and the tricks it took —
+ * except a top-visible one. The ending is sent face up (the open lens,
+ * src/engine/view.js's `opensAtHandEnd`), because the hand is over and the
+ * cards go down. Written out here rather than imported, like `entitledTo`: an
+ * auditor that imports the rule it audits cannot catch it being wrong.
+ */
+function openAtHandEnd(state, seat) {
+  const ok = entitledTo(state, seat);
+  for (const address of state.zones.allAddresses()) {
+    const instance = state.zones.get(address);
+    if (instance.seat === null || instance.seat === undefined) continue;
+    if (instance.def.visibility === 'top') continue;
+    for (const id of instance.cards) ok.add(id);
+  }
+  return ok;
+}
+
 /** Every card in another seat's hand — the ids whose leak matters most. */
 function foreignHands(state, seat) {
   const out = new Set();
@@ -496,8 +515,11 @@ function auditClient({ state, seat, client, delivered, isCardId, faults, poses =
   for (const key of ['trick', 'final']) {
     if (!sendsPose(key)) continue;
     if (!poses?.[key]) { faults.push(`seat ${seat} was sent a ${key} pose the move did not earn`); continue; }
-    const posedForeign = foreignHands(poses[key], seat);
-    const posedAllowed = entitledTo(poses[key], seat);
+    // THE ENDING IS OPEN, the trick is not: a finished hand's cards are on the
+    // table for everybody; a trick in progress shows only what was played.
+    const open = key === 'final';
+    const posedForeign = open ? new Set() : foreignHands(poses[key], seat);
+    const posedAllowed = open ? openAtHandEnd(poses[key], seat) : entitledTo(poses[key], seat);
     for (const id of cardIdsIn(delivered.map((frame) => frame?.poses?.[key]), isCardId)) {
       if (posedForeign.has(id)) faults.push(`seat ${seat} was sent ${id} from another seat's hand in the ${key} pose`);
       else if (!posedAllowed.has(id)) faults.push(`seat ${seat} was sent ${id} in the ${key} pose, which it may not see`);
@@ -508,6 +530,10 @@ function auditClient({ state, seat, client, delivered, isCardId, faults, poses =
   // since buried them (and a new deal may have handed them to a neighbour).
   const bare = delivered.map((frame) => (frame && frame.poses ? { ...frame, poses: undefined } : frame));
   const public_ = poses?.trick ? entitledTo(poses.trick, seat) : new Set();
+  // AND THE HAND'S COUNTS NAME THE CARDS THE ENDING TURNED OVER — the reveal's
+  // `showScored` carries the hand a seat was caught with, which is face up in
+  // the open ending this same frame carries.
+  if (poses?.final && sendsPose('final')) for (const id of openAtHandEnd(poses.final, seat)) public_.add(id);
   const foreign = foreignHands(state, seat);
   const allowed = entitledTo(state, seat);
   for (const id of cardIdsIn(bare, isCardId)) {

@@ -91,13 +91,32 @@ function heldValueOf(state, def, address) {
 }
 
 /**
+ * WHICH ZONES TURN FACE UP WHEN A HAND IS OVER: every pile that belongs to a
+ * seat — its hand, and the tricks it took.
+ *
+ * The open lens (#192), used for one moment only: the position a hand ENDED in,
+ * which the host ships to every guest as `poses.final` (#283). At a real table
+ * that is the moment the cards go down — the caught hands in Thirteen are
+ * counted out loud, Hearts' penalty cards are turned over to be added up — and
+ * a guest's felt shows the same thing the host's does.
+ *
+ * A SHARED pile is not a seat's and stays as it was: the undealt stock is no
+ * more anybody's business after the hand than during it. Nothing here touches a
+ * position anybody can still play in — a pose is a throwaway (poses.js) and the
+ * live view is never asked for `open`.
+ */
+export function opensAtHandEnd(def, instance) {
+  return instance.seat !== null && instance.seat !== undefined && def.visibility !== 'top';
+}
+
+/**
  * One zone, as `seat` may see it.
  *
  * `cards` present means "you may see these, in this order". Its ABSENCE is the
  * redaction — a client cannot tell a hidden pile from a pile it merely was not
  * told about, which is the correct amount of information.
  */
-function zoneView(state, address, instance, seat) {
+function zoneView(state, address, instance, seat, { open = false } = {}) {
   const def = instance.def;
   const cards = instance.cards;
   const out = {
@@ -109,6 +128,12 @@ function zoneView(state, address, instance, seat) {
 
   const held = heldValueOf(state, def, address);
   if (held !== undefined) out.heldValue = held;
+
+  // THE HAND AS IT ENDED, FACE UP FOR EVERYBODY (see `opensAtHandEnd`).
+  if (open && opensAtHandEnd(def, instance)) {
+    out.cards = cards.slice();
+    return out;
+  }
 
   switch (def.visibility) {
     case 'all':
@@ -140,13 +165,15 @@ function zoneView(state, address, instance, seat) {
  *              soundness trap and `legalMovesFor`'s memo is documented-unsound
  *              off the applyMove path)
  */
-export function viewFor(state, seat, { moves = null, announcements = null, deadlines = [], seq = null } = {}) {
+export function viewFor(state, seat, {
+  moves = null, announcements = null, deadlines = [], seq = null, open = false,
+} = {}) {
   const template = state.pack.template;
   const publicVars = publicVarsOf(template, state.pack.rules);
 
   const zones = {};
   for (const address of state.zones.allAddresses()) {
-    zones[address] = zoneView(state, address, state.zones.get(address), seat);
+    zones[address] = zoneView(state, address, state.zones.get(address), seat, { open });
   }
 
   // SHARED VARS ARE AN ALLOWLIST. Anything a template did not declare public is
@@ -219,12 +246,12 @@ function cloneMove(move) {
  * seat had no way to predict, and scoring it is reading the deck. That is the
  * same rule this function has always expressed, asked forward in time.
  */
-export function visibleCardIds(state, seat) {
+export function visibleCardIds(state, seat, { open = false } = {}) {
   const visible = new Set();
   for (const address of state.zones.allAddresses()) {
     const instance = state.zones.get(address);
     const def = instance.def;
-    if (def.visibility === 'all' || (def.visibility === 'owner' && instance.seat === seat)) {
+    if ((open && opensAtHandEnd(def, instance)) || def.visibility === 'all' || (def.visibility === 'owner' && instance.seat === seat)) {
       for (const id of instance.cards) visible.add(id);
     } else if (def.visibility === 'top' && instance.cards.length) {
       visible.add(instance.cards[instance.cards.length - 1]);
@@ -249,7 +276,7 @@ export function visibleCardIds(state, seat) {
  * a hidden card in an event payload is caught by the leak tests instead of
  * shipping.
  */
-export function eventsFor(state, seat, events = [], { also = [] } = {}) {
+export function eventsFor(state, seat, events = [], { also = [], opened = [] } = {}) {
   const visible = visibleCardIds(state, seat);
   // "ALREADY PUBLIC" HAS TO BE ASKED OF THE POSITION WHERE THEY WERE PUBLIC
   // (#283). Checked against the post-move state alone, `trickWon.cards` had
@@ -259,6 +286,12 @@ export function eventsFor(state, seat, events = [], { also = [] } = {}) {
   // seat could see it in EITHER position — never one it could see in neither.
   for (const extra of also) {
     if (extra) for (const id of visibleCardIds(extra, seat)) visible.add(id);
+  }
+  // AND A HAND THAT HAS ENDED IS OPEN (`opensAtHandEnd`): the host ships the
+  // ending face up, so the reveal's own card ids — the hand a seat was caught
+  // with, the penalty cards it took — are no secret on the events either.
+  for (const extra of opened) {
+    if (extra) for (const id of visibleCardIds(extra, seat, { open: true })) visible.add(id);
   }
 
   return events.map((ev) => {
