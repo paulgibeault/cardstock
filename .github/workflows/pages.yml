@@ -51,3 +51,5 @@ jobs:
       # The checklist runner is Playwright-driven and the test tier installs
       # no browsers unless asked.
       browsers: chromium
+      # Publish the game's offline pack so the launcher can run it with no network.
+      offline_pack: true
